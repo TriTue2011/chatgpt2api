@@ -44,24 +44,6 @@ class _So:
             config.data["cameras"] = self._cu
 
 
-class _Quyen:
-    """Đặt cài đặt quyền camera vào config mà không ghi ra đĩa."""
-
-    def __init__(self, che_do: str, cho_phep: list) -> None:
-        self.q = {"che_do": che_do, "cho_phep": cho_phep}
-
-    def __enter__(self):
-        self._cu = config.data.get("camera_quyen")
-        config.data["camera_quyen"] = self.q
-        return self
-
-    def __exit__(self, *a) -> None:
-        if self._cu is None:
-            config.data.pop("camera_quyen", None)
-        else:
-            config.data["camera_quyen"] = self._cu
-
-
 @pytest.mark.pure
 class CheBiMatTests(unittest.TestCase):
     def test_bo_mat_khau_khoi_url_rtsp(self) -> None:
@@ -397,28 +379,23 @@ class XemCameraTests(unittest.TestCase):
     def _goi(self, args=None, *, admin=True):
         return self.C.CAPABILITIES["xem_camera"].handler(args or {}, {"is_admin": admin})
 
-    def test_khong_phai_admin_va_chua_duoc_tich_thi_tu_choi(self) -> None:
-        with _Quyen("admin", []), mock.patch.object(cam, "chup") as chup:
-            ra = self._goi(admin=False)
-        chup.assert_not_called()
-        self.assertNotIn("image_url", ra)
-        self.assertIn("chưa được cấp quyền", ra["text"])
+    def test_khong_tick_nhom_camera_thi_tool_khong_ton_tai(self) -> None:
+        """Ai được xem chốt ở BỘ LỌC CHỨC NĂNG, không phải trong handler.
 
-    def test_nguoi_da_duoc_tich_thi_xem_duoc(self) -> None:
-        with _Quyen("danh_sach", ["zalo_9:u7"]), \
-             mock.patch.object(cam, "chup", return_value=("Sân", b"gui")):
-            ra = self.C.CAPABILITIES["xem_camera"].handler(
-                {}, {"is_admin": False, "user_id": "zalo_9:u7"})
-        self.assertIn("image_url", ra)
+        Thread chưa cấu hình bộ lọc (`allow=None`) cũng KHÔNG có camera: nhóm
+        `camera` nằm trong `_NHOM_PHAI_TICH`, phải tích tường minh mới có.
+        """
+        ten = [t["function"]["name"] for t in self.C.tools_schema(None)]
+        self.assertNotIn("xem_camera", ten)
+        ten = [t["function"]["name"] for t in self.C.tools_schema({"web", "image"})]
+        self.assertNotIn("xem_camera", ten)
+        ten = [t["function"]["name"] for t in self.C.tools_schema({"camera"})]
+        self.assertIn("xem_camera", ten)
 
-    def test_nguoi_khac_trong_cung_nhom_van_khong_xem_duoc(self) -> None:
-        # Khoá phiên khác nhau theo user, nên tích một người không mở cho cả nhóm.
-        with _Quyen("danh_sach", ["zalo_9:u7"]), \
-             mock.patch.object(cam, "chup") as chup:
-            ra = self.C.CAPABILITIES["xem_camera"].handler(
-                {}, {"is_admin": False, "user_id": "zalo_9:u8"})
-        chup.assert_not_called()
-        self.assertNotIn("image_url", ra)
+    def test_persona_khong_khoe_camera_khi_chua_tick(self) -> None:
+        # Persona khoe được mà tool bị ẩn thì model BỊA ảnh camera.
+        self.assertNotIn("camera nhà", self.C.persona_list(None).lower())
+        self.assertIn("camera nhà", self.C.persona_list({"camera"}).lower())
 
     def test_gui_anh_khi_khong_hoi_gi(self) -> None:
         with mock.patch.object(cam, "chup", return_value=("Sân trước", b"gui")), \
@@ -509,39 +486,28 @@ class HoiVeAnhTests(unittest.TestCase):
 
 
 @pytest.mark.pure
-class QuyenTests(unittest.TestCase):
-    def test_mac_dinh_la_dong(self) -> None:
-        cu = config.data.pop("camera_quyen", None)
-        try:
-            self.assertEqual(cam.quyen()["che_do"], cam.CHE_DO_ADMIN)
-            self.assertFalse(cam.duoc_xem("zalo_1"))
-        finally:
-            if cu is not None:
-                config.data["camera_quyen"] = cu
+class NhomCameraTests(unittest.TestCase):
+    """Nhóm `camera` trong bộ lọc thread: phải TÍCH mới có, và không tự bật."""
 
-    def test_admin_luon_duoc_du_khong_co_ten(self) -> None:
-        with _Quyen("danh_sach", []):
-            self.assertTrue(cam.duoc_xem("bat_ky", la_admin=True))
+    def test_ban_ghi_loc_cu_khong_tu_moc_them_camera(self) -> None:
+        # Bộ lọc lưu trước khi có nhóm camera. Luật chung là nhóm sinh sau được
+        # cộng thêm (xem test_loc_thread_nhom_moi), nhưng camera nhìn vào TRONG
+        # NHÀ nên phải đứng ngoài luật đó — một bản cập nhật không được tự cấp
+        # quyền chụp ảnh trong nhà cho thread cũ.
+        from services.agent import capabilities as caps
 
-    def test_che_do_admin_thi_danh_sach_khong_co_tac_dung(self) -> None:
-        # Cài sót: có người trong danh sách nhưng quên bật chế độ → vẫn đóng.
-        with _Quyen("admin", ["zalo_9:u7"]):
-            self.assertFalse(cam.duoc_xem("zalo_9:u7"))
+        cfg = {"thread_filters": {"t1": ["web", "image"]},
+               "thread_filter_meta": {"t1": {"known": ["web", "image"]}}}
+        with mock.patch("services.config.config.get", return_value=cfg):
+            self.assertNotIn("camera", caps.allowed_groups_for("t1"))
 
-    def test_cau_hinh_hong_thi_ve_mac_dinh_dong(self) -> None:
-        with _Quyen("linh_tinh", ["zalo_9:u7"]):
-            self.assertEqual(cam.quyen()["che_do"], cam.CHE_DO_ADMIN)
-            self.assertFalse(cam.duoc_xem("zalo_9:u7"))
+    def test_da_tick_thi_giu_nguyen(self) -> None:
+        from services.agent import capabilities as caps
 
-    def test_dat_quyen_chuan_hoa_va_bo_trung(self) -> None:
-        with _Quyen("admin", []), mock.patch.object(config, "_save", lambda: None):
-            ra = cam.dat_quyen("danh_sach", ["  zalo_1 ", "zalo_1", "", "ha"])
-            self.assertEqual(ra, {"che_do": "danh_sach", "cho_phep": ["ha", "zalo_1"]})
-            self.assertTrue(cam.duoc_xem("ha"))
-
-    def test_dat_quyen_che_do_la_bi_tu_choi(self) -> None:
-        with _Quyen("admin", []), self.assertRaises(cam.LoiCamera):
-            cam.dat_quyen("mo_toang", [])
+        cfg = {"thread_filters": {"t1": ["web", "camera"]},
+               "thread_filter_meta": {"t1": {"known": ["web", "camera"]}}}
+        with mock.patch("services.config.config.get", return_value=cfg):
+            self.assertIn("camera", caps.allowed_groups_for("t1"))
 
 
 # ── Khoá phiên và API ────────────────────────────────────────────────────────
@@ -583,22 +549,6 @@ class ApiCameraTests(unittest.TestCase):
         bo_qua.start()
         self.addCleanup(bo_qua.stop)
         self.client = TestClient(app)
-
-    def test_nguoi_dung_luon_co_home_assistant(self) -> None:
-        with mock.patch("services.channel_contacts.list_directory", return_value=[]):
-            d = self.client.get("/api/camera/nguoi-dung").json()
-        self.assertTrue(d["ok"])
-        self.assertEqual([r["key"] for r in d["rows"]], ["ha"])
-
-    def test_nguoi_dung_bo_qua_nhom(self) -> None:
-        rows = [{"kind": "group", "thread_id": "-100", "name": "Nhóm nhà"},
-                {"kind": "user", "thread_id": "555", "name": "Vợ", "bot_label": "BotNha"}]
-        with mock.patch("services.channel_contacts.list_directory",
-                        side_effect=lambda plat, **kw: rows if plat == "zalo" else []):
-            d = self.client.get("/api/camera/nguoi-dung").json()
-        khoa = [r["key"] for r in d["rows"]]
-        self.assertIn("zalo_555", khoa)
-        self.assertNotIn("zalo_-100", khoa)
 
     def test_test_thieu_ten(self) -> None:
         d = self.client.post("/api/camera/test", json={}).json()

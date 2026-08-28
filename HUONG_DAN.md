@@ -480,13 +480,16 @@ Nút **Chụp thử** chỉ chạy được sau khi đã bấm **Lưu**, vì nó
 hình đã lưu chứ không đọc từ ô đang gõ dở. Nút **Sửa** nạp camera đó lên form để
 chỉnh; đổi tên trong lúc sửa thì bản ghi cũ được bỏ đi, không thành hai cái.
 
-> 🔐 **Ai được xem.** Mặc định **chỉ mình bạn (admin)**. Muốn mở cho vợ/con thì
-> chọn «Admin và những người tôi tích bên dưới» rồi tích từng người. Danh sách
-> chỉ hiện **hội thoại 1-1** đã có trong danh bạ — nhóm chat không mở camera
-> được, vì mỗi người trong nhóm là một phiên riêng và mở camera nhà cho cả nhóm
-> cũng không phải thứ nên bấm nhầm một cái là xong. Tích sót thì hệ nghiêng về
-> phía **không** cho xem: chọn chế độ danh sách mà chưa tích ai thì vẫn chỉ mình
-> bạn xem được.
+> 🔐 **Ai được xem.** Cài ở **Kênh chat**, không phải ở thẻ Camera: chọn kênh
+> (📨 Telegram · 💬 Zalo Bot · 👤 Zalo Cá Nhân) → tab **🎚️ Lọc thread** → tìm
+> hội thoại → tích ô **📷 Camera nhà (go2rtc · RTSP)**. Cùng một chỗ với mọi
+> quyền khác của hội thoại đó, nên không còn cảnh bật một nơi mà nơi kia vẫn
+> chặn.
+>
+> Camera **phải tích mới có**: hội thoại chưa đặt bộ lọc thì không xem được, dù
+> các chức năng khác đang mở hết — ngược với mọi nhóm khác, và cố ý như vậy vì
+> camera nhìn vào trong nhà. Cùng lý do, bản cập nhật thêm nhóm camera **không
+> tự bật** nó cho các bộ lọc đã lưu từ trước; phải tự tay tích.
 
 Camera mập mờ tên thì bot **hỏi lại** chứ không chụp đại. Có hai camera cùng chữ
 «sân» mà bạn chỉ nói «xem camera sân» thì nó liệt kê ra để bạn chọn — chụp nhầm
@@ -866,13 +869,18 @@ Vị trí: `▸ Cài đặt → Kênh chat → [chọn kênh] → 🎚️ Lọc 
 - Chat **có** trong danh sách → **chỉ** được các nhóm chức năng đã tích.
 - Tích **rỗng** → chặn hết công cụ, chỉ còn trò chuyện.
 - Không có quyền cho việc được yêu cầu → bot **im lặng**, không giải thích.
+- **Ngoại lệ 📷 Camera nhà**: phải **tích mới có**. Chat chưa có trong danh sách
+  vẫn **không** xem được camera, dù dòng đầu nói "được phép tất cả" — camera nhìn
+  vào trong nhà, nên người lạ vừa nhắn bot lần đầu không được xin ảnh. Cũng vì
+  thế nó **không tự bật** cho các bộ lọc lưu từ trước.
 
 ### 6.2. Các nhóm chức năng
 
 🏠 Nhà (HA) · 🖥️ Server · 🎨 Ảnh · 🎬 Video · 🎵 Nhạc · 🌐 Web · 💻 Code · 🧠 Ghi nhớ ·
-📚 RAG/tài liệu · 📝 PDF→Word · 🧾 Tổng hợp · ⏰ Nhắc hẹn · 🧩 Skill/Workflow ·
-📖 Wiki · 📒 Danh bạ · **🔉 Trả lời bằng giọng nói** · **📢 Được ra lệnh phát loa** ·
-📚 Giáo viên
+📚 RAG/tài liệu · 📝 PDF→Word · 📄 Tài liệu Office · 🔌 Thiết bị ·
+**📷 Camera nhà** · 🧾 Tổng hợp · ⏰ Nhắc hẹn · 🧩 Skill/Workflow · 📖 Wiki ·
+📒 Danh bạ · ☁️ Kho đám mây · **🔉 Trả lời bằng giọng nói** ·
+**📢 Được ra lệnh phát loa** · 📚 Giáo viên · 📘 Đăng Facebook Page
 
 > **Cập nhật (2026-07-25) — Trả lời bằng giọng nói = CHỈ giọng, không kèm chữ.**
 > Khi tích `🔉 Trả lời bằng giọng nói`, bot **chỉ gửi âm thanh** (trước đây gửi cả

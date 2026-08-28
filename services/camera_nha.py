@@ -235,61 +235,6 @@ def tim(ten: str) -> tuple[str, dict[str, Any] | None, list[str]]:
     return "", None, sorted(so)
 
 
-# ── Ai được xem ──────────────────────────────────────────────────────────────
-# Camera giám sát nhìn vào trong nhà, nên mặc định là ĐÓNG: chỉ admin. Muốn mở
-# cho vợ/con thì tích từng người trong Cài đặt → Home Assistant → Camera nhà.
-#
-# Danh sách tích theo KHOÁ PHIÊN — đúng chuỗi mà orchestrator truyền vào
-# `ctx["user_id"]` (vd `zalo_123:u456`, `zalop_789`, `12345` của Telegram, `ha`).
-# Tích theo khoá phiên chứ không theo số điện thoại vì đó là thứ duy nhất
-# handler nhìn thấy lúc chạy; quy đổi từ danh bạ sang khoá phiên do web UI làm
-# một lần, không để handler đoán lại.
-
-CHE_DO_ADMIN = "admin"
-CHE_DO_DANH_SACH = "danh_sach"
-
-
-def quyen() -> dict[str, Any]:
-    """Cài đặt quyền xem camera. Thiếu hoặc hỏng thì trả về mặc định ĐÓNG."""
-    from services.config import config
-    q = config.data.get("camera_quyen")
-    if not isinstance(q, dict):
-        return {"che_do": CHE_DO_ADMIN, "cho_phep": []}
-    che_do = str(q.get("che_do") or CHE_DO_ADMIN)
-    if che_do not in (CHE_DO_ADMIN, CHE_DO_DANH_SACH):
-        che_do = CHE_DO_ADMIN
-    cho_phep = q.get("cho_phep")
-    ds = [str(k) for k in cho_phep if str(k).strip()] if isinstance(cho_phep, list) else []
-    return {"che_do": che_do, "cho_phep": ds}
-
-
-def dat_quyen(che_do: str, cho_phep: list[str] | None = None) -> dict[str, Any]:
-    """Ghi lại cài đặt quyền. Trả về bản đã chuẩn hoá."""
-    from services.config import config
-
-    if che_do not in (CHE_DO_ADMIN, CHE_DO_DANH_SACH):
-        raise LoiCamera(f"Chế độ '{che_do}' không dùng được.")
-    ds = sorted({str(k).strip() for k in (cho_phep or []) if str(k).strip()})
-    moi = {"che_do": che_do, "cho_phep": ds}
-    config.mutate(lambda data: data.__setitem__("camera_quyen", moi))
-    logger.info({"event": "camera_quyen_set", "che_do": che_do, "so_nguoi": len(ds)})
-    return moi
-
-
-def duoc_xem(user_id: str, *, la_admin: bool = False) -> bool:
-    """Người này có được xem camera không.
-
-    Admin luôn được. Ngoài admin thì phải ở chế độ danh sách VÀ có tên trong đó —
-    chế độ mặc định không mở cho ai, để một lần cài sót không thành lộ camera.
-    """
-    if la_admin:
-        return True
-    q = quyen()
-    if q["che_do"] != CHE_DO_DANH_SACH:
-        return False
-    return str(user_id or "") in set(q["cho_phep"])
-
-
 # ── Bóc một khung ảnh ────────────────────────────────────────────────────────
 
 def kich_thuoc_jpeg(jpeg: bytes) -> tuple[int, int] | None:

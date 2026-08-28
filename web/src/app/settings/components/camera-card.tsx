@@ -7,9 +7,14 @@
  * theo hai đường: go2rtc (đã có sẵn máy chủ go2rtc thì chỉ trỏ tới và nêu tên
  * luồng) hoặc RTSP (trỏ thẳng vào camera, ffmpeg bóc một khung).
  *
- * Sổ camera và quyền lưu trong config (`cameras`, `camera_quyen`) nên card này
- * dùng saveConfig như mọi card khác. Chỉ hai việc phải hỏi máy chủ: danh sách
- * người có thể tích, và chụp thử.
+ * Sổ camera lưu trong config (`cameras`) nên card này dùng saveConfig như mọi
+ * card khác; việc duy nhất phải hỏi máy chủ là chụp thử.
+ *
+ * AI ĐƯỢC XEM thì KHÔNG khai ở đây. Quyền camera là ô tích «📷 Camera nhà» trong
+ * bộ lọc chức năng của từng kênh (Telegram / Zalo Bot / Zalo Cá Nhân) — một chỗ
+ * duy nhất, cùng chỗ với mọi quyền khác của thread đó. Trước 28/08/2026 card này
+ * có thêm danh sách tích riêng (`camera_quyen`), nên phải bật ĐÚNG HAI nơi mới
+ * xem được camera và tắt một nơi thì nơi kia im lặng không báo gì.
  */
 
 import { useEffect, useState } from "react";
@@ -26,7 +31,6 @@ type Cam = {
   src_ai?: string; url_ai?: string;
   username?: string; password?: string; note?: string;
 };
-type Nguoi = { key: string; kenh: string; ten: string };
 
 const RONG: Cam = { kind: "go2rtc", base: "", src: "", url: "", src_ai: "", url_ai: "",
                     username: "", password: "", note: "" };
@@ -36,9 +40,6 @@ export function CameraCard() {
   const saveConfig = useSettingsStore((s) => s.saveConfig);
 
   const [cams, setCams] = useState<Record<string, Cam>>({});
-  const [cheDo, setCheDo] = useState<"admin" | "danh_sach">("admin");
-  const [choPhep, setChoPhep] = useState<string[]>([]);
-  const [nguoi, setNguoi] = useState<Nguoi[]>([]);
 
   const [ten, setTen] = useState("");
   const [moi, setMoi] = useState<Cam>({ ...RONG });
@@ -55,16 +56,7 @@ export function CameraCard() {
   useEffect(() => {
     const c = ((config as any)?.cameras as Record<string, Cam>) || {};
     setCams(c);
-    const q = ((config as any)?.camera_quyen as any) || {};
-    setCheDo(q.che_do === "danh_sach" ? "danh_sach" : "admin");
-    setChoPhep(Array.isArray(q.cho_phep) ? q.cho_phep.map(String) : []);
-  }, [(config as any)?.cameras, (config as any)?.camera_quyen]);
-
-  useEffect(() => {
-    request.get("/api/camera/nguoi-dung")
-      .then((r) => setNguoi(((r.data as any)?.rows as Nguoi[]) || []))
-      .catch(() => setNguoi([]));
-  }, []);
+  }, [(config as any)?.cameras]);
 
   useEffect(() => {
     setModelAnh(String((config as any)?.agent_branches?.vision || ""));
@@ -76,8 +68,8 @@ export function CameraCard() {
       .catch(() => setModels({}));
   }, []);
 
-  const luu = async (cam: Record<string, Cam>, che_do = cheDo, cho_phep = choPhep) => {
-    await saveConfig({ ...config, cameras: cam, camera_quyen: { che_do, cho_phep } } as any);
+  const luu = async (cam: Record<string, Cam>) => {
+    await saveConfig({ ...config, cameras: cam } as any);
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   };
 
@@ -151,17 +143,6 @@ export function CameraCard() {
     } catch (e) {
       setMsg(`❌ ${e instanceof Error ? e.message : String(e)}`);
     } finally { setBusy(""); }
-  };
-
-  const tick = (key: string) => {
-    const tiep = choPhep.includes(key) ? choPhep.filter((k) => k !== key) : [...choPhep, key];
-    setChoPhep(tiep);
-    void luu(cams, cheDo, tiep);
-  };
-
-  const doiCheDo = (v: "admin" | "danh_sach") => {
-    setCheDo(v);
-    void luu(cams, v, choPhep);
   };
 
   const ds = Object.entries(cams);
@@ -321,47 +302,19 @@ export function CameraCard() {
         </div>
 
         {/* ── Ai được xem ──────────────────────────────────────────────── */}
-        <div className="rounded border border-dashed border-border/70 p-3 space-y-2">
+        <div className="rounded border border-dashed border-border/70 p-3 space-y-1">
           <p className="text-sm font-medium">🔐 Ai được xem camera</p>
-          <label className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
-            <input type="radio" className="size-3.5" checked={cheDo === "admin"}
-              onChange={() => doiCheDo("admin")} />
-            Chỉ mình tôi (admin)
-          </label>
-          <label className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
-            <input type="radio" className="size-3.5" checked={cheDo === "danh_sach"}
-              onChange={() => doiCheDo("danh_sach")} />
-            Admin và những người tôi tích bên dưới
-          </label>
-
-          {cheDo === "danh_sach" && (
-            <div className="space-y-1 pt-1">
-              {nguoi.length === 0 && (
-                <p className="text-xs text-muted-foreground">
-                  Chưa có ai trong danh bạ. Người nào nhắn cho bot và được bạn duyệt sẽ
-                  hiện ở đây.
-                </p>
-              )}
-              {nguoi.map((n) => (
-                <label key={n.key}
-                  className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
-                  <input type="checkbox" className="size-3.5"
-                    checked={choPhep.includes(n.key)} onChange={() => tick(n.key)} />
-                  <span className="rounded bg-muted px-1">{n.kenh}</span>
-                  {n.ten}
-                </label>
-              ))}
-              <p className="text-[11px] text-muted-foreground pt-1">
-                Chỉ liệt kê hội thoại 1-1. Nhóm chat không mở được camera: mỗi người trong
-                nhóm là một phiên riêng, mà mở camera nhà cho cả nhóm cũng không nên.
-              </p>
-            </div>
-          )}
-          {cheDo === "danh_sach" && choPhep.length === 0 && (
-            <p className="text-xs text-amber-600">
-              ⚠️ Chưa tích ai — hiện vẫn chỉ mình bạn xem được.
-            </p>
-          )}
+          <p className="text-xs text-muted-foreground">
+            Cài ở <b>Kênh chat</b>, không phải ở đây: chọn kênh (📨 Telegram ·
+            💬 Zalo Bot · 👤 Zalo Cá Nhân) → tab <b>🎚️ Lọc thread</b> → tìm hội
+            thoại cần mở → tích ô <b>📷 Camera nhà (go2rtc · RTSP)</b>. Đó cũng là
+            chỗ đang quyết định mọi quyền khác của hội thoại đó.
+          </p>
+          <p className="text-xs text-amber-600">
+            ⚠️ Camera phải <b>tích mới có</b>: hội thoại chưa đặt bộ lọc thì không
+            xem được, kể cả khi các chức năng khác đang mở hết. Bật nhầm là người
+            đó xin được ảnh trong nhà bất cứ lúc nào, nên tích xong hãy đọc lại.
+          </p>
         </div>
 
         {/* ── Model phân tích ảnh ──────────────────────────────────────── */}

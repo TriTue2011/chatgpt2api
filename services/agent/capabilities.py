@@ -4433,15 +4433,9 @@ def _h_xem_camera(args: dict, ctx: dict) -> dict:
     """
     from services import camera_nha
 
-    # Mặc định ĐÓNG: chỉ admin. Mở thêm cho ai thì tích trong Cài đặt →
-    # Home Assistant → Camera nhà. Camera giám sát nhìn vào trong nhà nên cài
-    # sót phải nghiêng về phía không cho xem.
-    if not camera_nha.duoc_xem(str((ctx or {}).get("user_id") or ""),
-                               la_admin=bool((ctx or {}).get("is_admin"))):
-        return {"deliver_now": True,
-                "text": "Anh/chị chưa được cấp quyền xem camera nhà ạ. "
-                        "Chủ nhà bật giúp trong Cài đặt → Home Assistant → Camera nhà."}
-
+    # Ai được xem: chốt ở BỘ LỌC CHỨC NĂNG theo thread (ô tích «📷 Camera nhà»
+    # trong từng kênh). Nhóm `camera` thuộc `_NHOM_PHAI_TICH` nên thread chưa
+    # cấu hình bộ lọc KHÔNG có tool này — không cần chốt riêng ở đây nữa.
     ten = str(args.get("camera") or "").strip()
     hoi = str(args.get("hoi") or "").strip()
 
@@ -6463,8 +6457,9 @@ _CAP_GROUP: dict[str, str] = {
     # Camera giám sát nhìn vào TRONG NHÀ — nhóm RIÊNG "camera", KHÔNG gộp vào
     # "device" (webcam/máy tính) lẫn "homeassistant" (đèn/quạt): người chỉ cần
     # camera không phải mở luôn quyền điều khiển máy tính, và thread bật đèn
-    # không mặc nhiên được nhìn vào nhà. Truy cập THẬT vẫn chốt ở
-    # camera_nha.duoc_xem (mặc định chỉ admin) nên nhóm này bật rộng vẫn kín.
+    # không mặc nhiên được nhìn vào nhà. Đây là chốt DUY NHẤT — xem
+    # `_NHOM_PHAI_TICH`: không tích ô này thì không có tool, kể cả ở thread chưa
+    # cấu hình bộ lọc.
     "xem_camera": "camera",
     "remember": "memory", "search_history": "memory",
     "model_spec": "image",
