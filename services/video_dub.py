@@ -22,6 +22,7 @@ import subprocess
 import tempfile
 import time
 import wave
+from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import median
@@ -430,6 +431,61 @@ def _dac_trung(mau, rate: int, bat: float, ket: float) -> tuple[float, float | N
     x = np.asarray(mau[a:b], dtype=np.float32) / 32768.0
     nang_luong = float(np.sqrt(np.mean(x * x))) if len(x) else 0.0
     return nang_luong, _pitch_acf(x, rate)
+
+
+#: Ngắt CÂU khi gộp khung vụn: khoảng lặng dài hơn ngần này giây giữa hai khung
+#: coi là hết câu dù chưa có dấu chấm (đổi cảnh, ngập ngừng). Dưới mức này mà
+#: chưa có dấu kết câu thì còn là MỘT câu — gộp lại đọc liền, không chen im lặng.
+NGAT_CAU_GIAY = 0.8
+#: Trần an toàn khi gộp: phụ đề THIẾU dấu câu (ASR thô) sẽ gộp mãi không dừng.
+#: Chạm một trong hai trần này thì cắt câu tại đó.
+GOP_TOI_DA_GIAY = 12.0
+GOP_TOI_DA_KHUNG = 8
+#: Ký tự KẾT một câu. KHÔNG gồm dấu phẩy — phẩy là ngắt trong câu, để TTS tự
+#: ngân nhịp, không phải chỗ chèn im lặng.
+_KET_CAU = tuple(".!?…。！？؟।")
+
+_Cau = namedtuple("_Cau", "bat_dau ket_thuc chu")
+
+
+def _het_cau(chu: str) -> bool:
+    """Chuỗi này đã kết thúc một câu chưa (bỏ ngoặc/nháy đuôi rồi xét)."""
+    t = str(chu or "").rstrip().rstrip("\"')]}»”’ ").rstrip()
+    return bool(t) and t[-1] in _KET_CAU
+
+
+def _gop_cau(doan: list[Any]) -> list[Any]:
+    """Gộp các khung phụ đề CÙNG MỘT CÂU thành một đơn vị đọc.
+
+    Vì sao: phụ đề hay cắt một câu thành nhiều khung ngắn ("ngày mai" / "trời" /
+    "lại sáng"). Đọc TTS từng khung rồi đặt vào từng mốc → chen im lặng GIỮA
+    câu, nghe cụt từng chữ. Gộp lại rồi đọc trọn câu một hơi thì liền mạch, và
+    câu vẫn đặt ở mốc khung ĐẦU nên vẫn bám hình (yêu cầu chủ máy 28/08).
+
+    Cắt câu tại: dấu kết câu (._KET_CAU), hoặc khoảng lặng ``NGAT_CAU_GIAY``,
+    hoặc chạm trần an toàn (phụ đề thiếu dấu câu). Dấu PHẨY không cắt.
+    Trả danh sách ``_Cau`` (cùng giao diện bat_dau/ket_thuc/chu như ``Doan``).
+    """
+    ra: list[_Cau] = []
+    gom: list[Any] = []
+
+    def xa():
+        if gom:
+            chu = " ".join(str(d.chu or "").strip() for d in gom if str(d.chu or "").strip())
+            ra.append(_Cau(float(gom[0].bat_dau), float(gom[-1].ket_thuc), chu))
+            gom.clear()
+
+    for i, d in enumerate(doan):
+        gom.append(d)
+        het = _het_cau(d.chu)
+        qua_dai = (float(d.ket_thuc) - float(gom[0].bat_dau) >= GOP_TOI_DA_GIAY
+                   or len(gom) >= GOP_TOI_DA_KHUNG)
+        lang_dai = (i + 1 < len(doan)
+                    and float(doan[i + 1].bat_dau) - float(d.ket_thuc) > NGAT_CAU_GIAY)
+        if het or qua_dai or lang_dai:
+            xa()
+    xa()
+    return ra
 
 
 def _tao_meta(duong_video: str, doan: list[Any], lang: str,
@@ -1008,6 +1064,9 @@ def long_tieng(duong_video: str, srt: bytes | str, lang: str, *, voice: str = ""
     doan = vd.doc_phu_de(raw_srt)
     if not doan:
         raise LoiLongTieng("Phụ đề không có câu nào để đọc.")
+    # Gộp khung vụn cùng một câu để đọc TRỌN CÂU liền mạch, không chen im lặng
+    # giữa câu ("ngày mai (im) trời (im) lại sáng"). Câu vẫn đặt ở mốc khung đầu.
+    doan = _gop_cau(doan)
     voice = voice or chon_giong(lang)
     dai = _thoi_luong(duong_video, doan[-1].ket_thuc)
     meta, raw_pcm = _tao_meta(duong_video, doan, lang, voice)

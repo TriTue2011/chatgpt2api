@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+from dataclasses import dataclass
 
 from test._fakes import (FakeAudioSeparator, FakeFfmpeg, FakeTTS,
                          install_audio_separator, install_tts,
@@ -475,6 +476,75 @@ def test_cham_tran_toc_do_thi_chiu_tre_chu_khong_doc_nhanh_hon_nua():
     tempo, tre, tran = dub._tempo_chung(moc, [3.0] * 10, 10.0)
     assert tempo == pytest.approx(dub.TEMPO_NHANH_NHAT)
     assert tre > dub.TRE_TOI_DA or tran > 0.0
+
+
+@dataclass
+class _D:
+    bat_dau: float
+    ket_thuc: float
+    chu: str
+
+
+@pytest.mark.pure
+def test_gop_khung_vun_thanh_cau_tron_ven():
+    """#4: câu bị phụ đề cắt vụn được gộp lại để đọc liền, đặt ở mốc khung đầu.
+
+    "ngày mai (im) trời (im) lại sáng" — bản cũ đọc rời từng mảnh có im lặng
+    chen giữa. Gộp lại thành một câu, đọc một hơi.
+    """
+    from services import video_dub as dub
+
+    doan = [_D(0.0, 0.6, "ngày mai"), _D(0.6, 1.0, "trời"),
+            _D(1.0, 1.6, "lại sáng."), _D(3.0, 3.5, "Hôm nay"),
+            _D(3.5, 4.0, "trời mưa.")]
+    ra = dub._gop_cau(doan)
+    assert [c.chu for c in ra] == ["ngày mai trời lại sáng.", "Hôm nay trời mưa."]
+    assert ra[0].bat_dau == 0.0 and ra[0].ket_thuc == 1.6   # mốc khung ĐẦU→CUỐI
+    assert ra[1].bat_dau == 3.0
+
+
+@pytest.mark.pure
+def test_gop_ngat_o_khoang_lang_dai_du_khong_co_dau_cham():
+    """Phụ đề thiếu dấu câu: khoảng lặng dài vẫn cắt câu (đổi cảnh, ngập ngừng)."""
+    from services import video_dub as dub
+
+    doan = [_D(0.0, 0.6, "ngày mai"), _D(0.6, 1.0, "trời lại sáng"),
+            _D(5.0, 5.5, "và gió")]
+    ra = dub._gop_cau(doan)
+    assert [c.chu for c in ra] == ["ngày mai trời lại sáng", "và gió"]
+
+
+@pytest.mark.pure
+def test_gop_khong_cat_o_dau_phay():
+    """Dấu phẩy là ngắt TRONG câu — TTS tự ngân, không cắt thành đơn vị riêng."""
+    from services import video_dub as dub
+
+    doan = [_D(0.0, 0.6, "ngày mai,"), _D(0.6, 1.2, "trời lại sáng.")]
+    ra = dub._gop_cau(doan)
+    assert len(ra) == 1
+    assert ra[0].chu == "ngày mai, trời lại sáng."
+
+
+@pytest.mark.pure
+def test_gop_chan_tran_an_toan_khi_thieu_dau_cau():
+    """Phụ đề dài không có dấu câu nào: chạm trần số khung thì vẫn cắt."""
+    from services import video_dub as dub
+
+    doan = [_D(float(i), float(i) + 0.4, f"chữ{i}") for i in range(20)]
+    ra = dub._gop_cau(doan)
+    assert len(ra) >= 2                       # không gộp cả 20 thành một
+    assert all(len(c.chu) > 0 for c in ra)
+
+
+@pytest.mark.pure
+def test_het_cau_bo_qua_ngoac_nhay_duoi():
+    from services import video_dub as dub
+
+    assert dub._het_cau("xong.")
+    assert dub._het_cau('anh ấy nói "về nhà."')
+    assert dub._het_cau("(thật vậy!)")
+    assert not dub._het_cau("ngày mai")
+    assert not dub._het_cau("ngày mai,")
 
 
 @pytest.mark.pure
