@@ -156,13 +156,30 @@ def tra(tu: str, src: str = "en") -> dict:
     return ra
 
 
-def dong_tra_cho_chat(tu: str, src: str = "en", *, toi_da: int = 8) -> str:
+#: Trần ký tự cho MỘT câu ví dụ trong tin chat. Ví dụ trong kho dài trung bình
+#: 41 ký tự, nhưng cá biệt tới 475 — một mục như thế lấn hết chỗ của các nghĩa
+#: còn lại, nên cắt ca ngoại lệ thay vì hạ số nghĩa hiển thị.
+VI_DU_TOI_DA = 120
+
+
+def dong_tra_cho_chat(tu: str, src: str = "en", *, toi_da: int = TOI_DA_NGHIA,
+                      kem_vi_du: bool = True) -> str:
     """Khối chữ tra từ điển GỌN cho tin nhắn bot — rỗng nếu không tra được gì.
 
-    Khác ô web (``tra`` trả cấu trúc để render): đây trả sẵn chữ và CẮT cho hợp
-    khổ tin Zalo/Telegram — bỏ câu ví dụ, mỗi nghĩa một dòng. Dùng để đính vào
-    sau bản dịch của lệnh ``/dich`` khi người dùng tra MỘT từ: máy dịch chọn
-    một nghĩa, khối này cho thấy các nghĩa còn lại.
+    Khác ô web (``tra`` trả cấu trúc để render): đây trả sẵn chữ, cắt cho hợp
+    khổ tin Zalo/Telegram. Dùng để đính sau bản dịch của lệnh ``/dich`` khi
+    người dùng tra MỘT từ: máy dịch chọn một nghĩa, khối này cho thấy các nghĩa
+    còn lại.
+
+    Có KÈM câu ví dụ của từng nghĩa (``kem_vi_du``), và mặc định hiện ĐỦ số
+    nghĩa tra được — bằng đúng tab Dịch trên web.
+
+    Bản đầu bỏ ví dụ và cắt còn 8 nghĩa vì sợ dài tin. Đo lại 29/08 cho thấy lo
+    hão: từ nhiều nghĩa nhất trong kho, hiện đủ 15 nghĩa KÈM ví dụ, cũng chỉ
+    1.441 ký tự — nửa ngưỡng 2.900 của một tin. Cái giá của việc cắt thì lớn:
+    ví dụ mới là thứ phân biệt các nghĩa với nhau ("stroke" có 12 nghĩa, đọc
+    riêng chữ "đột quỵ" / "nét bút" / "cú đánh" thì không biết dùng vào câu
+    nào), và người dùng thấy web đủ mà chat thiếu thì tưởng bot hỏng.
     """
     r = tra(tu, src)
     if not r["nghia"]:
@@ -174,6 +191,11 @@ def dong_tra_cho_chat(tu: str, src: str = "en", *, toi_da: int = 8) -> str:
     for i, n in enumerate(r["nghia"][:toi_da], 1):
         tl = f"({n['tu_loai']}) " if n["tu_loai"] else ""
         dong.append(f"{i}. {tl}{n['vi']}")
+        vd = (n.get("vi_du") or "").strip() if kem_vi_du else ""
+        if vd:
+            if len(vd) > VI_DU_TOI_DA:
+                vd = vd[:VI_DU_TOI_DA - 1].rstrip() + "…"
+            dong.append(f"   · {vd}")
     con = len(r["nghia"]) - toi_da
     if con > 0:
         dong.append(f"…và {con} nghĩa nữa")

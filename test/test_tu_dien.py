@@ -9,6 +9,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
@@ -137,6 +138,51 @@ class TuDienTests(unittest.TestCase):
         self.assertIn("1. ", kq)
         self.assertNotIn("3. ", kq)
         self.assertIn("…và 1 nghĩa nữa", kq)
+
+    def test_dong_chat_kem_vi_du_tung_nghia(self):
+        """Chat phải có câu ví dụ như tab Dịch — đó là thứ phân biệt các nghĩa.
+
+        Đo 29/08: bản cũ bỏ ví dụ để tiết kiệm chỗ, nên trên Zalo chỉ thấy
+        "Đột quỵ" / "Nét (bút)" mà không biết dùng vào câu nào, trong khi web
+        hiện đủ. Người dùng báo đúng chỗ lệch này.
+        """
+        kq = td.dong_tra_cho_chat("stroke")
+        self.assertIn("He suffered a sudden stroke.", kq)
+        self.assertIn("He stroked the cat.", kq)
+
+    def test_dong_chat_tat_duoc_vi_du(self):
+        kq = td.dong_tra_cho_chat("stroke", kem_vi_du=False)
+        self.assertIn("Đột quỵ.", kq)
+        self.assertNotIn("He suffered a sudden stroke.", kq)
+
+    def test_dong_chat_hien_du_nghia_nhu_web(self):
+        """Mặc định KHÔNG cắt bớt nghĩa: web hiện 12 thì chat cũng 12."""
+        n = len(td.tra("stroke")["nghia"])
+        kq = td.dong_tra_cho_chat("stroke")
+        self.assertIn(f"{n}. ", kq, f"phải hiện đủ {n} nghĩa")
+        self.assertNotIn("nghĩa nữa", kq, "không được báo cắt bớt khi đã đủ")
+
+    def test_dong_chat_gon_trong_mot_tin(self):
+        """Từ nhiều nghĩa nhất kèm ví dụ vẫn gọn trong MỘT tin.
+
+        2.900 không phải tường cứng — Zalo tự tách tin khi dài hơn. Đây là chốt
+        chặn hồi quy: gọn một tin thì dễ đọc hơn, nên nếu con số này vọt lên là
+        có gì đó phình bất thường, chứ không phải tính năng hỏng.
+        """
+        for tu in ("stroke", "run", "set", "light", "take", "get"):
+            kq = td.dong_tra_cho_chat(tu)
+            if kq:
+                self.assertLess(len(kq), 2900, f"«{tu}» dài {len(kq)} ký tự")
+
+    def test_dong_chat_cat_vi_du_qua_dai(self):
+        """Ví dụ cá biệt dài 475 ký tự không được lấn hết chỗ các nghĩa khác."""
+        dai = "x" * 400
+        with mock.patch.object(td, "tra", return_value={
+                "tu": "t", "ipa": "", "nghia": [
+                    {"vi": "nghĩa", "tu_loai": "danh từ", "vi_du": dai}]}):
+            kq = td.dong_tra_cho_chat("t")
+        self.assertLessEqual(len(kq), 60 + td.VI_DU_TOI_DA)
+        self.assertIn("…", kq)
 
     def test_dong_chat_dang_goc_ghi_ro(self):
         self.assertIn("dạng gốc của", td.dong_tra_cho_chat("strokes"))
