@@ -1856,6 +1856,16 @@ def _extract_weather_city(raw: str) -> str:
         return ""
     fw = [_fold_diacritics(w).replace("đ", "d").strip(".,!?;:()\"'").lower() for w in words]
     lo, hi = 0, len(words)
+    # Bỏ mọi thứ ĐỨNG TRƯỚC cụm dẫn ("thời tiết", "dự báo"…): câu thật hay có
+    # lời dẫn ("anh lại hỏi thời tiết hồ chí minh", "cho anh hỏi dự báo Đà
+    # Nẵng"). Bản cũ chỉ cắt cụm dẫn khi nó nằm ngay ĐẦU câu, nên cả câu bị đem
+    # đi geocode — đo thật 29/08 16:05: "anh lại hỏi thời tiết hồ chí minh" trả
+    # về thời tiết "An Hoi" kèm mô tả tiếng Anh.
+    for i in range(hi):
+        rest = " ".join(fw[i:hi])
+        if any(rest == L or rest.startswith(L + " ") for L in _CITY_LEADS):
+            lo = i
+            break
     changed = True
     while changed and lo < hi:  # strip leading weather lead-ins / connectors
         changed = False

@@ -659,6 +659,13 @@ _TU_KHOA_SO_THICH = (
     # cả cơ chế đứng ngoài lượt đó. Bộ test bắt được, không phải suy đoán.
     "có tóm tắt", "kèm tóm tắt", "bỏ tóm tắt", "không tóm tắt", "bớt tóm tắt",
     "chỉ tiêu đề", "chỉ ghi tiêu đề", "tiêu đề thôi", "chỉ cần tiêu đề",
+    # Lời dặn THÊM một phần vào câu trả lời cũng là dặn cách trả lời, không phải
+    # dữ kiện. Thiếu nhóm này thì lời dặn ghi nhớ được mà không bao giờ áp được:
+    # đo thật 29/08 16:02, người dùng dặn "hỏi thời tiết thì thêm lưu ý, dặn dò,
+    # khuyến cáo", bot lưu đúng câu ấy rồi ba lượt thời tiết liền sau vẫn trả
+    # thiếu — vì không từ khoá nào ở trên khớp câu đó.
+    "lưu ý", "dặn dò", "khuyến cáo", "lời khuyên", "nhắc thêm", "kèm thêm",
+    "thêm phần", "nói thêm", "cảnh báo",
 )
 
 
@@ -837,8 +844,9 @@ def _neo_noi_dung(s: str, toi_da: int = 40) -> list[str]:
     return [n[:toi_da] for n in neo if len(n.strip()) >= 8]
 
 
-def _ap_so_thich(text: str, user_text: str, main_model_fn) -> str:
-    """Diễn đạt lại kết quả ĐƯỜNG TẮT theo sở thích trình bày đã ghi nhớ.
+def _ap_so_thich(text: str, user_text: str, main_model_fn,
+                 *, pham_vi: str = "") -> str:
+    """Diễn đạt lại kết quả ĐƯỜNG TẮT theo lời dặn đã ghi nhớ.
 
     Vì sao cần, và vì sao ở đây: sở thích ghi nhớ được tiêm vào system prompt,
     nên mọi lượt DO MODEL trả lời đều tôn trọng nó. Nhưng các đường tắt
@@ -850,6 +858,15 @@ def _ap_so_thich(text: str, user_text: str, main_model_fn) -> str:
 
     Không có sở thích nào thì trả nguyên văn — không tốn thêm một lượt gọi model.
 
+    `pham_vi` là BẮT BUỘC ở đường chạy thật: `remember` ghi lời dặn vào kho
+    riêng của phạm vi (kênh/chat/người), nên đọc kho chung không thôi là lời
+    dặn vừa lưu không có tác dụng — cùng cái bẫy `_so_thich_trinh_bay` đã ghi
+    trong docstring của nó.
+
+    KHÔNG đụng vào tin có khối `<<<ASK>>>` (menu chọn loa/model, câu hỏi xin
+    duyệt): từng dòng trong khối đó là một NÚT do code dựng và code bóc lại
+    (`ask_choices.extract`). Nhờ model viết lại là mời nó xoá mất nút.
+
     Chốt an toàn đo MẤT TIN, KHÔNG đo độ dài. Bản đầu tôi chặn theo độ dài
     ("ngắn hơn một nửa thì bỏ") và nó chặn OAN đúng thứ người dùng xin: đo thật
     01/08, bản tin có tóm tắt 4762 ký tự, bỏ tóm tắt còn 1718 — dưới ngưỡng
@@ -860,7 +877,9 @@ def _ap_so_thich(text: str, user_text: str, main_model_fn) -> str:
     goc = (text or "").strip()
     if not goc:
         return goc
-    st = _so_thich_trinh_bay()
+    if "<<<ASK>>>" in goc:
+        return goc
+    st = _so_thich_trinh_bay(pham_vi=pham_vi)
     if not st:
         return goc
     # Văn bản DÀI thì đừng nhờ model: đo thật 01/08, bản tin 4819 ký tự không
@@ -876,10 +895,13 @@ def _ap_so_thich(text: str, user_text: str, main_model_fn) -> str:
         resp = call_model(model, [
             {"role": "system", "content": (
                 "Người dùng đã dặn TRƯỚC cách họ muốn xem câu trả lời. Hãy trình "
-                "bày lại nội dung dưới đây cho đúng ý họ.\n"
-                "TUYỆT ĐỐI KHÔNG thêm, bớt, hay sửa thông tin: không bịa tin mới, "
-                "không bỏ tin đang có, không đổi số liệu hay tên riêng. Chỉ đổi "
-                "CÁCH BÀY: thứ tự, nhóm mục, độ dài câu, gạch đầu dòng.\n"
+                "bày lại nội dung dưới đây cho đúng ý họ — lời dặn là BẮT BUỘC, "
+                "không phải gợi ý.\n"
+                "KHÔNG được đổi DỮ KIỆN: không bịa tin mới, không bỏ tin đang có, "
+                "không đổi số liệu hay tên riêng.\n"
+                "Lời dặn có thể đòi THÊM một phần (lưu ý, dặn dò, khuyến cáo, lời "
+                "khuyên) — phần đó được phép viết thêm, nhưng phải suy ra từ chính "
+                "nội dung bên dưới, không kèm số liệu mới.\n"
                 "Trả về ĐÚNG nội dung đã trình bày lại, không nói gì thêm.\n\n"
                 "Người dùng đã dặn:\n" + "\n".join(f"- {x}" for x in st)
             )},
@@ -887,7 +909,13 @@ def _ap_so_thich(text: str, user_text: str, main_model_fn) -> str:
         # Trần 20s, KHÔNG 45: lượt tin tức trước đó chỉ 4,1 giây, sau khi thêm
         # bước bày lại thành 37 giây (đo thật 01/08) — người dùng ngồi chờ. Bày
         # lại là việc "có thì tốt"; quá 20 giây thì thà gửi bản gốc ngay.
-        ], timeout=20, no_smart_home=True)
+        #
+        # allowed_groups rỗng: lượt này chỉ viết lại đoạn văn đã có sẵn, KHÔNG
+        # được tra web. Không chặn thì gateway đem chính nội dung ấy đi tìm kiếm
+        # rồi tiêm kết quả ngược vào kèm câu "BẮT BUỘC ĐỌC VÀ TRẢ LỜI DỰA TRÊN
+        # ĐÂY" — vừa tốn hơn mười giây, vừa tranh chỗ với lời dặn (đo thật 29/08
+        # trên đường tắt nhà thông minh, log `search_executing` ghi nguyên câu).
+        ], timeout=20, no_smart_home=True, allowed_groups=set())
         if resp.get("error"):
             return goc
         moi = content_of(resp).strip()
@@ -1694,8 +1722,28 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None,
     return "\n\n".join(parts)
 
 
-def _finalize(user_id: str, result: dict[str, Any]) -> dict[str, Any]:
-    """Attach ask-choices metadata; strip control blocks; P0#5 filter media URLs."""
+def _finalize(user_id: str, result: dict[str, Any],
+              *, ap_loi_dan: str = "") -> dict[str, Any]:
+    """Attach ask-choices metadata; strip control blocks; P0#5 filter media URLs.
+
+    `ap_loi_dan` (câu người dùng vừa gõ) bật thêm bước ÁP LỜI DẶN: câu trả lời
+    của lượt này KHÔNG do model viết — nó là văn bản đường tắt / kết quả tool
+    trả thẳng — nên lời dặn ghi nhớ ("trả lời ngắn gọn", "hỏi thời tiết thì
+    thêm khuyến cáo") chưa có đường nào chạm tới. Lượt DO MODEL viết thì bỏ
+    trống: trí nhớ đã nằm sẵn trong system prompt, bày lại lần nữa vừa tốn một
+    lượt gọi model vừa thêm chỗ sai.
+
+    Chạy TRƯỚC `ask_choices`/`muc_luc` để mã mục A1/B2 được đánh lên đúng bản
+    văn cuối cùng. `_ap_so_thich` tự bỏ qua khi không có lời dặn nào (không tốn
+    lượt model), khi văn bản quá dài, và khi tin có khối `<<<ASK>>>`.
+    """
+    if ap_loi_dan and isinstance(result, dict) and str(result.get("text") or "").strip():
+        try:
+            result = {**result,
+                      "text": _ap_so_thich(str(result["text"]), ap_loi_dan, _main_model,
+                                           pham_vi=_pham_vi(user_id))}
+        except Exception as exc:
+            logger.warning("agent: áp lời dặn lỗi: %s", exc)
     try:
         result = ask_choices.apply_to_result(result, user_id)
     except Exception:
@@ -2106,7 +2154,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 out = _execute(cap, pending.get("args") or {}, user_id, is_admin=is_admin)
                 if verdict == "always":
                     out["text"] = "Dạ, từ giờ việc này em tự làm khỏi hỏi ạ. " + out.get("text", "")
-                fin = _finalize(user_id, out)
+                fin = _finalize(user_id, out, ap_loi_dan=user_text)
                 _journal(str(fin.get("text") or ""), status="approved")
                 return fin
         elif verdict == "deny":
@@ -2168,7 +2216,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
             # Danh sách tin liên quan trong câu trả lời cũng được đánh mã tiếp,
             # và vẫn tính là "tin" — gõ mã lần nữa lại tra thẳng như lần này.
             _kq_tin["muc_luc_nguon"] = "tin"
-            out_c = _finalize(user_id, _kq_tin)
+            out_c = _finalize(user_id, _kq_tin, ap_loi_dan=user_text)
             hist.append({"role": "assistant", "content": out_c.get("text") or ""})
             _persist_history(user_id, hist)
             _journal(str(out_c.get("text") or ""))
@@ -2260,7 +2308,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
                          "so_luong": _tat.get("so_luong") or 1,
                          "co_media": any(_kq.get(k) for k in
                                          ("image_url", "image_urls", "video_url", "audio_url"))})
-            out_t = _finalize(user_id, _kq)
+            out_t = _finalize(user_id, _kq, ap_loi_dan=user_text)
             hist.append({"role": "assistant", "content": out_t.get("text") or ""})
             _persist_history(user_id, hist)
             _journal(str(out_t.get("text") or ""))
@@ -2341,7 +2389,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
             # KHÔNG nhờ model bày lại bản tin nữa: định dạng (chia mục, gạch
             # đầu dòng, bỏ tóm tắt, không link) đã làm trọn bằng code ở trên, mà
             # bản tin lại quá dài để model kịp xử lý trong hạn chờ.
-            out_n = _finalize(user_id, _kq_ws)
+            out_n = _finalize(user_id, _kq_ws, ap_loi_dan=user_text)
             hist.append({"role": "assistant", "content": out_n.get("text") or ""})
             _persist_history(user_id, hist)
             _journal(str(out_n.get("text") or ""))
@@ -2425,7 +2473,8 @@ def _orchestrate_locked(user_text: str, user_id: str,
         _cap_sk = caps.get("teach_skill")
         if _cap_sk:
             out_sk = _finalize(user_id, _execute(_cap_sk, dict(_nut_sk), user_id,
-                                                 user_text=user_text, is_admin=is_admin))
+                                                 user_text=user_text, is_admin=is_admin),
+                               ap_loi_dan=user_text)
             hist.append({"role": "assistant", "content": out_sk.get("text") or ""})
             _persist_history(user_id, hist)
             _journal(str(out_sk.get("text") or ""), status="sua_skill")
@@ -2447,7 +2496,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
             logger.info({"event": "agent_tat_loa", "loa": _nut_loa.get("speaker"),
                          "volume": _nut_loa.get("volume"),
                          "delay_minutes": _nut_loa.get("delay_minutes") or 0})
-            out_l = _finalize(user_id, _kq_loa)
+            out_l = _finalize(user_id, _kq_loa, ap_loi_dan=user_text)
             hist.append({"role": "assistant", "content": out_l.get("text") or ""})
             _persist_history(user_id, hist)
             _journal(str(out_l.get("text") or ""), status="loa_fastpath")
@@ -2502,7 +2551,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
         if _kq_yc and str(_kq_yc.get("text") or "").strip():
             logger.info({"event": "agent_tat_loa_hoi",
                          "loa": _yc_loa.get("speaker") or ""})
-            out_y = _finalize(user_id, _kq_yc)
+            out_y = _finalize(user_id, _kq_yc, ap_loi_dan=user_text)
             hist.append({"role": "assistant", "content": out_y.get("text") or ""})
             _persist_history(user_id, hist)
             _journal(str(out_y.get("text") or ""), status="loa_hoi_fastpath")
@@ -2548,10 +2597,11 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 # Dùng model chat (thường "AI text") — giữ °C/%; burst có thể là
                 # model rẻ không :text và verbalize lại.
                 _phrase_model = _main_model("chat") or _main_model("burst")
+                _loi_dan = _so_thich_trinh_bay(pham_vi=_pham_vi(user_id))
                 resp = call_model(_phrase_model, [
                     {"role": "system", "content": (
                         "Hệ thống nhà thông minh ĐÃ xử lý xong tin nhắn của người dùng. "
-                        "Diễn đạt lại kết quả bên dưới thành MỘT câu trả lời tiếng Việt "
+                        "Diễn đạt lại kết quả bên dưới thành câu trả lời tiếng Việt "
                         "tự nhiên, ấm áp (xưng 'em') — đúng CHÍNH XÁC nội dung kết quả, "
                         "không bịa thêm thiết bị hay số liệu, không hỏi thêm.\n"
                         "QUAN TRỌNG — GIỮ NGUYÊN ĐƠN VỊ KÝ HIỆU trong kết quả: "
@@ -2561,22 +2611,43 @@ def _orchestrate_locked(user_text: str, user_id: str,
                     # Sở thích trình bày người dùng đã dặn — đường tắt trước đây
                     # bỏ qua sạch, nên "trả lời ngắn gọn thôi" chẳng bao giờ có
                     # tác dụng với câu trả lời nhà thông minh.
+                    #
+                    # "Không bịa thêm" ở trên nói về SỐ LIỆU. Phải nói rõ chỗ này,
+                    # kẻo lời dặn "thêm lưu ý/khuyến cáo" bị hiểu là điều bị cấm
+                    # rồi rơi mất — đo thật 29/08, ba lượt thời tiết liền nhau.
                     *([{"role": "system", "content":
-                        "Người dùng đã dặn cách trình bày:\n"
-                        + "\n".join(f"- {x}" for x in
-                                    _so_thich_trinh_bay(pham_vi=_pham_vi(user_id)))}]
-                      if _so_thich_trinh_bay(pham_vi=_pham_vi(user_id)) else []),
+                        "Người dùng đã dặn cách trả lời — PHẢI làm theo, kể cả khi "
+                        "lời dặn đòi THÊM một phần (lưu ý, dặn dò, khuyến cáo). Phần "
+                        "thêm đó viết dựa trên chính số liệu trong kết quả (mưa thì "
+                        "nhắc mang ô, nắng gắt thì nhắc che chắn…), không được bịa "
+                        "số liệu mới:\n"
+                        + "\n".join(f"- {x}" for x in _loi_dan)}]
+                      if _loi_dan else []),
                     {"role": "user", "content": (
                         f"Tin nhắn: {user_text}\nKết quả từ hệ thống nhà: {fp_text}")},
                     # no_smart_home: chỉ nhờ diễn đạt LẠI văn bản — tắt tích hợp HA
                     # kẻo pipeline thấy từ khóa lệnh nhà rồi THỰC THI LẦN 2.
-                ], timeout=30, no_smart_home=True)
+                    #
+                    # allowed_groups rỗng: lượt này KHÔNG được tra web. Đo thật
+                    # 29/08 16:05, log máy chủ ghi nguyên câu nhờ diễn đạt bị đem
+                    # đi tìm kiếm:
+                    #   {"event": "search_executing", "backend": "chatgpt",
+                    #    "query": "Tin nhắn: anh lại hỏi thời tiết hồ chí minh\n
+                    #     Kết quả từ hệ thống nhà: Thời tiết An Hoi hiện…"}
+                    # Kết quả tra về được tiêm vào lượt kèm câu "BẮT BUỘC ĐỌC VÀ
+                    # TRẢ LỜI DỰA TRÊN ĐÂY" — tranh chỗ với chính lời dặn của
+                    # người dùng, và tốn thêm hơn mười giây cho một việc chỉ là
+                    # viết lại đoạn văn đã có sẵn trong tay.
+                ], timeout=30, no_smart_home=True, allowed_groups=set())
                 if not resp.get("error"):
                     phrased = content_of(resp).strip()
                     if phrased:
                         reply = phrased
             except Exception as exc:  # call_model không raise, nhưng phòng hờ
                 logger.info("agent: ha fastpath phrasing skipped: %s", exc)
+            # KHÔNG `ap_loi_dan` ở đây: lượt diễn đạt ngay trên đã mang lời dặn
+            # theo rồi. Bày lại lần hai là gọi model thêm một lượt cho cùng một
+            # câu, và mỗi lần viết lại là một lần nữa có thể rơi mất chi tiết.
             out = _finalize(user_id, {"text": reply})
             hist.append({"role": "assistant", "content": out.get("text") or reply})
             _persist_history(user_id, hist)
@@ -2618,7 +2689,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
                              "slug": _wf_bat.slug,
                              "ok": bool(_kq_wf.get("ok")),
                              "busy": bool(_kq_wf.get("busy"))})
-                out_wf = _finalize(user_id, {"text": _txt_wf})
+                out_wf = _finalize(user_id, {"text": _txt_wf}, ap_loi_dan=user_text)
                 hist.append({"role": "assistant",
                              "content": out_wf.get("text") or _txt_wf})
                 _persist_history(user_id, hist)
@@ -2999,7 +3070,8 @@ def _orchestrate_locked(user_text: str, user_id: str,
         if produced_media or produced_images:
             text = produced_caption
             out_m = _finalize(user_id, {"text": text, **produced_media,
-                                        **_nhieu_anh(produced_images)})
+                                        **_nhieu_anh(produced_images)},
+                              ap_loi_dan=user_text)
             hist.append({"role": "assistant", "content": out_m.get("text") or text})
             _persist_history(user_id, hist)
             _journal(str(out_m.get("text") or text), status="media")
@@ -3007,7 +3079,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
         # Tạo ảnh/video/nhạc THẤT BẠI (deliver_now) → gửi thẳng câu thật, KHÔNG để
         # LLM kể lại là "đã gửi ở trên" khi thực ra chưa tạo được gì.
         if terminal_reply:
-            out_t = _finalize(user_id, {"text": terminal_reply})
+            out_t = _finalize(user_id, {"text": terminal_reply}, ap_loi_dan=user_text)
             hist.append({"role": "assistant", "content": out_t.get("text") or terminal_reply})
             _persist_history(user_id, hist)
             _journal(str(out_t.get("text") or terminal_reply), status="tool_final")
