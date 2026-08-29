@@ -313,8 +313,8 @@ def chay(kenh: Kenh, pend: dict | None, chon: dict) -> None:
                          "sau đó tổng hợp giọng và ghép video…")
             try:
                 giong = _dub.chon_giong(str(r.get("dich") or ""))
-                dub = _dub.long_tieng(duong_xu_ly, r["srt"], str(r["dich"]),
-                                      voice=giong)
+                dub = _dub.long_tieng(duong_xu_ly, _vd.srt_cho_long_tieng(r),
+                                      str(r["dich"]), voice=giong)
                 tep_tam.extend([dub.video_path, dub.prosody_path])
                 video_gui = dub.video_path
                 ban_net = tai.ban_cao() if tai is not None else ""

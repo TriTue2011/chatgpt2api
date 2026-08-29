@@ -527,7 +527,8 @@ def create_router() -> APIRouter:
                                           luc=time.time())
 
                             dub = video_dub.long_tieng(
-                                duong, r["srt"], str(r["dich"]), voice=giong,
+                                duong, vd.srt_cho_long_tieng(r),
+                                str(r["dich"]), voice=giong,
                                 progress=_tien_do_tts)
                             tep_tam.extend([dub.video_path, dub.prosody_path])
                             r["long_tieng"] = {

@@ -17,6 +17,7 @@ tải hình về rồi ``dich_tep_video`` tự nghe (bot Zalo đã nối, xem
 """
 from __future__ import annotations
 
+import bisect
 import logging
 import re
 import unicodedata
@@ -504,6 +505,59 @@ def gop_doan(doan: list[Doan], *, ranh_canh: list[float] | None = None) -> list[
     return ra
 
 
+#: Cắt CÂU ngay trong dòng chữ: sau dấu kết câu (kèm ngoặc/nháy đuôi) và phải
+#: có khoảng trắng theo sau — nhờ vế sau mà "1.5 triệu" hay "12.30" không bị xẻ.
+_CAT_CAU = re.compile(r'(?<=[.!?…。！？])["\'”’»)\]}]*\s+')
+
+
+def tach_theo_cau(doan: list[Doan]) -> list[Doan]:
+    """Các mảnh có mốc → từng CÂU trọn vẹn, mốc nội suy theo số ký tự.
+
+    Vì sao cần dù đã có ``gop_doan``: ``gop_doan`` chỉ ngắt được tại RANH GIỚI
+    MẢNH (nó xét mảnh đã gom có kết thúc bằng dấu câu chưa). Phụ đề tự sinh cắt
+    mảnh theo dòng chạy chữ nên dấu chấm gần như luôn nằm GIỮA mảnh — đo thật
+    29/08/2026: bản chép đã chấm câu có 53 dấu kết câu mà ``gop_doan`` vẫn chỉ
+    ngắt đúng 10/22 chỗ, phần còn lại rơi vào trần 350 ký tự, tức cắt giữa câu.
+    Tách ở đây thì cắt đúng ngay tại dấu chấm, không phụ thuộc mảnh dài ngắn.
+
+    Chạy TRƯỚC ``gop_doan``: câu đã trọn thì ``gop_doan`` để nguyên (điều kiện
+    gộp của nó đòi mảnh trước CHƯA kết câu), còn vùng nào không có dấu câu nào
+    thì hàm này trả y nguyên và ``gop_doan`` gom + chặn trần như cũ.
+    """
+    manh = [d for d in doan if str(d.chu or "").strip()]
+    if not manh:
+        return list(doan)
+    chu = [" ".join(str(d.chu).split()) for d in manh]
+    text = " ".join(chu)
+    if not _CAT_CAU.search(text):
+        return list(doan)
+    # dau[k] = vị trí ký tự đầu của mảnh k trong `text` (các mảnh cách nhau 1
+    # khoảng trắng, khoảng trắng đó tính vào đuôi mảnh trước).
+    dau: list[int] = []
+    vi = 0
+    for t in chu:
+        dau.append(vi)
+        vi += len(t) + 1
+
+    def thoi_diem(i: int) -> float:
+        k = bisect.bisect_right(dau, i) - 1
+        k = max(0, min(k, len(manh) - 1))
+        d, n = manh[k], len(chu[k])
+        phan = 1.0 if n <= 0 else min(1.0, max(0.0, (i - dau[k]) / n))
+        return float(d.bat_dau) + (float(d.ket_thuc) - float(d.bat_dau)) * phan
+
+    cat = [0] + [m.end() for m in _CAT_CAU.finditer(text)] + [len(text)]
+    ra: list[Doan] = []
+    for a, b in zip(cat, cat[1:]):
+        cau = text[a:b].strip()
+        if not cau:
+            continue
+        bat = thoi_diem(a)
+        ket = thoi_diem(a + len(text[a:b].rstrip()))
+        ra.append(Doan(bat, max(ket, bat + 0.002), cau))
+    return ra
+
+
 def _moc(giay: float) -> str:
     """Giây → "HH:MM:SS,mmm" đúng khuôn SRT.
 
@@ -558,6 +612,44 @@ def lam_srt(doan: list[Doan]) -> str:
     for i, d in enumerate(chuan_thoi_gian(doan), 1):
         khoi.append(f"{i}\n{_moc(d.bat_dau)} --> {_moc(d.ket_thuc)}\n{d.chu}\n")
     return "\n".join(khoi)
+
+
+def lam_srt_long_tieng(doan: list[Doan]) -> str:
+    """SRT cho khâu LỒNG TIẾNG: mỗi khối là MỘT CÂU, giữ nguyên mốc thật.
+
+    Vì sao phải có bản riêng: ``lam_srt`` đóng gói để ĐỌC TRÊN MÀN HÌNH — cắt
+    lại 42 ký tự/dòng và ép mỗi khung tối đa ``GIAY_TOI_DA`` giây. Hai luật đó
+    đúng cho mắt người nhưng sai cho giọng đọc. Đo thật 29/08/2026 trên một
+    video 9 phút: 25 trong 62 khung chạm đúng trần 7 giây, tức mốc kết thúc bị
+    cắt cụt vì lý do hiển thị chứ không phải vì người ta ngừng nói; ``_gop_cau``
+    của khâu lồng tiếng đọc chỗ cụt đó thành "có khoảng lặng dài" rồi cắt thêm
+    10 lần nữa GIỮA CÂU.
+
+    Ở đây chỉ giữ hai bảo đảm mà khâu lồng tiếng thật sự cần: mốc BẮT ĐẦU
+    nguyên vẹn (``_ghi_track`` đặt câu theo mốc này), và khung không đè lên
+    khung sau.
+    """
+    sach = [d for d in doan if " ".join(str(d.chu or "").split())]
+    khoi = []
+    for i, d in enumerate(sach):
+        bat = float(d.bat_dau)
+        ket = float(d.ket_thuc)
+        if i + 1 < len(sach):
+            ket = min(ket, float(sach[i + 1].bat_dau))
+        ket = max(ket, bat + 0.002)
+        chu = " ".join(str(d.chu).split())
+        khoi.append(f"{i + 1}\n{_moc(bat)} --> {_moc(ket)}\n{chu}\n")
+    return "\n".join(khoi)
+
+
+def srt_cho_long_tieng(r: dict[str, Any]) -> bytes:
+    """Bản SRT mà khâu lồng tiếng phải dùng, lấy từ kết quả dịch.
+
+    Có hàm này để hai lối gọi (bot và web) không lối nào quên: đưa nhầm bản
+    hiển thị cho TTS là quay lại đúng lỗi đọc vụn. Kết quả cũ (chưa có khoá
+    mới) vẫn chạy được bằng bản hiển thị như trước.
+    """
+    return r.get("srt_long_tieng") or r["srt"]
 
 
 def srt_chu_tren(srt: str) -> str:
@@ -731,10 +823,8 @@ def _chinh_llm_neu_bat(nhom: list[Doan], ban_dich: list[str],
     online thì phần "học" chắt lọc thuật ngữ vào ``<src>.hoc.json`` để lần sau
     bớt cần LLM. Mọi trục trặc → trả nguyên ``ban_dich`` (LLM chỉ làm tốt hơn).
     """
-    from services.config import config
-    llm = (config.get() or {}).get("dich_llm") or {}
-    model = str(llm.get("model") or "").strip()
-    if not (llm.get("bat") and model):
+    model = _model_llm_phu_de()
+    if not model:
         return ban_dich
     src = _ma_tieng_glossary(nguon)
     linh_vuc = tn.doan_linh_vuc(" ".join(d.chu for d in nhom), src) if src else []
@@ -749,6 +839,57 @@ def _chinh_llm_neu_bat(nhom: list[Doan], ban_dich: list[str],
 
     cap = list(zip((d.chu for d in nhom), ban_dich))
     return dich_llm.chinh_va_hoc(cap, linh_vuc, src, model, goi_model)
+
+
+def _model_llm_phu_de() -> str:
+    """Model của bước LLM tùy chọn cho phụ đề, rỗng nghĩa là đang tắt."""
+    from services.config import config
+
+    llm = (config.get() or {}).get("dich_llm") or {}
+    model = str(llm.get("model") or "").strip()
+    return model if llm.get("bat") and model else ""
+
+
+def _cham_cau_neu_thieu(doan: list[Doan],
+                        tien_do: TienDo | None = None) -> list[Doan]:
+    """Chèn lại dấu câu khi lời thoại nguồn là chữ trần (bước LLM TÙY CHỌN).
+
+    Phụ đề tự sinh của YouTube không có dấu câu nào, mà ``gop_doan`` ở ngay
+    dưới lại ngắt đơn vị dịch bằng dấu câu — thiếu dấu thì nó cắt theo trần độ
+    dài, tức cắt giữa câu (xem ``services/cham_cau.py`` để có số đo).
+
+    Dùng chung công tắc ``dich_llm`` với bước chỉnh bản dịch: cả hai đều là
+    "mượn LLM cho phụ đề tốt hơn", tắt thì cả hai cùng tắt. Tắt vẫn chạy được
+    như trước, chỉ là câu bị cắt theo trần độ dài như cũ.
+    """
+    from services import cham_cau as cc
+
+    if not cc.thieu_dau_cau([d.chu for d in doan]):
+        return doan
+    model = _model_llm_phu_de()
+    if not model:
+        logger.info("lời thoại nguồn không có dấu câu mà dich_llm đang tắt — "
+                    "đơn vị dịch sẽ bị cắt theo trần độ dài")
+        return doan
+
+    def goi_model(m: str, messages: list[dict]) -> str:
+        from services.agent.runtime import call_model, content_of
+        resp = call_model(m, messages, timeout=180, max_tokens=4000)
+        if resp.get("error"):
+            raise cc.LoiChamCau(str(resp["error"]))
+        return content_of(resp)
+
+    def _moi_lo(so_lo: int, tong_lo: int) -> None:
+        _bao_tien_do(tien_do, f"đang chấm câu lại lời thoại ({so_lo}/{tong_lo})…",
+                     PT_CANH_XONG, moc=so_lo == 1)
+
+    try:
+        moi = cc.phuc_hoi([d.chu for d in doan], model, goi_model, _moi_lo)
+    except Exception as exc:
+        # Chấm câu là làm TỐT HƠN, không được làm mất bản chép đã có.
+        logger.warning("chấm câu lời thoại lỗi: %s", str(exc)[:160])
+        return doan
+    return [Doan(d.bat_dau, d.ket_thuc, t) for d, t in zip(doan, moi)]
 
 
 def dich_video(text: str, target: str = "", *, chep_loi: bool = False,
@@ -816,7 +957,11 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
     """
     doan = [Doan(d.bat_dau, d.ket_thuc, loc_nhan_khong_phai_loi(d.chu))
             for d in doan]
-    nhom = gop_doan(bo_trung([d for d in doan if d.chu]), ranh_canh=ranh_canh)
+    # Chấm câu TRƯỚC khi gộp: gop_doan ngắt đơn vị dịch bằng dấu câu, mà phụ đề
+    # tự sinh của YouTube không có dấu nào — thiếu bước này thì nó cắt theo trần
+    # độ dài, tức cắt giữa câu, và cái cắt sai đó đi thẳng xuống tới TTS.
+    sach = _cham_cau_neu_thieu(bo_trung([d for d in doan if d.chu]), tien_do)
+    nhom = gop_doan(tach_theo_cau(sach), ranh_canh=ranh_canh)
     if not nhom:
         return {"ok": False, "error": "không còn lời thoại sau khi bỏ nhãn âm thanh"}
     canh_bao_dich = ""
@@ -868,13 +1013,17 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
 
     # Gộp để DỊCH, cắt lại để ĐỌC: khung 150 ký tự dịch đúng nghĩa nhưng không
     # ai đọc kịp trên màn hình.
-    da_dich = cat_khung([Doan(d.bat_dau, d.ket_thuc, b)
-                         for d, b in zip(nhom, ban_dich)])
+    theo_cau = [Doan(d.bat_dau, d.ket_thuc, b) for d, b in zip(nhom, ban_dich)]
+    da_dich = cat_khung(theo_cau)
     _bao_tien_do(tien_do, "đang đóng tệp SRT…", PT_DICH_XONG)
     srt = lam_srt(da_dich)
     ra = {
         "ok": True,
         "srt": srt.encode("utf-8"),
+        # Bản CHO GIỌNG ĐỌC: vẫn từng câu, chưa qua khuôn hiển thị. Khâu lồng
+        # tiếng phải dùng bản này — bản trên đã bị cắt dòng và ép trần 7 giây
+        # cho vừa màn hình, đưa nó cho TTS là đọc vụn từng mẩu.
+        "srt_long_tieng": lam_srt_long_tieng(theo_cau).encode("utf-8"),
         "ten": f"phu-de.{dich}.srt",
         "chu": "\n".join(d.chu for d in da_dich),
         # Cặp (câu gốc, câu dịch) để đóng bản SONG NGỮ. Ghép ở mức `nhom` chứ
