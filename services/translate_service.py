@@ -812,16 +812,46 @@ def _bo_tag_dau(text: str) -> str:
     return phan[1].strip() if len(phan) > 1 else ""
 
 
+#: Từ đi ngay sau "dịch" mà tạo thành TỪ GHÉP tiếng Việt — không phải lệnh dịch.
+#: "dịch vụ", "dịch bệnh"… là danh từ, nuốt chúng thành lệnh thì "dịch vụ này
+#: tốt không" biến thành đi dịch chữ "vụ này tốt không".
+_SAU_DICH_KHONG_PHAI_LENH = {
+    "vu", "benh", "te", "chuyen", "hach", "gia", "thuat", "can", "cum",
+    "corona", "covid", "ta", "hai", "chiet", "ma", "nao", "nay", "do", "kia",
+}
+
+#: Trần số từ để coi "dịch X" (không gạch chéo) là lệnh tra từ. Cố ý HẸP: giá
+#: trị của đường tắt này là tra TỪ ĐƠN trong từ điển, còn câu dài thì trợ lý
+#: xử lý vẫn tốt. Hẹp cũng là để "dịch bài này sang tiếng Anh giúp anh với" đi
+#: đường trợ lý như cũ, không bị bẻ lái.
+_DICH_TRAN_TU = 3
+
+
 def la_lenh_dich(text: str) -> bool:
-    """Tin nhắn này có phải lệnh /dich.
+    """Tin nhắn này có phải lệnh dịch.
 
     Nhận "/dich", "/dịch", "/translate", "/tr", cả dạng "/dich@TenBot" (nhóm
     Telegram) và "@TenBot /dich ..." (nhóm Zalo luôn kèm tag ở đầu).
+
+    NHẬN CẢ dạng KHÔNG gạch chéo cho tra từ ngắn — "dịch stroke". Đo thật trên
+    Zalo 29/08 01:03: người dùng gõ "dịch stroke", câu này không khớp lệnh nên
+    rơi xuống trợ lý, và LLM TỰ NGHĨ ra 5 nghĩa (không ví dụ, chậm) trong khi
+    kho từ điển 104.829 mục có sẵn 12 nghĩa kèm câu ví dụ. Agent lại không có
+    tool từ điển nào để tự tra, nên không có đường nào khác để nó đi đúng.
     """
-    dau = _bo_tag_dau(text).split(maxsplit=1)
+    s = _bo_tag_dau(text)
+    dau = s.split(maxsplit=1)
     if not dau:
         return False
-    return dau[0].split("@", 1)[0].lower() in _LENH_DICH
+    if dau[0].split("@", 1)[0].lower() in _LENH_DICH:
+        return True
+    # Dạng không gạch chéo: "dịch <từ>" — chỉ khi NGẮN và không phải từ ghép.
+    if _bo_dau(dau[0]).strip(":,.") != "dich" or len(dau) < 2:
+        return False
+    con = dau[1].split()
+    if not con or len(con) > _DICH_TRAN_TU:
+        return False
+    return _bo_dau(con[0]).strip(":,.") not in _SAU_DICH_KHONG_PHAI_LENH
 
 
 def _phan_giai_dich(noi_dung: str) -> tuple[str, str]:

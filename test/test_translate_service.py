@@ -41,10 +41,33 @@ def test_nhan_moi_dang_lenh_dich(text):
 
 @pytest.mark.pure
 @pytest.mark.parametrize("text", [
-    "", "dich hello", "/dichvu abc", "hôm nay trời thế nào", "/id", "@BenBapBot xin chào",
+    "", "/dichvu abc", "hôm nay trời thế nào", "/id", "@BenBapBot xin chào",
+    # "dịch" đứng đầu nhưng là TỪ GHÉP tiếng Việt — không phải lệnh.
+    "dịch vụ này tốt không", "dịch bệnh covid đang tăng", "dịch chuyển sang trái",
+    "dịch tễ học là gì", "dịch giả nổi tiếng",
+    # Câu DÀI thì để trợ lý lo; đường tắt chỉ dành cho tra từ ngắn.
+    "dịch bài này sang tiếng anh giúp anh với",
+    "bản dịch hay quá", "tôi cần dịch tài liệu dài",
 ])
 def test_khong_nhan_lam_lenh_dich(text):
     assert ts.la_lenh_dich(text) is False
+
+
+@pytest.mark.pure
+@pytest.mark.parametrize("text", [
+    "dịch stroke", "dich stroke", "Dịch stroke", "dịch hello world",
+    "@BenBapBot dịch stroke", "dịch en xin chào", "dich hello",
+])
+def test_nhan_dang_khong_gach_cheo(text):
+    """Tra từ ngắn KHÔNG cần gõ "/dich".
+
+    Đo thật trên Zalo 29/08 01:03: người dùng gõ "dịch stroke", câu này không
+    khớp lệnh nên rơi xuống trợ lý, và LLM TỰ NGHĨ ra 5 nghĩa — không câu ví
+    dụ, lại chậm vì đi trọn một vòng model — trong khi kho từ điển 104.829 mục
+    có sẵn 12 nghĩa kèm ví dụ. Agent cũng không có tool từ điển nào để tự tra,
+    nên không còn đường nào khác cho nó đi đúng.
+    """
+    assert ts.la_lenh_dich(text) is True
 
 
 @pytest.mark.pure
