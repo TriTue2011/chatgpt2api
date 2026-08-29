@@ -89,11 +89,69 @@ def _strip_web_profiles_from_config(profiles: set[str]) -> None:
         config._save()
 
 
+# Tiền tố tên hồ sơ của mọi đường onboard. MỘT tài khoản Google có thể có tới
+# bốn thư mục hồ sơ riêng (`google-`, `chatgpt-`, `codex-`, `github-`…), mỗi
+# thư mục một bộ cookie — xoá một cái không làm ba cái kia biến mất.
+_TIEN_TO_HO_SO = ("google-", "chatgpt-web-", "chatgpt-", "openai-",
+                  "gemini-web-", "gemini-", "claude-web-", "claude-",
+                  "codex-", "github-")
+
+# Hai kho credential trong `accounts.db` của solver. Cùng một địa chỉ email có
+# thể có bản ghi ở CẢ HAI với hai mật khẩu khác nhau.
+_KHO_CREDENTIAL = ("google", "openai")
+
+
+def _duoi_ho_so(ten: str) -> str:
+    """Phần sau tiền tố dịch vụ của một tên hồ sơ — `chatgpt-benbap115` → `benbap115`.
+
+    So khớp NGUYÊN VĂN, không gộp dấu: `ben-bap` và `benbap` phải khác nhau.
+    Gộp dấu tiện hơn nhưng ở đây đang XOÁ, mà `ben.bap@` với `benbap@` là hai
+    tài khoản khác nhau — nhận nhầm là xoá mất phiên của người khác.
+    """
+    s = str(ten or "").strip().lower()
+    for pfx in _TIEN_TO_HO_SO:
+        if s.startswith(pfx):
+            return s[len(pfx):]
+    return ""
+
+
+def _ho_so_anh_em(cs_url: str, headers: dict, duoi_can_xoa: set[str]) -> set[str]:
+    """Mọi thư mục hồ sơ trên solver thuộc về các tài khoản đang bị xoá.
+
+    Hỏi thẳng solver thay vì tự suy tên: trên đĩa đang tồn tại vài quy ước đặt
+    tên khác nhau, nên tên suy ra có thể trỏ vào thư mục không tồn tại trong khi
+    thư mục thật vẫn nằm đó.
+    """
+    import httpx
+    try:
+        r = httpx.get(f"{cs_url}/v1/profiles", headers=headers, timeout=20)
+        ds = (r.json() or {}).get("profiles") or []
+    except Exception as exc:
+        logger.warning({"event": "captcha_profile_list_failed", "error": str(exc)[:120]})
+        return set()
+    return {str(n) for n in ds
+            if _duoi_ho_so(str(n)) in duoi_can_xoa and not _is_placeholder_profile(str(n))}
+
+
 def _cleanup_captcha_profiles(accounts: list[dict]) -> None:
-    """Best-effort: delete each account's captcha-solver browser profile when
-    the account is removed, so the on-disk profile doesn't linger (orphan).
-    Skips accounts with no email (sk-/standard/codex-token accounts have no
-    browser profile). Never raises — account deletion already succeeded."""
+    """Xoá tài khoản = xoá ở ĐỦ BỐN nơi, không phải một.
+
+    Một tài khoản nằm ở: (1) thư mục hồ sơ trình duyệt trên đĩa — có thể nhiều
+    thư mục anh em, (2) bản ghi credential trong `accounts.db` của solver — có
+    thể ở cả hai kho, (3) các tham chiếu trong `config.json` của provider,
+    (4) pool token (bên gọi đã xoá trước khi vào đây).
+
+    Bản cũ chỉ chạm đúng MỘT thư mục (`google-<localpart>` suy theo quy ước) và
+    MỘT kho (`loai` để trống → mặc định `google`). Hệ quả người vận hành thấy:
+    "xoá lâu rồi mà không mất". Đo thật 29/08/2026 trên máy chủ — sau nhiều lượt
+    xoá vẫn còn `chatgpt-benbap115` và `chatgpt-smarthomebenbap` (22/06),
+    `codex-*` (25–30/07), `github-*` (12/06): 16 thư mục anh em, khoảng 110 MB.
+    Chúng bị bộ lọc của ô chọn giấu đi nên không ai nhìn thấy, và bản ghi
+    credential còn nguyên nên lượt tự khôi phục sau đăng nhập lại được, thư mục
+    mọc lại.
+
+    Best-effort, không bao giờ ném: việc xoá tài khoản ở pool đã xong rồi.
+    """
     import httpx
     flow = (config.data.get("providers") or {}).get("flow") or {}
     from services.captcha import captcha_base
@@ -103,26 +161,53 @@ def _cleanup_captcha_profiles(accounts: list[dict]) -> None:
     if not cs_url:
         return
     headers = {"Authorization": f"Bearer {cs_key}"} if cs_key else {}
-    seen: set[str] = set()
+
+    emails = []
     for acc in accounts:
         email = str((acc or {}).get("email") or "").strip()
-        if not email or "@" not in email:
-            continue
-        profile = _profile_for_email(email)
-        if profile in seen:
-            continue
-        seen.add(profile)
+        # sk-/standard/codex-token: không có email thì cũng không có hồ sơ nào.
+        if email and "@" in email and email not in emails:
+            emails.append(email)
+    if not emails:
+        return
+
+    # Tên suy theo quy ước LUÔN nằm trong danh sách, phòng khi solver không liệt
+    # kê được; cộng thêm mọi thư mục anh em mà solver báo là có thật.
+    ho_so = {_profile_for_email(e) for e in emails}
+    # Đuôi rỗng hoặc "default" thì BỎ. `_profile_for_email("@x.com")` cho ra
+    # `google-default`, mà `gemini-web-default` cũng có đuôi "default" — khớp
+    # kiểu đó là xoá mất hồ sơ placeholder dùng chung của cả hệ thống.
+    duoi = {d for d in (_duoi_ho_so(_profile_for_email(e)) for e in emails)
+            if d and d != "default"}
+    if duoi:
+        ho_so |= _ho_so_anh_em(cs_url, headers, duoi)
+    ho_so = {h for h in ho_so if h and not _is_placeholder_profile(h)}
+
+    for profile in sorted(ho_so):
         try:
             r = httpx.delete(f"{cs_url}/v1/profiles/{profile}", headers=headers, timeout=30)
             logger.info({"event": "captcha_profile_delete", "profile": profile, "status": r.status_code})
         except Exception as exc:
             logger.warning({"event": "captcha_profile_delete_failed", "profile": profile, "error": str(exc)[:120]})
-        try:
-            # Also delete from captcha-solver accounts.db so auto-refresh loop doesn't revive it
-            r2 = httpx.delete(f"{cs_url}/v1/accounts/saved/{email}", headers=headers, timeout=10)
-            logger.info({"event": "captcha_account_db_delete", "email": email, "status": r2.status_code})
-        except Exception as exc:
-            logger.warning({"event": "captcha_account_db_delete_failed", "email": email, "error": str(exc)[:120]})
+
+    for email in emails:
+        for kho in _KHO_CREDENTIAL:
+            try:
+                # `loai` PHẢI nói rõ: để trống thì solver mặc định kho 'google',
+                # nên bản ghi ở kho 'openai' của cùng địa chỉ không bao giờ xoá được.
+                r2 = httpx.delete(f"{cs_url}/v1/accounts/saved/{email}", params={"loai": kho},
+                                  headers=headers, timeout=10)
+                logger.info({"event": "captcha_account_db_delete", "email": email,
+                             "kho": kho, "status": r2.status_code})
+            except Exception as exc:
+                logger.warning({"event": "captcha_account_db_delete_failed", "email": email,
+                                "kho": kho, "error": str(exc)[:120]})
+
+    # Tham chiếu trong config: không dọn thì provider-tree bơm tài khoản trở lại.
+    try:
+        _strip_web_profiles_from_config(ho_so)
+    except Exception as exc:
+        logger.warning({"event": "captcha_config_strip_failed", "error": str(exc)[:120]})
 
 
 

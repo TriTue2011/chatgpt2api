@@ -28,7 +28,65 @@ function isAccountProfile(n: string): boolean {
   if (/(^|-)probe\d*$/i.test(n)) return false; // chatgpt-probe, -probe2
   if (/^test[-_]|[-_]test$|^nonexistent/i.test(n)) return false; // test-*, *-test
   if (/^github-/i.test(n) || /^codex-/i.test(n) || /^chatgpt-/i.test(n)) return false; // non-google accounts
+  // `openai-*` là tài khoản OpenAI GỐC — không có tài khoản Google nào phía
+  // sau, nên mọi thứ ô chọn này làm được (tái dùng phiên Google cho Flow /
+  // ChatGPT / Gemini / Claude) đều không áp dụng. Để nó lọt vào danh sách chỉ
+  // sinh ra hai chuyện: người dùng chọn nhầm rồi nhận lỗi khó hiểu, và MỘT tài
+  // khoản hiện thành HAI dòng khi trên đĩa có cả `google-<tên>` lẫn
+  // `openai-<tên>` (đo 29/08/2026: bios-disused99-6e84t67f hiện đúng hai lần).
+  if (/^openai-/i.test(n)) return false;
   return true;
+}
+
+// ── Nguồn sự thật DUY NHẤT cho danh sách hồ sơ ──────────────────────────────
+// Trang Settings gắn NĂM ô chọn (Flow, ChatGPT, Gemini Web API, Claude, "Tái
+// dùng tất cả") và các thẻ khác gắn thêm nữa. Bản cũ cho mỗi ô một `useState`
+// riêng, chỉ nạp lúc mount và chỉ nạp lại sau khi CHÍNH NÓ xoá — nên xoá ở ô
+// này thì các ô kia vẫn hiện tên đã xoá cho tới khi tải lại trang.
+//
+// Đo thật 29/08/2026: đĩa máy chủ có đúng 12 hồ sơ hợp lệ; ô ChatGPT hiện 12,
+// ô Gemini hiện 17 — thừa năm cái `google-AngianoLandro8821`,
+// `google-DegaustGellert3920`, `google-ErkerSchopper0973`,
+// `google-MorkveJorie191`, `google-StelmackMalagarie974` không còn tồn tại
+// trên đĩa.
+//
+// Một kho dùng chung + danh sách người nghe: mọi ô cùng đọc một mảng, và một
+// lượt nạp phục vụ cả trang (bản cũ bắn năm request giống hệt nhau mỗi lần mở).
+let khoDanhSach: string[] = [];
+let khoLoi = "";
+let khoDangTai = false;
+let dangNap: Promise<void> | null = null;
+const nguoiNghe = new Set<() => void>();
+
+function bao() {
+  for (const f of nguoiNghe) f();
+}
+
+function napKho(cs: CSCfg): Promise<void> {
+  if (!cs.url) return Promise.resolve();
+  if (dangNap) return dangNap; // gộp các lượt nạp trùng nhau trong cùng một nhịp
+  khoDangTai = true;
+  bao();
+  dangNap = (async () => {
+    try {
+      const res = await request.get(`${cs.url}/v1/session/list`);
+      khoDanhSach = ((res.data?.profiles || []) as { name?: string }[])
+        .map((p) => p.name || "")
+        .filter(isAccountProfile)
+        .sort();
+      khoLoi = "";
+    } catch (e: any) {
+      // KHÔNG nuốt im. Bản cũ `catch { /* network blip — leave list as-is */ }`
+      // giữ nguyên danh sách cũ mà không để lại dấu vết nào, nên một danh sách
+      // quá hạn trông y hệt một danh sách vừa nạp xong.
+      khoLoi = String(e?.message || e);
+    } finally {
+      khoDangTai = false;
+      dangNap = null;
+      bao();
+    }
+  })();
+  return dangNap;
 }
 
 /**
@@ -48,34 +106,37 @@ export function ReuseProfilePicker({
   cs: CSCfg;
   onReuse: (profile: string) => Promise<void>;
 }) {
-  const [profiles, setProfiles] = useState<string[]>([]);
+  // Danh sách đọc từ kho dùng chung; chỉ ô ĐANG CHỌN là của riêng mỗi ô.
+  const [, veLai] = useState(0);
   const [selected, setSelected] = useState("");
-  const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
-
-  async function load() {
-    if (!cs.url) return;
-    setLoading(true);
-    try {
-      const res = await request.get(`${cs.url}/v1/session/list`);
-      const data = res.data;
-      const names: string[] = (data.profiles || [])
-        .map((p: { name?: string }) => p.name || "")
-        .filter(isAccountProfile)
-        .sort();
-      setProfiles(names);
-      setSelected((s) => (s && names.includes(s) ? s : names[0] || ""));
-    } catch {
-      /* network blip — leave list as-is */
-    } finally {
-      setLoading(false);
-    }
-  }
+  const profiles = khoDanhSach;
+  const loading = khoDangTai;
 
   useEffect(() => {
-    void load();
+    const f = () => veLai((n) => n + 1);
+    nguoiNghe.add(f);
+    return () => {
+      nguoiNghe.delete(f);
+    };
+  }, []);
+
+  useEffect(() => {
+    void napKho(cs);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cs.url, cs.apiKey]);
+
+  // Tên đang chọn biến mất khỏi danh sách (ô khác vừa xoá nó) thì nhảy về tên
+  // đầu tiên, đừng để nút "Tái dùng" trỏ vào một hồ sơ không còn tồn tại.
+  useEffect(() => {
+    setSelected((s) => (s && profiles.includes(s) ? s : profiles[0] || ""));
+  }, [profiles]);
+
+  // Nạp lỗi thì NÓI RA. Danh sách đang hiện có thể đã quá hạn, và người dùng
+  // cần biết điều đó trước khi bấm xoá hay tái dùng một cái tên trong đó.
+  useEffect(() => {
+    if (khoLoi) toast.error(`Không tải được danh sách profile: ${khoLoi}`);
+  }, [khoLoi]);
 
   // Delete the browser SESSION (user-data-dir) of the selected profile. This is
   // the only place a session is removed deliberately — it logs the Google
@@ -93,7 +154,7 @@ export function ReuseProfilePicker({
     try {
       await request.delete(`${cs.url}/v1/profiles/${encodeURIComponent(selected)}`);
       toast.success(`Đã xóa session ${selected}`);
-      await load();
+      await napKho(cs);
     } catch (e: any) {
       toast.error(`Xóa session lỗi: ${e?.message || e}`);
     } finally {
@@ -122,7 +183,7 @@ export function ReuseProfilePicker({
         type="button"
         variant="outline"
         size="icon"
-        onClick={() => void load()}
+        onClick={() => void napKho(cs)}
         disabled={busy || loading}
         title="Tải lại danh sách profile"
       >
