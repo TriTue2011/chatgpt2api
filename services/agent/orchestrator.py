@@ -1174,7 +1174,13 @@ _KW_DEVICE = _re_mod.compile(
     r"may tinh|laptop")
 _KW_CAMERA = _re_mod.compile(
     r"camera|ngoai (cong|san)|nhin (thu|xem) .{0,12}(phong|san|cong|nha)|"
-    r"quan sat|xem (san|cong|gara)")
+    r"quan sat|xem (san|cong|gara)|"
+    # "cam" là cách gọi tắt của camera. Đo thật 29/08: "Gửi ảnh chụp cam ban
+    # công" trước đây không khớp nên tool bị lọc mất → [BLOCKED] oan dù thread
+    # đã tích camera. Chỉ bắt "cam" trong ngữ cảnh camera (đi cùng chụp/xem/ảnh
+    # hoặc theo sau là vị trí), không bắt "cam" trơ (cam=quả cam, cảm ơn…).
+    r"(chup|xem|coi|mo|gui|anh|hinh)\b[^.]{0,15}\bcam\b|"
+    r"\bcam\s+(ban|san|cong|gara|phong|trong|ngoai|cua|nha)\b")
 _KW_FACEBOOK = _re_mod.compile(
     r"facebook|\bfb\b|\bpage\b|dang bai|len trang|dang len")
 _KW_KHODAMMAY = _re_mod.compile(
@@ -1484,7 +1490,15 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None,
             "đã có «Xem trạng thái nhà» thì hỏi một cảm biến/entity cụ thể "
             "(sensor.xyz, light.abc…) cũng thuộc quyền đó, cứ gọi tool mà trả "
             "lời. Chỉ dùng [BLOCKED] khi CHẮC CHẮN yêu cầu nằm ngoài danh "
-            "sách; còn phân vân thì thử tool tương ứng trước.")
+            "sách; còn phân vân thì thử tool tương ứng trước.\n"
+            # Tool nạp theo việc, có lúc chưa hiện dù chức năng ĐÃ được cấp. Nếu
+            # việc người dùng xin CÓ trong danh sách trên mà em chưa thấy tool
+            # tương ứng, GỌI mo_nhom_cong_cu để mở nhóm đó rồi dùng — TUYỆT ĐỐI
+            # không trả [BLOCKED] cho việc nằm TRONG danh sách. Đo 29/08: "chụp
+            # cam" bị [BLOCKED] oan dù camera đã được cấp, chỉ vì tool chưa hiện.
+            "QUAN TRỌNG: nếu việc xin CÓ trong danh sách «Em làm được gì» nhưng "
+            "em chưa thấy tool tương ứng trong lượt này, hãy gọi mo_nhom_cong_cu "
+            "để mở nhóm đó rồi làm — đừng [BLOCKED] một việc nằm trong danh sách.")
         if disabled:
             limit_txt += ("\nNhóm chức năng đã TẮT cho khung chat này: "
                           + ", ".join(disabled) + ".")
@@ -2650,8 +2664,15 @@ def _orchestrate_locked(user_text: str, user_id: str,
         # cạn token. Tiếng Việt tốn khoảng 2 token/từ, mà bài dài nhất luồng
         # Facebook đặt hàng là 1000 từ → cần cỡ 2000 chỉ cho phần bài, chưa tính
         # lời dẫn. Đây là TRẦN, không phải đích: câu trả lời thường không dài ra.
+        # LƯỚI AN TOÀN: thread có bộ lọc (allow is not None) là nơi lệnh
+        # [BLOCKED] bật. Dò rỗng (từ khoá trượt) mà vẫn cắt tool thì model thiếu
+        # tool cho chức năng ĐÃ ĐƯỢC CẤP rồi trả [BLOCKED] oan (đo 29/08: "chụp
+        # cam" bị chặn dù thread tích camera). Nên thread có lọc mà dò rỗng thì
+        # KHÔNG cắt theo việc — đưa đủ tool được phép. Thread mở (allow None)
+        # không có [BLOCKED] nên rỗng vẫn cắt tối thiểu để tiết kiệm (tán gẫu).
+        _tf = None if (allow is not None and not _nhom_tool) else _nhom_tool
         resp = call_model(main_model, messages,
-                          tools=caps.tools_schema(allow, _nhom_tool),
+                          tools=caps.tools_schema(allow, _tf),
                           max_tokens=4000,
                           no_smart_home=(allow is not None and "homeassistant" not in allow),
                           allowed_groups=allow, channel=caps._channel_of({"user_id": user_id}),

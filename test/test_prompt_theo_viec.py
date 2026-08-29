@@ -283,6 +283,49 @@ class LocSchemaToolTheoViec(unittest.TestCase):
         self.assertNotIn("generate_image", self._ten(None, nhom))
 
 
+class CamVietTat(unittest.TestCase):
+    """"cam" là cách gọi tắt camera — phải nhận, nhưng không nhầm quả cam/cảm ơn.
+
+    Đo thật trên Zalo 29/08 13:27: "Gửi ảnh chụp cam ban công" bị [BLOCKED] oan
+    dù thread đã tích camera — vì "cam" không khớp `\\bcamera\\b`, tool bị lọc mất.
+    """
+
+    A = {"camera", "image", "homeassistant"}
+
+    def test_nhan_cam_viet_tat(self):
+        for c in ("Gửi ảnh chụp cam ban công", "Gửi ảnh cam ban công",
+                  "chụp cam sân", "xem cam cổng", "coi cam phòng khách"):
+            self.assertIn("camera", orch._nhom_viec(c, self.A), f"«{c}»")
+
+    def test_khong_nham_cam_khac(self):
+        for c in ("cho tôi quả cam", "cảm ơn em nhiều", "tôi bị cảm cúm",
+                  "cẩm nang du lịch"):
+            self.assertNotIn("camera", orch._nhom_viec(c, self.A), f"«{c}»")
+
+
+class LuoiAnToanKhongChanOan(unittest.TestCase):
+    """Thread có bộ lọc + dò rỗng → KHÔNG cắt tool (tránh [BLOCKED] oan).
+
+    Lệnh [BLOCKED] chỉ bật khi thread có bộ lọc (allow is not None). Ở đó, nếu
+    từ khoá trượt (dò rỗng) mà vẫn cắt tool theo việc thì model thiếu tool cho
+    chức năng đã cấp rồi chặn oan. Nên dò rỗng trên thread có lọc = đưa đủ tool.
+    """
+
+    def test_thread_co_loc_do_rong_thi_du_tool(self):
+        allow = {"camera", "image", "web"}
+        # câu không khớp keyword nào
+        nhom = orch._nhom_ngu_canh("cái này thế nào nhỉ", [], allow)
+        tf = None if (allow is not None and not nhom) else nhom
+        ten = {t["function"]["name"] for t in caps.tools_schema(allow, tf)}
+        self.assertIn("xem_camera", ten, "thread có lọc, dò rỗng → phải đủ tool")
+
+    def test_thread_mo_do_rong_van_cat_toi_thieu(self):
+        nhom = orch._nhom_ngu_canh("chào em", [], None)
+        tf = None if (None is not None and not nhom) else nhom  # allow None → giữ nhom
+        ten = {t["function"]["name"] for t in caps.tools_schema(None, tf)}
+        self.assertNotIn("generate_image", ten, "thread mở tán gẫu → cắt tối thiểu")
+
+
 class MoNhomCongCu(unittest.TestCase):
     """Lối thoát khi bộ lọc dò trượt — model tự lật chương."""
 
