@@ -244,7 +244,33 @@ def _nchmf_moc_gio(raw: str) -> datetime:
     return datetime.min
 
 
-def _fetch_nchmf(source: str) -> list[dict[str, Any]]:
+#: Feed "môi trường" của báo có lẫn tin môi trường lẫn thời tiết — lọc lấy tin
+#: thời tiết/thiên tai bằng từ khoá (chữ đã bỏ dấu). Chủ máy 29/08: muốn "tin
+#: tức thời tiết của các trang khác tổng hợp vào", không chỉ mỗi NCHMF.
+_RSS_THOI_TIET_BAO: list[tuple[str, str, str]] = [
+    ("vnexpress", "VnExpress", "https://vnexpress.net/rss/moi-truong.rss"),
+    ("tuoitre", "Tuổi Trẻ", "https://tuoitre.vn/rss/moi-truong.rss"),
+]
+# Khớp GIỮ NGUYÊN DẤU, không bỏ dấu. Tiêu đề tin luôn viết đủ dấu, mà bỏ dấu
+# thì đụng nhau tai hại: "bão"→"bao" dính "bao bì"/"bảo vệ", "lũ"→"lu" dính
+# "lưu", "sóng"→"song" dính "sông", "dông"→"dong" dính "đóng". Đo 29/08 trên
+# feed môi trường thật: bỏ dấu cho 6/15 tin sai. Giữ dấu + biên từ thì sạch.
+_RE_THOI_TIET = re.compile(
+    r"\b(bão|áp thấp|mưa|nắng nóng|nắng gắt|lũ|lụt|ngập lụt|ngập úng|"
+    r"triều cường|sạt lở|dông|giông|lốc xoáy|mưa đá|không khí lạnh|rét|"
+    r"gió mùa|thời tiết|sóng lớn|gió mạnh|hạn hán|hạn mặn|xâm nhập mặn|"
+    r"nước biển dâng|sấm sét|nhiệt độ (?:giảm|tăng|xuống|lên)|bão số|"
+    r"áp thấp nhiệt đới)\b",
+    re.IGNORECASE,
+)
+
+
+def _la_tin_thoi_tiet(tieu_de: str) -> bool:
+    """Tiêu đề có nói về thời tiết/thiên tai không (feed môi trường lẫn tạp)."""
+    return bool(_RE_THOI_TIET.search(tieu_de or ""))
+
+
+def _fetch_nchmf(source: str, so_tin: int = _NCHMF_SO_TIN) -> list[dict[str, Any]]:
     """Bản tin cảnh báo của cơ quan khí tượng nhà nước, mới nhất trước.
 
     Bóc HTML chứ không đọc feed: đường RSS mà chính trang họ quảng cáo trả 404
@@ -290,7 +316,7 @@ def _fetch_nchmf(source: str) -> list[dict[str, Any]]:
     # Trang không xếp sẵn theo giờ: khối "tin nổi bật" nằm trước khối tin
     # thường, nên phải xếp trước rồi mới cắt — cắt trước thì lấy nhầm tin cũ.
     items.sort(key=lambda it: it["_moc"], reverse=True)
-    items = items[:_NCHMF_SO_TIN]
+    items = items[:max(1, so_tin)]
     for it in items:
         it.pop("_moc", None)
     return items
@@ -471,6 +497,50 @@ def _lay_mot_muc(topic: str, so_tin: int,
     return _tron_theo_nguon(items, so_tin)
 
 
+def _muc_thoi_tiet(so_tin: int) -> list[dict[str, Any]]:
+    """Mục thời tiết ĐẦY ĐỦ: cảnh báo NCHMF (nhiều bản mới nhất) + tin thời tiết
+    gom từ các báo.
+
+    Khác `_lay_mot_muc("thoi_tiet")` cũ theo yêu cầu chủ máy 29/08:
+      · NCHMF cho tới `so_tin`+2 bản mới nhất, KHÔNG chốt 1 như khi trộn vào
+        mục "tin mới nhất" (trang chủ NCHMF có ~20 bản/ngày, chốt 1 là thiếu);
+      · gom thêm tin thời tiết/thiên tai LỌC từ feed môi trường của báo — feed
+        đó lẫn tin môi trường nên phải lọc bằng `_la_tin_thoi_tiet`.
+    """
+    items: list[dict[str, Any]] = []
+    if _is_source_enabled("nchmf"):
+        items += _fetch_nchmf("NCHMF", so_tin=so_tin + 2)
+    bao: list[dict[str, Any]] = []
+    for key, ten, url in _RSS_THOI_TIET_BAO:
+        if not _is_source_enabled(key):
+            continue
+        try:
+            bao += [x for x in _fetch_feed(ten, url)
+                    if _la_tin_thoi_tiet(str(x.get("title") or ""))]
+        except Exception as exc:
+            logger.warning("thoi tiet bao %s loi: %s", ten, exc)
+    items += _tron_theo_nguon(bao, so_tin)
+    return items
+
+
+def _canh_bao_thanh_pho(lat: float | None, lon: float | None) -> str:
+    """Một dòng dự báo/cảnh báo cho ĐÚNG toạ độ người hỏi (nhà trong HA).
+
+    Chủ máy 29/08 muốn "cảnh báo ở thành phố người hỏi". Toạ độ do tầng gọi
+    truyền vào (từ vị trí nhà Home Assistant) — hub không tự biết người dùng ở
+    đâu. Không có toạ độ (người lạ, chưa nối HA) → trả rỗng, mục vẫn có NCHMF +
+    tin báo. Dùng Open-Meteo theo toạ độ: có nhiệt độ, mưa/dông, tia cực tím.
+    """
+    if lat is None or lon is None:
+        return ""
+    try:
+        from src.vn.weather import _om_fetch
+        return _om_fetch(float(lat), float(lon), "khu vực của anh/chị") or ""
+    except Exception as exc:
+        logger.warning("canh bao thanh pho loi: %s", exc)
+        return ""
+
+
 def _bo_dau(s: str) -> str:
     """Bỏ dấu tiếng Việt + hạ thường, để so khớp từ khoá không kể dấu."""
     s = unicodedata.normalize("NFD", s or "")
@@ -541,7 +611,8 @@ def _tim_theo_chu_de(kw: str, limit: int = 12) -> str:
 @mcp.tool()
 def get_news_sections(per_section: int = 3, kem_tom_tat: bool = True,
                       in_dam: bool = True, dung_emoji: bool = True,
-                      chi_tieng_viet: bool = False, chu_de: str = "") -> str:
+                      chi_tieng_viet: bool = False, chu_de: str = "",
+                      lat: float | None = None, lon: float | None = None) -> str:
     """Ban tin. MAC DINH chia 8 MUC (the thao, kinh te, xa hoi, CNTT, giao duc,
     y te, giai tri, the gioi) — dung khi nguoi dung hoi tin CHUNG ('tin tuc hom
     nay', 'ban tin', 'co gi moi').
@@ -576,22 +647,43 @@ def get_news_sections(per_section: int = 3, kem_tom_tat: bool = True,
     # Lấy 8 mục SONG SONG: tuần tự mất ~9,8s (đo thật 01/08) — quá lâu cho một
     # lượt chat. Song song thì tổng ≈ mục chậm nhất.
     ket: dict[str, list[dict[str, Any]]] = {}
-    with ThreadPoolExecutor(max_workers=len(MUC_BAN_TIN)) as pool:
-        tuong_lai = {pool.submit(_lay_mot_muc, tid, so_tin, chi_tieng_viet): tid
-                     for tid, _, _ in MUC_BAN_TIN}
-        for f in as_completed(tuong_lai):
+    with ThreadPoolExecutor(max_workers=len(MUC_BAN_TIN) + 1) as pool:
+        # Mục thời tiết đi đường RIÊNG (_muc_thoi_tiet): NCHMF nhiều bản + tin
+        # thời tiết các báo. Các mục còn lại theo _lay_mot_muc như cũ.
+        tuong_lai = {}
+        for tid, _, _ in MUC_BAN_TIN:
+            if tid == "thoi_tiet":
+                tuong_lai[pool.submit(_muc_thoi_tiet, so_tin)] = tid
+            else:
+                tuong_lai[pool.submit(_lay_mot_muc, tid, so_tin, chi_tieng_viet)] = tid
+        # Cảnh báo cho thành phố người hỏi (Part C) — chạy song song luôn.
+        f_tp = pool.submit(_canh_bao_thanh_pho, lat, lon)
+        for f in as_completed(list(tuong_lai)):
             tid = tuong_lai[f]
             try:
                 ket[tid] = f.result()
             except Exception as exc:
                 logger.warning("muc tin %s loi: %s", tid, exc)
                 ket[tid] = []
+    try:
+        canh_bao_tp = f_tp.result()
+    except Exception:
+        canh_bao_tp = ""
 
     khoi: list[str] = []
     thieu: list[str] = []
     for tid, emo, ten in MUC_BAN_TIN:
         nhan = f"{emo} {ten}" if dung_emoji else ten
         ds = ket.get(tid) or []
+        # Mục thời tiết: dòng cảnh báo cho thành phố người hỏi lên ĐẦU mục, kể
+        # cả khi NCHMF/báo tạm không có tin — nó là thứ sát người dùng nhất.
+        if tid == "thoi_tiet" and canh_bao_tp:
+            dau_muc = f"**{nhan}**" if in_dam else nhan
+            than = [dau_muc, f"- {canh_bao_tp}"]
+            for it in ds:
+                than.append(f"- {it['title']}")
+            khoi.append("\n".join(than))
+            continue
         if not ds:
             thieu.append(ten)
             continue

@@ -2278,13 +2278,27 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 # cắt từ chung ('tin tức/hôm nay') — còn lại rỗng thì digest 8
                 # mục như cũ, còn lại 'bão'/'giá vàng'… thì tìm ĐÚNG chủ đề. Đo
                 # thật 01/08: 'tin tức bão' trước đây rớt chủ đề, trả digest lạc.
-                _tin = call_mcp_tool("get_news_sections",
-                                     {"per_section": 3,
-                                      "kem_tom_tat": _dang["tom_tat"],
-                                      "in_dam": _dang["in_dam"],
-                                      "dung_emoji": _dang["emoji"],
-                                      "chi_tieng_viet": _dang["chi_viet"],
-                                      "chu_de": user_text})
+                # Toạ độ nhà (Home Assistant) → mục thời tiết có thêm dòng cảnh
+                # báo cho ĐÚNG nơi người hỏi ở. Chỉ khi thread có quyền nhà
+                # thông minh; người lạ/chưa nối HA thì bỏ, mục vẫn đủ NCHMF+báo.
+                _lat = _lon = None
+                if allow is None or "homeassistant" in allow:
+                    try:
+                        from services.weather_extras import _home_latlon
+                        _ll = _home_latlon()
+                        if _ll:
+                            _lat, _lon = _ll
+                    except Exception:
+                        pass
+                _args_tin = {"per_section": 3,
+                             "kem_tom_tat": _dang["tom_tat"],
+                             "in_dam": _dang["in_dam"],
+                             "dung_emoji": _dang["emoji"],
+                             "chi_tieng_viet": _dang["chi_viet"],
+                             "chu_de": user_text}
+                if _lat is not None and _lon is not None:
+                    _args_tin["lat"], _args_tin["lon"] = _lat, _lon
+                _tin = call_mcp_tool("get_news_sections", _args_tin)
                 logger.info({"event": "tintuc_dang_bay", **_dang})
                 if not (_tin and str(_tin).strip()):
                     _tin = call_mcp_tool("get_news", {"topic": "moi_nhat", "limit": 10})
