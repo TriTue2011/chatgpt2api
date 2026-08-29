@@ -501,6 +501,24 @@ class BrowserPool:
                 human_preset='careful',
                 args=[
                     "--no-first-run",
+                    # GHIM kho mật khẩu, đừng để Chromium tự dò.
+                    #
+                    # Trên Linux, Chromium mã hoá cookie và mật khẩu bằng khoá
+                    # lấy từ Gnome Keyring / KWallet, và TỰ DÒ backend theo môi
+                    # trường desktop ở MỖI lần khởi động. Container này không có
+                    # keyring lẫn dbus (đo 29/08/2026: không `gnome-keyring-daemon`,
+                    # không `dbus-launch`, `DBUS_SESSION_BUS_ADDRESS` rỗng), nên
+                    # nó đang rơi về `basic` — khoá cố định, chạy được.
+                    #
+                    # Vấn đề nằm ở chữ "tự dò": ngày nào image nền có thêm dbus
+                    # hoặc Secret Service, backend đổi, và MỌI cookie đã mã hoá
+                    # theo khoá cũ thành không giải mã được. Hậu quả là mất sạch
+                    # phiên của tất cả tài khoản cùng một lúc, không một thông
+                    # báo lỗi nào — chỉ thấy đồng loạt đòi đăng nhập lại.
+                    #
+                    # Ghim `basic` để kết quả không phụ thuộc môi trường. Không
+                    # hạ thấp bảo mật gì thêm: hiện đã là `basic` rồi.
+                    "--password-store=basic",
                     "--disable-session-crashed-bubble",
                     "--disable-infobars",
                     "--no-default-browser-check",
@@ -553,6 +571,24 @@ class BrowserPool:
                 env=env,
                 args=[
                     "--no-first-run",
+                    # GHIM kho mật khẩu, đừng để Chromium tự dò.
+                    #
+                    # Trên Linux, Chromium mã hoá cookie và mật khẩu bằng khoá
+                    # lấy từ Gnome Keyring / KWallet, và TỰ DÒ backend theo môi
+                    # trường desktop ở MỖI lần khởi động. Container này không có
+                    # keyring lẫn dbus (đo 29/08/2026: không `gnome-keyring-daemon`,
+                    # không `dbus-launch`, `DBUS_SESSION_BUS_ADDRESS` rỗng), nên
+                    # nó đang rơi về `basic` — khoá cố định, chạy được.
+                    #
+                    # Vấn đề nằm ở chữ "tự dò": ngày nào image nền có thêm dbus
+                    # hoặc Secret Service, backend đổi, và MỌI cookie đã mã hoá
+                    # theo khoá cũ thành không giải mã được. Hậu quả là mất sạch
+                    # phiên của tất cả tài khoản cùng một lúc, không một thông
+                    # báo lỗi nào — chỉ thấy đồng loạt đòi đăng nhập lại.
+                    #
+                    # Ghim `basic` để kết quả không phụ thuộc môi trường. Không
+                    # hạ thấp bảo mật gì thêm: hiện đã là `basic` rồi.
+                    "--password-store=basic",
                     "--disable-session-crashed-bubble",
                     "--disable-infobars",
                     "--no-default-browser-check",

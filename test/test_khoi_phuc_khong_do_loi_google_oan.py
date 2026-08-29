@@ -149,10 +149,31 @@ class KhongMatKhauThiCamXoaHoSo(unittest.TestCase):
     def test_co_phep_kiem_mat_khau(self):
         self.assertIn("co_mat_khau = bool((password or \"\").strip())", self.than)
 
-    def test_khong_mat_khau_thi_dung_truoc_khi_toi_nuke(self):
-        """Nhánh bỏ lượt phải nằm TRƯỚC lệnh xoá — sau thì đã muộn."""
+    def test_khong_mat_khau_thi_dung_truoc_nhanh_dang_nhap_moi(self):
+        """Nhánh bỏ lượt phải nằm TRƯỚC nhánh đăng nhập mới — sau thì đã muộn."""
         self.assertLess(self.than.index("elif not co_mat_khau:"),
-                        self.than.index("await _nuke_profile(profile)"))
+                        self.than.index("session.reuse_session = False"))
+
+    def test_KHONG_con_xoa_ca_ho_so(self):
+        """Từ 29/08/2026 không xoá `user-data-dir` nữa, chỉ xoá cookie Google.
+
+        Việc cần làm là "để Google hiện lại màn đăng nhập", tức xoá COOKIE. Xoá
+        cả hồ sơ làm thêm một chuyện không ai cần: vứt luôn danh tính thiết bị
+        (Local State, dấu vân tay, cache), nên lần đăng nhập sau trông như một
+        máy hoàn toàn lạ — đúng thứ khiến Google đòi xác minh thêm, và là lý do
+        tài khoản phải đăng nhập lại rất nhiều.
+        """
+        self.assertNotIn("await _nuke_profile(profile)", self.than,
+                         "còn xoá cả hồ sơ trong luồng onboard")
+
+    def test_van_xoa_cookie_google_o_runner_dang_chay(self):
+        """Bỏ nuke thì phải có người làm việc xoá cookie, và phải là runner
+        ĐANG CHẠY (`_run_onboard_v2`), không phải `_run_onboard` đã chết."""
+        v2 = NGUON_CGPT[NGUON_CGPT.index("async def _run_onboard_v2"):]
+        i_else = v2.index("            else:")
+        khuc = v2[i_else:i_else + 1600]
+        self.assertIn("accounts.google.com", khuc)
+        self.assertIn("clear_cookies", khuc)
 
     def test_bo_luot_bang_trang_thai_doc_duoc(self):
         khuc = _than(self.than, "elif not co_mat_khau:", "    else:")
@@ -169,7 +190,7 @@ class KhongMatKhauThiCamXoaHoSo(unittest.TestCase):
         giờ thì DỪNG, không được bỏ qua bước xoá rồi vẫn onboard (là đăng nhập đè
         lên hồ sơ việc khác đang dùng)."""
         khuc = _than(self.than, "# Kill any existing browser context",
-                     "await _nuke_profile(profile)")
+                     "asyncio.create_task")
         self.assertIn("cho_toi_da=_HAN_DONG_HO_SO_S", khuc)
         self.assertIn("except HoSoDangBan", khuc)
         self.assertIn("return session", khuc)

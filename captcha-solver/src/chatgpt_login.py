@@ -496,7 +496,18 @@ async def start_chatgpt_onboard(
             session.completed_at = time.time()
             logger.warning("chatgpt_login: %s đang bận, không xoá hồ sơ giữa chừng", profile)
             return session
-        await _nuke_profile(profile)
+        # KHÔNG xoá cả hồ sơ nữa — chỉ xoá cookie Google, và việc đó do
+        # `_run_onboard_v2` làm ngay khi mở trình duyệt.
+        #
+        # Việc cần làm ở đây chỉ là "để Google hiện lại màn đăng nhập", tức xoá
+        # COOKIE. Xoá cả `user-data-dir` làm thêm một chuyện không ai cần: vứt
+        # luôn danh tính thiết bị (Local State, dấu vân tay, lịch sử, cache).
+        # Lần đăng nhập kế tiếp vì thế trông như một máy hoàn toàn lạ đang gõ
+        # mật khẩu của tài khoản — đúng thứ khiến Google đòi xác minh thêm.
+        #
+        # Đo 29/08/2026: mỗi lượt onboard không-tái-dùng là một lần xoá sạch hồ
+        # sơ, nên tài khoản phải đăng nhập lại rất nhiều và lần nào cũng có nguy
+        # cơ dính captcha. Giữ hồ sơ lại thì thiết bị quen mặt dần.
 
     asyncio.create_task(_chay_onboard_co_han(session, password))
     return session
@@ -1683,6 +1694,28 @@ async def _run_onboard_v2(session, password: str) -> None:
                 session.message = "Tai su dung Google session san co, bo qua login Google..."
                 logger.info("onboard_v2: reuse_session — skipping Google login")
             else:
+                # Xoá ĐÚNG cookie Google, giữ nguyên phần còn lại của hồ sơ.
+                # Thay cho lệnh xoá cả `user-data-dir` trước đây: cùng đạt mục
+                # đích "Google hiện lại màn đăng nhập", nhưng không vứt danh
+                # tính thiết bị. `_run_onboard` (bản cũ, không còn được gọi) đã
+                # làm đúng bước này từ trước — nay chuyển sang runner đang chạy.
+                session.state = "running"
+                session.message = "Dang xoa Google cookies cu..."
+                for _gdom in ("https://accounts.google.com/", "https://google.com/",
+                              "https://myaccount.google.com/", "https://mail.google.com/"):
+                    try:
+                        gc = await ctx.cookies(_gdom)
+                        for c in gc:
+                            try:
+                                await ctx.clear_cookies(name=c.get("name"),
+                                                        domain=c.get("domain", ""))
+                            except Exception:
+                                pass
+                        if gc:
+                            logger.info("onboard_v2: xoá %d cookie của %s", len(gc), _gdom)
+                    except Exception as exc:
+                        logger.warning("onboard_v2: xoá cookie %s hỏng: %s", _gdom, str(exc)[:80])
+
                 session.state = "running"
                 session.message = "Mo accounts.google.com (qua trang chu Google de tranh block)..."
                 navigated = False
