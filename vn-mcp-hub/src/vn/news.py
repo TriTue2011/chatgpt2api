@@ -49,6 +49,12 @@ _INTL_SOURCES = [
 ]
 
 _RSS_URLS: dict[str, dict[str, str]] = {
+    # Mỗi mục của bản tin (MUC_BAN_TIN) cần vài báo Việt cùng góp, không thì
+    # "tin tức hôm nay" chỉ nghe một tờ. Đo 29/08: trước đây `the_gioi` và
+    # `cong_nghe` KHÔNG có nguồn Việt nào (chỉ BBC/Google/WorldMonitor tiếng
+    # Anh, bị lọc khi chỉ lấy tiếng Việt), còn `giai_tri` chỉ mỗi VnExpress.
+    # `cong_nghe` của VnExpress nằm ở feed "so-hoa". Mọi URL dưới đây đã kiểm
+    # sống (50–100 tin) cùng ngày.
     "vnexpress": {
         "moi_nhat": "https://vnexpress.net/rss/tin-moi-nhat.rss",
         "thoi_su": "https://vnexpress.net/rss/thoi-su.rss",
@@ -59,17 +65,32 @@ _RSS_URLS: dict[str, dict[str, str]] = {
         "giao_duc": "https://vnexpress.net/rss/giao-duc.rss",
         "suc_khoe": "https://vnexpress.net/rss/suc-khoe.rss",
         "khoa_hoc": "https://vnexpress.net/rss/khoa-hoc.rss",
+        "cong_nghe": "https://vnexpress.net/rss/so-hoa.rss",
         "so_hoa": "https://vnexpress.net/rss/so-hoa.rss",
+        "the_gioi": "https://vnexpress.net/rss/the-gioi.rss",
         "du_lich": "https://vnexpress.net/rss/du-lich.rss",
     },
     "tuoitre": {
         "moi_nhat": "https://tuoitre.vn/rss/tin-moi-nhat.rss",
         "thoi_su": "https://tuoitre.vn/rss/thoi-su.rss",
         "kinh_doanh": "https://tuoitre.vn/rss/kinh-doanh.rss",
+        "the_thao": "https://tuoitre.vn/rss/the-thao.rss",
+        "giao_duc": "https://tuoitre.vn/rss/giao-duc.rss",
+        "suc_khoe": "https://tuoitre.vn/rss/suc-khoe.rss",
+        "cong_nghe": "https://tuoitre.vn/rss/cong-nghe.rss",
+        "giai_tri": "https://tuoitre.vn/rss/giai-tri.rss",
+        "the_gioi": "https://tuoitre.vn/rss/the-gioi.rss",
     },
     "thanhnien": {
         "moi_nhat": "https://thanhnien.vn/rss/home.rss",
+        "thoi_su": "https://thanhnien.vn/rss/thoi-su.rss",
+        "kinh_doanh": "https://thanhnien.vn/rss/kinh-te.rss",
         "the_thao": "https://thanhnien.vn/rss/the-thao.rss",
+        "giao_duc": "https://thanhnien.vn/rss/giao-duc.rss",
+        "suc_khoe": "https://thanhnien.vn/rss/suc-khoe.rss",
+        "cong_nghe": "https://thanhnien.vn/rss/cong-nghe.rss",
+        "giai_tri": "https://thanhnien.vn/rss/giai-tri.rss",
+        "the_gioi": "https://thanhnien.vn/rss/the-gioi.rss",
     },
     # Bản tin cảnh báo của cơ quan khí tượng nhà nước. Có mặt ở "tin mới nhất"
     # để lọt vào bản tin chung, và có mục riêng "thoi_tiet" mà không báo nào
@@ -86,6 +107,9 @@ _RSS_URLS: dict[str, dict[str, str]] = {
         "the_thao": "https://dantri.com.vn/rss/the-thao.rss",
         "giao_duc": "https://dantri.com.vn/rss/giao-duc.rss",
         "suc_khoe": "https://dantri.com.vn/rss/suc-khoe.rss",
+        "cong_nghe": "https://dantri.com.vn/rss/cong-nghe.rss",
+        "giai_tri": "https://dantri.com.vn/rss/giai-tri.rss",
+        "the_gioi": "https://dantri.com.vn/rss/the-gioi.rss",
     },
     "bbc_news": {
         "moi_nhat": "https://feeds.bbci.co.uk/news/rss.xml",
