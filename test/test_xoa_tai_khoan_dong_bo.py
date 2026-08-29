@@ -165,8 +165,22 @@ class OChonMotNguonSuThatTests(unittest.TestCase):
                          "quá hạn trông y hệt danh sách vừa nạp")
         i = PICKER.index("function napKho")
         than = PICKER[i:PICKER.index("/**", i)]
-        self.assertIn("khoLoi =", than, "nạp hỏng phải ghi lại lý do")
-        self.assertIn("toast.error", PICKER, "và phải nói ra cho người dùng")
+        self.assertIn("toast.error", than, "nạp hỏng phải nói ra cho người dùng")
+
+    def test_mot_luot_nap_hong_chi_bao_MOT_lan(self):
+        """Trang có năm ô chọn; báo trong component là năm toast cho một lỗi.
+
+        Kho là một, lượt nạp là một (đã gộp bằng `dangNap`), nên lời báo cũng
+        phải là một — tức nằm trong `napKho`, không nằm trong `useEffect` của
+        từng ô.
+        """
+        self.assertEqual(PICKER.count("Không tải được danh sách profile"), 1)
+        than_ham = PICKER[PICKER.index("function napKho"):PICKER.index("/**")]
+        self.assertIn("Không tải được danh sách profile", than_ham,
+                      "lời báo phải nằm trong hàm nạp dùng chung")
+        than_component = PICKER[PICKER.index("export function ReuseProfilePicker"):]
+        self.assertNotIn("Không tải được danh sách profile", than_component,
+                         "còn báo lỗi trong component — năm ô sẽ bung năm toast")
 
     def test_lco_ho_so_openai_khoi_o_chon(self):
         i = PICKER.index("function isAccountProfile")

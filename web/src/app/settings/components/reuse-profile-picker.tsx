@@ -53,7 +53,6 @@ function isAccountProfile(n: string): boolean {
 // Một kho dùng chung + danh sách người nghe: mọi ô cùng đọc một mảng, và một
 // lượt nạp phục vụ cả trang (bản cũ bắn năm request giống hệt nhau mỗi lần mở).
 let khoDanhSach: string[] = [];
-let khoLoi = "";
 let khoDangTai = false;
 let dangNap: Promise<void> | null = null;
 const nguoiNghe = new Set<() => void>();
@@ -74,12 +73,15 @@ function napKho(cs: CSCfg): Promise<void> {
         .map((p) => p.name || "")
         .filter(isAccountProfile)
         .sort();
-      khoLoi = "";
     } catch (e: any) {
       // KHÔNG nuốt im. Bản cũ `catch { /* network blip — leave list as-is */ }`
       // giữ nguyên danh sách cũ mà không để lại dấu vết nào, nên một danh sách
       // quá hạn trông y hệt một danh sách vừa nạp xong.
-      khoLoi = String(e?.message || e);
+      //
+      // Và báo ở ĐÂY chứ không phải trong `useEffect` của từng ô: trang có năm
+      // ô chọn, báo trong component là năm toast giống hệt nhau cho cùng MỘT
+      // lần nạp hỏng. Kho là một, lượt nạp là một, nên lời báo cũng là một.
+      toast.error(`Không tải được danh sách profile: ${String(e?.message || e)}`);
     } finally {
       khoDangTai = false;
       dangNap = null;
@@ -131,12 +133,6 @@ export function ReuseProfilePicker({
   useEffect(() => {
     setSelected((s) => (s && profiles.includes(s) ? s : profiles[0] || ""));
   }, [profiles]);
-
-  // Nạp lỗi thì NÓI RA. Danh sách đang hiện có thể đã quá hạn, và người dùng
-  // cần biết điều đó trước khi bấm xoá hay tái dùng một cái tên trong đó.
-  useEffect(() => {
-    if (khoLoi) toast.error(`Không tải được danh sách profile: ${khoLoi}`);
-  }, [khoLoi]);
 
   // Delete the browser SESSION (user-data-dir) of the selected profile. This is
   // the only place a session is removed deliberately — it logs the Google
