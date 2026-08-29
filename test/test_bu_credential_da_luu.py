@@ -60,9 +60,14 @@ def _bu(monkey_store: dict):
     return ns["bu_credential"]
 
 
+_BAN_GHI = {"email": "benbap2011@gmail.com", "password": "mk-that",
+            "totp_secret": "seed-that"}
 KHO = {
-    "benbap2011@gmail.com": {"password": "mk-that", "totp_secret": "seed-that"},
-    "google-benbap2011": {"password": "mk-that", "totp_secret": "seed-that"},
+    # `resolve_account` trả NGUYÊN bản ghi, và bản ghi trong `accounts.db` luôn
+    # có cột email — kho giả phải giống thế, nếu không bài kiểm về việc bù email
+    # sẽ đạt vì lý do sai.
+    "benbap2011@gmail.com": _BAN_GHI,
+    "google-benbap2011": _BAN_GHI,
 }
 
 
@@ -73,25 +78,29 @@ class BuTuKhoTests(unittest.TestCase):
     def test_form_RONG_thi_lay_tu_kho(self):
         """Đúng kịch bản đã hỏng: chọn tài khoản đã lưu rồi bấm đăng nhập."""
         self.assertEqual(self.bu(YeuCauGia(email="benbap2011@gmail.com")),
-                         ("mk-that", "seed-that"))
+                         ("benbap2011@gmail.com", "mk-that", "seed-that"))
 
     def test_tra_duoc_theo_TEN_PROFILE_chu_khong_chi_email(self):
         """Vài thẻ chỉ biết tên hồ sơ (`google-benbap2011`), không biết email."""
-        self.assertEqual(self.bu(YeuCauGia(profile="google-benbap2011"))[0], "mk-that")
+        ra = self.bu(YeuCauGia(profile="google-benbap2011"))
+        self.assertEqual(ra[1], "mk-that")
+        self.assertEqual(ra[0], "benbap2011@gmail.com",
+                         "biết hồ sơ mà không tra ra email thì lượt đăng nhập "
+                         "sẽ gõ vào ô email đúng 0 ký tự")
 
     def test_go_TAY_thi_kho_KHONG_duoc_de_len(self):
         """Người dùng gõ mật khẩu mới là ý định thật — thường là vì mật khẩu cũ
         đã đổi, đè lên bằng giá trị cũ thì đăng nhập hỏng mãi mãi."""
         ra = self.bu(YeuCauGia(email="benbap2011@gmail.com", password="mk-moi"))
-        self.assertEqual(ra[0], "mk-moi")
-        self.assertEqual(ra[1], "seed-that", "vẫn phải bù hạt giống còn thiếu")
+        self.assertEqual(ra[1], "mk-moi")
+        self.assertEqual(ra[2], "seed-that", "vẫn phải bù hạt giống còn thiếu")
 
     def test_khong_co_trong_kho_thi_tra_ve_nguyen_trang(self):
         self.assertEqual(self.bu(YeuCauGia(email="la@gmail.com", password="p")),
-                         ("p", ""))
+                         ("la@gmail.com", "p", ""))
 
     def test_khong_co_email_lan_profile_thi_khong_no(self):
-        self.assertEqual(self.bu(YeuCauGia()), ("", ""))
+        self.assertEqual(self.bu(YeuCauGia()), ("", "", ""))
 
     def test_kho_loi_thi_khong_lam_hong_ca_luot_dang_nhap(self):
         def no(_):
@@ -100,7 +109,7 @@ class BuTuKhoTests(unittest.TestCase):
         ns = {"resolve_account": no}
         exec(compile(than, "bu", "exec"), ns)
         self.assertEqual(ns["bu_credential"](YeuCauGia(email="x@y", password="p")),
-                         ("p", ""))
+                         ("x@y", "p", ""))
 
 
 class KhongGhiDeRongLenKhoTests(unittest.TestCase):
@@ -183,6 +192,65 @@ class KhongTraBiMatVeTrinhDuyetTests(unittest.TestCase):
         than = NGUON[i:NGUON.index("\n@app.", i)]
         self.assertIn('"code": code', than)
         self.assertNotIn("seed}", than)
+
+
+class EmailPhaiDuocBuCungLucTests(unittest.TestCase):
+    """Bù mật khẩu mà KHÔNG bù email là tổ hợp tệ nhất trong ba tổ hợp.
+
+    SỰ CỐ 29/08/2026. Bộ tự khôi phục gọi onboard với cả ba trường rỗng. Bản cũ
+    của `bu_credential` bù mật khẩu và hạt giống nhưng bỏ email, nên lượt gọi đi
+    tiếp với mật khẩu THẬT + email RỖNG:
+
+      · `start_chatgpt_onboard` có lá chắn "không mật khẩu thì đừng xoá hồ sơ"
+        (vá 09/08/2026). Mật khẩu vừa được bù nên lá chắn KHÔNG nổ → nhánh dưới
+        xoá hồ sơ, mất luôn phiên Google đang sống.
+      · `do_google_login_steps` chạy với email rỗng: `includes("")` luôn đúng
+        nên bấm trúng phần tử đầu tiên gặp được, `press_sequentially("")` gõ
+        đúng 0 ký tự, rồi vẫn bấm "Tiếp theo".
+
+    Log máy chủ, hồ sơ google-smarthomebenbap0610: "nuked profile" 00:31:23 →
+    "clicked account tile for  on chooser screen" 00:31:32 → "bấm lại vào mail
+    lần 40" 00:37:53, URL đứng im ở /v3/signin/identifier với cùng một `dsh=`.
+    Bốn mươi lượt nộp form rỗng trong bảy phút là thứ khiến Google bung
+    reCAPTCHA.
+
+    Nếu email KHÔNG bù được thì thà trả rỗng cả ba còn hơn: rỗng cả ba thì lá
+    chắn "không mật khẩu" nổ đúng và hồ sơ được giữ nguyên.
+    """
+
+    def setUp(self):
+        self.bu = _bu(KHO)
+
+    def test_co_mat_khau_thi_PHAI_co_email(self):
+        for yc in (YeuCauGia(email="benbap2011@gmail.com"),
+                   YeuCauGia(profile="google-benbap2011"),
+                   YeuCauGia(profile="google-benbap2011", email="benbap2011@gmail.com")):
+            email, mk, _ = self.bu(yc)
+            if mk:
+                self.assertTrue(email,
+                                f"{yc} → có mật khẩu mà email rỗng: đúng tổ hợp "
+                                f"đã xoá hồ sơ rồi gõ 0 ký tự vào ô email")
+
+    def test_khong_tra_ra_duoc_thi_rong_CA_BA(self):
+        """Rỗng cả ba là an toàn — lá chắn 'không mật khẩu' sẽ giữ lại hồ sơ."""
+        self.assertEqual(self.bu(YeuCauGia(profile="google-khong-co-trong-kho")),
+                         ("", "", ""))
+
+    def test_email_nguoi_dung_go_van_duoc_uu_tien(self):
+        ra = self.bu(YeuCauGia(email="nguoi-go@gmail.com", profile="google-benbap2011"))
+        self.assertEqual(ra[0], "nguoi-go@gmail.com")
+
+
+class MoiDuongOnboardDungEmailDaBuTests(unittest.TestCase):
+    """Cả sáu đường onboard đều truyền thẳng `req.email` — nên cả sáu cùng dính."""
+
+    def test_khong_con_truyen_thang_req_email_vao_ham_dang_nhap(self):
+        self.assertNotIn("email=req.email", NGUON,
+                         "còn nơi truyền thẳng req.email: nơi đó vẫn đăng nhập "
+                         "được với ô email trống")
+
+    def test_du_sau_duong_cung_bu_credential(self):
+        self.assertEqual(NGUON.count("email_tk, mat_khau, hat_giong = bu_credential(req)"), 6)
 
 
 if __name__ == "__main__":

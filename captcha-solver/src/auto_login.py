@@ -663,6 +663,32 @@ async def do_google_login_steps(
         session.error = "Không có mật khẩu để tự động đăng nhập (reuse_only=True hoặc thiếu dữ liệu)."
         session.completed_at = time.time()
         return False
+
+    # KHÔNG có email thì DỪNG NGAY — không tồn tại lượt đăng nhập nào để thử.
+    #
+    # Email rỗng không làm vòng dưới hỏng một cách ồn ào; nó làm vòng dưới chạy
+    # ĐỦ 420 giây một cách vô nghĩa: `includes("")` luôn đúng nên đoạn dò tile
+    # bấm trúng phần tử đầu tiên gặp được, `press_sequentially("")` gõ đúng 0 ký
+    # tự, rồi vẫn bấm "Tiếp theo" nên Google trả "Hãy nhập email hoặc số điện
+    # thoại" trên một ô trống. Lặp bốn mươi lượt trong bảy phút, và ĐÓ mới là
+    # thứ khiến Google bung reCAPTCHA — không phải tài khoản bị chặn.
+    #
+    # Đo thật 29/08/2026 (google-smarthomebenbap0610): "clicked account tile for
+    #  on chooser screen" (email trống) 00:31:32 → "bấm lại vào mail lần 40"
+    # 00:37:53, URL đứng im ở /v3/signin/identifier với cùng một `dsh=`.
+    #
+    # Gốc đã vá ở `main.py::bu_credential` (bù email cùng bản ghi với mật khẩu).
+    # Chốt chặn ở đây để KHÔNG một người gọi nào — hôm nay hay mai sau — đẩy
+    # được lượt đăng nhập rỗng vào trang Google lần nữa.
+    if not (session.email or "").strip():
+        session.state = "failed"
+        session.error = ("Không có địa chỉ email để đăng nhập — hồ sơ chưa lưu tài khoản, "
+                         "hoặc lượt gọi quên gửi email. Lưu tài khoản cho hồ sơ này rồi "
+                         "chạy lại; KHÔNG thử đăng nhập với ô email trống.")
+        session.completed_at = time.time()
+        logger.warning("auto_login: %s — email rỗng, bỏ lượt thay vì bấm 'Tiếp theo' "
+                       "trên ô trống (thứ làm Google bung captcha)", session.profile)
+        return False
     
     async def _click_try_again() -> bool:
         # 1. Attribute-based reliable locators
@@ -822,6 +848,23 @@ async def do_google_login_steps(
                         await el.fill("")
                         await el.press_sequentially(session.email, delay=50)
                         await asyncio.sleep(0.6)
+                        # ĐỌC LẠI ô trước khi bấm "Tiếp theo". Gõ xong không
+                        # đồng nghĩa giá trị đã nằm trong ô: trang có thể vừa
+                        # render lại giữa chừng (mất sạch những gì đã gõ), hoặc
+                        # `session.email` rỗng nên vừa gõ đúng 0 ký tự. Bấm
+                        # "Tiếp theo" lúc đó là nộp form TRỐNG — Google trả
+                        # "Hãy nhập email hoặc số điện thoại" và tính đó là một
+                        # lượt nộp hỏng. Bốn mươi lượt như vậy trong bảy phút
+                        # (đo 29/08/2026) là đủ để nó bung captcha.
+                        try:
+                            da_vao = (await el.input_value(timeout=1000) or "").strip()
+                        except Exception:
+                            da_vao = ""
+                        if da_vao.lower() != (session.email or "").strip().lower():
+                            logger.info("auto_login: ô email chưa nhận đủ chữ "
+                                        "(đang là %r) — KHÔNG bấm Tiếp theo, thử lại vòng sau",
+                                        da_vao[:40])
+                            return False
                         if not await _safe_click(
                             page, '#identifierNext button', '#identifierNext',
                             'button:has-text("Next")', 'button:has-text("Tiếp theo")',
