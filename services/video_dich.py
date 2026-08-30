@@ -892,6 +892,57 @@ def _cham_cau_neu_thieu(doan: list[Doan],
     return [Doan(d.bat_dau, d.ket_thuc, t) for d, t in zip(doan, moi)]
 
 
+def _loi_doc_cho_giong(nhom: list[Doan], ban_dich: list[str],
+                       nguon: str, dich: str) -> tuple[list[str], dict[str, int]]:
+    """Bản dịch → LỜI ĐỌC cho khâu lồng tiếng. Phụ đề để XEM không đổi.
+
+    Chủ máy chốt 30/08/2026: chỉ bản đọc được viết lại. Phụ đề vẫn giữ thuật
+    ngữ tiếng Anh và mã sản phẩm như dân kỹ thuật quen đọc, còn giọng máy thì
+    nhận bản đã thay bằng thứ nó phát âm được.
+
+    Chạy SAU ``_chinh_llm_neu_bat`` là cố ý: bước đó vừa ghi thuật ngữ mới vào
+    ``<src>.hoc.json``, nên lượt này được hưởng ngay cái nó vừa học thay vì
+    phải đợi video sau (đo thật 30/08: kho đã có 'incoming feeder' → 'bộ cấp
+    nguồn vào' mà bản lồng tiếng vẫn đọc nguyên tiếng Anh).
+    """
+    from services import loi_doc as ld
+
+    # Chỉ áp cho bản dịch SANG TIẾNG VIỆT. Hai chốt, cả hai đều bắt buộc:
+    #   • Luật phiên âm và kho cách đọc đều viết riêng cho tiếng Việt.
+    #   • ``nguon == dich`` là bản CHÉP LỜI, không dịch gì — lúc đó câu "gốc"
+    #     chính là câu "dịch", nên phép đối chiếu sẽ coi MỌI chữ không dấu là
+    #     chữ ngoại còn sót (dao, minh, trang…) và phá hỏng bản chép.
+    if not str(dich or "").lower().startswith("vi") or nguon == dich:
+        return list(ban_dich), {}
+    src = _ma_tieng_glossary(nguon)
+    try:
+        linh_vuc = tn.doan_linh_vuc(" ".join(d.chu for d in nhom), src) if src else []
+    except Exception:
+        linh_vuc = []
+    model = _model_llm_phu_de()
+
+    def goi_model(m: str, messages: list[dict]) -> str:
+        from services.agent.runtime import call_model, content_of
+        resp = call_model(m, messages, timeout=180, max_tokens=2000)
+        if resp.get("error"):
+            raise ld.LoiLoiDoc(str(resp["error"]))
+        return content_of(resp)
+
+    try:
+        ra, so_sua, hoc_moi = ld.chuan_hoa(
+            ban_dich, [d.chu for d in nhom], nguon=nguon, dich=dich,
+            model=model, goi_model=goi_model if model else None,
+            linh_vuc=linh_vuc)
+    except Exception as exc:
+        # Chuẩn hoá lời đọc là làm TỐT HƠN; hỏng thì đọc bản dịch như cũ.
+        logger.warning("chuẩn hoá lời đọc lỗi: %s", str(exc)[:160])
+        return list(ban_dich), {}
+    if so_sua or hoc_moi:
+        logger.info({"event": "loi_doc_chuan_hoa", "so_cho_sua": so_sua,
+                     "hoc_them_cach_doc": hoc_moi})
+    return ra, {"so_cho_sua": so_sua, "hoc_them_cach_doc": hoc_moi}
+
+
 def dich_video(text: str, target: str = "", *, chep_loi: bool = False,
                nguon_biet: str = "") -> dict[str, Any]:
     """Link video → bản dịch. KHÔNG raise: lỗi nằm trong khoá ``error``.
@@ -1017,13 +1068,18 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
     da_dich = cat_khung(theo_cau)
     _bao_tien_do(tien_do, "đang đóng tệp SRT…", PT_DICH_XONG)
     srt = lam_srt(da_dich)
+    # Lời đọc đi đường RIÊNG: mã sản phẩm và chữ ngoại còn sót lại được thay
+    # bằng thứ giọng Việt phát âm được. Phụ đề để xem không đụng tới.
+    loi_doc, thong_ke_doc = _loi_doc_cho_giong(nhom, ban_dich, nguon, dich)
+    theo_cau_doc = [Doan(d.bat_dau, d.ket_thuc, b) for d, b in zip(nhom, loi_doc)]
     ra = {
         "ok": True,
         "srt": srt.encode("utf-8"),
         # Bản CHO GIỌNG ĐỌC: vẫn từng câu, chưa qua khuôn hiển thị. Khâu lồng
         # tiếng phải dùng bản này — bản trên đã bị cắt dòng và ép trần 7 giây
         # cho vừa màn hình, đưa nó cho TTS là đọc vụn từng mẩu.
-        "srt_long_tieng": lam_srt_long_tieng(theo_cau).encode("utf-8"),
+        "srt_long_tieng": lam_srt_long_tieng(theo_cau_doc).encode("utf-8"),
+        "loi_doc": thong_ke_doc,
         "ten": f"phu-de.{dich}.srt",
         "chu": "\n".join(d.chu for d in da_dich),
         # Cặp (câu gốc, câu dịch) để đóng bản SONG NGỮ. Ghép ở mức `nhom` chứ

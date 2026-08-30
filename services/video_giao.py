@@ -343,8 +343,19 @@ def chay(kenh: Kenh, pend: dict | None, chon: dict) -> None:
                     + str(exc)[:220] + "; em vẫn gửi SRT để không mất kết quả.")
                 kenh.gui_bytes(r["srt"], r["ten"], "Phụ đề")
                 return
+            # Nói rõ đã nắn bao nhiêu chỗ khó đọc: chủ máy nghe thấy "ngọng"
+            # thì cần biết bước nắn có chạy hay không, chứ không phải đoán.
+            _ld = r.get("loi_doc") or {}
+            _tin_doc = ""
+            if _ld.get("so_cho_sua"):
+                _tin_doc = (f"\n🗣️ Đã nắn {_ld['so_cho_sua']} chỗ cho giọng đọc "
+                            "(mã thiết bị, tên riêng, chữ chưa dịch)")
+                if _ld.get("hoc_them_cach_doc"):
+                    _tin_doc += (f"; học thêm {_ld['hoc_them_cach_doc']} cách "
+                                 "đọc để lần sau khỏi cần mạng")
+                _tin_doc += ". Phụ đề để xem vẫn giữ nguyên."
             kenh.gui_tin(
-                _vd.bao_cao(r) + f"\n🔊 Đã lồng bằng {dub.voice}; track âm "
+                _vd.bao_cao(r) + _tin_doc + f"\n🔊 Đã lồng bằng {dub.voice}; track âm "
                 "thanh gốc không được dùng, TTS đã trộn với stem nhạc/hiệu ứng."
                 " Source separation có thể còn rò giọng ở cảnh âm thanh chồng "
                 "lấn." + (f"\n⚠️ {dub.canh_bao}" if dub.canh_bao else ""))
