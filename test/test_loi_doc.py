@@ -103,16 +103,46 @@ def test_thay_khop_ca_tu_khong_an_vao_giua_chu():
 # ── Kho cách đọc: học một lần, lần sau khỏi cần mạng ────────────────────────
 
 
-@pytest.mark.adapter
-def test_ghi_kho_roi_lan_sau_chua_duoc_ma_khong_can_model(kho):
-    assert ld.ghi_kho({"3wl": "ba vê kép eo"}, "vi") == 1
-    assert ld.doc_kho("vi") == {"3wl": "ba vê kép eo"}
+@pytest.mark.pure
+@pytest.mark.parametrize("ma, doc", [
+    ("3WL", "ba vê kép lờ"),
+    ("RTU", "rờ tê u"),          # chủ máy chốt: KHÔNG phải "a tê u" kiểu Anh
+    ("DP", "dê pê"),
+    ("RS485", "rờ ét bốn tám năm"),
+    ("S7-1200", "ét bảy một hai không không"),
+])
+def test_ma_thiet_bi_danh_van_bang_chu_cai_tieng_viet(ma, doc):
+    assert ld.doc_ma(ma) == doc
 
+
+@pytest.mark.pure
+@pytest.mark.parametrize("ten", ["PROFIBUS", "Modbus", "Siemens", "Schneider"])
+def test_ten_rieng_khong_bi_danh_van_tung_chu(ten):
+    """Viết tắt IN HOA dài là TÊN, phải phiên âm chứ không đánh vần."""
+    assert ld.la_ma_danh_van(ten) is False
+
+
+@pytest.mark.adapter
+def test_ma_khong_can_kho_khong_can_model(kho):
+    """Mã đánh vần tất định — chạy được cả khi mất mạng và kho còn rỗng."""
     ra, so_sua, hoc = ld.chuan_hoa(
-        ["Bộ ngắt mạch 3wl nhỏ gọn."], ["3wl breakers are small."],
+        ["Bộ ngắt mạch 3WL nhỏ gọn."], ["3WL breakers are small."],
         nguon="en", dich="vi", model="", goi_model=None)
 
-    assert ra == ["Bộ ngắt mạch ba vê kép eo nhỏ gọn."]
+    assert ra == ["Bộ ngắt mạch ba vê kép lờ nhỏ gọn."]
+    assert (so_sua, hoc) == (1, 0)
+
+
+@pytest.mark.adapter
+def test_ghi_kho_roi_lan_sau_chua_duoc_ma_khong_can_model(kho):
+    assert ld.ghi_kho({"Siemens": "Xi-mừn"}, "vi") == 1
+    assert ld.doc_kho("vi") == {"Siemens": "Xi-mừn"}
+
+    ra, so_sua, hoc = ld.chuan_hoa(
+        ["Siemens làm bộ ngắt mạch."], ["Siemens makes breakers."],
+        nguon="en", dich="vi", model="", goi_model=None)
+
+    assert ra == ["Xi-mừn làm bộ ngắt mạch."]
     assert (so_sua, hoc) == (1, 0)
 
 
@@ -159,30 +189,31 @@ def test_hoi_model_roi_hoc_lai_cach_doc(kho):
 
     def _model(_m, messages):
         goi.append(messages)
-        return json.dumps([{"goc": "Seamans", "doc": "Xi-mừn"},
-                           {"goc": "3wl", "doc": "ba vê kép eo"}],
+        return json.dumps([{"goc": "Seamans", "doc": "Xi-mừn"}],
                           ensure_ascii=False)
 
     ra, so_sua, hoc = ld.chuan_hoa(
-        ["Seamans làm bộ ngắt mạch 3wl."], ["Seamans makes the 3wl breaker."],
+        ["Seamans làm bộ ngắt mạch 3WL."], ["Seamans makes the 3WL breaker."],
         nguon="en", dich="vi", model="m", goi_model=_model)
 
-    assert ra == ["Xi-mừn làm bộ ngắt mạch ba vê kép eo."]
-    assert (so_sua, hoc) == (2, 2)
-    assert ld.doc_kho("vi") == {"Seamans": "Xi-mừn", "3wl": "ba vê kép eo"}
+    # 3WL đánh vần tất định, KHÔNG đem đi hỏi; chỉ tên hãng mới cần model.
+    assert ra == ["Xi-mừn làm bộ ngắt mạch ba vê kép lờ."]
+    assert (so_sua, hoc) == (2, 1)
+    assert ld.doc_kho("vi") == {"Seamans": "Xi-mừn"}
     assert len(goi) == 1
+    assert "3WL" not in goi[0][-1]["content"]   # không đem mã đi hỏi
 
 
 @pytest.mark.adapter
 def test_bo_qua_muc_khong_hoi_va_muc_model_tra_lai_y_nguyen(kho):
     def _model(_m, _msg):
-        return json.dumps([{"goc": "3wl", "doc": "3wl"},          # trả lại y nguyên
+        return json.dumps([{"goc": "Seamans", "doc": "Seamans"},  # trả lại y nguyên
                            {"goc": "khong-hoi", "doc": "bịa"}],   # không nằm trong câu hỏi
                           ensure_ascii=False)
 
-    ra, so_sua, hoc = ld.chuan_hoa(["Mã 3wl ở đây."], ["The 3wl code here."],
+    ra, so_sua, hoc = ld.chuan_hoa(["Seamans ở đây."], ["Seamans is here."],
                                    nguon="en", dich="vi", model="m", goi_model=_model)
-    assert ra == ["Mã 3wl ở đây."]
+    assert ra == ["Seamans ở đây."]
     assert (so_sua, hoc) == (0, 0)
     assert ld.doc_kho("vi") == {}
 
@@ -192,9 +223,9 @@ def test_model_hong_thi_giu_nguyen_ban_dich(kho):
     def _model(_m, _msg):
         raise ld.LoiLoiDoc("model bận")
 
-    ra, so_sua, _ = ld.chuan_hoa(["Mã 3wl ở đây."], ["The 3wl code here."],
+    ra, so_sua, _ = ld.chuan_hoa(["Seamans ở đây."], ["Seamans is here."],
                                  nguon="en", dich="vi", model="m", goi_model=_model)
-    assert ra == ["Mã 3wl ở đây."] and so_sua == 0
+    assert ra == ["Seamans ở đây."] and so_sua == 0
 
 
 # ── Đấu nối: phụ đề để XEM không đổi, chỉ bản đọc đổi ───────────────────────

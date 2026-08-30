@@ -11,14 +11,18 @@ Luật chủ máy chốt 30/08/2026:
 
 * **Tên người, tên hãng, địa danh, danh từ riêng** — đọc ĐÚNG tên đó, nhưng
   bằng PHIÊN ÂM tiếng Việt (``Siemens`` → "Xi-mừn"), không đánh vần.
-* **Mã thiết bị** — đọc theo TIẾNG ĐÍCH (``3WL`` → "ba vê kép eo").
+* **Mã thiết bị** — ĐÁNH VẦN bằng tên chữ cái tiếng Việt (``3WL`` → "ba vê
+  kép lờ", ``RTU`` → "rờ tê u"). Chủ máy sửa lại chỗ này sau khi nghe model
+  đánh vần ``RTU`` thành "a tê u" kiểu tiếng Anh — nên mã KHÔNG đi qua LLM
+  nữa mà tra thẳng bảng ``CHU_CAI_VIET``.
 * Phụ đề để XEM giữ nguyên, chỉ bản dành cho giọng đọc mới được viết lại.
 
 Thứ tự tra, để MẤT INTERNET VẪN CHẠY:
 
-1. Kho ``<dich>.doc.json`` — cách đọc đã học ở những lượt trước. Tất định.
-2. Kho thuật ngữ đã học ``<src>.hoc.json`` — do ``dich_llm.hoc_thuat_ngu`` ghi.
-3. LLM, chỉ cho phần còn lại, rồi GHI NGƯỢC vào (1) để lần sau khỏi cần.
+1. Mã thiết bị → đánh vần tất định, không kho không mạng.
+2. Kho ``<dich>.doc.json`` — cách đọc đã học ở những lượt trước.
+3. Kho thuật ngữ đã học ``<src>.hoc.json`` — do ``dich_llm.hoc_thuat_ngu`` ghi.
+4. LLM, chỉ cho phần còn lại, rồi GHI NGƯỢC vào (2) để lần sau khỏi cần.
 
 Không có model (hoặc không có mạng) thì bước 3 bỏ qua: câu nào chưa học được
 cách đọc thì giữ nguyên như hiện nay, không bao giờ tệ hơn.
@@ -112,6 +116,52 @@ def la_ma_thiet_bi(tu: str) -> bool:
             and any(c.isalpha() for c in t))
 
 
+#: Tên chữ cái ĐỌC THEO TIẾNG VIỆT. Chủ máy chốt 30/08/2026 sau khi nghe model
+#: đánh vần "RTU" thành "a tê u" (kiểu tiếng Anh): phải là "rờ tê u".
+#: Đây là bảng TẤT ĐỊNH — mã thiết bị không đi qua LLM nữa, nên vừa luôn đúng
+#: vừa chạy được khi mất mạng.
+CHU_CAI_VIET = {
+    "a": "a", "ă": "á", "â": "ớ", "b": "bê", "c": "xê", "d": "dê", "đ": "đê",
+    "e": "e", "ê": "ê", "f": "ép", "g": "giê", "h": "hát", "i": "i", "j": "gi",
+    "k": "ca", "l": "lờ", "m": "mờ", "n": "nờ", "o": "o", "ô": "ô", "ơ": "ơ",
+    "p": "pê", "q": "quy", "r": "rờ", "s": "ét", "t": "tê", "u": "u", "ư": "ư",
+    "v": "vê", "w": "vê kép", "x": "ích", "y": "i dài", "z": "dét",
+}
+CHU_SO_VIET = {"0": "không", "1": "một", "2": "hai", "3": "ba", "4": "bốn",
+               "5": "năm", "6": "sáu", "7": "bảy", "8": "tám", "9": "chín"}
+#: Cụm chữ IN HOA dài hơn ngần này chữ cái thì coi là TÊN, không phải mã viết
+#: tắt: PROFIBUS đọc thành "prô-fi-bớt" chứ không đánh vần từng chữ.
+MA_TOI_DA_CHU = 4
+
+
+def doc_ma(t: str) -> str:
+    """Mã thiết bị → cách đọc tiếng Việt. ``3WL`` → "ba vê kép lờ"."""
+    ra: list[str] = []
+    for ch in _sach(t):
+        thap = ch.lower()
+        if thap in CHU_SO_VIET:
+            ra.append(CHU_SO_VIET[thap])
+        elif thap in CHU_CAI_VIET:
+            ra.append(CHU_CAI_VIET[thap])
+        # gạch nối, chấm… chỉ là chỗ ngắt, không đọc
+    return " ".join(ra)
+
+
+def la_ma_danh_van(t: str) -> bool:
+    """Chỗ này có phải MÃ (đánh vần) không, hay là TÊN (phiên âm)?
+
+    Mã: lẫn chữ với số (3WL, RS485), hoặc viết tắt IN HOA ngắn (RTU, DP).
+    Tên: PROFIBUS, Siemens, Modbus — phiên âm chứ không đánh vần từng chữ.
+    """
+    s = _sach(t)
+    if not s or " " in s:
+        return False
+    if la_ma_thiet_bi(s):
+        return True
+    chu = [c for c in s if c.isalpha()]
+    return bool(chu and len(chu) <= MA_TOI_DA_CHU and s.upper() == s)
+
+
 def _kho_doc_mot_tu(t: str, goc: set[str]) -> bool:
     if len(t) < 2 or len(t) > DAI_TOI_DA or t.isdigit() or _co_dau_viet(t):
         return False
@@ -189,11 +239,12 @@ def _hoi_model(cho: list[str], nhac: str, model: str,
         "1. Tên người, tên hãng, địa danh, danh từ riêng: giữ ĐÚNG tên đó "
         "nhưng viết bằng PHIÊN ÂM tiếng Việt theo cách đọc thật của nó "
         "(Siemens → Xi-mừn, Schneider → Sờ-nai-đơ). KHÔNG đánh vần từng chữ.\n"
-        "2. Mã thiết bị, mã model, ký hiệu: đọc theo TIẾNG VIỆT, đánh vần "
-        "từng ký tự bằng tên chữ cái tiếng Việt (3WL → ba vê kép eo).\n"
-        "3. Từ hoặc cụm từ thông thường chưa được dịch: DỊCH sang tiếng Việt.\n"
+        "2. Từ hoặc cụm từ thông thường chưa được dịch: DỊCH sang tiếng Việt.\n"
         "Lời thoại có thể do máy nghe sai chính tả tên riêng; hãy đọc theo tên "
         "ĐÚNG mà nó định nói.\n"
+        "KHÔNG ĐƯỢC trả lại y nguyên chữ gốc, kể cả với tên riêng quen thuộc: "
+        "chỗ nào cũng phải có cách đọc viết bằng chữ cái tiếng Việt. Giọng máy "
+        "chỉ biết đọc chữ tiếng Việt, thấy chữ nước ngoài là nó đọc ngọng.\n"
         'Trả về DUY NHẤT một mảng JSON, mỗi phần tử {"goc": "chỗ đó", '
         '"doc": "cách viết để đọc"}. Không giải thích, không văn xuôi.'
     )
@@ -251,7 +302,10 @@ def chuan_hoa(cau_viet: list[str], cau_goc: list[str] | None = None, *,
     if not tat_ca:
         return list(cau_viet), 0, 0
 
-    bang = dict(_tu_kho_da_hoc(tat_ca, nguon, dich))
+    # MÃ đánh vần tất định trước tiên — không kho, không LLM, không cần mạng.
+    bang = {x: doc_ma(x) for x in tat_ca if la_ma_danh_van(x)}
+    bang.update({k: v for k, v in _tu_kho_da_hoc(tat_ca, nguon, dich).items()
+                 if k not in bang})
     con = [x for x in tat_ca if x not in bang]
     hoc_moi = 0
     if con and model and goi_model is not None:
