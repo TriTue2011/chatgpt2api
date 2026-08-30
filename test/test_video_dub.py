@@ -685,6 +685,35 @@ def test_cau_dai_hon_khung_khong_bi_cat_duoi_ma_de_cau_sau_vao_muon():
 
 
 @pytest.mark.pure
+def test_phu_de_chay_qua_duoi_phim_khong_duoc_thanh_thoi_luong_video(monkeypatch):
+    """Lỗi thật 30/08/2026: phim 239,04s, phụ đề YouTube kết ở 240,83s.
+
+    Bản cũ trả ``max(đo được, fallback)`` nên chốt "video dài 240,83s", rồi
+    track nhạc 239,03s (khớp đúng luồng tiếng gốc) bị coi là cụt 1,8 giây và cả
+    lượt lồng tiếng bị bỏ.
+    """
+    from services import video_dub as dub
+
+    monkeypatch.setattr(dub, "_chay", lambda *_a, **_k: subprocess.CompletedProcess([], 0, b"239.041000\n", b""))
+    dai = dub._thoi_luong("phim.mp4", 240.83)
+
+    assert dai == pytest.approx(239.041)
+    # Track nhạc đúng độ dài luồng tiếng gốc thì phải lọt.
+    monkeypatch.setattr(dub, "_thoi_luong",
+                        lambda _path, _fallback: 239.033515)
+    assert dub._kiem_tra_nen_du_dai("nen.wav", dai) == pytest.approx(239.0335)
+
+
+@pytest.mark.pure
+@pytest.mark.parametrize("ra", [b"N/A\n", b"", b"0.000000\n", b"  \n"])
+def test_ffprobe_do_hong_thi_moi_dung_toi_fallback(monkeypatch, ra):
+    from services import video_dub as dub
+
+    monkeypatch.setattr(dub, "_chay", lambda *_a, **_k: subprocess.CompletedProcess([], 0, ra, b""))
+    assert dub._thoi_luong("phim.mp4", 240.83) == pytest.approx(240.83)
+
+
+@pytest.mark.pure
 def test_track_nen_bi_cut_hoac_tts_thieu_mot_cau_deu_khong_xuat_mp4(monkeypatch):
     from services import video_dub as dub
 

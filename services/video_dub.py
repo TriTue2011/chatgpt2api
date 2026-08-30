@@ -315,12 +315,29 @@ def _chay(cmd: list[str], *, input_data: bytes | None = None,
 
 
 def _thoi_luong(duong: str, fallback: float) -> float:
+    """Thời lượng THẬT của tệp. ``fallback`` chỉ dùng khi ffprobe không đo được.
+
+    Trước đây trả ``max(đo được, fallback)``. Nghe thì có vẻ an toàn nhưng sai
+    hẳn ở chỗ gọi chính: ``long_tieng`` truyền ``fallback`` là mốc kết thúc của
+    khung phụ đề CUỐI, mà phụ đề YouTube rất hay chạy quá đuôi phim. Đo thật
+    30/08/2026 trên một video 4 phút: phim dài 239,04 giây (luồng tiếng 239,041)
+    còn phụ đề kết ở 240,83 giây, nên ``max()`` chốt "video dài 240,83 giây".
+    Track nhạc/hiệu ứng tách ra dài 239,03 giây — khớp đúng luồng tiếng gốc,
+    không thiếu một mẩu nào — vẫn bị ``_kiem_tra_nen_du_dai`` kết luận là cụt
+    1,8 giây, và cả lượt lồng tiếng bị bỏ, người dùng chỉ nhận lại SRT.
+
+    Lấy đúng số đo còn làm phép đo TRÀN ĐUÔI của ``_do_tre`` thành thật: mốc
+    hết phim mà nống ra thì phần lời tràn qua đuôi không bị đếm, trong khi
+    ``_mux`` vẫn cắt tại đó và lời cuối vẫn mất.
+    """
     p = _chay(["ffprobe", "-v", "error", "-show_entries", "format=duration",
               "-of", "default=noprint_wrappers=1:nokey=1", duong], timeout=60)
     try:
-        return max(float(p.stdout.decode().strip()), fallback)
+        do_duoc = float(p.stdout.decode().strip())
     except (TypeError, ValueError):
         return fallback
+    # ffprobe trả "N/A"/0 cho tệp hỏng hoặc container không ghi thời lượng.
+    return do_duoc if do_duoc > 0 else fallback
 
 
 def _kiem_tra_nen_du_dai(duong_nen: str, dai_video: float) -> float:
