@@ -1636,6 +1636,17 @@ def _parse_event(body: dict) -> dict:
         "trich_dan_raw": _rut_trich_dan(data.get("quote"),
                                         str(body.get("_accountId") or "").strip()),
     }
+    # CHẨN ĐOÁN tạm: xem zca-js có thật gửi `data.quote` khi người dùng bấm "Trả
+    # lời" không. Tài liệu Zalo Bot chính thức không có trường này (đã đo: payload
+    # chỉ có chat/date/from/message_id/text), nên phải xác minh riêng đường cá
+    # nhân từ tin thật. Bỏ khi đã xác nhận. Chỉ log tên khoá, không log nội dung.
+    try:
+        _q = data.get("quote")
+        logger.info("zalop event data keys=%s quote_keys=%s",
+                    sorted(data.keys()),
+                    sorted(_q.keys()) if isinstance(_q, dict) else None)
+    except Exception:
+        pass
 
 
 def _bot_account_aliases(account_id: str) -> list[str]:
