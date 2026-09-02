@@ -190,11 +190,29 @@ export function VoiceSpeakersCard() {
     String((dungCho[ten] || {}).stt_tieng || "")
       .split(",").map((x) => x.trim()).filter(Boolean);
 
-  /** Gửi những tiếng vừa đổi giọng lồng tiếng. Trả về số tiếng đã gửi. */
+  /** Gửi những tiếng vừa đổi giọng lồng tiếng. Trả về số tiếng đã gửi.
+   *
+   *  Bảng máy chủ trả về phải ghi NGƯỢC vào config trong store. `POST
+   *  /api/settings` gửi NGUYÊN cả config (`SettingsUpdateRequest` nhận khoá
+   *  lạ), mà bản trong store là bản chụp TRƯỚC khi endpoint này ghi — nên lần
+   *  bấm Lưu kế tiếp, ở thẻ này hay ở bất kỳ thẻ Cài đặt nào khác, đè giọng cũ
+   *  lên và xoá im lặng lựa chọn vừa lưu.
+   */
   const luuGiongDub = async (): Promise<number> => {
     const doi = Object.keys(dubChon).filter((ma) => dubChon[ma] !== (dubGoc[ma] || ""));
+    let bang: Record<string, string> | null = null;
     for (const ma of doi) {
-      await request.post("/api/dich/giong-mac-dinh", { lang: ma, voice: dubChon[ma] });
+      const res = await request.post("/api/dich/giong-mac-dinh",
+                                     { lang: ma, voice: dubChon[ma] });
+      const sau = (res.data as { giong_long_tieng?: Record<string, string> })?.giong_long_tieng;
+      if (sau) bang = sau;
+    }
+    if (bang) {
+      // Lấy config MỚI NHẤT chứ không phải `cfg` của lượt render này: saveConfig()
+      // vừa chạy xong đã thay cả object config trong store.
+      const dichCfg = ((useSettingsStore.getState().config as Record<string, unknown> | null)
+        ?.dich as Record<string, unknown>) || {};
+      setField("dich", { ...dichCfg, giong_long_tieng: bang });
     }
     return doi.length;
   };
