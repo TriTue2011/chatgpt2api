@@ -104,3 +104,31 @@ class SelfMessageGateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NormalizeGiuSelfReplyTests(unittest.TestCase):
+    """Bộ chuẩn hóa `thread_mention_filters` phải GIỮ reply_to_self/self_keyword.
+
+    Lỗi thật (đo 02/09): normalizer dựng lại record chỉ {required, keyword} ở CẢ
+    lúc lưu lẫn đọc, nên tick «Trả lời cả tin của tôi» trên WebUI + Lưu xong tải
+    lại là mất — y hệt triệu chứng lồng tiếng nhưng gốc ở server.
+    """
+
+    def test_giu_reply_to_self_va_self_keyword(self):
+        from services.config import _normalize_thread_mention_filters as norm
+        r = norm({"zalop:acc:th": {"required": True, "keyword": "@bot",
+                                   "reply_to_self": True, "self_keyword": "@toi"}})
+        rec = r["zalop:acc:th"]
+        self.assertTrue(rec["reply_to_self"])
+        self.assertEqual(rec["self_keyword"], "@toi")
+        self.assertEqual(rec["keyword"], "@bot")  # ô cũ độc lập vẫn còn
+
+    def test_khong_self_reply_thi_record_gon(self):
+        from services.config import _normalize_thread_mention_filters as norm
+        r = norm({"t": {"required": True, "keyword": "@bot"}})
+        self.assertNotIn("reply_to_self", r["t"])
+        self.assertNotIn("self_keyword", r["t"])
+
+    def test_tuong_thich_bool_cu(self):
+        from services.config import _normalize_thread_mention_filters as norm
+        self.assertEqual(norm({"t": True})["t"], {"required": True, "keyword": ""})

@@ -420,7 +420,13 @@ def _normalize_thread_user_only(value: object) -> dict[str, bool]:
 
 def _normalize_thread_mention_filters(value: object) -> dict[str, dict]:
     """Chuẩn hóa `thread_mention_filters`: dict thread_key -> {required: bool,
-    keyword: str}. Bỏ khóa rỗng; chấp nhận cả giá trị bool (cũ) → {required, ''}."""
+    keyword: str [, reply_to_self, self_keyword]}. Bỏ khóa rỗng; chấp nhận cả
+    giá trị bool (cũ) → {required, ''}.
+
+    GIỮ `reply_to_self`/`self_keyword` («trả lời cả tin của chính chủ», per-thread):
+    trước đây normalizer chỉ dựng lại {required, keyword} nên hai trường này bị
+    vứt ở CẢ lúc lưu lẫn lúc đọc — nút Lưu tưởng ăn nhưng tải lại là mất. Chỉ ghi
+    khi thật sự có (bật hoặc có từ khóa) để record gọn."""
     out: dict[str, dict] = {}
     if isinstance(value, dict):
         for k, v in value.items():
@@ -429,10 +435,15 @@ def _normalize_thread_mention_filters(value: object) -> dict[str, dict]:
             if isinstance(v, bool):
                 out[k.strip()] = {"required": v, "keyword": ""}
             elif isinstance(v, dict):
-                out[k.strip()] = {
+                rec: dict = {
                     "required": bool(v.get("required")),
                     "keyword": str(v.get("keyword") or "").strip(),
                 }
+                _self_kw = str(v.get("self_keyword") or "").strip()
+                if v.get("reply_to_self") or _self_kw:
+                    rec["reply_to_self"] = bool(v.get("reply_to_self"))
+                    rec["self_keyword"] = _self_kw
+                out[k.strip()] = rec
     return out
 
 
