@@ -132,3 +132,32 @@ class NormalizeGiuSelfReplyTests(unittest.TestCase):
     def test_tuong_thich_bool_cu(self):
         from services.config import _normalize_thread_mention_filters as norm
         self.assertEqual(norm({"t": True})["t"], {"required": True, "keyword": ""})
+
+
+class TinChuKhongBiCongTagChanTests(unittest.TestCase):
+    """Tin của chính chủ khớp từ khóa riêng phải QUA luôn cổng «bắt buộc tag».
+
+    Lỗi thật (đo 02/09): thread đặt «bắt buộc tag» = "@bot" và self_keyword =
+    "@toi". Tin "@toi xin chào" qua được cổng isSelf nhưng bị cổng tag chặn vì
+    không chứa "@bot" → bot im. Hai ô độc lập nên tin đã khớp @toi = đã tag.
+    """
+
+    def test_handle_event_danh_dau_da_tag(self):
+        import services.zalo_personal as zp
+        ev = {"account_id": "acc1", "thread_id": "th1", "sender_id": "acc1",
+              "is_self": True, "text": "@toi xin chào", "msg_id": "m9",
+              "thread_type": 1, "mentions": []}
+        with mock.patch.object(zp, "_parse_event", return_value=ev), \
+             mock.patch.object(zp, "_dedup", return_value=False), \
+             mock.patch.object(zp, "forward_to_ha"), \
+             mock.patch("services.channel_activity.is_blacklisted", return_value=False), \
+             mock.patch("services.channel_activity.record"), \
+             mock.patch("services.channel_contacts.upsert"), \
+             mock.patch("services.agent.capabilities.forward_event", return_value=False), \
+             mock.patch("services.agent.capabilities.reply_to_self_for",
+                        return_value=(True, "@toi")), \
+             mock.patch.object(zp, "resolve_thread", return_value={"ok": False}), \
+             mock.patch.object(zp, "_process_ai"):
+            zp.handle_event({}, "message")
+        # Cờ này là thứ _process_ai dùng để bỏ qua cổng «bắt buộc tag».
+        self.assertTrue(ev.get("_tu_toi_da_tag"))

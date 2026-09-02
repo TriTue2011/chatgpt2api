@@ -3184,6 +3184,10 @@ def _process_ai(ev: dict) -> None:
                      # để tấm ảnh gửi ngay sau đó tới được phần xử lý.
                      or _cst.dang_cho(pkey))
         _req, _kw = _caps.mention_required_for("zalop", ev.get("account_id") or "", thread_id)
+        # Tin của CHÍNH CHỦ đã khớp từ khóa riêng ở cổng isSelf (handle_event) →
+        # đã là "có tag", khỏi đòi thêm từ khóa của ô «bắt buộc tag».
+        if ev.get("_tu_toi_da_tag"):
+            _req = False
         if _dang_cho:
             _req = False
             _phi_cho.het_cho_anh(pkey)   # dùng một lần, tránh mở cổng mãi
@@ -3952,6 +3956,12 @@ def handle_event(body: dict, event_name: str = "message") -> None:
                 _self_on, _self_kw = False, ""
             if not (_self_on and is_bot_tagged(ev, _self_kw)):
                 return
+            # Chủ đã gọi bot bằng TỪ KHÓA RIÊNG của mình (@toi) → coi như ĐÃ TAG.
+            # Không bắt tin này phải chứa thêm từ khóa của ô «bắt buộc tag» (@bot):
+            # hai ô độc lập — @bot để NGƯỜI KHÁC gọi bot, @toi để CHÍNH CHỦ gọi.
+            # Thiếu cờ này thì tin "@toi xin chào" qua được cổng isSelf rồi vẫn bị
+            # cổng tag chặn vì không có "@bot", và bot im lặng.
+            ev["_tu_toi_da_tag"] = True
         # Tên nhóm (zca-js getGroupInfo) — webhook thường không kèm title
         _is_g = bool(ev.get("thread_type") == 1)
         _acc = str(ev.get("account_id") or "")
