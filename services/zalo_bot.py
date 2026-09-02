@@ -1651,13 +1651,18 @@ def process_update(body: dict, bot: dict) -> bool:
         if len(seen) > 2000:
             seen.clear()
             seen.add(mid)  # re-add — clear() vừa xoá luôn mid mới thêm ở trên
-    # TÊN KHOÁ (không kèm nội dung) của mọi tin vào đường webhook. Tài liệu
-    # bot.zapps.me/docs/webhook/ chỉ liệt kê from/chat/text/photo/caption/
-    # sticker/url/voice_url/message_id/date — KHÔNG có trường nào cho tin được
-    # trích dẫn. Dòng này là cách duy nhất biết Zalo có gửi kèm hay không, và
-    # nếu có thì gọi nó là gì, để `_extract_quote` nhận đúng khoá.
+    # Đã đo (02/09): Zalo Bot chính thức chỉ gửi from/chat/text/photo/caption/
+    # sticker/url/voice_url/message_id/date — KHÔNG có trường tin trích dẫn.
+    # Chỉ log khi payload có khoá LẠ ngoài bộ đã biết, để nếu về sau Zalo thêm
+    # trường (vd reply/quote) thì mình thấy ngay; còn tin thường thì im lặng.
     try:
-        logger.info("Zalo webhook keys=%s", sorted(msg.keys()))
+        _la = set(msg.keys()) - {
+            "from", "chat", "text", "caption", "photo", "photo_url", "sticker",
+            "url", "voice", "voice_url", "message_id", "date", "document",
+            "file_url", "file_name", "file_id", "type",
+        }
+        if _la:
+            logger.info("Zalo webhook khoá LẠ=%s (toàn bộ=%s)", sorted(_la), sorted(msg.keys()))
     except Exception:
         pass
     chat = msg.get("chat") if isinstance(msg.get("chat"), dict) else {}

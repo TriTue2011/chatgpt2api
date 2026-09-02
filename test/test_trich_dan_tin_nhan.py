@@ -303,3 +303,63 @@ class SoNuotLuaChonTests(unittest.TestCase):
                                  trich_dan="ai đó đã nhắn: “mục 3 nói gì”")
         ac.assert_not_called()      # có trích dẫn → KHÔNG chạy bộ dò
         ac_clr.assert_called()      # và dọn pending cũ
+
+
+class DoanThamChieuTests(unittest.TestCase):
+    """Đoán tin đang nhắc khi câu mơ hồ và KHÔNG có trích dẫn từ nền tảng."""
+
+    def test_cau_ro_rang_khong_kich_hoat(self) -> None:
+        from services.agent import tham_chieu as tc
+        self.assertEqual(tc.doan("u1", "em khỏe không", []), "")
+        self.assertEqual(tc.doan("u1", "mấy giờ rồi", []), "")
+
+    def test_tro_trong_lay_tin_bot_gan_nhat(self) -> None:
+        from services.agent import tham_chieu as tc
+        hist = [
+            {"role": "user", "content": "tin cháy hôm nay"},
+            {"role": "assistant", "content": "Vụ cháy Lê Quang Đạo đã được dập tắt."},
+        ]
+        out = tc.doan("u1", "cái này sao rồi", hist)
+        self.assertIn("PHỎNG ĐOÁN", out)
+        self.assertIn("Lê Quang Đạo", out)
+
+    def test_co_chu_noi_dung_tra_nhat_ky(self) -> None:
+        from services.agent import tham_chieu as tc
+        with mock.patch("services.agent.session.is_enabled", return_value=True), \
+             mock.patch("services.agent.session.search",
+                        return_value=[{"role": "assistant",
+                                       "content": "Vụ cháy đường Lê Quang Đạo, số 68."}]):
+            out = tc.doan("u1", "vụ cháy đó dập chưa", [])
+        self.assertIn("Lê Quang Đạo", out)
+        self.assertIn("PHỎNG ĐOÁN", out)
+
+    def test_khong_co_gi_de_doan_thi_rong(self) -> None:
+        from services.agent import tham_chieu as tc
+        self.assertEqual(tc.doan("u1", "cái này là gì", []), "")
+
+    def test_orchestrator_chen_khi_khong_co_trich_dan(self) -> None:
+        import services.agent.orchestrator as orch
+        from test._fakes import install_data_dir
+        hist = [
+            {"role": "user", "content": "tin cháy"},
+            {"role": "assistant", "content": "Vụ cháy Lê Quang Đạo đã dập tắt."},
+        ]
+        xong = {"choices": [{"message": {"content": "Dạ rồi ạ."}}]}
+        with install_data_dir():
+            with mock.patch.object(orch, "_get_history", return_value=list(hist)), \
+                 mock.patch.object(orch, "call_model", return_value=xong) as fake:
+                orch.orchestrate("cái này sao rồi", "zalo_doan")
+        sp = fake.call_args[0][1][0]["content"]
+        self.assertIn("PHỎNG ĐOÁN", sp)
+
+    def test_orchestrator_co_trich_dan_thi_khong_doan(self) -> None:
+        """Có trích dẫn thật rồi thì không chạy đoán (khỏi chèn hai khối)."""
+        import services.agent.orchestrator as orch
+        from test._fakes import install_data_dir
+        xong = {"choices": [{"message": {"content": "Dạ ạ."}}]}
+        with install_data_dir():
+            with mock.patch("services.agent.tham_chieu.doan") as doan, \
+                 mock.patch.object(orch, "call_model", return_value=xong):
+                orch.orchestrate("cái này sao rồi", "zalo_td2",
+                                 trich_dan="ai đó đã nhắn: “vụ cháy”")
+        doan.assert_not_called()

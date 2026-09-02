@@ -2781,6 +2781,18 @@ def _orchestrate_locked(user_text: str, user_id: str,
               "\"cái này\", \"vụ đó\", \"chỗ đó\" là trỏ vào đó. "
               "Đừng hỏi lại họ đang nhắc tới gì."
         )
+    else:
+        # Không có trích dẫn thật từ nền tảng (vd Zalo Bot không gửi) mà câu lại
+        # trỏ trống ("cái này sao rồi") → ĐOÁN tin đang nhắc từ nhật ký, đánh dấu
+        # PHỎNG ĐOÁN để model dùng nếu hợp, hỏi lại nếu trật. Module tự bỏ qua
+        # khi câu không mơ hồ, nên gọi vô điều kiện ở nhánh này là an toàn.
+        try:
+            from services.agent import tham_chieu as _tc
+            _doan = _tc.doan(user_id, user_text, hist_before)
+            if _doan:
+                sys_prompt += _doan
+        except Exception:
+            pass
     # CẤM CHỌN MỤC TỪ DANH SÁCH CŨ. Lỗi thật (đo 02/09): sau bản tin đánh số còn
     # trong lịch sử, người dùng gõ "Tét 1" / "Test 2" — model hiểu là "chọn mục
     # 1/2" của danh sách cũ rồi trả lời sai sang chuyện trước. Việc chọn mục THẬT
