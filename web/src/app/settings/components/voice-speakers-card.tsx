@@ -190,13 +190,13 @@ export function VoiceSpeakersCard() {
     String((dungCho[ten] || {}).stt_tieng || "")
       .split(",").map((x) => x.trim()).filter(Boolean);
 
-  /** Gửi những tiếng vừa đổi giọng lồng tiếng. Trả về số tiếng đã gửi.
+  /** Ghi những tiếng vừa đổi giọng lồng tiếng. Trả về số tiếng đã gửi.
    *
-   *  Bảng máy chủ trả về phải ghi NGƯỢC vào config trong store. `POST
-   *  /api/settings` gửi NGUYÊN cả config (`SettingsUpdateRequest` nhận khoá
-   *  lạ), mà bản trong store là bản chụp TRƯỚC khi endpoint này ghi — nên lần
-   *  bấm Lưu kế tiếp, ở thẻ này hay ở bất kỳ thẻ Cài đặt nào khác, đè giọng cũ
-   *  lên và xoá im lặng lựa chọn vừa lưu.
+   *  Bảng máy chủ chốt lại được ghi NGƯỢC vào config trong store, vì
+   *  `POST /api/settings` gửi NGUYÊN cả config (`SettingsUpdateRequest` khai
+   *  extra="allow") và `config.update` đè thẳng khoá `dich`. Không ghi ngược
+   *  thì mọi lượt lưu sau đó — nút này bấm lần hai, hay bất kỳ thẻ Cài đặt nào
+   *  khác — xoá im lặng giọng vừa chọn.
    */
   const luuGiongDub = async (): Promise<number> => {
     const doi = Object.keys(dubChon).filter((ma) => dubChon[ma] !== (dubGoc[ma] || ""));
@@ -749,11 +749,14 @@ export function VoiceSpeakersCard() {
             placeholder="http://IP-GATEWAY:3030" />
         </div>
 
-        {/* Một nút Lưu cho cả thẻ. Giọng lồng tiếng nằm ở khoá config khác và
-            được backend kiểm (giọng phải đã tải model) nên phải gửi riêng —
-            nhưng người dùng vẫn chỉ thấy đúng một nút. */}
+        {/* MỘT nút Lưu, và nó phải lưu MỌI thứ đang chờ trong thẻ này.
+            Giọng lồng tiếng buộc phải đi endpoint riêng vì máy chủ còn kiểm
+            "giọng này đã tải model chưa" — thứ mà /api/settings không kiểm.
+            Nên ghi nó TRƯỚC rồi gộp kết quả vào config, để lượt saveConfig()
+            ngay sau — gửi NGUYÊN cả config lên /api/settings — mang đúng giọng
+            vừa chọn. Làm ngược lại thì chính lượt lưu chung đẩy giọng cũ đè
+            lên giọng mới, và người dùng thấy như bấm Lưu chẳng ăn gì. */}
         <Button onClick={async () => {
-            await saveConfig();
             try {
               await luuGiongDub();
             } catch (e) {
@@ -761,7 +764,7 @@ export function VoiceSpeakersCard() {
               void load();
               return;
             }
-            toast.success("Đã lưu cấu hình giọng nói");
+            await saveConfig();
             void load();
           }}
           disabled={isSavingConfig} className="w-full" size="sm">
