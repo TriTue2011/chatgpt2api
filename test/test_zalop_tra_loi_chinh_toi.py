@@ -25,7 +25,7 @@ class ReplyToSelfReaderTests(unittest.TestCase):
     def test_bat_va_co_keyword(self):
         from services.agent import capabilities as caps
         with mock.patch("services.config.config.get",
-                        return_value=self._cfg({"reply_to_self": True, "keyword": "@bot"})):
+                        return_value=self._cfg({"reply_to_self": True, "self_keyword": "@bot", "keyword": ""})):
             on, kw = caps.reply_to_self_for("zalop", "acc1", "th1")
         self.assertTrue(on)
         self.assertEqual(kw, "@bot")
@@ -35,7 +35,7 @@ class ReplyToSelfReaderTests(unittest.TestCase):
         # bot tự sinh → phải TẮT dù cờ bật.
         from services.agent import capabilities as caps
         with mock.patch("services.config.config.get",
-                        return_value=self._cfg({"reply_to_self": True, "keyword": ""})):
+                        return_value=self._cfg({"reply_to_self": True, "self_keyword": "", "keyword": "@nguoikhac"})):
             on, kw = caps.reply_to_self_for("zalop", "acc1", "th1")
         self.assertFalse(on)
 

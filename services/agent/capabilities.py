@@ -6927,12 +6927,15 @@ def reply_to_self_for(platform: str, bot_id: str, chat_id: str,
     """Thread có cho bot TRẢ LỜI CẢ TIN CỦA CHÍNH CHỦ (isSelf) không?
 
     Dùng khi bot zca-js chạy trên CHÍNH tài khoản người dùng: tin chủ tự gõ bị
-    Zalo đánh isSelf và mặc định bị bỏ. Bật cờ này + có từ khóa tag thì tin chủ
-    CÓ TAG được xử lý. Trả ``(bật, keyword)`` — đọc từ `thread_mention_filters`
-    (cùng bản ghi với `required`/`keyword`), khóa `reply_to_self`.
+    Zalo đánh isSelf và mặc định bị bỏ. Bật cờ này + có TỪ KHÓA RIÊNG thì tin
+    chủ chứa từ khóa đó được xử lý. Trả ``(bật, self_keyword)``.
 
-    Keyword BẮT BUỘC không rỗng (UI ép): câu bot tự sinh là văn xuôi không tag
-    nên không lọt lại — đó là chốt chống lặp. Rỗng keyword → coi như TẮT.
+    Từ khóa nằm ở field RIÊNG ``self_keyword`` — ĐỘC LẬP với ``keyword`` của
+    «bắt buộc tag» (thứ để lọc tin NGƯỜI KHÁC). Hai việc khác nhau: một cái kích
+    hoạt cho chính chủ, một cái lọc người khác; không dùng chung ô.
+
+    ``self_keyword`` BẮT BUỘC không rỗng (UI ép): câu bot tự sinh là văn xuôi
+    không chứa từ khóa nên không lọt lại — đó là chốt chống lặp. Rỗng → coi như TẮT.
     """
     def _lookup(key: str) -> tuple[bool, str] | None:
         try:
@@ -6941,7 +6944,7 @@ def reply_to_self_for(platform: str, bot_id: str, chat_id: str,
             if isinstance(m, dict) and key in m:
                 v = m.get(key)
                 if isinstance(v, dict):
-                    kw = str(v.get("keyword") or "").strip()
+                    kw = str(v.get("self_keyword") or "").strip()
                     on = bool(v.get("reply_to_self")) and bool(kw)
                     return (on, kw)
         except Exception:
