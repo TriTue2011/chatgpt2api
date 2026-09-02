@@ -6922,6 +6922,38 @@ def mention_required_for(platform: str, bot_id: str, chat_id: str,
     return (False, "")
 
 
+def reply_to_self_for(platform: str, bot_id: str, chat_id: str,
+                      topic_id: str | int | None = None) -> tuple[bool, str]:
+    """Thread có cho bot TRẢ LỜI CẢ TIN CỦA CHÍNH CHỦ (isSelf) không?
+
+    Dùng khi bot zca-js chạy trên CHÍNH tài khoản người dùng: tin chủ tự gõ bị
+    Zalo đánh isSelf và mặc định bị bỏ. Bật cờ này + có từ khóa tag thì tin chủ
+    CÓ TAG được xử lý. Trả ``(bật, keyword)`` — đọc từ `thread_mention_filters`
+    (cùng bản ghi với `required`/`keyword`), khóa `reply_to_self`.
+
+    Keyword BẮT BUỘC không rỗng (UI ép): câu bot tự sinh là văn xuôi không tag
+    nên không lọt lại — đó là chốt chống lặp. Rỗng keyword → coi như TẮT.
+    """
+    def _lookup(key: str) -> tuple[bool, str] | None:
+        try:
+            from services.config import config
+            m = config.get().get("thread_mention_filters") or {}
+            if isinstance(m, dict) and key in m:
+                v = m.get(key)
+                if isinstance(v, dict):
+                    kw = str(v.get("keyword") or "").strip()
+                    on = bool(v.get("reply_to_self")) and bool(kw)
+                    return (on, kw)
+        except Exception:
+            pass
+        return None
+    for k in _thread_keys(platform, bot_id, chat_id, topic_id):
+        r = _lookup(k)
+        if r is not None:
+            return r
+    return (False, "")
+
+
 def tag_gate_allows(
     *,
     required: bool,

@@ -3934,9 +3934,24 @@ def handle_event(body: dict, event_name: str = "message") -> None:
                 )
         except Exception:
             pass
-        # 2) AI chỉ xử lý tin nhắn thường, không phải tin tự gửi.
-        if event_name != "message" or ev.get("is_self") or not ev.get("thread_id"):
+        # 2) AI xử lý tin nhắn thường. Tin TỰ GỬI (isSelf) mặc định BỎ — để bot
+        # không trả lời chính câu nó vừa gửi (vòng lặp vô hạn). NGOẠI LỆ: khi bot
+        # chạy trên CHÍNH tài khoản chủ, chủ tự gõ cũng bị đánh isSelf; nếu thread
+        # bật «trả lời cả tin của tôi» (reply_to_self) VÀ tin CÓ TAG thì cho qua.
+        # An toàn chống lặp: câu bot tự sinh là văn xuôi KHÔNG tag → is_bot_tagged
+        # trả False → vẫn bị bỏ; keyword bắt buộc không rỗng (UI ép + reader chặn).
+        if event_name != "message" or not ev.get("thread_id"):
             return
+        if ev.get("is_self"):
+            try:
+                from services.agent import capabilities as _caps_self
+                _self_on, _self_kw = _caps_self.reply_to_self_for(
+                    "zalop", str(ev.get("account_id") or ""),
+                    str(ev.get("thread_id") or ""))
+            except Exception:
+                _self_on, _self_kw = False, ""
+            if not (_self_on and is_bot_tagged(ev, _self_kw)):
+                return
         # Tên nhóm (zca-js getGroupInfo) — webhook thường không kèm title
         _is_g = bool(ev.get("thread_type") == 1)
         _acc = str(ev.get("account_id") or "")
