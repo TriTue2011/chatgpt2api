@@ -842,11 +842,10 @@ def _handle_update(upd: dict, bot: dict, seen: set[str]) -> None:
     if not isinstance(upd, dict):
         return
     msg = upd.get("message") or (upd.get("result") or {}).get("message") or {}
-    # LOG THÔ mọi tin Zalo (chẩn đoán nhận diện file + xác minh trích dẫn) — keys
-    # + raw. Nâng lên 3000 tạm thời để không cắt mất khối tin trích nếu có.
+    # LOG THÔ mọi tin Zalo (chẩn đoán nhận diện file) — keys + raw cắt ngắn.
     try:
         logger.info("Zalo IN keys=%s raw=%s", list(msg.keys()),
-                    json.dumps(msg, ensure_ascii=False)[:3000])
+                    json.dumps(msg, ensure_ascii=False)[:600])
     except Exception:
         pass
     mid = str(msg.get("message_id") or "")
@@ -1664,13 +1663,6 @@ def process_update(body: dict, bot: dict) -> bool:
         }
         if _la:
             logger.info("Zalo webhook khoá LẠ=%s (toàn bộ=%s)", sorted(_la), sorted(msg.keys()))
-    except Exception:
-        pass
-    # CHẨN ĐOÁN TẠM (gỡ sau khi xác minh trích dẫn): ghi TOÀN BỘ payload thô của
-    # webhook, để soi mọi trường — kể cả trường lồng sâu hay nằm ở cấp body ngoài
-    # `message` — xem tin bấm "Trả lời" có mang tham chiếu tin trích không.
-    try:
-        logger.info("Zalo webhook RAW body=%s", json.dumps(body, ensure_ascii=False)[:3000])
     except Exception:
         pass
     chat = msg.get("chat") if isinstance(msg.get("chat"), dict) else {}
