@@ -1511,6 +1511,41 @@ def _dedup(msg_id: str) -> bool:
     return False
 
 
+def _mo_ta_trich_dan(quote: Any, own_id: str = "") -> str:
+    """`data.quote` của zca-js → một dòng ngữ cảnh cho model, hoặc "" nếu không có.
+
+    Khuôn `TQuote` (zca-js/dist/models/Message.d.ts): ``{ownerId, cliMsgId,
+    globalMsgId, cliMsgType, ts, msg, attach, fromD, ttl}`` — ``msg`` là nội
+    dung tin được trích, ``fromD`` tên người gửi tin đó, ``ts`` mốc thời gian
+    tính bằng mili-giây.
+
+    Trích một tấm ảnh / tệp thì ``msg`` rỗng; vẫn trả về dòng mô tả để model
+    biết người ta đang trỏ vào một tin có đính kèm chứ không phải hỏi khơi khơi.
+    """
+    if not isinstance(quote, dict):
+        return ""
+    noi_dung = str(quote.get("msg") or "").strip()
+    dinh_kem = str(quote.get("attach") or "").strip()
+    if not noi_dung and not dinh_kem:
+        return ""
+    # Trích tin do CHÍNH tài khoản bot gửi là trường hợp phổ biến nhất (người
+    # ta trả lời vào câu bot vừa nói). So bằng ID chủ tin, không so tên hiển thị
+    # — tên hiển thị trong quote là tên người gửi tin ĐƯỢC TRÍCH, còn tên ở
+    # ngoài là của người gửi tin HIỆN TẠI, hai thứ khác nhau.
+    nguoi = str(quote.get("fromD") or "").strip() or "ai đó"
+    if own_id and str(quote.get("ownerId") or "").strip() == str(own_id).strip():
+        nguoi = "chính em (bot)"
+    luc = ""
+    try:
+        ts = float(quote.get("ts") or 0) / 1000.0
+        if ts > 0:
+            luc = " lúc " + time.strftime("%H:%M %d/%m/%Y", time.localtime(ts))
+    except (TypeError, ValueError):
+        luc = ""
+    than = noi_dung or "(một tin có ảnh/tệp đính kèm)"
+    return f"{nguoi}{luc} đã nhắn: “{than}”"
+
+
 def _parse_event(body: dict) -> dict:
     """Chuẩn hóa event zca-js → dict phẳng dùng chung cho AI + HA forward."""
     data = body.get("data") if isinstance(body.get("data"), dict) else {}
@@ -1595,6 +1630,12 @@ def _parse_event(body: dict) -> dict:
         "ts": str(data.get("ts") or "").strip(),
         "ttl": data.get("ttl"),
         "mentions": mentions,
+        # Người dùng bấm "Trả lời" vào một tin cũ rồi hỏi tiếp. zca-js đính tin
+        # được trích ở `data.quote` và zalo-server chuyển tiếp NGUYÊN event nên
+        # nó tới được đây; trước đây bị bỏ qua, thành ra bot không thấy người ta
+        # đang hỏi về cái gì.
+        "trich_dan": _mo_ta_trich_dan(data.get("quote"),
+                                      str(body.get("_accountId") or "").strip()),
     }
 
 
@@ -3659,6 +3700,9 @@ def _process_ai(ev: dict) -> None:
             # Quyền admin quyết định phạm vi thư viện media: admin xem cả kho,
             # người thường chỉ media chính họ tạo (đặc tả 31/07).
             is_admin=_is_admin,
+            # Tin cũ họ bấm "Trả lời" vào — đi đường riêng, không trộn vào câu
+            # hỏi (câu hỏi còn được đem đi tra cứu nguyên văn).
+            trich_dan=str(ev.get("trich_dan") or ""),
         )
         try:
             from services import net_guard

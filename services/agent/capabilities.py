@@ -20,8 +20,9 @@ import logging
 import os
 import re
 import shutil
+import time
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Any, Callable
 
 from services.config import config
 from services.local_gateway import gateway_base_url
@@ -1275,8 +1276,36 @@ def _h_schedule(args: dict, ctx: dict) -> dict:
     }
 
 
+def _luc_nao(ts: Any) -> str:
+    """Mốc thời gian một lượt chat → chữ người đọc được, kèm khoảng cách tới nay.
+
+    Có khoảng cách ("3 ngày trước") thì model trả lời thẳng được câu "cái đó lâu
+    chưa" mà không phải tự trừ ngày — thứ nó làm sai thường xuyên.
+    """
+    try:
+        t = float(ts or 0)
+    except (TypeError, ValueError):
+        return ""
+    if t <= 0:
+        return ""
+    khi = time.strftime("%H:%M %d/%m/%Y", time.localtime(t))
+    giay = max(0.0, time.time() - t)
+    if giay < 3600:
+        cach = f"{int(giay // 60)} phút trước"
+    elif giay < 86400:
+        cach = f"{int(giay // 3600)} giờ trước"
+    else:
+        cach = f"{int(giay // 86400)} ngày trước"
+    return f"{khi} ({cach})"
+
+
 def _h_search_history(args: dict, ctx: dict) -> dict:
-    """Full-text search past conversation turns for this user."""
+    """Full-text search past conversation turns for this user.
+
+    Kèm THỜI GIAN từng lượt: `session.search` vẫn luôn trả `created_at`, chỉ là
+    chỗ này trước đây vứt đi — nên hỏi "câu đó em hỏi lúc nào" thì bot tìm được
+    nội dung mà đành nói không biết thời gian.
+    """
     from services.agent import session as sess
 
     q = str(args.get("query") or "").strip()
@@ -1288,13 +1317,14 @@ def _h_search_history(args: dict, ctx: dict) -> dict:
     hits = sess.search(user_id, q, limit=8)
     if not hits:
         return {"text": f"Em không thấy đoạn chat nào khớp “{q}” ạ."}
-    lines = [f"Em tìm thấy {len(hits)} đoạn liên quan “{q}”:"]
+    lines = [f"Em tìm thấy {len(hits)} đoạn liên quan “{q}” (mới nhất trước):"]
     for h in hits:
         role = "Anh/chị" if h.get("role") == "user" else "Em"
         snippet = str(h.get("content") or "").replace("\n", " ")
         if len(snippet) > 160:
             snippet = snippet[:160] + "…"
-        lines.append(f"• {role}: {snippet}")
+        luc = _luc_nao(h.get("created_at"))
+        lines.append(f"• [{luc}] {role}: {snippet}" if luc else f"• {role}: {snippet}")
     return {"text": "\n".join(lines)}
 
 
@@ -5691,7 +5721,9 @@ CAPABILITIES: dict[str, Capability] = {
         emoji="🔍", label="Tìm lại chuyện đã chat",
         description=(
             "Tìm trong lịch sử hội thoại đã lưu của người này (full-text). "
-            "Dùng khi họ hỏi 'hôm trước mình nói gì về…', 'nhắc lại việc X'."
+            "Mỗi kết quả KÈM THỜI ĐIỂM đã nhắn và khoảng cách tới nay. "
+            "Dùng khi họ hỏi 'hôm trước mình nói gì về…', 'nhắc lại việc X', "
+            "và cả khi họ hỏi 'chuyện đó lúc nào / bao lâu rồi'."
         ),
         parameters={"type": "object", "properties": {
             "query": {"type": "string", "description": "Từ khoá / chủ đề cần tìm"}},

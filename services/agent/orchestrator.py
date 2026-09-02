@@ -627,6 +627,10 @@ _TURN_BUDGET_S = 240.0
 # Chờ lượt trước của CÙNG người. Hết chừng này thì báo bận chứ không xếp hàng
 # vô hạn — hàng đợi vô hạn là thứ biến một lượt treo thành chết cả hội thoại.
 _LOCK_WAIT_S = 45.0
+# Trần độ dài đoạn trích dẫn nhét vào system prompt. Người ta hay trả lời vào
+# một bản tin dài của bot; cả bài vào prompt là tốn token mà phần đuôi gần như
+# không bao giờ là thứ họ đang hỏi tới.
+_TRICH_DAN_MAX = 1200
 
 
 def _ghi_so_anh(user_id: str, urls: list[str]) -> None:
@@ -1920,7 +1924,8 @@ def orchestrate(user_text: str, user_id: str,
                 ha_fastpath: bool = True,
                 model: str | None = None,
                 auto_approve: bool = False,
-                is_admin: bool = False) -> dict[str, Any]:
+                is_admin: bool = False,
+                trich_dan: str = "") -> dict[str, Any]:
     """`allow` = tập nhóm chức năng threadID này được phép (None = tất cả). Lọc
     tool schema + chặn dispatch theo nhóm để giới hạn chức năng cho từng người.
 
@@ -1928,6 +1933,12 @@ def orchestrate(user_text: str, user_id: str,
     thông minh rõ ràng được thực thi cục bộ ngay — không vòng qua provider.
 
     `model` = override model (vd. per-admin ai_model); trống → model_hints/default.
+
+    `trich_dan` = tin nhắn CŨ mà người dùng bấm "trả lời/đính kèm" ở lượt này
+    (Zalo và Telegram đều có nút đó). Đi ĐƯỜNG RIÊNG chứ KHÔNG nhập vào
+    `user_text`: mọi tầng tra cứu phía sau (searxng, federated_search, RAG
+    kho tri thức, prefetch MCP) lấy NGUYÊN VĂN `user_text` làm truy vấn, nên
+    nhét đoạn trích vào đó là đi tra cứu cả đoạn trích.
 
     FIX5: cả lượt (load lịch sử → LLM/tool → ghi lịch sử) chạy dưới 1 khoá
     riêng theo user_id — 2 luồng cùng user (vd chat thường + reminder task bắn
@@ -1950,6 +1961,7 @@ def orchestrate(user_text: str, user_id: str,
             return _orchestrate_locked(
                 user_text, user_id, allow=allow, ha_fastpath=ha_fastpath,
                 model=model, auto_approve=auto_approve, is_admin=is_admin,
+                trich_dan=trich_dan,
             )
         finally:
             # Khoá do CHÍNH thread chạy thân hàm nhả. Nếu hết giờ mà bên ngoài
@@ -1979,7 +1991,8 @@ def _orchestrate_locked(user_text: str, user_id: str,
                         ha_fastpath: bool = True,
                         model: str | None = None,
                         auto_approve: bool = False,
-                        is_admin: bool = False) -> dict[str, Any]:
+                        is_admin: bool = False,
+                        trich_dan: str = "") -> dict[str, Any]:
     import time as _time
     t0 = _time.time()
     tools_used: list[str] = []
@@ -2719,6 +2732,20 @@ def _orchestrate_locked(user_text: str, user_id: str,
     sys_prompt = super_context.maybe_attach(
         sys_prompt, user_id, user_text, hist_before, allow=allow,
     )
+    # Người dùng bấm "trả lời/đính kèm" một tin cũ rồi hỏi tiếp. Đoạn trích vào
+    # SYSTEM PROMPT chứ không vào `user_text` — xem docstring orchestrate(): mọi
+    # tầng tra cứu phía sau lấy nguyên văn `user_text` làm truy vấn.
+    #
+    # Cũng KHÔNG ghi vào lịch sử: nội dung được trích thường chính là một lượt
+    # đã nằm trong lịch sử rồi, chép lại lần nữa là nhân đôi vô ích.
+    if str(trich_dan or "").strip():
+        sys_prompt += (
+            "\n\n## Tin nhắn người dùng đang TRÍCH DẪN\n"
+            + str(trich_dan).strip()[:_TRICH_DAN_MAX]
+            + "\n\nCâu của họ ở lượt này nói VỀ đoạn trích trên: "
+              "\"cái này\", \"vụ đó\", \"chỗ đó\" là trỏ vào đó. "
+              "Đừng hỏi lại họ đang nhắc tới gì."
+        )
     messages = [{"role": "system", "content": sys_prompt}] + list(model_hist)
 
     # 2) Agentic loop.
