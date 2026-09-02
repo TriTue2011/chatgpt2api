@@ -1254,6 +1254,27 @@ _KW_PHATLOA_BAOCAO = _re_mod.compile(
 #: Mã mục trần ('A1','E1','B2'…) người dùng gõ để chọn — cũng là lúc cần lời dặn.
 _RE_MA_TRAN = _re_mod.compile(r"^[a-z]{1,2}\d{1,2}[a-z]{0,3}$")
 
+# Dòng danh sách đánh số trong tin bot đã gửi: "1. …", "2) …", hoặc "mục 3".
+# Dùng để phát hiện danh sách CŨ còn trong lịch sử, rồi cấm model tự chọn mục.
+_RE_DONG_SO = _re_mod.compile(r"(?im)^\s*(?:\d{1,2}[.)]\s+\S|mục\s+\d{1,2}\b)")
+# Tin người dùng LÀ một lựa chọn đứng riêng ("1", "a", "A1", "3.") — chỉ khi
+# đúng khuôn này thì con số MỚI có thể là chọn mục; ngoài ra là câu thường.
+_RE_CHON_TRAN = _re_mod.compile(r"^[\s.\-–)(]*[a-zA-Z]{0,2}\d{1,2}[a-zA-Z]{0,3}[\s.\-–)(]*$")
+
+
+def _lich_su_co_danh_sach_so(hist: list[dict[str, Any]]) -> bool:
+    """Vài lượt bot gần nhất có danh sách đánh số không (để cấm chọn mục cũ)."""
+    n = 0
+    for m in reversed(hist or []):
+        if (m.get("role") or "") != "assistant":
+            continue
+        if _RE_DONG_SO.search(str(m.get("content") or "")):
+            return True
+        n += 1
+        if n >= 4:      # chỉ nhìn 4 lượt bot gần nhất — danh sách xa hơn coi như nguội
+            break
+    return False
+
 
 _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
     ("image", _KW_IMAGE, "- Vẽ/tạo ảnh → generate_image."),
@@ -2101,20 +2122,34 @@ def _orchestrate_locked(user_text: str, user_id: str,
     if not user_text:
         return {"text": "Dạ anh/chị cần em giúp gì ạ? 😊"}
 
+    # Người dùng bấm "Trả lời" một tin cụ thể → đó là tín hiệu RÕ RÀNG họ KHÔNG
+    # chọn mục trong danh sách đánh số cũ. Bỏ qua cả hai bộ dò lựa chọn và dọn
+    # luôn bản chờ, để một con số trong tin trích dẫn (vd trả lời vào "mục 3…"
+    # rồi hỏi tiếp) không bị nuốt thành "chọn phương án 3" của menu cũ.
+    _co_trich_dan = bool(str(trich_dan or "").strip())
+    if _co_trich_dan:
+        try:
+            ask_choices.clear_pending(user_id)
+            from services.agent import muc_luc as _ml
+            _ml.clear_pending(user_id)
+        except Exception:
+            pass
+
     # 0) Resolve a pending ask-choice (user tapped button or replied 1/2/…)
     picked = None
-    try:
-        picked = ask_choices.resolve_reply(user_id, user_text)
-        if picked:
-            user_text = picked
-    except Exception:
-        pass
+    if not _co_trich_dan:
+        try:
+            picked = ask_choices.resolve_reply(user_id, user_text)
+            if picked:
+                user_text = picked
+        except Exception:
+            pass
 
     # 0.1) Không phải lựa chọn của câu hỏi nào → có thể là MÃ MỤC của danh sách
     # vừa gửi ("A1", "3"). Tra sau ask_choices: câu hỏi model chủ động đặt được
     # ưu tiên, vì bản chờ mã mục sống tới 30 phút nên hay còn tồn.
     _tin_da_chon = ""      # tiêu đề tin vừa được chọn bằng mã mục (mục 1.44)
-    if not picked:
+    if not picked and not _co_trich_dan:
         try:
             from services.agent import muc_luc as _ml
             _chon_muc = _ml.resolve_reply(user_id, user_text)
@@ -2745,6 +2780,24 @@ def _orchestrate_locked(user_text: str, user_id: str,
             + "\n\nCâu của họ ở lượt này nói VỀ đoạn trích trên: "
               "\"cái này\", \"vụ đó\", \"chỗ đó\" là trỏ vào đó. "
               "Đừng hỏi lại họ đang nhắc tới gì."
+        )
+    # CẤM CHỌN MỤC TỪ DANH SÁCH CŨ. Lỗi thật (đo 02/09): sau bản tin đánh số còn
+    # trong lịch sử, người dùng gõ "Tét 1" / "Test 2" — model hiểu là "chọn mục
+    # 1/2" của danh sách cũ rồi trả lời sai sang chuyện trước. Việc chọn mục THẬT
+    # đã được hai bộ dò (ask_choices/muc_luc) xử lý TRƯỚC khi tới model và thay
+    # hẳn user_text; nên nếu tin còn nguyên văn tới đây thì nó KHÔNG phải lựa
+    # chọn. Chỉ dặn khi (a) lịch sử gần có danh sách đánh số, và (b) tin hiện
+    # tại KHÔNG phải một mã/số đứng riêng — đúng lúc model hay đoán nhầm.
+    if (_lich_su_co_danh_sach_so(model_hist)
+            and not _RE_CHON_TRAN.match((user_text or "").strip())):
+        sys_prompt += (
+            "\n\n## Đừng tự chọn mục từ danh sách CŨ\n"
+            "Trước đây em có gửi danh sách đánh số (1., 2., … hoặc «mục N»). "
+            "Tin HIỆN TẠI của người dùng KHÔNG phải một con số/mã đứng riêng, "
+            "nên TUYỆT ĐỐI đừng hiểu nó là «chọn mục N» của danh sách cũ đó. "
+            "Việc chọn mục đã được hệ thống xử lý trước khi tới em — nếu họ "
+            "thật sự chọn, em đã nhận thẳng nội dung mục. Cứ trả lời tin hiện "
+            "tại như một câu độc lập; một con số nằm trong câu chỉ là con số."
         )
     messages = [{"role": "system", "content": sys_prompt}] + list(model_hist)
 

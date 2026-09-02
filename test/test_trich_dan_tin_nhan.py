@@ -252,3 +252,54 @@ class LucNaoTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SoNuotLuaChonTests(unittest.TestCase):
+    """Lỗi 02/09: sau danh sách đánh số cũ, tin thường có số bị hiểu là 'chọn mục N'.
+
+    Sửa ở tầng chỉ dẫn: khi lịch sử gần có danh sách đánh số MÀ tin hiện tại
+    không phải một mã/số đứng riêng → chèn khối cấm chọn mục cũ.
+    """
+
+    def _run(self, user_text, hist, trich_dan=""):
+        import services.agent.orchestrator as orch
+        from test._fakes import install_data_dir
+        xong = {"choices": [{"message": {"content": "Dạ vâng ạ."}}]}
+        with install_data_dir():
+            with mock.patch.object(orch, "_get_history", return_value=list(hist)), \
+                 mock.patch.object(orch, "call_model", return_value=xong) as fake:
+                orch.orchestrate(user_text, "zalo_songuot", trich_dan=trich_dan)
+        return fake.call_args[0][1][0]["content"]   # system prompt
+
+    def test_tin_co_so_sau_danh_sach_bi_cam_chon_muc(self) -> None:
+        hist = [
+            {"role": "user", "content": "tin cháy"},
+            {"role": "assistant", "content": "Vụ cháy:\n1. Thời gian\n2. Địa điểm"},
+        ]
+        sp = self._run("Tét 1", hist)
+        self.assertIn("Đừng tự chọn mục", sp)
+
+    def test_khong_co_danh_sach_thi_khong_chen(self) -> None:
+        hist = [{"role": "assistant", "content": "Dạ em nghe ạ."}]
+        sp = self._run("Tét 1", hist)
+        self.assertNotIn("Đừng tự chọn mục", sp)
+
+    def test_chon_that_su_mot_so_dung_rieng_khong_bi_chen(self) -> None:
+        # "1" đứng riêng LÀ lựa chọn hợp lệ (bộ dò xử lý) → không chèn khối cấm.
+        hist = [{"role": "assistant", "content": "Chọn:\n1. A\n2. B"}]
+        sp = self._run("1", hist)
+        self.assertNotIn("Đừng tự chọn mục", sp)
+
+    def test_trich_dan_bo_qua_bo_do_lua_chon(self) -> None:
+        """Tin trích dẫn: bộ dò ask_choices/muc_luc bị bỏ qua và pending bị dọn."""
+        import services.agent.orchestrator as orch
+        from test._fakes import install_data_dir
+        xong = {"choices": [{"message": {"content": "Dạ ạ."}}]}
+        with install_data_dir():
+            with mock.patch("services.agent.ask_choices.resolve_reply") as ac, \
+                 mock.patch("services.agent.ask_choices.clear_pending") as ac_clr, \
+                 mock.patch.object(orch, "call_model", return_value=xong):
+                orch.orchestrate("3", "zalo_td",
+                                 trich_dan="ai đó đã nhắn: “mục 3 nói gì”")
+        ac.assert_not_called()      # có trích dẫn → KHÔNG chạy bộ dò
+        ac_clr.assert_called()      # và dọn pending cũ
