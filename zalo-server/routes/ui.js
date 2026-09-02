@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { zaloAccounts, loginZaloAccount } from '../api/zalo/zalo.js';
 import { proxyService } from '../services/proxyService.js';
+import { selfReplyService } from '../services/selfReplyService.js';
 import { adminMiddleware } from '../services/authService.js';
 import dotenv from 'dotenv';
 import { broadcastMessage } from '../services/websocketHub.js';
@@ -221,6 +222,55 @@ router.delete('/proxies', adminMiddleware, (req, res) => {
       res.json({ success: true, message: 'Xóa proxy thành công' });
   } catch (error) {
       res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ── "Trả lời cả tin của chính tôi" theo từng thread ──────────────────────────
+// Bật/tắt + từ khóa RIÊNG cho mỗi threadId, mặc định tắt. Chống lặp: chỉ tin
+// isSelf chứa từ khóa của thread mới được đẩy kèm cờ self_reply.
+router.get('/self-reply', adminMiddleware, (req, res) => {
+  const acceptHeader = req.headers.accept || '';
+  if (acceptHeader.includes('application/json')) {
+    return res.json({ success: true, data: selfReplyService.getAll() });
+  }
+  res.render('self-reply');
+});
+
+// Thêm/cập nhật cấu hình cho một thread
+router.post('/self-reply', adminMiddleware, (req, res) => {
+  const { threadId, enabled, keyword } = req.body || {};
+  if (!threadId || !String(threadId).trim()) {
+    return res.status(400).json({ success: false, error: 'threadId không hợp lệ' });
+  }
+  const on = enabled === true || enabled === 'true' || enabled === 1 || enabled === '1';
+  const kw = String(keyword || '').trim();
+  // CHỐNG LẶP: bật mà không có từ khóa là không được — nếu không có gì phân biệt
+  // tin chủ với câu bot tự sinh thì bot sẽ trả lời chính nó → lặp.
+  if (on && !kw) {
+    return res.status(400).json({
+      success: false,
+      error: 'Bật thì PHẢI có từ khóa (chống lặp). Chọn ký hiệu bot không tự nói, vd @bot, //, #me.',
+    });
+  }
+  try {
+    const saved = selfReplyService.set(String(threadId).trim(), on, kw);
+    res.json({ success: true, data: saved });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Xóa cấu hình của một thread
+router.delete('/self-reply', adminMiddleware, (req, res) => {
+  const { threadId } = req.body || {};
+  if (!threadId || !String(threadId).trim()) {
+    return res.status(400).json({ success: false, error: 'threadId không hợp lệ' });
+  }
+  try {
+    selfReplyService.remove(String(threadId).trim());
+    res.json({ success: true, message: 'Đã xóa' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

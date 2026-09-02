@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Trả lời tin của chính tôi | Zalo Chat</title>
+    <meta name="theme-color" content="#0068ff">
+    <link rel="icon" type="image/png" href="<%= ingressPath %>/chat/icons/icon-192.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="<%= ingressPath %>/chat/css/app.css">
+    <style>
+        .sr-item { display: flex; align-items: center; justify-content: space-between; padding: 16px 0; border-bottom: 1px solid var(--border-color); gap: 12px; }
+        .sr-item:last-child { border-bottom: none; }
+        .sr-id { font-family: 'SF Mono','Fira Code','Consolas',monospace; font-size: 13px; word-break: break-all; color: var(--text-primary); }
+        .sr-meta { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
+        .sr-badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+        .sr-on { background: #e6f7ea; color: #1a7f37; }
+        .sr-off { background: #f0f0f0; color: #888; }
+        .sr-note { font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+    </style>
+</head>
+<body>
+
+<header class="app-header">
+    <a href="<%= ingressPath %>/" class="app-logo">
+        <span class="app-logo-icon"><img src="<%= ingressPath %>/chat/icons/icon-192.png" style="width:100%;height:100%;border-radius:8px;object-fit:cover"></span>
+        Zalo Chat
+    </a>
+    <div class="header-spacer"></div>
+    <div class="header-actions">
+        <button class="btn-icon" id="theme-toggle" aria-label="Đổi theme">🌙</button>
+        <a href="<%= ingressPath %>/" class="btn btn-outline btn-sm">← Về trang chủ</a>
+    </div>
+</header>
+
+<main class="container">
+    <div class="flex-between mb-2">
+        <div>
+            <h1 class="page-title" style="margin-bottom:4px">Trả lời cả tin của chính tôi</h1>
+            <p class="text-muted" style="font-size:13px">Bật theo từng cuộc trò chuyện (thread) — mặc định tắt</p>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <p class="sr-note">
+                Bot đăng nhập bằng <b>chính tài khoản của bạn</b>, nên tin <b>bạn tự gõ</b> bị Zalo
+                đánh dấu là tin tự gửi và mặc định bị bỏ (chống bot tự trả lời chính mình → lặp).
+                Bật một thread + đặt <b>từ khóa riêng</b> thì tin của bạn <b>có chứa từ khóa</b> đó
+                sẽ được xử lý.
+                <br>⚠️ <b>Từ khóa là chốt chống lặp</b>: chọn ký hiệu bot không bao giờ tự nói ra
+                trong câu trả lời — ví dụ <code>@bot</code>, <code>//</code>, <code>#me</code>.
+                <br>Chưa biết Thread ID? Mở trang <b>Tin nhắn</b> để xem/chép ID cuộc trò chuyện.
+            </p>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-header">Thêm / cập nhật một thread</div>
+        <div class="card-body">
+            <form id="srForm">
+                <div style="display:flex;flex-direction:column;gap:10px;max-width:520px">
+                    <input type="text" class="form-input" id="srThreadId" placeholder="Thread ID (ID cuộc trò chuyện/nhóm)" required>
+                    <input type="text" class="form-input" id="srKeyword" placeholder="Từ khóa riêng, vd @bot">
+                    <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer">
+                        <input type="checkbox" id="srEnabled"> Bật cho thread này
+                    </label>
+                    <div>
+                        <button type="submit" class="btn btn-accent">Lưu</button>
+                        <button type="button" class="btn btn-outline btn-sm" id="srClear">Nhập lại</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <span>Thread đã cấu hình (<span id="srCount">0</span>)</span>
+        </div>
+        <div class="card-body" id="srList">
+            <div class="empty-state">
+                <div class="empty-icon">🙋</div>
+                <h3>Chưa cấu hình thread nào</h3>
+                <p>Thêm một thread ở trên để bắt đầu.</p>
+            </div>
+        </div>
+    </div>
+</main>
+
+<script>
+    var INGRESS_PATH = '<%= ingressPath %>';
+(function() {
+    var s = localStorage.getItem('chat-theme');
+    if (s) document.documentElement.setAttribute('data-theme', s);
+    else if (window.matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.setAttribute('data-theme', 'dark');
+    var btn = document.getElementById('theme-toggle');
+    function up() { btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙'; }
+    up();
+    btn.addEventListener('click', function() {
+        var cur = document.documentElement.getAttribute('data-theme');
+        var next = cur === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('chat-theme', next);
+        up();
+    });
+})();
+
+function updateCount() {
+    document.getElementById('srCount').textContent = document.querySelectorAll('.sr-item').length;
+}
+function showEmpty() {
+    document.getElementById('srList').innerHTML =
+        '<div class="empty-state"><div class="empty-icon">🙋</div><h3>Chưa cấu hình thread nào</h3><p>Thêm một thread ở trên để bắt đầu.</p></div>';
+}
+
+function addItem(threadId, cfg) {
+    var list = document.getElementById('srList');
+    var empty = list.querySelector('.empty-state');
+    if (empty) empty.remove();
+    var old = list.querySelector('[data-tid="' + CSS.escape(threadId) + '"]');
+    if (old) old.remove();
+
+    var div = document.createElement('div');
+    div.className = 'sr-item';
+    div.setAttribute('data-tid', threadId);
+
+    var info = document.createElement('div');
+    info.style.cssText = 'min-width:0;flex:1';
+    var idDiv = document.createElement('div');
+    idDiv.className = 'sr-id';
+    idDiv.textContent = threadId;
+    info.appendChild(idDiv);
+    var meta = document.createElement('div');
+    meta.className = 'sr-meta';
+    var badge = cfg.enabled ? '<span class="sr-badge sr-on">BẬT</span>' : '<span class="sr-badge sr-off">TẮT</span>';
+    meta.innerHTML = badge + ' &nbsp; Từ khóa: <b>' + (cfg.keyword ? escapeHtml(cfg.keyword) : '(chưa có)') + '</b>';
+    info.appendChild(meta);
+    div.appendChild(info);
+
+    var editBtn = document.createElement('button');
+    editBtn.className = 'btn btn-outline btn-sm';
+    editBtn.textContent = 'Sửa';
+    editBtn.addEventListener('click', function() {
+        document.getElementById('srThreadId').value = threadId;
+        document.getElementById('srKeyword').value = cfg.keyword || '';
+        document.getElementById('srEnabled').checked = !!cfg.enabled;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+    div.appendChild(editBtn);
+
+    var delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-danger btn-sm';
+    delBtn.textContent = 'Xóa';
+    delBtn.addEventListener('click', function() {
+        if (!confirm('Xóa cấu hình của thread này?')) return;
+        fetch(INGRESS_PATH + '/self-reply', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ threadId: threadId })
+        }).then(function(r){ return r.json(); }).then(function(d){
+            if (d.success) { div.remove(); updateCount(); if (!document.querySelectorAll('.sr-item').length) showEmpty(); }
+            else { alert(d.error || 'Lỗi khi xóa'); }
+        });
+    });
+    div.appendChild(delBtn);
+
+    list.insertBefore(div, list.firstChild);
+    updateCount();
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function(c){
+        return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+    });
+}
+
+document.getElementById('srClear').addEventListener('click', function() {
+    document.getElementById('srThreadId').value = '';
+    document.getElementById('srKeyword').value = '';
+    document.getElementById('srEnabled').checked = false;
+});
+
+document.getElementById('srForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    var threadId = document.getElementById('srThreadId').value.trim();
+    var keyword = document.getElementById('srKeyword').value.trim();
+    var enabled = document.getElementById('srEnabled').checked;
+    if (!threadId) return;
+    if (enabled && !keyword) { alert('Bật thì PHẢI có từ khóa (chống lặp). Vd @bot, //, #me.'); return; }
+    fetch(INGRESS_PATH + '/self-reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threadId: threadId, enabled: enabled, keyword: keyword })
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+        if (d.success) { addItem(threadId, d.data); document.getElementById('srClear').click(); }
+        else { alert(d.error || 'Lỗi khi lưu'); }
+    })
+    .catch(function(){ alert('Lỗi kết nối'); });
+});
+
+// Nạp danh sách ban đầu
+fetch(INGRESS_PATH + '/self-reply', { headers: { 'Accept': 'application/json' } })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+        if (d.success && d.data && Object.keys(d.data).length) {
+            document.getElementById('srList').innerHTML = '';
+            Object.keys(d.data).forEach(function(tid){ addItem(tid, d.data[tid]); });
+        }
+    });
+</script>
+
+</body>
+</html>

@@ -14,7 +14,7 @@ import {
 import { storeGroupMessage } from './utils/groupHistoryStore.js';
 import { noteSelfMessage } from './services/messageExpiry.js';
 import { withTimeout } from './utils/timeout.js';
-import { getSelfReplyKeyword } from './config/addon.js';
+import { getSelfReplyConfig } from './services/selfReplyService.js';
 
 let reconnectLogin = null;
 let accountRegistry = [];
@@ -155,17 +155,22 @@ export function setupEventListeners(api, loginResolve) {
         const messageWebhookUrl = getWebhookUrl("messageWebhookUrl", ownId);
         const msgWithOwnId = enrichMessageEvent(msg, ownId);
 
-        // Cờ CHỐNG LẶP cho "trả lời cả tin của chính chủ". Bot chạy trên chính
-        // tài khoản chủ: tin chủ tự gõ VÀ câu bot tự sinh đều là isSelf. Phân biệt
-        // bằng TỪ KHÓA cấu hình: chỉ tin isSelf CÓ chứa từ khóa mới là lệnh của
-        // chủ (self_reply=true). Câu bot tự sinh là văn xuôi không chứa từ khóa →
-        // false → gateway/automation bỏ qua → không lặp. Rỗng keyword = luôn false
-        // (giữ nguyên hành vi cũ, không đổi gì cho ai chưa bật).
+        // Cờ CHỐNG LẶP cho "trả lời cả tin của chính chủ", THEO TỪNG THREAD. Bot
+        // chạy trên chính tài khoản chủ: tin chủ tự gõ VÀ câu bot tự sinh đều là
+        // isSelf. Phân biệt bằng cấu hình per-thread (WebUI): thread phải BẬT và
+        // tin isSelf CÓ chứa TỪ KHÓA của thread đó mới là lệnh của chủ
+        // (self_reply=true). Câu bot tự sinh không chứa từ khóa → false → gateway/
+        // automation bỏ qua → không lặp. Thread chưa cấu hình = tắt (mặc định).
         try {
-            const kw = getSelfReplyKeyword();
-            if (msg?.isSelf && kw) {
-                const { text } = extractMessageContent(msg);
-                msgWithOwnId.self_reply = typeof text === 'string' && text.includes(kw);
+            if (msg?.isSelf) {
+                const tid = String(msg?.threadId ?? msg?.data?.idTo ?? '');
+                const cfg = getSelfReplyConfig(tid);
+                if (cfg.enabled && cfg.keyword) {
+                    const { text } = extractMessageContent(msg);
+                    msgWithOwnId.self_reply = typeof text === 'string' && text.includes(cfg.keyword);
+                } else {
+                    msgWithOwnId.self_reply = false;
+                }
             } else {
                 msgWithOwnId.self_reply = false;
             }
