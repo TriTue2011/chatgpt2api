@@ -14,6 +14,7 @@ import {
 import { storeGroupMessage } from './utils/groupHistoryStore.js';
 import { noteSelfMessage } from './services/messageExpiry.js';
 import { withTimeout } from './utils/timeout.js';
+import { getSelfReplyKeyword } from './config/addon.js';
 
 let reconnectLogin = null;
 let accountRegistry = [];
@@ -153,6 +154,24 @@ export function setupEventListeners(api, loginResolve) {
         if (msg?.isSelf) noteSelfMessage(msg, ownId);
         const messageWebhookUrl = getWebhookUrl("messageWebhookUrl", ownId);
         const msgWithOwnId = enrichMessageEvent(msg, ownId);
+
+        // Cờ CHỐNG LẶP cho "trả lời cả tin của chính chủ". Bot chạy trên chính
+        // tài khoản chủ: tin chủ tự gõ VÀ câu bot tự sinh đều là isSelf. Phân biệt
+        // bằng TỪ KHÓA cấu hình: chỉ tin isSelf CÓ chứa từ khóa mới là lệnh của
+        // chủ (self_reply=true). Câu bot tự sinh là văn xuôi không chứa từ khóa →
+        // false → gateway/automation bỏ qua → không lặp. Rỗng keyword = luôn false
+        // (giữ nguyên hành vi cũ, không đổi gì cho ai chưa bật).
+        try {
+            const kw = getSelfReplyKeyword();
+            if (msg?.isSelf && kw) {
+                const { text } = extractMessageContent(msg);
+                msgWithOwnId.self_reply = typeof text === 'string' && text.includes(kw);
+            } else {
+                msgWithOwnId.self_reply = false;
+            }
+        } catch (e) {
+            msgWithOwnId.self_reply = false;
+        }
 
         if (messageWebhookUrl) {
             triggerN8nWebhook(msgWithOwnId, messageWebhookUrl);
