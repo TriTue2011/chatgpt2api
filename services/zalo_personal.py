@@ -44,6 +44,7 @@ import httpx
 
 from services.config import config
 from services.local_gateway import gateway_base_url
+from services.agent import trich_dan as _trichdan
 
 logger = logging.getLogger(__name__)
 
@@ -1511,39 +1512,37 @@ def _dedup(msg_id: str) -> bool:
     return False
 
 
-def _mo_ta_trich_dan(quote: Any, own_id: str = "") -> str:
-    """`data.quote` của zca-js → một dòng ngữ cảnh cho model, hoặc "" nếu không có.
+def _rut_trich_dan(quote: Any, own_id: str = "") -> dict:
+    """`data.quote` của zca-js → dict trích dẫn thô cho services.agent.trich_dan.
 
     Khuôn `TQuote` (zca-js/dist/models/Message.d.ts): ``{ownerId, cliMsgId,
     globalMsgId, cliMsgType, ts, msg, attach, fromD, ttl}`` — ``msg`` là nội
-    dung tin được trích, ``fromD`` tên người gửi tin đó, ``ts`` mốc thời gian
-    tính bằng mili-giây.
+    dung tin được trích, ``fromD`` tên người gửi, ``ts`` mốc thời gian MILI-giây.
 
-    Trích một tấm ảnh / tệp thì ``msg`` rỗng; vẫn trả về dòng mô tả để model
-    biết người ta đang trỏ vào một tin có đính kèm chứ không phải hỏi khơi khơi.
+    Trả {} khi tin này không trích gì. Việc dựng câu (và tra nhật ký nếu thiếu
+    nội dung) để cho `trich_dan.mo_ta` lo — nó cần khoá phiên, thứ chỉ có ở
+    `_process_ai`.
     """
     if not isinstance(quote, dict):
-        return ""
+        return {}
     noi_dung = str(quote.get("msg") or "").strip()
-    dinh_kem = str(quote.get("attach") or "").strip()
-    if not noi_dung and not dinh_kem:
-        return ""
-    # Trích tin do CHÍNH tài khoản bot gửi là trường hợp phổ biến nhất (người
-    # ta trả lời vào câu bot vừa nói). So bằng ID chủ tin, không so tên hiển thị
-    # — tên hiển thị trong quote là tên người gửi tin ĐƯỢC TRÍCH, còn tên ở
-    # ngoài là của người gửi tin HIỆN TẠI, hai thứ khác nhau.
-    nguoi = str(quote.get("fromD") or "").strip() or "ai đó"
-    if own_id and str(quote.get("ownerId") or "").strip() == str(own_id).strip():
-        nguoi = "chính em (bot)"
-    luc = ""
+    co_dinh_kem = bool(str(quote.get("attach") or "").strip())
+    if not noi_dung and not co_dinh_kem:
+        return {}
+    # Tin do CHÍNH tài khoản bot gửi là trường hợp phổ biến nhất (người ta trả
+    # lời vào câu bot vừa nói). So bằng ID chủ tin, không so tên hiển thị — tên
+    # trong quote là của người gửi tin ĐƯỢC TRÍCH, khác người gửi tin hiện tại.
+    la_bot = bool(own_id) and str(quote.get("ownerId") or "").strip() == str(own_id).strip()
     try:
-        ts = float(quote.get("ts") or 0) / 1000.0
-        if ts > 0:
-            luc = " lúc " + time.strftime("%H:%M %d/%m/%Y", time.localtime(ts))
+        ts = float(quote.get("ts") or 0) / 1000.0  # zca-js dùng mili-giây
     except (TypeError, ValueError):
-        luc = ""
-    than = noi_dung or "(một tin có ảnh/tệp đính kèm)"
-    return f"{nguoi}{luc} đã nhắn: “{than}”"
+        ts = 0.0
+    return {
+        "noi_dung": noi_dung,
+        "ts": ts if ts > 0 else 0.0,
+        "cua_ai": "bot" if la_bot else (str(quote.get("fromD") or "").strip()),
+        "co_dinh_kem": co_dinh_kem,
+    }
 
 
 def _parse_event(body: dict) -> dict:
@@ -1633,9 +1632,9 @@ def _parse_event(body: dict) -> dict:
         # Người dùng bấm "Trả lời" vào một tin cũ rồi hỏi tiếp. zca-js đính tin
         # được trích ở `data.quote` và zalo-server chuyển tiếp NGUYÊN event nên
         # nó tới được đây; trước đây bị bỏ qua, thành ra bot không thấy người ta
-        # đang hỏi về cái gì.
-        "trich_dan": _mo_ta_trich_dan(data.get("quote"),
-                                      str(body.get("_accountId") or "").strip()),
+        # đang hỏi về cái gì. Lưu dict THÔ, dựng câu ở `_process_ai` (cần khoá phiên).
+        "trich_dan_raw": _rut_trich_dan(data.get("quote"),
+                                        str(body.get("_accountId") or "").strip()),
     }
 
 
@@ -3701,8 +3700,10 @@ def _process_ai(ev: dict) -> None:
             # người thường chỉ media chính họ tạo (đặc tả 31/07).
             is_admin=_is_admin,
             # Tin cũ họ bấm "Trả lời" vào — đi đường riêng, không trộn vào câu
-            # hỏi (câu hỏi còn được đem đi tra cứu nguyên văn).
-            trich_dan=str(ev.get("trich_dan") or ""),
+            # hỏi (câu hỏi còn được đem đi tra cứu nguyên văn). Dựng câu ở đây vì
+            # `trich_dan.mo_ta` cần `_skey` để tra lại nội dung từ nhật ký khi
+            # nền tảng chỉ kèm mốc thời gian mà không kèm nội dung.
+            trich_dan=_trichdan.mo_ta(ev.get("trich_dan_raw"), session_key=_skey),
         )
         try:
             from services import net_guard

@@ -273,6 +273,44 @@ def search(user_id: str, query: str, *, limit: int = 20) -> list[dict[str, Any]]
     ]
 
 
+def turn_gan_ts(user_id: str, ts: float, *, cua_bot: bool | None = None,
+                window_s: float = 600.0) -> dict[str, Any] | None:
+    """Lượt chat GẦN mốc `ts` nhất của người này, trong cửa sổ ±`window_s`.
+
+    Dùng cho dự phòng trích dẫn: nền tảng cho biết người dùng đang trả lời một
+    tin CŨ và mốc thời gian của nó, nhưng KHÔNG kèm nội dung. `created_at` của
+    turn xấp xỉ lúc tin đó được xử lý, nên khớp theo mốc gần nhất là lấy lại
+    được nội dung.
+
+    `cua_bot`: True chỉ xét lượt của bot (role=assistant), False chỉ xét lượt
+    người dùng, None xét cả hai. Trả None nếu không có lượt nào đủ gần.
+    """
+    if not is_enabled() or not user_id or not ts:
+        return None
+    try:
+        ts = float(ts)
+    except (TypeError, ValueError):
+        return None
+    dieu_kien = "user_id=? AND ABS(created_at - ?) <= ?"
+    tham_so: list[Any] = [str(user_id), ts, float(window_s)]
+    if cua_bot is True:
+        dieu_kien += " AND role='assistant'"
+    elif cua_bot is False:
+        dieu_kien += " AND role='user'"
+    try:
+        with _lock:
+            row = _db().execute(
+                "SELECT role, content, created_at FROM turns "
+                f"WHERE {dieu_kien} ORDER BY ABS(created_at - ?) ASC LIMIT 1",
+                (*tham_so, ts),
+            ).fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    return {"role": row[0], "content": row[1], "created_at": row[2]}
+
+
 def users_active_since(ts: float) -> list[tuple[str, int]]:
     """user_id + số turn ghi được kể từ ``ts``, nhiều nhất trước — nguồn ứng
     viên cho pipeline chưng cất hồ sơ (services.agent.distill)."""

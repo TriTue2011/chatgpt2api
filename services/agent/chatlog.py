@@ -355,6 +355,36 @@ def doc_scope_ngay(scope_key: str, day: str) -> list[dict[str, Any]]:
              "sender": r[3] or r[2] or "", "text": r[4]} for r in rows]
 
 
+def tin_gan_ts(user_id: str, ts: float, *, window_s: float = 600.0) -> dict[str, Any] | None:
+    """Tin nhật ký GẦN mốc `ts` nhất trong phạm vi nhóm của người này.
+
+    Dự phòng trích dẫn cấp NHÓM: khi nền tảng chỉ cho mốc thời gian của tin
+    được trả lời mà không kèm nội dung, dò trong sổ chung của nhóm. Chỉ chạy
+    được nếu nhóm ĐÃ bật ghi nhật ký (mặc định tắt) — không bật thì trả None.
+    """
+    if not user_id or not ts:
+        return None
+    try:
+        ts = float(ts)
+    except (TypeError, ValueError):
+        return None
+    try:
+        from services.agent.scope import khoa_nhat_ky
+        scope = khoa_nhat_ky(user_id)
+        with _lock:
+            row = _db().execute(
+                "SELECT ts, sender_name, sender_id, text FROM chatlog "
+                "WHERE scope=? AND ABS(ts - ?) <= ? "
+                "ORDER BY ABS(ts - ?) ASC LIMIT 1",
+                (str(scope), ts, float(window_s), ts),
+            ).fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    return {"ts": row[0], "sender": row[1] or row[2] or "", "text": row[3]}
+
+
 # ── Luật «tự nhắc» + quét nền ────────────────────────────────────────────────
 
 _LEAD_MAC_DINH = [1440, 60]     # nhắc trước 1 ngày và 1 giờ (phút)

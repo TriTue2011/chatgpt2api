@@ -968,9 +968,13 @@ async def handle_webhook(request) -> dict:
     except Exception:
         native_mention = False
 
+    # Tin cũ người dùng bấm "Trả lời" vào (reply_to_message) — rút NỘI DUNG để
+    # bot hiểu "cái này", "vụ đó" trỏ vào đâu. Đi đường riêng, không nhập vào
+    # `text` (thứ được đem đi tra cứu nguyên văn ở mọi tầng phía sau).
+    trich_dan = _extract_quote(msg)
     _tg_worker(_process_message, text, chat_id, photo, document, bot, sender,
                user_id, is_group, native_mention, chat_name,
-               voice_file_id, topic_id, video)   # bound: hết slot thì bỏ tin
+               voice_file_id, topic_id, video, trich_dan)   # bound: hết slot thì bỏ tin
     return {"ok": True}
 
 
@@ -1460,7 +1464,42 @@ def _do_photo_request(
             pass
 
 
-def _process_message(text: str, chat_id: str, photo: list | None = None, document: dict | None = None, bot: dict | None = None, sender: str = "", user_id: str = "", is_group: bool = False, native_mention: bool = False, chat_name: str = "", voice_file_id: str = "", topic_id: str = "", video: dict | None = None) -> None:
+def _extract_quote(msg: dict) -> dict:
+    """Tin CŨ người dùng bấm "Trả lời" vào → dict trích dẫn thô (trich_dan.mo_ta).
+
+    Telegram đính TRỌN tin được trả lời ở ``reply_to_message`` — một Message đầy
+    đủ (``text``/``caption``/``from``/``date``). Đó là điểm khác Zalo: nội dung
+    gần như luôn có sẵn, nên nhánh tra lại nhật ký chỉ chạm tới khi trả lời một
+    tin chỉ có media (không chữ).
+
+    Trả {} khi tin này không trả lời gì. `detect_bot_mention` đã dùng
+    ``reply_to_message`` để nhận diện tag; ở đây ta lấy NỘI DUNG của nó.
+    """
+    if not isinstance(msg, dict):
+        return {}
+    q = msg.get("reply_to_message")
+    if not isinstance(q, dict) or not q:
+        return {}
+    noi_dung = str(q.get("text") or q.get("caption") or "").strip()
+    co_dinh_kem = any(q.get(k) for k in ("photo", "document", "video", "voice",
+                                         "audio", "sticker", "animation"))
+    if not noi_dung and not co_dinh_kem:
+        return {}
+    frm = q.get("from") if isinstance(q.get("from"), dict) else {}
+    la_bot = bool(frm.get("is_bot"))
+    nguoi = (" ".join(x for x in (str(frm.get("first_name") or "").strip(),
+                                  str(frm.get("last_name") or "").strip()) if x).strip()
+             or str(frm.get("username") or "").strip())
+    ts = 0.0
+    try:
+        ts = float(q.get("date") or 0)  # Telegram: epoch GIÂY
+    except (TypeError, ValueError):
+        ts = 0.0
+    return {"noi_dung": noi_dung, "ts": ts if ts > 0 else 0.0,
+            "cua_ai": "bot" if la_bot else nguoi, "co_dinh_kem": co_dinh_kem}
+
+
+def _process_message(text: str, chat_id: str, photo: list | None = None, document: dict | None = None, bot: dict | None = None, sender: str = "", user_id: str = "", is_group: bool = False, native_mention: bool = False, chat_name: str = "", voice_file_id: str = "", topic_id: str = "", video: dict | None = None, trich_dan: dict | None = None) -> None:
     """Process a Telegram message in background thread.
 
     Lưới AN TOÀN NGOÀI CÙNG quanh TOÀN BỘ pipeline (_process_message_inner):
@@ -1473,7 +1512,7 @@ def _process_message(text: str, chat_id: str, photo: list | None = None, documen
     try:
         _process_message_inner(
             text, chat_id, photo, document, bot, sender, user_id, is_group,
-            native_mention, chat_name, voice_file_id, topic_id, video,
+            native_mention, chat_name, voice_file_id, topic_id, video, trich_dan,
         )
     except Exception as exc:
         logger.warning("tg _process_message lỗi (chat=%s user=%s): %s", chat_id, user_id, exc)
@@ -1486,7 +1525,7 @@ def _process_message(text: str, chat_id: str, photo: list | None = None, documen
             pass
 
 
-def _process_message_inner(text: str, chat_id: str, photo: list | None = None, document: dict | None = None, bot: dict | None = None, sender: str = "", user_id: str = "", is_group: bool = False, native_mention: bool = False, chat_name: str = "", voice_file_id: str = "", topic_id: str = "", video: dict | None = None) -> None:
+def _process_message_inner(text: str, chat_id: str, photo: list | None = None, document: dict | None = None, bot: dict | None = None, sender: str = "", user_id: str = "", is_group: bool = False, native_mention: bool = False, chat_name: str = "", voice_file_id: str = "", topic_id: str = "", video: dict | None = None, trich_dan: dict | None = None) -> None:
     """Nội dung xử lý thật (bọc lưới an toàn ở _process_message phía trên)."""
     if bot is not None:
         _current.bot = bot  # luồng mới → gắn lại ngữ cảnh bot để gửi đúng token
@@ -2075,8 +2114,13 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         # không trộn giữa các topic, và persona cài riêng topic có hiệu lực
         # (persona.prompt_for fallback: user-topic → user-nhóm → topic → nhóm).
         _skey = khoa_phien(chat_id, _cur_topic(), user_id)
+        # Dựng câu trích dẫn ở ĐÂY vì `trich_dan.mo_ta` cần `_skey` để tra lại
+        # nội dung từ nhật ký khi tin được trả lời chỉ có media (không chữ).
+        from services.agent import trich_dan as _trichdan
+        _td = _trichdan.mo_ta(trich_dan if isinstance(trich_dan, dict) else None,
+                              session_key=_skey)
         out = orchestrate(text, _skey, allow=_allow, ha_fastpath=_fp, model=_model,
-                          is_admin=_is_admin_chat(chat_id, user_id))
+                          is_admin=_is_admin_chat(chat_id, user_id), trich_dan=_td)
         # P0#5 defense-in-depth: lọc lại media URL/path (orchestrator đã lọc).
         try:
             from services import net_guard

@@ -1706,18 +1706,21 @@ def _extract_file_fields(msg: dict) -> tuple[str, str, str]:
     return url, name, fid
 
 
-def _extract_quote(msg: dict) -> str:
-    """Tin CŨ mà người dùng bấm "Trả lời" vào → một dòng ngữ cảnh cho model.
+def _extract_quote(msg: dict) -> dict:
+    """Tin CŨ người dùng bấm "Trả lời" vào → dict trích dẫn thô (trich_dan.mo_ta).
 
     Zalo Bot API đi theo khuôn Telegram (``message_id`` / ``chat`` / ``from`` /
-    ``text``) nên tin được trích nằm ở ``reply_to_message``. Nhận thêm mấy biến
-    thể tên khoá vì tài liệu Zalo không công bố trường này — đúng cách
-    ``_extract_file_fields`` đang tha thứ cho ba khuôn payload tệp khác nhau.
+    ``text``) nên tin được trích, NẾU có, nằm ở ``reply_to_message``. Tài liệu
+    bot.zapps.me/docs/webhook/ KHÔNG công bố trường này, nên nhận thêm mấy biến
+    thể tên khoá — đúng cách ``_extract_file_fields`` tha thứ cho ba khuôn payload
+    tệp; ``process_update`` còn log tên khoá của mọi tin vào để xác minh từ tin
+    thật Zalo có gửi kèm hay không.
 
-    Trả "" khi tin này không trích gì cả (phần lớn các tin).
+    Trả {} khi tin này không trích gì. Dựng câu (và tra nhật ký khi thiếu nội
+    dung) để `trich_dan.mo_ta` lo — nó cần khoá phiên, dựng ở `_process_message`.
     """
     if not isinstance(msg, dict):
-        return ""
+        return {}
     q: dict | None = None
     for khoa in ("reply_to_message", "reply_to", "quote", "quoted_message"):
         v = msg.get(khoa)
@@ -1725,30 +1728,27 @@ def _extract_quote(msg: dict) -> str:
             q = v
             break
     if q is None:
-        return ""
+        return {}
     noi_dung = str(q.get("text") or q.get("caption") or q.get("msg") or "").strip()
     co_dinh_kem = any(q.get(k) for k in ("photo", "photo_url", "document", "file_url", "attach"))
     if not noi_dung and not co_dinh_kem:
-        return ""
+        return {}
     frm = q.get("from") if isinstance(q.get("from"), dict) else {}
-    nguoi = str(frm.get("display_name") or frm.get("name")
-                or q.get("fromD") or "").strip() or "ai đó"
-    if frm.get("is_bot"):
-        nguoi = "chính em (bot)"
+    la_bot = bool(frm.get("is_bot"))
+    nguoi = str(frm.get("display_name") or frm.get("name") or q.get("fromD") or "").strip()
     # `date` là giây (khuôn Telegram), `ts` là mili-giây (khuôn Zalo). Phân biệt
     # bằng độ lớn chứ không đoán theo tên khoá, vì đây là biên hệ thống ngoài.
-    luc = ""
+    ts = 0.0
     try:
         raw = float(q.get("date") or q.get("ts") or 0)
         if raw > 1e11:
             raw /= 1000.0
-        if raw > 0:
-            luc = " lúc " + time.strftime("%H:%M %d/%m/%Y", time.localtime(raw))
+        ts = raw if raw > 0 else 0.0
     except (TypeError, ValueError):
-        luc = ""
-    than = noi_dung or "(một tin có ảnh/tệp đính kèm)"
-    logger.info("zalo trích dẫn: %s%s → %.60s", nguoi, luc, than)
-    return f"{nguoi}{luc} đã nhắn: “{than}”"
+        ts = 0.0
+    logger.info("zalo trích dẫn: keys=%s → %.60s", sorted(q.keys()), noi_dung)
+    return {"noi_dung": noi_dung, "ts": ts,
+            "cua_ai": "bot" if la_bot else nguoi, "co_dinh_kem": co_dinh_kem}
 
 
 def _extract_voice_url(msg: dict) -> str:
@@ -1766,7 +1766,8 @@ def _extract_voice_url(msg: dict) -> str:
 def _process_message(text: str, chat_id: str, photo_url: str = "", bot: dict | None = None,
                      sender: str = "", file_url: str = "", file_name: str = "",
                      file_id: str = "", user_id: str = "", is_group: bool = False,
-                     chat_name: str = "", voice_url: str = "", trich_dan: str = "") -> None:
+                     chat_name: str = "", voice_url: str = "",
+                     trich_dan: dict | None = None) -> None:
     """Lưới AN TOÀN NGOÀI CÙNG quanh TOÀN BỘ pipeline (_process_message_inner):
     dedup message_id đã tiêu thụ ở handle_webhook/_handle_update TRƯỚC khi
     thread nền này chạy, nên một lỗi ở blacklist / lọc quyền / admin-workspace /
@@ -1794,7 +1795,7 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
                            sender: str = "", file_url: str = "", file_name: str = "",
                            file_id: str = "", user_id: str = "", is_group: bool = False,
                            chat_name: str = "", voice_url: str = "",
-                           trich_dan: str = "") -> None:
+                           trich_dan: dict | None = None) -> None:
     """Nội dung xử lý thật (bọc lưới an toàn ở _process_message phía trên)."""
     if bot is not None:
         _current.bot = bot  # luồng mới → gắn lại ngữ cảnh bot để gửi đúng token
@@ -2249,8 +2250,13 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
         except Exception:
             pass
         _la_admin = _is_admin_chat(chat_id, user_id, is_group=is_group)
+        # Dựng câu trích dẫn ở ĐÂY vì `trich_dan.mo_ta` cần `_skey` để tra lại
+        # nội dung từ nhật ký khi Zalo chỉ kèm tham chiếu/mốc thời gian.
+        from services.agent import trich_dan as _trichdan
+        _td = _trichdan.mo_ta(trich_dan if isinstance(trich_dan, dict) else None,
+                              session_key=_skey)
         out = orchestrate(text, _skey, allow=_allow, ha_fastpath=_fp, model=_model,
-                          is_admin=_la_admin, trich_dan=trich_dan)
+                          is_admin=_la_admin, trich_dan=_td)
         try:
             from services import net_guard
             out = net_guard.filter_agent_output(out if isinstance(out, dict) else {})
