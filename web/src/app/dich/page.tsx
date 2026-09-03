@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Languages, LoaderCircle, Upload, FileText, Download, Copy, Check, Mic, MessagesSquare, Volume2 } from "lucide-react";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { request } from "@/lib/request";
@@ -238,14 +238,63 @@ function DichPageContent() {
   const [suaVi, setSuaVi] = useState("");
   const [suaMsg, setSuaMsg] = useState("");
 
-  useEffect(() => {
-    request.get(`/api/dich/glossary?src=${suaSrc}`)
+  // Kho thuật ngữ ĐANG DÙNG của lĩnh vực đang chọn: gộp bản chuẩn + máy tự học
+  // + bản sửa tay. Phải cho THẤY thì người dùng mới tự phát hiện được từ máy
+  // học sai; chỉ đưa con số đếm thì họ không có cách nào biết.
+  type MucKho = { term: string; vi: string; nguon: "chuan" | "hoc" | "sua" };
+  type DeXuat = { term: string; hien_tai: string; de_xuat: string; ly_do: string };
+  const [dsKho, setDsKho] = useState<MucKho[]>([]);
+  const [deXuat, setDeXuat] = useState<DeXuat[] | null>(null);
+  const [dangSoat, setDangSoat] = useState(false);
+
+  const napKho = useCallback(() => {
+    request.get(`/api/dich/glossary?src=${suaSrc}&linh_vuc=${suaLinhVuc}`)
       .then((r) => {
         setDsLinhVuc(((r.data as any)?.linh_vuc as { slug: string; ten: string }[]) || []);
         setDsSua(((r.data as any)?.sua as Record<string, Record<string, string>>) || {});
+        setDsKho(((r.data as any)?.danh_sach as MucKho[]) || []);
       })
-      .catch(() => { setDsLinhVuc([]); setDsSua({}); });
-  }, [suaSrc]);
+      .catch(() => { setDsLinhVuc([]); setDsSua({}); setDsKho([]); });
+  }, [suaSrc, suaLinhVuc]);
+
+  useEffect(() => { napKho(); setDeXuat(null); }, [napKho]);
+
+  // Nhờ AI soát kho. Chỉ ĐỀ XUẤT kèm lý do, không tự ghi — người dùng đọc lý do
+  // rồi tự quyết, vì chọn từ ngành là việc của người biết ngành.
+  const soatKho = async () => {
+    setDangSoat(true); setDeXuat(null); setSuaMsg("");
+    try {
+      const r = await request.post("/api/dich/glossary/soat",
+        { src: suaSrc, linh_vuc: suaLinhVuc });
+      const ds = ((r.data as any)?.de_xuat as DeXuat[]) || [];
+      setDeXuat(ds);
+      setSuaMsg(ds.length
+        ? `AI soát ${(r.data as any)?.da_soat ?? 0} mục, thấy ${ds.length} chỗ nên sửa.`
+        : `AI soát ${(r.data as any)?.da_soat ?? 0} mục, không thấy chỗ nào cần sửa.`);
+    } catch (e) { setSuaMsg("❌ " + layLoi(e)); }
+    finally { setDangSoat(false); }
+  };
+
+  // Nhận một đề xuất = ghi vào bảng SỬA TAY (thắng mọi tầng), không đụng vào
+  // kho tự học — giữ được dấu vết máy đã học gì để còn đối chiếu.
+  const nhanDeXuat = async (d: DeXuat) => {
+    try {
+      await request.post("/api/dich/glossary",
+        { src: suaSrc, linh_vuc: suaLinhVuc, term: d.term, vi: d.de_xuat });
+      setDeXuat((cu2) => (cu2 || []).filter((x) => x.term !== d.term));
+      napKho();
+      setSuaMsg(`✓ Đã nhận "${d.term}" → "${d.de_xuat}".`);
+    } catch (e) { setSuaMsg("❌ " + layLoi(e)); }
+  };
+
+  const xoaHoc = async (term: string) => {
+    try {
+      await request.post("/api/dich/glossary/xoa-hoc",
+        { src: suaSrc, linh_vuc: suaLinhVuc, term });
+      napKho();
+      setSuaMsg(`✓ Đã xoá mục tự học "${term}" — lượt lồng tiếng sau có thể học lại.`);
+    } catch (e) { setSuaMsg("❌ " + layLoi(e)); }
+  };
 
   const tenLinhVuc = (slug: string) => dsLinhVuc.find((x) => x.slug === slug)?.ten || slug;
 
@@ -285,6 +334,7 @@ function DichPageContent() {
         { src: suaSrc, linh_vuc: suaLinhVuc, term, vi });
       setDsSua(((r.data as any)?.sua as Record<string, Record<string, string>>) || {});
       setSuaTerm(""); setSuaVi(""); setSuaMsg("✓ Đã lưu — lần dịch sau sẽ dùng từ này.");
+      napKho();
     } catch (e) { setSuaMsg("❌ " + layLoi(e)); }
   };
 
@@ -292,6 +342,7 @@ function DichPageContent() {
     try {
       const r = await request.post("/api/dich/glossary/xoa", { src: suaSrc, linh_vuc, term });
       setDsSua(((r.data as any)?.sua as Record<string, Record<string, string>>) || {});
+      napKho();
     } catch (e) { setSuaMsg("❌ " + layLoi(e)); }
   };
 
@@ -736,6 +787,87 @@ function DichPageContent() {
               ))}
             </div>
           )}
+          {/* Kho thuật ngữ ĐANG DÙNG của lĩnh vực này + nhờ AI soát. Đây là chỗ
+              người dùng THẤY máy tự học được gì; không thấy thì không tự phát
+              hiện được từ dịch sai, mà một từ học sai kéo lệch mọi bản dịch sau. */}
+          <div className="space-y-2 rounded-[12px] border border-[var(--border)] p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium">
+                Kho thuật ngữ — {tenLinhVuc(suaLinhVuc)} ({dsKho.length})
+              </span>
+              <button type="button" onClick={soatKho} disabled={dangSoat || !dsKho.length}
+                className="ml-auto rounded-[10px] border border-[var(--border)] px-3 py-1.5 text-xs hover:bg-[var(--muted)] disabled:opacity-50">
+                {dangSoat ? "AI đang soát…" : "🔎 Nhờ AI soát"}
+              </button>
+            </div>
+
+            {deXuat !== null && deXuat.length > 0 && (
+              <div className="space-y-2 rounded-[10px] bg-amber-500/10 p-2">
+                {deXuat.map((d) => (
+                  <div key={d.term} className="space-y-0.5 border-b border-[var(--border)] pb-2 last:border-0 last:pb-0">
+                    <div className="text-sm">
+                      <b>{d.term}</b>: <span className="line-through opacity-60">{d.hien_tai}</span>
+                      {" → "}<b>{d.de_xuat}</b>
+                    </div>
+                    {d.ly_do && (
+                      <div className="text-xs text-[var(--muted-foreground)]">{d.ly_do}</div>
+                    )}
+                    <div className="flex gap-2 pt-0.5">
+                      <button type="button" onClick={() => nhanDeXuat(d)}
+                        className="rounded-[8px] bg-slate-900 px-2.5 py-1 text-xs text-white hover:bg-slate-800">
+                        Nhận
+                      </button>
+                      <button type="button"
+                        onClick={() => setDeXuat((c) => (c || []).filter((x) => x.term !== d.term))}
+                        className="rounded-[8px] border border-[var(--border)] px-2.5 py-1 text-xs hover:bg-[var(--muted)]">
+                        Bỏ qua
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {dsKho.length === 0 ? (
+              <p className="text-xs text-[var(--muted-foreground)]">
+                Lĩnh vực này chưa có thuật ngữ nào. Máy sẽ tự học khi bạn lồng tiếng
+                một video thuộc lĩnh vực đó.
+              </p>
+            ) : (
+              <div className="max-h-64 space-y-1 overflow-y-auto">
+                {dsKho.map((m) => (
+                  <div key={m.term} className="flex items-center gap-2 text-sm">
+                    <span className={
+                      m.nguon === "sua" ? "shrink-0 rounded bg-emerald-500/15 px-1.5 text-[10px] text-emerald-600"
+                      : m.nguon === "hoc" ? "shrink-0 rounded bg-sky-500/15 px-1.5 text-[10px] text-sky-600"
+                      : "shrink-0 rounded bg-[var(--muted)] px-1.5 text-[10px] text-[var(--muted-foreground)]"}>
+                      {m.nguon === "sua" ? "bạn sửa" : m.nguon === "hoc" ? "máy học" : "chuẩn"}
+                    </span>
+                    <span className="flex-1"><b>{m.term}</b> → {m.vi}</span>
+                    <button type="button" onClick={() => { setSuaTerm(m.term); setSuaVi(m.vi); }}
+                      className="shrink-0 rounded px-1.5 text-xs text-[var(--muted-foreground)] hover:text-slate-900"
+                      title="Đổ xuống ô sửa bên dưới">
+                      sửa
+                    </button>
+                    {m.nguon === "hoc" && (
+                      <button type="button" onClick={() => xoaHoc(m.term)}
+                        className="shrink-0 rounded px-1.5 text-[var(--muted-foreground)] hover:text-red-600"
+                        title="Xoá mục máy tự học — lượt sau có thể học lại">
+                        ×
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="text-xs text-[var(--muted-foreground)]">
+              <b>chuẩn</b> = từ điển dựng sẵn · <b>máy học</b> = máy tự chắt lọc khi lồng
+              tiếng · <b>bạn sửa</b> = bạn tự đặt, thắng cả hai. Nút <b>Nhờ AI soát</b> đọc
+              phần máy học rồi chỉ ra chỗ nào sai nghĩa hay dịch thô — chỉ đề xuất, nhận
+              hay không là quyền bạn.
+            </p>
+          </div>
+
           <p className="text-xs text-[var(--muted-foreground)]">
             Sửa ở đây <b>thắng cả từ điển gốc</b>, có hiệu lực ngay lượt dịch sau. Nhập
             <b> từ gốc</b> ở tiếng nguồn (vd tiếng Anh &quot;cache&quot;), không phải bản dịch —

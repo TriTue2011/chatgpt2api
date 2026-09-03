@@ -184,6 +184,66 @@ def hoc_thuat_ngu(cap: list[tuple[str, str]], linh_vuc: list[str], src: str,
     return {lv_chinh: bang} if bang else {}
 
 
+#: Số mục mỗi lượt nhờ model soát. Nhỏ hơn lô dịch vì mỗi mục cần model NGHĨ
+#: chứ không chỉ viết lại, và câu trả lời dài hơn (kèm lý do).
+MUC_MOI_LO_SOAT = 40
+
+
+def soat_thuat_ngu(cap: list[tuple[str, str]], linh_vuc: str, src: str,
+                   model: str, goi_model: GoiModel) -> list[dict]:
+    """Nhờ model soát bảng thuật ngữ, CHỈ trả về những mục nên sửa.
+
+    ``cap`` = [(term nguồn, thuật ngữ VI đang dùng)]. Trả
+    ``[{term, hien_tai, de_xuat, ly_do}]`` — mục nào model thấy sai nghĩa hoặc
+    dịch thô, kèm từ đúng và MỘT câu lý do ngắn, để người dùng tự quyết chứ
+    không bị sửa lén sau lưng.
+
+    Vì sao cần: ``ghi_hoc`` cố ý không đè mục đã có, nên một từ học sai nằm đó
+    mãi và kéo mọi bản dịch sau đi lệch. Người dùng chữa được — nhưng phải THẤY
+    nó sai đã, mà nhìn một bảng vài chục thuật ngữ ngành thì không phải ai cũng
+    nhận ra. Đây là con mắt thứ hai cho việc đó.
+
+    Model hỏng hay trả về rác → trả [] (không có đề xuất nào), KHÔNG bao giờ tự
+    ghi vào từ điển.
+    """
+    if not cap or not model:
+        return []
+    nhac = _nhac_linh_vuc([linh_vuc] if linh_vuc else [])
+    system = (
+        "Bạn soát một bảng thuật ngữ song ngữ dùng cho phụ đề tiếng Việt. Với "
+        "mỗi dòng bạn nhận THUẬT NGỮ GỐC và BẢN DỊCH ĐANG DÙNG. Chỉ ra những "
+        "dòng SAI NGHĨA hoặc dịch thô không giống cách người trong ngành nói. "
+        "Dòng nào đã ổn thì BỎ QUA, đừng liệt kê. Trả về DUY NHẤT một mảng "
+        'JSON, mỗi phần tử {"src": "thuật ngữ gốc", "vi": "bản dịch đúng", '
+        '"ly_do": "một câu ngắn vì sao"}. Không giải thích ngoài mảng JSON.'
+    )
+    ra: list[dict] = []
+    for i in range(0, len(cap), MUC_MOI_LO_SOAT):
+        lo = cap[i:i + MUC_MOI_LO_SOAT]
+        dong = [f"- GỐC: {g}  ||  ĐANG DÙNG: {v}" for g, v in lo]
+        user = (f"Lĩnh vực: {nhac}. Tiếng gốc: {src}.\n"
+                f"Soát {len(lo)} dòng sau:\n\n" + "\n".join(dong))
+        try:
+            raw = goi_model(model, [{"role": "system", "content": system},
+                                    {"role": "user", "content": user}])
+        except Exception as exc:
+            logger.warning("soát thuật ngữ lỗi (%s) — bỏ qua lô này",
+                           str(exc)[:160])
+            continue
+        dang_co = {g: v for g, v in lo}
+        for x in _rã_json_terms(raw):
+            term = str(x.get("src") or "").strip()
+            vi_moi = str(x.get("vi") or "").strip()
+            if not term or not vi_moi or term not in dang_co:
+                continue                      # model bịa term không có trong lô
+            if tn.thuong_hoa(vi_moi) == tn.thuong_hoa(dang_co[term]):
+                continue                      # "sửa" thành đúng cái đang có
+            ra.append({"term": term, "hien_tai": dang_co[term],
+                       "de_xuat": vi_moi,
+                       "ly_do": str(x.get("ly_do") or "").strip()[:200]})
+    return ra
+
+
 def chinh_va_hoc(cap: list[tuple[str, str]], linh_vuc: list[str], src: str,
                  model: str, goi_model: GoiModel) -> list[str]:
     """Chỉnh bằng LLM rồi (nếu biết tiếng nguồn + lĩnh vực) chắt lọc thuật ngữ

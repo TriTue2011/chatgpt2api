@@ -109,6 +109,15 @@ class XoaThuatNguRequest(BaseModel):
     term: str
 
 
+class SoatThuatNguRequest(BaseModel):
+    """Nhờ LLM soát bảng thuật ngữ của MỘT lĩnh vực."""
+    src: str
+    linh_vuc: str
+    #: Chỉ soát phần TỰ HỌC (mặc định) hay soát cả bản chuẩn. Mặc định chỉ tự
+    #: học vì đó là phần máy tự sinh, nơi lỗi hay nằm; bản chuẩn do người dựng.
+    ca_ban_chuan: bool = False
+
+
 def _luu_so_viec_da_khoa() -> None:
     """Ghi sổ việc. Caller đang giữ ``_khoa`` để snapshot nhất quán."""
     from services import dich_jobs
@@ -699,11 +708,14 @@ def create_router() -> APIRouter:
         return ra
 
     @router.get("/api/dich/glossary")
-    async def xem_glossary(src: str = "en", authorization: str | None = Header(None)):
+    async def xem_glossary(src: str = "en", linh_vuc: str = "",
+                           authorization: str | None = Header(None)):
         """Bảng thuật ngữ NGƯỜI DÙNG SỬA của một tiếng nguồn + danh sách lĩnh vực.
 
-        Chỉ trả bản sửa tay (``<src>.sua.json``) — thứ người dùng quản được —
-        kèm số thuật ngữ nền (curated + tự học) mỗi lĩnh vực để biết đang có gì.
+        Trả bản sửa tay (``<src>.sua.json``) — thứ người dùng quản được — kèm
+        số thuật ngữ nền (curated + tự học) mỗi lĩnh vực. Có ``linh_vuc`` thì
+        trả thêm ``danh_sach`` gồm cả ba tầng, mỗi mục ghi rõ nguồn, để người
+        dùng THẤY máy học được gì mà tự phát hiện từ dịch sai.
         """
         require_admin(authorization)
         from services import thuat_ngu as tn
@@ -711,10 +723,16 @@ def create_router() -> APIRouter:
         if src not in {"en", "ja", "zh", "ko"}:
             raise HTTPException(400, detail={"error": "Tiếng nguồn phải là en/ja/zh/ko"})
         nen = tn.nap_glossary(src)
-        return {"src": src,
-                "linh_vuc": tn.danh_sach_linh_vuc(),
-                "sua": tn.doc_sua(src),
-                "so_nen": {lv: len(cap) for lv, cap in nen.items()}}
+        ra = {"src": src,
+              "linh_vuc": tn.danh_sach_linh_vuc(),
+              "sua": tn.doc_sua(src),
+              "so_nen": {lv: len(cap) for lv, cap in nen.items()}}
+        # Có chọn lĩnh vực thì trả LUÔN danh sách của lĩnh vực đó. Không trả cả
+        # kho vì bản chuẩn tiếng Nhật có hơn 1400 mục, nạp hết vào trang là thừa.
+        lv = str(linh_vuc or "").strip()
+        if lv:
+            ra["danh_sach"] = tn.liet_ke(src, lv)
+        return ra
 
     @router.post("/api/dich/google")
     async def dich_qua_google(body: GoogleDichRequest,
@@ -789,5 +807,55 @@ def create_router() -> APIRouter:
         src = str(body.src or "").lower().strip()
         co = tn.xoa_sua(src, body.linh_vuc, body.term)
         return {"ok": True, "da_xoa": co, "sua": tn.doc_sua(src)}
+
+    @router.post("/api/dich/glossary/xoa-hoc")
+    async def xoa_hoc_glossary(body: XoaThuatNguRequest,
+                               authorization: str | None = Header(None)):
+        """Bỏ một mục TỰ HỌC. Cần vì vòng học không đè mục đã có: học sai một
+        lần là nằm đó mãi, xoá đi thì lượt sau có cơ hội học lại cho đúng."""
+        require_admin(authorization)
+        from services import thuat_ngu as tn
+        src = str(body.src or "").lower().strip()
+        co = tn.xoa_hoc(src, body.linh_vuc, body.term)
+        return {"ok": True, "da_xoa": co,
+                "danh_sach": tn.liet_ke(src, body.linh_vuc)}
+
+    @router.post("/api/dich/glossary/soat")
+    async def soat_glossary(body: SoatThuatNguRequest,
+                            authorization: str | None = Header(None)):
+        """Nhờ LLM soát bảng thuật ngữ, trả về những mục NÊN SỬA kèm lý do.
+
+        Chỉ ĐỀ XUẤT, không tự ghi — người dùng xem lý do rồi tự quyết. Dùng
+        đúng model đã cấu hình cho bước LLM của phụ đề; chưa bật thì báo rõ
+        thay vì im lặng trả rỗng (im lặng thì không phân biệt được với "không
+        có gì để sửa").
+        """
+        require_admin(authorization)
+        from services import thuat_ngu as tn
+        from services import dich_llm
+        from services.video_dich import _model_llm_phu_de
+        src = str(body.src or "").lower().strip()
+        if src not in {"en", "ja", "zh", "ko"}:
+            raise HTTPException(400, detail={"error": "Tiếng nguồn phải là en/ja/zh/ko"})
+        model = _model_llm_phu_de()
+        if not model:
+            raise HTTPException(400, detail={
+                "error": "Chưa bật bước LLM cho phụ đề — bật ở mục «Dịch bằng LLM» rồi soát lại"})
+        muc = [m for m in tn.liet_ke(src, body.linh_vuc)
+               if body.ca_ban_chuan or m["nguon"] != "chuan"]
+        if not muc:
+            return {"ok": True, "de_xuat": [], "da_soat": 0}
+
+        def goi_model(m: str, messages: list[dict]) -> str:
+            from services.agent.runtime import call_model, content_of
+            resp = call_model(m, messages, timeout=180, max_tokens=4000)
+            if resp.get("error"):
+                raise dich_llm.LoiLLM(str(resp["error"]))
+            return content_of(resp)
+
+        de_xuat = dich_llm.soat_thuat_ngu(
+            [(m["term"], m["vi"]) for m in muc], body.linh_vuc, src,
+            model, goi_model)
+        return {"ok": True, "de_xuat": de_xuat, "da_soat": len(muc)}
 
     return router

@@ -205,6 +205,55 @@ def doc_sua(src: str) -> dict[str, dict[str, str]]:
     return _doc_glossary_file(_thu_muc_glossary() / f"{str(src or '').lower().strip()}.sua.json")
 
 
+def doc_hoc(src: str) -> dict[str, dict[str, str]]:
+    """Bảng TỰ HỌC của một tiếng — đọc thẳng file, để UI liệt kê.
+
+    Người dùng cần THẤY máy học được gì thì mới phát hiện được từ dịch sai; chỉ
+    đưa con số đếm thì họ không có cách nào tự biết, phải nhờ người mở tệp trên
+    máy chủ ra đọc.
+    """
+    return _doc_glossary_file(_thu_muc_glossary() / f"{str(src or '').lower().strip()}.hoc.json")
+
+
+def xoa_hoc(src: str, linh_vuc: str, term: str) -> bool:
+    """Bỏ một mục TỰ HỌC khỏi ``<src>.hoc.json``. Trả True nếu có xoá.
+
+    Cần vì ``ghi_hoc`` cố ý không đè mục đã có: một từ học sai sẽ nằm đó mãi.
+    Ghi đè ở bảng sửa tay cũng chữa được, nhưng xoá hẳn thì lượt học sau có cơ
+    hội học lại cho đúng.
+    """
+    src = str(src or "").lower().strip()
+    lv = str(linh_vuc or "").strip()
+    term_n = thuong_hoa(term)
+    tep = _thu_muc_glossary() / f"{src}.hoc.json"
+    bang = _doc_glossary_file(tep)
+    if term_n not in bang.get(lv, {}):
+        return False
+    del bang[lv][term_n]
+    tep.write_text(json.dumps({lv2: cap for lv2, cap in bang.items() if cap},
+                              ensure_ascii=False, indent=1), encoding="utf-8")
+    _KHO.xoa()
+    return True
+
+
+def liet_ke(src: str, linh_vuc: str) -> list[dict[str, str]]:
+    """[{term, vi, nguon}] của MỘT lĩnh vực, ``nguon`` = sua | hoc | chuan.
+
+    Gộp ba tầng theo đúng thứ tự ưu tiên lúc dịch (sửa tay > tự học > bản
+    chuẩn) để cái UI hiện ra chính là cái thật sự được dùng.
+    """
+    src = str(src or "").lower().strip()
+    lv = str(linh_vuc or "").strip()
+    chuan = _doc_glossary_file(_thu_muc_glossary() / f"{src}.json").get(lv, {})
+    hoc = doc_hoc(src).get(lv, {})
+    sua = doc_sua(src).get(lv, {})
+    ra: dict[str, dict[str, str]] = {}
+    for nguon, bang in (("chuan", chuan), ("hoc", hoc), ("sua", sua)):
+        for term, vi in bang.items():
+            ra[term] = {"term": term, "vi": vi, "nguon": nguon}
+    return sorted(ra.values(), key=lambda x: x["term"])
+
+
 def _ghi_sua_file(src: str, bang: dict[str, dict[str, str]]) -> None:
     tep = _thu_muc_glossary() / f"{src}.sua.json"
     tep.parent.mkdir(parents=True, exist_ok=True)
