@@ -40,29 +40,17 @@ FALLBACK_MODELS = {
     ],
     "chatgpt": [
         "chatgpt/auto",
+        "chatgpt/gpt-5-6-luna",
         "chatgpt/gpt-5-5",
         "chatgpt/gpt-5-5-instant",
         "chatgpt/gpt-5-5-thinking",
-        "chatgpt/gpt-4.1-mini",
-        "chatgpt/gpt-4.1-nano",
-        "chatgpt/gpt-4o",
-        "chatgpt/gpt-4o-mini",
-        "chatgpt/o3",
-        "chatgpt/o3-mini",
-        "chatgpt/o4-mini",
     ],
     "chatgpt_web": [
         "cgw/auto",
+        "cgw/gpt-5-6-luna",
         "cgw/gpt-5-5",
         "cgw/gpt-5-5-instant",
         "cgw/gpt-5-5-thinking",
-        "cgw/gpt-4.1-mini",
-        "cgw/gpt-4.1-nano",
-        "cgw/gpt-4o",
-        "cgw/gpt-4o-mini",
-        "cgw/o3",
-        "cgw/o3-mini",
-        "cgw/o4-mini",
     ],
     "openai_oauth": [
         "cx/auto",
@@ -1000,15 +988,21 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
     #  - paid/auto → plus/go/business unified under Codex (also cx/ , codex/)
     #  - oai/auto  → raw OpenAI API (sk-/standard)
     cgf_models = ["cgf/auto",
-                  # GPT-5 family (full chatgpt.com web line-up)
+                  # GPT-5 family (chatgpt.com web free line-up). Chỉ giữ GPT-5
+                  # trở lên — 4o/4.1/o3/o4-mini đã bỏ (đo 04/09/2026).
+                  #
+                  # gpt-5-6-luna: đường web free (chatgpt.com/backend-api) trả
+                  # dòng gpt-5-6 bình thường — đo 03/09/2026 trên máy chủ bằng
+                  # token tài khoản free (xem test_codex_limited_ganh_free). Là
+                  # cùng slug mà nhánh tạo ảnh free+codex đang gửi
+                  # (openai_backend_api._resolve_image_model). Nhãn dấu chấm bên
+                  # Codex là cx/gpt-5.6-luna.
+                  "cgf/gpt-5-6-luna",
                   "cgf/gpt-5", "cgf/gpt-5-1", "cgf/gpt-5-2", "cgf/gpt-5-3",
                   "cgf/gpt-5-3-mini", "cgf/gpt-5-4-t-mini", "cgf/gpt-5-5",
-                  "cgf/gpt-5-5-instant", "cgf/gpt-5-5-thinking", 
-                  "cgf/gpt-5-4-thinking", "cgf/gpt-5-3-instant", "cgf/o3",
-                  "cgf/gpt-5-mini", "cgf/research",
-                  # legacy 4o / 4.1 / o-series
-                  "cgf/gpt-4o", "cgf/gpt-4o-mini", "cgf/gpt-4.1-mini",
-                  "cgf/gpt-4.1-nano", "cgf/o3-mini", "cgf/o4-mini"]
+                  "cgf/gpt-5-5-instant", "cgf/gpt-5-5-thinking",
+                  "cgf/gpt-5-4-thinking", "cgf/gpt-5-3-instant",
+                  "cgf/gpt-5-mini", "cgf/research"]
     for mid in cgf_models:
         if mid not in seen:
             seen.add(mid)
