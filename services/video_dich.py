@@ -156,6 +156,29 @@ LOI_CHUA_CO_TIENG = (
 )
 
 
+#: Lỗi CHỈ nói về phụ đề, còn bản thân video vẫn tải được → tầng gọi nên tải về
+#: rồi tự nghe. Tách khỏi nhóm "video hỏng hẳn" (VideoUnavailable, InvalidVideoId,
+#: AgeRestricted, VideoUnplayable): tải mấy trăm MB rồi vẫn hỏng là phí trắng.
+#: Nhóm bị CHẶN (IpBlocked/RequestBlocked/PoTokenRequired) xếp vào đây vì chỉ
+#: đường lấy phụ đề bị chặn, đường tải hình đi lối khác nên vẫn còn cửa.
+_LOI_CHI_THIEU_PHU_DE = frozenset({
+    "TranscriptsDisabled", "NoTranscriptFound", "NotTranslatable",
+    "TranslationLanguageNotAvailable", "IpBlocked", "RequestBlocked",
+    "PoTokenRequired",
+})
+
+
+def _chi_thieu_phu_de(exc: BaseException) -> bool:
+    """Lỗi này chỉ là "không lấy được phụ đề", hay là video hỏng hẳn?
+
+    Soi TÊN LỚP theo cả cây kế thừa thay vì bắt kiểu trực tiếp, để không phải
+    import youtube_transcript_api ở đây (test khỏi cần thư viện) mà vẫn nhận ra
+    lớp con.
+    """
+    ten = {c.__name__ for c in type(exc).__mro__}
+    return bool(ten & _LOI_CHI_THIEU_PHU_DE)
+
+
 def thieu_phu_de_san(r: dict[str, Any]) -> bool:
     """Kết quả hỏng ĐÚNG vì video không có phụ đề sẵn, không phải lỗi khác.
 
@@ -978,6 +1001,12 @@ def dich_video(text: str, target: str = "", *, chep_loi: bool = False,
             doan, nguon = lay_phu_de(url, goi_y)
     except Exception as exc:
         logger.warning("lấy phụ đề %s lỗi: %s", url, str(exc)[:200])
+        # Video tắt phụ đề (hoặc đường lấy phụ đề bị chặn) thì đổi sang lỗi
+        # CHUẨN, để tầng gọi nhận ra mà tải video về tự nghe. Trả nguyên văn lỗi
+        # thư viện thì `thieu_phu_de_san` không khớp, đường tự nghe không bao
+        # giờ chạy, và người dùng nhận nguyên một khối tiếng Anh.
+        if _chi_thieu_phu_de(exc):
+            return {"ok": False, "error": LOI_CHUA_CO_TIENG}
         return {"ok": False, "error": str(exc)[:300]}
     if not doan:
         return {"ok": False, "error": LOI_CHUA_CO_TIENG}
