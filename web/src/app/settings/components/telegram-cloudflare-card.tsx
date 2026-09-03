@@ -2059,13 +2059,14 @@ export function TelegramCloudflareCard() {
                           value={row.selfKeyword}
                           onChange={(e) => setFilterField(row.id, { selfKeyword: e.target.value })}
                           placeholder="Từ khóa RIÊNG cho tin của tôi, vd: @tôi (khác ô «bắt buộc tag»)"
-                          className="h-8 text-xs"
+                          className={"h-8 text-xs"
+                            + (row.selfKeyword.trim() ? "" : " border-red-500 focus-visible:ring-red-500")}
                         />
                         {!row.selfKeyword.trim() && (
                           <p className="text-[11px] text-red-600">
-                            ⚠️ Phải nhập từ khóa riêng ở trên — bỏ trống thì bot sẽ trả lời cả
-                            câu chính nó vừa gửi (lặp vô hạn), nên khi trống thì tính năng này
-                            KHÔNG chạy.
+                            ⛔ <b>Bắt buộc</b> nhập từ khóa riêng — bỏ trống thì bot không phân
+                            biệt được câu bạn gõ với câu chính nó vừa gửi, và sẽ tự trả lời mình
+                            không dứt. Để trống là <b>không lưu được</b> cả thẻ thread này.
                           </p>
                         )}
                       </>
