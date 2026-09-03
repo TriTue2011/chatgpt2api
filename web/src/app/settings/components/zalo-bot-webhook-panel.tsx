@@ -278,7 +278,10 @@ export function ZaloBotWebhookPanel() {
                   {b.ok ? <CheckCircle2 className="size-3.5 text-emerald-400" /> : <XCircle className="size-3.5 text-red-400" />}
                   <span className="font-semibold">{b.label || b.bot_id}</span>
                   {b.polling && <span className="rounded bg-amber-400/15 px-1.5 py-0.5 text-amber-400">đang poll</span>}
-                  <code className="flex-1 break-all text-[var(--muted-foreground)]">
+                  {/* w-full: trên màn hình hẹp, `flex-1` bị mấy nhãn bên cạnh bóp
+                      còn vài chục pixel nên `break-all` xuống dòng MỖI CHỮ CÁI.
+                      Cho nó hẳn một dòng riêng thì đọc được ở mọi bề ngang. */}
+                  <code className="w-full min-w-0 break-all text-[var(--muted-foreground)]">
                     {b.ok ? (zaloUrl || "(trống — chưa đặt webhook)") : b.error}
                   </code>
                   {!!b.info?.updated_at && (
@@ -293,35 +296,43 @@ export function ZaloBotWebhookPanel() {
                       lệch URL
                     </span>
                   )}
+                  {/* NHÃN trạng thái và NÚT bấm phải nhìn ra khác nhau ngay. Bản
+                      trước gộp làm một: nút hiện đúng chữ "polling" với nền mờ y
+                      hệt nhãn "đang poll" bên cạnh, nên không ai đoán được là bấm
+                      được — người dùng tìm mãi không thấy chỗ bật riêng. */}
                   {!!b.token && (
-                    <span className="flex items-center gap-1">
+                    <div className="flex w-full flex-wrap items-center gap-2 border-t border-[var(--border)] pt-1.5">
+                      <span className="text-[var(--muted-foreground)]">
+                        Chế độ:{" "}
+                        <b className={b.webhook ? "text-[var(--neon-cyan)]" : "text-amber-400"}>
+                          {b.webhook ? "webhook" : "long-polling"}
+                        </b>
+                        {b.khai_rieng ? " (đặt riêng)" : " (theo công tắc chung)"}
+                      </span>
                       <button
                         type="button"
                         disabled={busy}
                         onClick={() => void doiCheDoBot(b.token!, !b.webhook)}
-                        className={`rounded px-2 py-0.5 text-[11px] font-semibold ${
-                          b.webhook ? "bg-[var(--neon-cyan)]/15 text-[var(--neon-cyan)]"
-                                    : "bg-amber-400/15 text-amber-400"}`}
-                        title={b.webhook ? "Bấm để chuyển bot NÀY về long-polling"
-                                         : "Bấm để bật webhook cho riêng bot NÀY"}
+                        className={`${BTN} ml-auto border px-2.5 py-1 text-[11px] ${
+                          b.webhook
+                            ? "border-amber-400/40 text-amber-400 hover:bg-amber-400/10"
+                            : "border-[var(--neon-cyan)]/40 text-[var(--neon-cyan)] hover:bg-[var(--neon-cyan)]/10"}`}
                       >
-                        {b.webhook ? "webhook" : "polling"}
+                        {b.webhook ? "→ Chuyển bot này về polling"
+                                   : "→ Bật webhook cho bot này"}
                       </button>
-                      {b.khai_rieng ? (
+                      {b.khai_rieng && (
                         <button
                           type="button"
                           disabled={busy}
                           onClick={() => void doiCheDoBot(b.token!, null)}
-                          className="rounded px-1 text-[11px] text-[var(--muted-foreground)] hover:text-red-400"
-                          title="Bỏ cài riêng, cho bot theo công tắc chung"
+                          className={`${BTN} border border-[var(--border)] px-2.5 py-1 text-[11px] text-[var(--muted-foreground)] hover:bg-[var(--card)]`}
+                          title="Xoá cài đặt riêng, cho bot này theo công tắc chung"
                         >
-                          ×
+                          Theo chung
                         </button>
-                      ) : (
-                        <span className="text-[10px] text-[var(--muted-foreground)]"
-                              title="Bot này đang theo công tắc chung">chung</span>
                       )}
-                    </span>
+                    </div>
                   )}
                 </div>
               );
