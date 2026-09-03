@@ -1761,6 +1761,41 @@ export function TelegramCloudflareCard() {
             tag + User ID (Nhận diện / gõ tên tương tự). 🔗 Webhook HA/n8n theo thread
             hoặc từng user.
           </p>
+          <details className="rounded border border-dashed border-border/70 p-2">
+            <summary className="text-[11px] font-medium cursor-pointer select-none">
+              💡 Ba ô tag ăn khớp nhau thế nào — một ví dụ
+            </summary>
+            <div className="mt-1.5 space-y-1 text-[10px] text-muted-foreground">
+              <p>
+                Cài: «bắt buộc tag» <b>tắt</b> · «trả lời tin của TÔI» <b>bật</b>, từ khóa{" "}
+                <code>@toi</code> · chuyển tiếp <b>bật</b>, «chỉ khi có TAG», tag riêng{" "}
+                <code>@n8n</code>. Khi đó:
+              </p>
+              <table className="w-full">
+                <tbody>
+                  {[
+                    ["Người khác: “giá bao nhiêu”", "ChatGPT trả lời"],
+                    ["Người khác: “@n8n xuất báo cáo”", "đi webhook, ChatGPT im"],
+                    ["Bạn: “@toi thời tiết sao”", "ChatGPT trả lời"],
+                    ["Bạn: “@n8n chạy quy trình”", "đi webhook, ChatGPT im"],
+                    ["Bạn: “mai họp mấy giờ”", "không ai — bạn buộc phải có tag"],
+                    ["Câu bot vừa trả lời", "không ai — không chứa tag nào"],
+                  ].map(([a, b]) => (
+                    <tr key={a} className="align-top">
+                      <td className="pr-2 py-0.5 whitespace-nowrap">{a}</td>
+                      <td className="py-0.5 font-medium">→ {b}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p>
+                Luật chung: <b>đúng một</b> trong hai (ChatGPT / webhook) được nhận tin
+                KHÔNG tag, cái còn lại phải có tag. Tin mang tag nào thì về đúng nơi của
+                tag đó. Ba ô tag phải khác nhau — trùng nhau thì một bên không bao giờ
+                tới lượt, và ô cấu hình sẽ báo đỏ không cho lưu.
+              </p>
+            </div>
+          </details>
           {loiLoc.length > 0 && (
             <div className="rounded border border-red-500 bg-red-500/10 p-2 space-y-1">
               <p className="text-xs font-semibold text-red-600">
