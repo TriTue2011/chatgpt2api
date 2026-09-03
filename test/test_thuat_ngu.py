@@ -63,6 +63,37 @@ class ThuatNguTests(unittest.TestCase):
     def test_khong_co_glossary_tra_rong(self):
         self.assertEqual(tn.doan_linh_vuc("bất kỳ", "ja"), [])
 
+    def test_term_ngan_khong_khop_trong_long_tu_khac(self):
+        # 'la', 'mi', 'fa' là nốt nhạc; khớp lỏng thì chúng nằm sẵn trong
+        # 'player', 'important', 'fact' và mọi bản thoại tiếng Anh đều bị chấm
+        # là âm nhạc. Bản thoại về tim dưới đây không có nốt nhạc nào.
+        (self._data / "glossary" / "en.json").write_text(
+            json.dumps({"am_nhac": {"la": "la", "mi": "mi", "fa": "fa",
+                                    "key": "phím", "bow": "vĩ"}},
+                       ensure_ascii=False), encoding="utf-8")
+        tn._reset_cache_cho_test()
+        self.assertEqual(
+            tn.doan_linh_vuc("The important fact is that the player relaxes "
+                             "and the heart keeps beating", "en"), [])
+
+    def test_term_ngan_van_khop_khi_dung_la_mot_tu(self):
+        (self._data / "glossary" / "en.json").write_text(
+            json.dumps({"am_nhac": {"la": "la", "mi": "mi", "fa": "fa"}},
+                       ensure_ascii=False), encoding="utf-8")
+        tn._reset_cache_cho_test()
+        self.assertEqual(
+            tn.doan_linh_vuc("sing la then mi then fa", "en"), ["am_nhac"])
+
+    def test_tieng_khong_cach_tu_van_khop_chuoi_con(self):
+        # Tiếng Nhật viết liền, không có biên chữ để tựa vào → giữ khớp chuỗi con.
+        (self._data / "glossary" / "ja.json").write_text(
+            json.dumps({"cong_nghe": {"電池": "pin", "回路": "mạch",
+                                      "端子": "cực"}}, ensure_ascii=False),
+            encoding="utf-8")
+        tn._reset_cache_cho_test()
+        self.assertEqual(
+            tn.doan_linh_vuc("この電池と回路と端子を確認する", "ja"), ["cong_nghe"])
+
     # ── hậu kỳ thay thuật ngữ ────────────────────────────────────────────────
     def test_thay_bang_thuat_ngu_chuan(self):
         # NLLB dịch "cache" thành "bộ đệm ẩn"; hậu kỳ nắn về "bộ nhớ đệm".

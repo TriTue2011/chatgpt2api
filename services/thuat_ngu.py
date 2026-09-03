@@ -247,6 +247,31 @@ def xoa_sua(src: str, linh_vuc: str, term: str) -> bool:
 # nhận, và bản sửa tay chưa bao giờ có cơ hội chạy.
 
 
+#: Mẫu khớp-nguyên-từ đã biên dịch, theo term. ``None`` = term không viết bằng
+#: chữ Latin nên phải khớp chuỗi con (Nhật/Trung viết không cách từ).
+_MAU_CA_TU: dict[str, re.Pattern[str] | None] = {}
+_LA_LATIN = re.compile(r"[a-z0-9][a-z0-9\s\-'.&/]*", re.ASCII)
+
+
+def co_trong(term: str, hay: str) -> bool:
+    """``term`` (đã thường hoá) có xuất hiện trong ``hay`` (đã thường hoá) không.
+
+    Term viết bằng chữ Latin phải khớp NGUYÊN TỪ. Kho có những term rất ngắn —
+    'la', 'mi', 'fa' là nốt nhạc, 'ok', 'hip', 'app' — mà khớp lỏng thì chúng
+    nằm sẵn trong 'player', 'important', 'fact', 'look', 'ship'. Hệ quả đã đo
+    được: mọi bản thoại tiếng Anh đều đủ ba lần khớp và bị chấm là ÂM NHẠC.
+
+    Tiếng Nhật/Trung viết không cách từ nên không có biên chữ để tựa vào; term
+    của các tiếng đó giữ nguyên lối khớp chuỗi con.
+    """
+    if term not in _MAU_CA_TU:
+        _MAU_CA_TU[term] = (
+            re.compile(r"(?<!\w)" + re.escape(term) + r"(?!\w)")
+            if _LA_LATIN.fullmatch(term) else None)
+    mau = _MAU_CA_TU[term]
+    return bool(mau.search(hay)) if mau is not None else term in hay
+
+
 def cap_nguoi_dung(src: str) -> list[tuple[str, str]]:
     """[(term nguồn, thuật ngữ VI)] người dùng TỰ THÊM cho tiếng ``src``.
 
@@ -308,7 +333,7 @@ def doan_linh_vuc(text_nguon: str, src: str) -> list[str]:
     hay = thuong_hoa(text_nguon)
     diem: dict[str, int] = {}
     for linh_vuc, cap in goi.items():
-        n = sum(1 for term in cap if term and term in hay)
+        n = sum(1 for term in cap if term and co_trong(term, hay))
         if n >= NGUONG_LINH_VUC:
             diem[linh_vuc] = n
     return sorted(diem, key=lambda k: diem[k], reverse=True)[:TOI_DA_LINH_VUC]
@@ -346,7 +371,7 @@ def hau_ky_thuat_ngu(
     can_thay: dict[str, str] = {}
     for lv in linh_vuc:
         for term, vi in goi.get(lv, {}).items():
-            if term and term in nguon_hay:
+            if term and co_trong(term, nguon_hay):
                 can_thay.setdefault(term, vi)
 
     bang: dict[str, str] = {}

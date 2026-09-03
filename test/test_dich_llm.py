@@ -78,6 +78,31 @@ class HocTests(_DataTmp):
         raw = '```json\n[{"src":"kernel","vi":"nhân"}]\n```'
         self.assertEqual(dl._rã_json_terms(raw), [{"src": "kernel", "vi": "nhân"}])
 
+    def test_chon_linh_vuc_nhan_nhan_hop_le(self):
+        ra = dl.chon_linh_vuc(["The heart pumps blood"], "m",
+                              lambda m, msg: "y_khoa")
+        self.assertEqual(ra, ["y_khoa"])
+
+    def test_chon_linh_vuc_boc_duoc_nhan_lan_trong_cau(self):
+        ra = dl.chon_linh_vuc(["The heart pumps blood"], "m",
+                              lambda m, msg: "Lĩnh vực: y_khoa.")
+        self.assertEqual(ra, ["y_khoa"])
+
+    def test_chon_linh_vuc_khong_ro_thi_rong(self):
+        self.assertEqual(
+            dl.chon_linh_vuc(["hôm nay trời đẹp"], "m",
+                             lambda m, msg: "khong_ro"), [])
+
+    def test_chon_linh_vuc_bia_nhan_moi_thi_rong(self):
+        # Model bịa lĩnh vực ngoài danh sách → không nhận, thà không học.
+        self.assertEqual(
+            dl.chon_linh_vuc(["x"], "m", lambda m, msg: "tim_mach"), [])
+
+    def test_chon_linh_vuc_model_loi_thi_rong(self):
+        def hong(m, msg):
+            raise dl.LoiLLM("sập")
+        self.assertEqual(dl.chon_linh_vuc(["x"], "m", hong), [])
+
     def test_hoc_thuat_ngu_gan_linh_vuc_chinh(self):
         cap = [("the kernel panics", "nhân sụp")]
         def goi(m, msg):

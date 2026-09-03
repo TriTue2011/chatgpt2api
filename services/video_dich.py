@@ -837,6 +837,10 @@ def _chinh_llm_neu_bat(nhom: list[Doan], ban_dich: list[str],
             raise dich_llm.LoiLLM(str(resp["error"]))
         return content_of(resp)
 
+    if src and not linh_vuc:
+        # Thống kê chỉ nhận ra lĩnh vực kho ĐÃ phủ; lĩnh vực mới thì nó chịu, mà
+        # chịu thì vòng học không chạy và kho mãi không phủ. Hỏi model một lượt.
+        linh_vuc = dich_llm.chon_linh_vuc([d.chu for d in nhom], model, goi_model)
     cap = list(zip((d.chu for d in nhom), ban_dich))
     return dich_llm.chinh_va_hoc(cap, linh_vuc, src, model, goi_model)
 

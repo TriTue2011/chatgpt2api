@@ -94,6 +94,43 @@ def chinh(cap: list[tuple[str, str]], linh_vuc: list[str], src: str,
     return ra
 
 
+def chon_linh_vuc(cau_goc: list[str], model: str, goi_model: GoiModel) -> list[str]:
+    """Hỏi model bản thoại thuộc lĩnh vực nào — CHỈ dùng khi thống kê chịu thua.
+
+    ``thuat_ngu.doan_linh_vuc`` chấm lĩnh vực bằng cách đếm thuật ngữ ĐÃ CÓ
+    trong kho, nên lĩnh vực nào kho chưa phủ thì nó không nhận ra; mà không
+    nhận ra thì vòng học không chạy, và kho mãi không phủ thêm. Một lượt hỏi
+    ngắn phá được vòng luẩn quẩn đó.
+
+    Chỉ nhận nhãn có sẵn trong ``LINH_VUC_NHAN``; model nói gì khác (kể cả bịa
+    lĩnh vực mới, hay bảo không rõ) đều trả [] — thà không học còn hơn học vào
+    sai ngăn, vì ``ghi_hoc`` ghi rồi thì không đè lại.
+    """
+    if not cau_goc or not model:
+        return []
+    system = (
+        "Bạn phân loại lĩnh vực chuyên môn của một bản thoại. Chọn ĐÚNG MỘT "
+        "nhãn trong danh sách được cho. Nếu bản thoại là chuyện đời thường, "
+        "không thuộc chuyên ngành nào, hãy trả 'khong_ro'. CHỈ ghi nhãn, không "
+        "giải thích."
+    )
+    user = ("Danh sách nhãn: " + ", ".join(tn.LINH_VUC_NHAN)
+            + "\n\nBản thoại:\n" + "\n".join(cau_goc[:40]))
+    try:
+        raw = goi_model(model, [{"role": "system", "content": system},
+                                {"role": "user", "content": user}])
+    except Exception as exc:
+        logger.warning("hỏi lĩnh vực lỗi (%s) — bỏ qua vòng học lần này",
+                       str(exc)[:160])
+        return []
+    thap = (raw or "").strip().lower()
+    for slug in tn.LINH_VUC_NHAN:
+        if re.search(r"(?<!\w)" + slug + r"(?!\w)", thap):
+            logger.info("dịch LLM: model chấm lĩnh vực '%s'", slug)
+            return [slug]
+    return []
+
+
 def _rã_json_terms(raw: str) -> list[dict]:
     """Bóc mảng JSON [{src, vi}] khỏi câu trả lời (kể cả khi bọc ```json)."""
     s = (raw or "").strip()
