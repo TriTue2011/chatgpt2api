@@ -29,6 +29,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { request } from "@/lib/request";
+import { useSettingsStore } from "@/app/settings/store";
 import {
   RefreshCw, Webhook, CheckCircle2, XCircle, AlertTriangle, Radio, Copy,
 } from "lucide-react";
@@ -52,11 +53,16 @@ type BotInfo = {
   polling: boolean;
   /** URL RIÊNG của bot này — thứ setWebhook thật sự đăng ký. */
   expected_url?: string;
+  /** Chế độ ĐANG áp cho riêng bot này */
+  webhook?: boolean;
+  /** Bot có khai riêng, hay đang kế thừa công tắc chung */
+  khai_rieng?: boolean;
+  token?: string;
 };
 
 type Status = {
   configured: boolean;
-  mode: "webhook" | "long-polling";
+  mode: "webhook" | "long-polling" | "hỗn hợp";
   webhook_enabled: boolean;
   webhook_url: string;
   expected_webhook_url: string;
@@ -100,6 +106,28 @@ export function ZaloBotWebhookPanel() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  const setField = useSettingsStore((st) => st.setField);
+  // Đổi chế độ cho RIÊNG một bot. `enabled = null` = xoá cờ riêng, quay về kế
+  // thừa công tắc chung.
+  const doiCheDoBot = async (token: string, enabled: boolean | null) => {
+    setBusy(true);
+    try {
+      const r = await request.post("/api/zalo-bot/webhook-config", { token, enabled });
+      const d = r.data as Record<string, unknown>;
+      showToast(
+        enabled === null ? "Đã bỏ cài riêng, bot theo công tắc chung ✓"
+        : enabled ? "Đã bật webhook cho bot này ✓"
+        : "Đã chuyển bot này về long-polling ✓",
+        !d?.fell_back_to_polling,
+      );
+      await refresh();
+    } catch (e) {
+      showToast(`Lỗi: ${e instanceof Error ? e.message : e}`, false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const expected = String(status?.expected_webhook_url || "");
   const laHttps = expected.toLowerCase().startsWith("https://");
 
@@ -108,6 +136,13 @@ export function ZaloBotWebhookPanel() {
     try {
       const r = await request.post("/api/zalo-bot/webhook-config", { enabled });
       const d = r.data as Record<string, unknown>;
+      // Đồng bộ NGAY vào bản chụp cấu hình của trang. Endpoint trên ghi thẳng
+      // `zalo_webhook_enabled` xuống máy chủ, nhưng store vẫn giữ giá trị cũ —
+      // lần bấm «Lưu cấu hình» sau đó ghi đè cả config nên cờ vừa đổi bị lật
+      // ngược, rồi `register_webhook()` áp lại chế độ cũ. Đo thật 03/09: tắt
+      // webhook xong đúng 26 giây sau là polling bị dừng, lặp lại y hệt hai lần.
+      const daApDung = !d?.fell_back_to_polling && !!d?.ok;
+      setField("zalo_webhook_enabled", daApDung ? enabled : false);
       if (d?.fell_back_to_polling) {
         // apply_mode dừng poll TRƯỚC khi setWebhook; trượt hết thì nó tự quay về
         // polling và hạ cờ, nên phải nói rõ kẻo người dùng tưởng đã bật xong.
@@ -177,7 +212,8 @@ export function ZaloBotWebhookPanel() {
               ? "bg-[var(--neon-cyan)]/15 text-[var(--neon-cyan)]"
               : "bg-amber-400/15 text-amber-400"
           }`}>
-            {status?.mode === "webhook" ? "🔗 Webhook" : "🔄 Long-polling"}
+            {status?.mode === "webhook" ? "🔗 Webhook"
+              : status?.mode === "hỗn hợp" ? "🔀 Hỗn hợp" : "🔄 Long-polling"}
           </span>
           <span className="text-xs text-[var(--muted-foreground)]">
             {status?.bots_count ?? 0} bot · {status?.bots_polling ?? 0} đang poll
@@ -255,6 +291,36 @@ export function ZaloBotWebhookPanel() {
                   {lech && (
                     <span className="rounded bg-amber-400/15 px-1.5 py-0.5 text-amber-400" title="URL Zalo đang giữ khác URL ta sẽ đăng ký — bấm 'Áp lại chế độ'">
                       lệch URL
+                    </span>
+                  )}
+                  {!!b.token && (
+                    <span className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void doiCheDoBot(b.token!, !b.webhook)}
+                        className={`rounded px-2 py-0.5 text-[11px] font-semibold ${
+                          b.webhook ? "bg-[var(--neon-cyan)]/15 text-[var(--neon-cyan)]"
+                                    : "bg-amber-400/15 text-amber-400"}`}
+                        title={b.webhook ? "Bấm để chuyển bot NÀY về long-polling"
+                                         : "Bấm để bật webhook cho riêng bot NÀY"}
+                      >
+                        {b.webhook ? "webhook" : "polling"}
+                      </button>
+                      {b.khai_rieng ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void doiCheDoBot(b.token!, null)}
+                          className="rounded px-1 text-[11px] text-[var(--muted-foreground)] hover:text-red-400"
+                          title="Bỏ cài riêng, cho bot theo công tắc chung"
+                        >
+                          ×
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-[var(--muted-foreground)]"
+                              title="Bot này đang theo công tắc chung">chung</span>
+                      )}
                     </span>
                   )}
                 </div>

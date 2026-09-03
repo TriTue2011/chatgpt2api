@@ -589,6 +589,44 @@ def get_webhook_info(bot: dict) -> dict:
     return _with_bot(bot, _api_call, "getWebhookInfo")
 
 
+def bot_webhook_enabled(bot: dict) -> bool:
+    """Bot NÀY chạy webhook hay long-polling.
+
+    Bản ghi bot có khoá `webhook` (bool) thì theo nó; không có thì kế thừa công
+    tắc chung `zalo_webhook_enabled`. Kế thừa như vậy để cấu hình đang chạy
+    không đổi hành vi, và người chỉ có một bot khỏi phải khai thêm gì.
+
+    Vì sao cần tách theo bot: một tài khoản có thể nuôi nhiều bot cho nhiều việc
+    (trợ lý, n8n, thử nghiệm) mà chỉ MỘT trong số đó có URL webhook công khai
+    hợp lệ. Ép chung một công tắc thì hoặc là bot kia im, hoặc phải hạ cả nhà
+    xuống long-polling.
+    """
+    v = (bot or {}).get("webhook")
+    if isinstance(v, bool):
+        return v
+    return webhook_enabled()
+
+
+def dat_webhook_cho_bot(token: str, value: bool | None) -> bool:
+    """Ghi cờ chế độ RIÊNG cho một bot. ``None`` = xoá cờ, quay về kế thừa."""
+    tok = str(token or "").strip()
+    if not tok:
+        return False
+    ds = [dict(b) for b in _bots()]
+    thay = False
+    for b in ds:
+        if str(b.get("token", "")).strip() != tok:
+            continue
+        if value is None:
+            b.pop("webhook", None)
+        else:
+            b["webhook"] = bool(value)
+        thay = True
+    if thay:
+        config.update({"zalo_bots": ds})
+    return thay
+
+
 def _enabled_bots() -> list[dict]:
     return [dict(b) for b in _bots()
             if b.get("enabled", True) and str(b.get("token", "")).strip()]
@@ -626,22 +664,27 @@ def apply_mode(*, delete_inline: bool = True) -> dict:
     được vì mỗi bot bật đều có luồng poll tự deleteWebhook trước vòng đầu, nên
     bất biến vẫn giữ; chỉ mất phần BÁO CÁO kết quả delete cho người bấm nút.
     """
-    want_webhook = webhook_enabled()
     bots = _enabled_bots()
+    nhom_wh = [b for b in bots if bot_webhook_enabled(b)]
+    nhom_poll = [b for b in bots if not bot_webhook_enabled(b)]
     out: dict[str, Any] = {
-        "mode": "webhook" if want_webhook else "long-polling",
+        "mode": ("webhook" if not nhom_poll else
+                 "long-polling" if not nhom_wh else "hỗn hợp"),
         "bots": [],
     }
-    if want_webhook:
-        out["draining"] = stop_polling()
-        for bot in bots:
+    if nhom_wh:
+        # Chỉ rút poll của ĐÚNG những bot sắp chuyển sang webhook; bot đang
+        # long-polling ở nhóm kia phải chạy tiếp, không bị vạ lây.
+        out["draining"] = stop_polling(
+            tokens=[str(b.get("token", "")).strip() for b in nhom_wh])
+        for bot in nhom_wh:
             r = set_webhook(bot)
             out["bots"].append({
                 "bot_id": _bot_public_id(bot),
+                "mode": "webhook",
                 "ok": bool(r.get("ok")),
                 "error": "" if r.get("ok") else str(r.get("description") or "")[:200],
             })
-        out["polling"] = False
         out["webhook_url"] = webhook_url()
         # AN TOÀN: đăng ký webhook trượt HẾT thì kênh coi như CHẾT — poll vừa bị
         # dừng ở trên, mà webhook thì không đặt được. Ca này rất dễ gặp: docs đòi
@@ -653,27 +696,38 @@ def apply_mode(*, delete_inline: bool = True) -> dict:
         # biến "webhook bật thì không poll", giữ hai thứ lệch nhau là mời lỗi về
         # sau. Hạ cờ khiến trạng thái chỉ có MỘT nguồn đúng, và người vận hành
         # thấy công tắc tự tắt kèm lý do thì biết ngay là chưa dùng được.
-        if bots and not any(b["ok"] for b in out["bots"]):
+        if not any(b["ok"] for b in out["bots"]):
             ly_do = next((b["error"] for b in out["bots"] if b["error"]), "không rõ")
             logger.warning("Zalo: setWebhook trượt hết (%s) → quay về long-polling", ly_do)
+            # Hạ cờ để trạng thái chỉ có MỘT nguồn đúng: bật webhook mà đặt
+            # không được thì bot im hoàn toàn — cái giá quá đắt cho một lần thử.
+            # Hạ cho ĐÚNG những bot vừa trượt, và hạ cả công tắc chung nếu chưa
+            # bot nào khai riêng (giữ nếp cũ cho người chỉ dùng một công tắc).
             try:
-                config.update({"zalo_webhook_enabled": False})
+                if any(isinstance(b.get("webhook"), bool) for b in _bots()):
+                    # Đang dùng chế độ riêng từng bot → hạ đúng mấy bot vừa
+                    # trượt, không đụng công tắc chung lẫn bot khác.
+                    for bot in nhom_wh:
+                        dat_webhook_cho_bot(str(bot.get("token", "")).strip(), False)
+                else:
+                    # Chưa ai khai riêng → giữ nguyên nếp cũ: hạ công tắc chung.
+                    config.update({"zalo_webhook_enabled": False})
             except Exception as exc:
-                logger.warning("Zalo: hạ cờ zalo_webhook_enabled lỗi: %s", exc)
-            out["mode"] = "long-polling"
+                logger.warning("Zalo: hạ cờ webhook lỗi: %s", exc)
+            out["mode"] = "long-polling" if not nhom_poll else "hỗn hợp"
             out["fell_back_to_polling"] = True
             out["fallback_reason"] = ly_do
-            out["polling"] = start_polling()
-    else:
-        if delete_inline:
-            for bot in bots:
-                r = delete_webhook(bot)
-                out["bots"].append({
-                    "bot_id": _bot_public_id(bot),
-                    "ok": bool(r.get("ok")),
-                    "error": "" if r.get("ok") else str(r.get("description") or "")[:200],
-                })
-        out["polling"] = start_polling()
+            nhom_poll = bots
+    if nhom_poll and delete_inline:
+        for bot in nhom_poll:
+            r = delete_webhook(bot)
+            out["bots"].append({
+                "bot_id": _bot_public_id(bot),
+                "mode": "long-polling",
+                "ok": bool(r.get("ok")),
+                "error": "" if r.get("ok") else str(r.get("description") or "")[:200],
+            })
+    out["polling"] = start_polling() if nhom_poll else False
     # Không bot nào cấu hình thì coi như đúng trạng thái (rỗng), không báo lỗi.
     out["ok"] = all(b["ok"] for b in out["bots"]) if out["bots"] else True
     return out
@@ -689,15 +743,16 @@ def register_webhook() -> bool:
 
 def start_polling() -> bool:
     """Bật polling cho tất cả bot enabled; bỏ qua bot đã có thread sống."""
-    if webhook_enabled():
-        # Bất biến: webhook bật thì getUpdates vô hiệu (docs) — chạy poll chỉ tạo
-        # log lỗi rác và giữ deleteWebhook ngầm phá luôn webhook vừa đăng ký.
-        logger.info("Zalo: webhook đang BẬT → không khởi động long-polling")
-        return False
     started = False
     with _poll_lock:
         for bot in _bots():
             if not bot.get("enabled", True):
+                continue
+            # Bất biến: bot nào đang bật webhook thì KHÔNG poll — docs nói
+            # getUpdates vô hiệu khi có webhook, và luồng poll còn deleteWebhook
+            # ngầm nên chạy song song là phá luôn webhook vừa đăng ký. Xét theo
+            # TỪNG bot, để bot này webhook không kéo bot kia ngưng nhận tin.
+            if bot_webhook_enabled(bot):
                 continue
             token = str(bot.get("token", "")).strip()
             if not token:
@@ -716,7 +771,8 @@ def start_polling() -> bool:
     return started
 
 
-def stop_polling(join_timeout: float = 2.0) -> int:
+def stop_polling(join_timeout: float = 2.0,
+                 tokens: list[str] | None = None) -> int:
     """Ra hiệu cho mọi luồng poll dừng; trả về số luồng CÒN đang thoát dở.
 
     Không chờ hết 35s socket timeout vì hàm này chạy trong request quản trị.
@@ -725,7 +781,10 @@ def stop_polling(join_timeout: float = 2.0) -> int:
     trong khoảnh khắc chuyển chế độ cũng không bị xử lý hai lần.
     """
     with _poll_lock:
-        tokens = list(_poll_threads)
+        # `tokens` = chỉ rút poll của ĐÚNG mấy bot này (dùng khi chuyển chế độ
+        # riêng từng bot); None = rút hết như trước.
+        can = set(tokens) if tokens is not None else None
+        tokens = [t for t in _poll_threads if can is None or t in can]
         for tok in tokens:
             _poll_stop.setdefault(tok, threading.Event()).set()
         # Đọc qua .get() một lần: luồng poll tự pop khỏi _poll_threads khi thoát,
@@ -795,7 +854,9 @@ def _poll_loop(bot: dict) -> None:
     offset = 0
     while True:
         # Bot bị tắt / xóa khỏi config, hoặc vừa bật webhook → tự dừng luồng.
-        if stop.is_set() or webhook_enabled():
+        if stop.is_set() or bot_webhook_enabled(
+                next((b for b in _bots()
+                      if str(b.get("token", "")).strip() == token), bot)):
             _poll_threads.pop(token, None)
             logger.info("Zalo poll stop for bot %s (đổi chế độ)", token[:6])
             return
@@ -2426,9 +2487,13 @@ def get_status() -> dict:
     bots = _bots()
     alive = sum(1 for th in _poll_threads.values() if th.is_alive())
     wh = webhook_enabled()
+    # Mỗi bot tự chọn được chế độ, nên trạng thái chung có thể là HỖN HỢP.
+    _bat = [b for b in bots if b.get("enabled", True)]
+    _wh_n = sum(1 for b in _bat if bot_webhook_enabled(b))
     return {
         "configured": bool(bots),
-        "mode": "webhook" if wh else "long-polling",
+        "mode": ("webhook" if _bat and _wh_n == len(_bat)
+                 else "long-polling" if _wh_n == 0 else "hỗn hợp"),
         "webhook_enabled": wh,
         "webhook_url": webhook_url() if wh else "",
         "polling": alive > 0,
@@ -2458,6 +2523,11 @@ def get_webhook_status() -> dict:
             "info": r.get("result") if r.get("ok") else None,
             "error": "" if r.get("ok") else str(r.get("description") or "")[:200],
             "polling": bool(th is not None and th.is_alive()),
+            # Chế độ ĐANG áp cho bot này, và bot có khai riêng hay đang kế thừa
+            # công tắc chung — UI cần phân biệt để nút hiện đúng trạng thái.
+            "webhook": bot_webhook_enabled(bot),
+            "khai_rieng": isinstance(bot.get("webhook"), bool),
+            "token": str(bot.get("token", "")).strip(),
             # URL RIÊNG của bot này — thứ setWebhook thật sự đăng ký. So với
             # `info.url` (URL Zalo đang giữ) là biết ngay bot nào lệch.
             "expected_url": webhook_url(bot),

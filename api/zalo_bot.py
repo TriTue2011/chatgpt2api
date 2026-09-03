@@ -129,6 +129,16 @@ def create_router() -> APIRouter:
         b = body or {}
         if "enabled" not in b:
             raise HTTPException(status_code=400, detail="Thiếu trường 'enabled'")
+        # Có `token` = đổi chế độ RIÊNG cho bot đó; `enabled=null` = xoá cờ
+        # riêng, quay về kế thừa công tắc chung. Không có token thì như cũ: đổi
+        # công tắc chung cho mọi bot chưa khai riêng.
+        tok = str(b.get("token") or "").strip()
+        if tok:
+            bat = b.get("enabled")
+            gia_tri = None if bat is None else bool(bat)
+            if not await asyncio.to_thread(zb.dat_webhook_cho_bot, tok, gia_tri):
+                raise HTTPException(404, detail={"error": "Không có bot với token đó"})
+            return await asyncio.to_thread(zb.apply_mode)
         return await asyncio.to_thread(zb.set_webhook_enabled, bool(b.get("enabled")))
 
     @router.post("/api/zalo-bot/apply-mode")
