@@ -51,7 +51,16 @@ class ModelCooldownManager:
     BACKOFF_MAX = 1800.0     # 30 minutes
     BACKOFF_401_COOLDOWN = 1800.0   # 30 min
     BACKOFF_402_403_COOLDOWN = 1800.0
-    BACKOFF_404_COOLDOWN = 43200.0  # 12 hours
+    # 404 KHÔNG còn đáng tin là "model này không tồn tại". Đo ngày 03/09/2026
+    # trên máy chủ thật: chatgpt.com/backend-api/codex/responses trả 404 với
+    # THÂN RỖNG cho một tài khoản đã bị thu hồi quyền Codex, trong khi model
+    # vẫn sống nguyên (cùng lúc đó gpt-5.5 và gpt-5.6-luna gọi bằng tài khoản
+    # khác đều trả lời bình thường). Với án 12 tiếng, đúng một lần vớ phải tài
+    # khoản chết là cả provider bị treo tới hôm sau — đo được trong log: codex
+    # và chatgpt free cùng bị bỏ qua suốt buổi, request tụt xuống model yếu hơn.
+    # 30 phút đủ để thôi nện vào một provider đang hỏng thật, mà một lần 404
+    # thoáng qua không còn phải trả giá bằng cả ngày.
+    BACKOFF_404_COOLDOWN = 1800.0    # 30 min
     BACKOFF_5XX_COOLDOWN = 60.0     # 1 minute
     BACKOFF_UNKNOWN_COOLDOWN = 60.0
 

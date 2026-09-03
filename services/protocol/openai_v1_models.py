@@ -85,8 +85,17 @@ FALLBACK_MODELS = {
         "cx/gpt-5.6-luna", "cx/gpt-5.6-luna-review",
         # GPT 5.5
         "cx/gpt-5.5", "cx/gpt-5.5-review",
-        # GPT 5.4 — OpenAI báo ngừng cho đăng nhập ChatGPT từ 31/08/2026,
-        # thay bằng 5.6-terra (cho 5.4) và 5.6-luna (cho 5.4-mini).
+        # GPT 5.4 — đo lại 03/09/2026, sau mốc OpenAI ngừng cho đăng nhập
+        # ChatGPT (31/08/2026). Kết quả PHỤ THUỘC GÓI của tài khoản:
+        #   gói `free` : gpt-5.4 CHẾT (400), gpt-5.4-mini sống
+        #   gói `go`   : cả hai đều sống
+        # Nên gpt-5.4 chỉ được hiện khi có tài khoản codex trả phí —
+        # xem `_CX_CHI_GOI_TRA_PHI` ở dưới. Hiện bừa thì người dùng chọn
+        # phải một model mà tài khoản của họ gọi là 400.
+        #
+        # Cách đo cũng đã đổi: upstream nay trả 400 THÂN RỖNG cho mọi tên
+        # sai, nên mẹo đọc câu lỗi ở trên KHÔNG dùng được nữa. Phải gọi
+        # thật có luồng: model sống -> 200 kèm sự kiện; chết -> 400.
         "cx/gpt-5.4", "cx/gpt-5.4-review",
         "cx/gpt-5.4-mini", "cx/gpt-5.4-mini-review",
     ],
@@ -736,12 +745,34 @@ def _drop_unavailable(data: list[dict]) -> list[dict]:
     return out
 
 
+def _co_codex_tra_phi() -> bool:
+    """Có ít nhất một tài khoản Codex gói TRẢ PHÍ (plus/pro/go/business…) đang
+    dùng được không? Đo 03/09/2026: model "cx/gpt-5.4" chỉ sống trên tài khoản
+    codex gói `go`, còn 7 tài khoản gói `free` gọi nó là 400. Nên chỉ hiện
+    gpt-5.4 khi thật sự có tài khoản trả phí — không thì người dùng chọn phải
+    một model mà tài khoản của họ không gọi được."""
+    from services.account_service import PAID_PLANS
+    try:
+        accs = account_service.list_accounts()
+    except Exception:
+        return False
+    for a in accs:
+        if account_group(a) != "codex":
+            continue
+        if str(a.get("status")) in ("disabled", "error", "limited"):
+            continue
+        if str(a.get("plan") or "").strip().lower() in PAID_PLANS:
+            return True
+    return False
+
+
 def _curate_models(data: list[dict]) -> list[dict]:
     """Tab quản lý model — dọn nhóm Codex OAuth:
       - BỎ mọi model tiền tố `codex/`.
       - BỎ cx/* cũ hơn 5.3 (giữ cx/auto = Model chính luôn hiện).
     Giữ nguyên biến thể ':text' của các model được giữ. Provider khác không đụng."""
     import re as _re
+    co_tra_phi = _co_codex_tra_phi()
     out: list[dict] = []
     for m in data:
         base = str(m.get("id") or "").split(":")[0]  # bỏ ':text' khi xét
@@ -753,6 +784,10 @@ def _curate_models(data: list[dict]) -> list[dict]:
                 mt = _re.search(r"gpt-(\d+(?:\.\d+)?)", slug)
                 ver = float(mt.group(1)) if mt else 0.0
                 if ver < 5.3:
+                    continue
+                # gpt-5.4 (không phải -mini) chỉ sống trên gói trả phí.
+                if slug.startswith("gpt-5.4") and not slug.startswith("gpt-5.4-mini") \
+                        and not co_tra_phi:
                     continue
         out.append(m)
     return out

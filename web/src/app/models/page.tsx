@@ -19,7 +19,7 @@ const PROVIDER_LABELS: Record<string, { label: string; color: string; tint: stri
   opencode: { label: "OpenCode", color: "#E87040", tint: "amber" },
   gemini_free: { label: "Gemini", color: "#8E6CEE", tint: "violet" },
   openrouter: { label: "OpenRouter", color: "#6366F1", tint: "indigo" },
-  openai_oauth: { label: "Codex OAuth", color: "#00A67E", tint: "emerald" },
+  openai_oauth: { label: "Codex Free", color: "#00A67E", tint: "emerald" },
   antigravity: { label: "Antigravity", color: "#1A73E8", tint: "indigo" },
   chatgpt2api: { label: "Hệ thống (combo)", color: "#F59E0B", tint: "amber" },
   flow: { label: "Google Labs Flow", color: "#34A853", tint: "emerald" },

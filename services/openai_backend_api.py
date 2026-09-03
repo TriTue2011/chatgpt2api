@@ -612,7 +612,11 @@ class OpenAIBackendAPI:
         if not model:
             return "auto"
         if model == "gpt-image-2":
-            return "gpt-5-3"
+            # gpt-5-3 là dòng model đã chết (xem ghi chú trong
+            # protocol/openai_v1_models.py). Đo 03/09/2026 trên máy chủ:
+            # gpt-5-3, gpt-5-6-luna và auto đều ra ảnh như nhau, nên đây
+            # là đổi NHÃN cho khớp model còn sống, không đổi hành vi.
+            return "gpt-5-6-luna"
         if model == CODEX_IMAGE_MODEL:
             return model
         return "auto"
