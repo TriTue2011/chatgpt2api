@@ -144,6 +144,8 @@ type SettingsStore = {
   secretDaDat: BanDoSecret;
   isLoadingConfig: boolean;
   isSavingConfig: boolean;
+  /** Cấu hình TỰ MÂU THUẪN do các thẻ báo lên — còn dòng nào thì CHẶN lưu. */
+  loiChanLuu: string[];
   backups: BackupItem[];
   backupState: BackupState | null;
   isLoadingBackups: boolean;
@@ -180,6 +182,7 @@ type SettingsStore = {
   initialize: () => Promise<void>;
   loadConfig: () => Promise<void>;
   saveConfig: (updatedConfig?: SettingsConfig) => Promise<boolean>;
+  datLoiChanLuu: (loi: string[]) => void;
   loadBackups: (silent?: boolean) => Promise<void>;
   runBackup: () => Promise<void>;
   removeBackup: (key: string) => Promise<void>;
@@ -247,6 +250,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   secretDaDat: {},
   isLoadingConfig: true,
   isSavingConfig: false,
+  loiChanLuu: [],
   backups: [],
   backupState: null,
   isLoadingBackups: true,
@@ -316,9 +320,21 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
   },
 
+  datLoiChanLuu: (loi) => set({ loiChanLuu: loi }),
+
   saveConfig: async (updatedConfig) => {
     const config = updatedConfig || get().config;
     if (!config) {
+      return false;
+    }
+    // Thẻ nào đang có cấu hình tự mâu thuẫn thì nó KHÔNG ghi phần của mình vào
+    // store. Cứ lưu tiếp thì phần còn lại vẫn xuống máy chủ và nút báo "Đã lưu"
+    // — người dùng tưởng xong, trong khi đúng cái vừa sửa lại bị bỏ. Chặn hẳn ở
+    // đây và nói rõ còn mấy chỗ phải sửa.
+    const chan = get().loiChanLuu;
+    if (chan.length) {
+      toast.error(
+        `Chưa lưu được: còn ${chan.length} chỗ cấu hình tự mâu thuẫn. ${chan[0]}`);
       return false;
     }
 

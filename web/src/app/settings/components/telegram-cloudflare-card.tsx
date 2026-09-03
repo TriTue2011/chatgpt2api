@@ -535,6 +535,7 @@ export function TelegramCloudflareCard() {
   const isSavingConfig = useSettingsStore((state) => state.isSavingConfig);
   const setField = useSettingsStore((state) => state.setField);
   const saveConfig = useSettingsStore((state) => state.saveConfig);
+  const datLoiChanLuu = useSettingsStore((state) => state.datLoiChanLuu);
 
   const [models, setModels] = useState<string[]>([]);
   /** Acc Zalo CN: hiển thị tên + SĐT (không hiện ownId). ownId chỉ dùng key nội bộ. */
@@ -1023,9 +1024,13 @@ export function TelegramCloudflareCard() {
 
   const commitFilters = (rows: FilterRow[]) => {
     setFilterRows(rows);
-    // Giữ nguyên chữ đang gõ, nhưng KHÔNG đẩy cấu hình hỏng xuống config.
+    // Giữ nguyên chữ đang gõ, nhưng KHÔNG đẩy cấu hình hỏng xuống config, VÀ
+    // chặn luôn nút «Lưu cấu hình» — không chặn thì phần còn lại vẫn xuống máy
+    // chủ kèm câu "Đã lưu cấu hình", người dùng tưởng xong trong khi đúng cái
+    // vừa sửa lại bị bỏ.
     const loi = loiCauHinh(rows);
     setLoiLoc(loi);
+    datLoiChanLuu(loi);
     if (loi.length) return;
     const tf: Record<string, string[]> = {};
     const tuf: Record<string, string[]> = {};
