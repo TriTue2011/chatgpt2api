@@ -56,7 +56,7 @@ def _nhac_linh_vuc(linh_vuc: list[str]) -> str:
 
 def chinh(cap: list[tuple[str, str]], linh_vuc: list[str], src: str,
           model: str, goi_model: GoiModel) -> list[str]:
-    """Chỉnh danh sách câu đã dịch cho ĐÚNG NGHĨA + MƯỢT, GIỮ thuật ngữ đã chuẩn.
+    """Chỉnh danh sách câu đã dịch cho ĐÚNG NGHĨA + MƯỢT, NẮN thuật ngữ cho chuẩn.
 
     ``cap`` = [(câu gốc, bản dịch nháp)]. Trả danh sách bản dịch đã chỉnh, ĐÚNG
     số câu. Bất kỳ trục trặc nào (model lỗi, lệch số dòng) → trả nguyên bản nháp
@@ -68,11 +68,13 @@ def chinh(cap: list[tuple[str, str]], linh_vuc: list[str], src: str,
     system = (
         "Bạn là biên tập viên phụ đề tiếng Việt. Với mỗi câu, bạn nhận CÂU GỐC "
         "và một BẢN DỊCH NHÁP. Hãy chỉnh bản dịch cho đúng nghĩa theo ngữ cảnh "
-        "và mượt, tự nhiên như người Việt nói. TUYỆT ĐỐI giữ nguyên thuật ngữ "
-        "chuyên ngành đã có trong bản nháp, không thay bằng từ đời thường. "
-        "KHÔNG thêm/bớt/gộp/tách câu. Trả về ĐÚNG số dòng, mỗi dòng một câu, "
-        "đánh số 1., 2., 3.… và CHỈ ghi bản dịch đã chỉnh (không kèm câu gốc, "
-        "không giải thích)."
+        "và mượt, tự nhiên như người Việt nói. Bản nháp do máy dịch làm, nên "
+        "thuật ngữ chuyên ngành trong đó có thể dịch thô hoặc sai: hãy thay "
+        "bằng thuật ngữ chuẩn mà người trong ngành thật sự dùng. Chiều ngược "
+        "lại thì KHÔNG: đã là thuật ngữ chuyên ngành thì không hạ xuống từ đời "
+        "thường. KHÔNG thêm/bớt/gộp/tách câu. Trả về ĐÚNG số dòng, mỗi dòng "
+        "một câu, đánh số 1., 2., 3.… và CHỈ ghi bản dịch đã chỉnh (không kèm "
+        "câu gốc, không giải thích)."
     )
     ra: list[str] = []
     for i in range(0, len(cap), CAU_MOI_LO):

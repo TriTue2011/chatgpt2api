@@ -106,6 +106,47 @@ class ThuatNguTests(unittest.TestCase):
                 render, cache_render=cache)
         self.assertEqual(goi["n"], 1)  # 'cache' chỉ dịch-đơn một lần
 
+    def test_khong_noi_them_duoi_khi_render_la_dau_thuat_ngu(self):
+        # Kho có cả số ít lẫn số nhiều, NLLB dịch-đơn cả hai ra "công tắc phụ",
+        # mà thuật ngữ chuẩn "công tắc phụ trợ" lại BẮT ĐẦU bằng chính chuỗi đó.
+        # Thay nhiều lượt thì mỗi vòng nối thêm một "trợ"; phải giữ nguyên câu.
+        (self._data / "glossary" / "en.json").write_text(
+            json.dumps({"ky_thuat": {"auxiliary switch": "công tắc phụ trợ",
+                                     "auxiliary switches": "công tắc phụ trợ"}},
+                       ensure_ascii=False), encoding="utf-8")
+        tn._reset_cache_cho_test()
+        ra = tn.hau_ky_thuat_ngu(
+            ban_dich="tín hiệu từ các công tắc phụ trợ",
+            nguon="signals from the auxiliary switches and auxiliary switch",
+            src="en", linh_vuc=["ky_thuat"],
+            render_nllb=lambda t: "công tắc phụ")
+        self.assertEqual(ra, "tín hiệu từ các công tắc phụ trợ")
+
+    def test_van_nan_khi_nllb_dich_thanh_chuoi_ngan(self):
+        # Cùng cấu hình trên, nhưng bản dịch đang mang đúng chuỗi NLLB sinh ra
+        # → vẫn phải nắn lên thuật ngữ chuẩn, đúng MỘT lần.
+        (self._data / "glossary" / "en.json").write_text(
+            json.dumps({"ky_thuat": {"auxiliary switch": "công tắc phụ trợ",
+                                     "auxiliary switches": "công tắc phụ trợ"}},
+                       ensure_ascii=False), encoding="utf-8")
+        tn._reset_cache_cho_test()
+        ra = tn.hau_ky_thuat_ngu(
+            ban_dich="tín hiệu từ các công tắc phụ ở tủ",
+            nguon="signals from the auxiliary switches in the panel",
+            src="en", linh_vuc=["ky_thuat"],
+            render_nllb=lambda t: "công tắc phụ")
+        self.assertEqual(ra, "tín hiệu từ các công tắc phụ trợ ở tủ")
+
+    def test_giu_chu_hoa_dau_cau(self):
+        # Thuật ngữ trong kho viết thường; thay vào ĐẦU CÂU thì phải hoa lại,
+        # không được biến "Bộ nhớ đệm bị đầy" thành "bộ nhớ đệm bị đầy".
+        ra = tn.hau_ky_thuat_ngu(
+            ban_dich="Bộ đệm ẩn bị đầy",
+            nguon="the cache is full",
+            src="en", linh_vuc=["cong_nghe"],
+            render_nllb=lambda t: "bộ đệm ẩn")
+        self.assertEqual(ra, "Bộ nhớ đệm bị đầy")
+
     def test_render_giong_chuan_thi_bo_qua(self):
         # NLLB đã ra đúng "bộ nhớ đệm" → không cần thay, không đổi gì.
         ra = tn.hau_ky_thuat_ngu(

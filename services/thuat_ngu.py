@@ -314,20 +314,6 @@ def doan_linh_vuc(text_nguon: str, src: str) -> list[str]:
     return sorted(diem, key=lambda k: diem[k], reverse=True)[:TOI_DA_LINH_VUC]
 
 
-def _thay_ca_tu(chuoi: str, tim: str, thay: str) -> tuple[str, int]:
-    """Thay ``tim`` bằng ``thay`` trong ``chuoi``, KHỚP NGUYÊN CỤM (biên chữ),
-    không phân biệt hoa thường. Trả (chuỗi mới, số lần thay).
-
-    Biên chữ để 'cache' không nuốt trong 'cached' hay 'cacher'. Với tiếng Việt
-    (âm tiết cách nhau bằng khoảng trắng) ``\\b`` quanh cụm vẫn đúng vì hai đầu
-    cụm là chữ cái/số.
-    """
-    if not tim:
-        return chuoi, 0
-    mau = re.compile(r"(?<!\w)" + re.escape(tim) + r"(?!\w)", re.IGNORECASE)
-    return mau.subn(lambda _m: thay, chuoi)
-
-
 def hau_ky_thuat_ngu(
     ban_dich: str,
     nguon: str,
@@ -363,7 +349,7 @@ def hau_ky_thuat_ngu(
             if term and term in nguon_hay:
                 can_thay.setdefault(term, vi)
 
-    ra = ban_dich
+    bang: dict[str, str] = {}
     for term in sorted(can_thay, key=len, reverse=True):
         vi_chuan = can_thay[term]
         if term not in cache_render:
@@ -375,7 +361,28 @@ def hau_ky_thuat_ngu(
         nllb_render = cache_render[term]
         if not nllb_render or thuong_hoa(vi_chuan) == nllb_render:
             continue
-        moi, n = _thay_ca_tu(ra, nllb_render, vi_chuan)
-        if n:
-            ra = moi
-    return ra
+        # Khai chính thuật ngữ chuẩn làm khoá trỏ về nó: chỗ NLLB đã dịch đúng
+        # sẽ khớp vào khoá DÀI này và giữ nguyên, thay vì bị bản render ngắn
+        # hơn khớp trúng phần đầu rồi nối thêm đuôi ("công tắc phụ" nằm gọn
+        # trong "công tắc phụ trợ").
+        bang.setdefault(thuong_hoa(vi_chuan), vi_chuan)
+        bang.setdefault(nllb_render, vi_chuan)
+    if not bang:
+        return ban_dich
+    # Thay MỘT LƯỢT bằng một mẫu gộp, khớp cụm dài trước: chữ vừa thay xong
+    # không được quét lại, nếu không thì term sau cắn vào thuật ngữ term trước
+    # vừa sinh ra và cụm dài thêm một đuôi sau mỗi vòng lặp.
+    mau = re.compile(
+        r"(?<!\w)(" + "|".join(re.escape(k) for k in
+                               sorted(bang, key=len, reverse=True)) + r")(?!\w)",
+        re.IGNORECASE)
+
+    def _thay(m: re.Match) -> str:
+        # Giữ chữ hoa đầu câu của bản dịch: thuật ngữ trong kho viết thường,
+        # thay thẳng vào đầu câu là câu mất chữ hoa.
+        thay = bang[thuong_hoa(m.group(1))]
+        if m.group(1)[:1].isupper() and thay[:1].islower():
+            return thay[0].upper() + thay[1:]
+        return thay
+
+    return mau.sub(_thay, ban_dich)
