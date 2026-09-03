@@ -37,7 +37,7 @@ dependencies = [
     "uvicorn>=0.44.0",
     "sqlalchemy>=2.0.0",
     "psycopg2-binary>=2.9.0",
-    "gitpython>=3.1.57",
+    "gitpython>=3.1.59",  # 3.1.58 có PYSEC-2026-3785..3788
     "gemini-webapi>=2.0.0",
     "cryptography>=50.0.0",
     # Giọng nói: STT chạy local (Zipformer) + phát ra loa Google Cast.
