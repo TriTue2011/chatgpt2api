@@ -33,10 +33,56 @@ _XML_TC_RE = re.compile(r'<tool_call\s+name=["\'](.+?)["\']>(.*?)</tool_call>', 
 _XML_TC_SELF_RE = re.compile(r'<tool_call\s+name=["\'](.+?)["\']\s*/>', re.DOTALL)
 
 
-def extract_text_tool_calls(text: str) -> Optional[list[dict[str, Any]]]:
-    """Bóc tool call viết dạng text/XML trong content → list tool_calls chuẩn."""
-    if not text or "<tool_call" not in text:
+#: Tên khoá mà các model không-native hay dùng khi tự viết tool call ra JSON.
+_JSON_TEN = ("tool", "name", "tool_name", "function", "action")
+_JSON_ARGS = ("args", "arguments", "parameters", "params", "input")
+
+
+def _boc_tool_call_json(text: str,
+                        ten_hop_le: Optional[set[str]] = None) -> Optional[list[dict[str, Any]]]:
+    """Bóc tool call model viết dạng JSON TRẦN (không XML, không native).
+
+    Đo thật 03/09: model `nemotron-3-ultra-free` trả về đúng chuỗi
+    ``{"tool": "search_web", "args": {...}}`` và nó đi thẳng ra màn hình người
+    dùng — vì bộ bóc cũ chỉ hiểu thẻ ``<tool_call>``.
+
+    Chỉ nhận khi TOÀN BỘ nội dung là một object JSON như vậy, và khi có danh
+    sách tool thì tên phải nằm trong đó. Hai chốt này để không nuốt nhầm câu trả
+    lời JSON hợp lệ mà người dùng thật sự hỏi xin.
+    """
+    t = (text or "").strip()
+    if not t:
         return None
+    m = re.match(r"^```(?:json)?\s*(.*?)\s*```$", t, re.DOTALL)
+    if m:
+        t = m.group(1).strip()
+    if not (t.startswith("{") and t.endswith("}")):
+        return None
+    try:
+        obj = json.loads(t)
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    ten = next((str(obj[k]).strip() for k in _JSON_TEN
+                if isinstance(obj.get(k), str) and str(obj[k]).strip()), "")
+    if not ten:
+        return None
+    if ten_hop_le is not None and ten not in ten_hop_le:
+        return None
+    args = next((obj[k] for k in _JSON_ARGS if isinstance(obj.get(k), dict)), {})
+    return [{"id": f"agent_json_{uuid.uuid4().hex[:8]}", "type": "function",
+             "function": {"name": ten,
+                          "arguments": json.dumps(args, ensure_ascii=False)}}]
+
+
+def extract_text_tool_calls(
+        text: str, ten_hop_le: Optional[set[str]] = None) -> Optional[list[dict[str, Any]]]:
+    """Bóc tool call viết dạng text (XML hoặc JSON trần) → list tool_calls chuẩn."""
+    if not text:
+        return None
+    if "<tool_call" not in text:
+        return _boc_tool_call_json(text, ten_hop_le)
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for m in _XML_TC_RE.finditer(text):
@@ -70,7 +116,8 @@ def extract_text_tool_calls(text: str) -> Optional[list[dict[str, Any]]]:
     return out or None
 
 
-def _normalize_text_tool_calls(data: dict[str, Any]) -> None:
+def _normalize_text_tool_calls(data: dict[str, Any],
+                              ten_hop_le: Optional[set[str]] = None) -> None:
     """Nếu model trả tool call dạng text (không native) → nhét vào message.tool_calls
     và dọn phần XML khỏi content để KHÔNG rò ra người dùng. Sửa tại chỗ (in-place)."""
     try:
@@ -80,13 +127,16 @@ def _normalize_text_tool_calls(data: dict[str, Any]) -> None:
     if not isinstance(msg, dict) or msg.get("tool_calls"):
         return
     content = msg.get("content")
-    if not isinstance(content, str) or "<tool_call" not in content:
+    if not isinstance(content, str) or not content.strip():
         return
-    calls = extract_text_tool_calls(content)
+    calls = extract_text_tool_calls(content, ten_hop_le)
     if not calls:
         return
-    cleaned = re.sub(r"```xml\s*.*?```", "", content, flags=re.DOTALL)
-    cleaned = _XML_TC_SELF_RE.sub("", _XML_TC_RE.sub("", cleaned)).strip()
+    if "<tool_call" in content:
+        cleaned = re.sub(r"```xml\s*.*?```", "", content, flags=re.DOTALL)
+        cleaned = _XML_TC_SELF_RE.sub("", _XML_TC_RE.sub("", cleaned)).strip()
+    else:
+        cleaned = ""   # cả nội dung LÀ lệnh gọi, không còn chữ nào cho người đọc
     msg["tool_calls"] = calls
     msg["content"] = cleaned
     data["choices"][0]["message"] = msg
@@ -188,7 +238,11 @@ def call_model(
         # tool_calls để orchestrator THỰC THI, thay vì rò text ra người dùng.
         if tools:
             try:
-                _normalize_text_tool_calls(data)
+                # Đưa kèm TÊN TOOL vừa gửi: chỉ đổi thành tool_call khi tên có
+                # thật, để không nuốt nhầm câu trả lời JSON người dùng hỏi xin.
+                _ten = {str(((t or {}).get("function") or {}).get("name") or "").strip()
+                        for t in (tools or []) if isinstance(t, dict)}
+                _normalize_text_tool_calls(data, {x for x in _ten if x})
             except Exception as exc:
                 logger.debug("agent.runtime: normalize tool_calls lỗi: %s", exc)
         return data
