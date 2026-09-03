@@ -448,7 +448,7 @@ def _normalize_thread_mention_filters(value: object) -> dict[str, dict]:
 
 
 def _normalize_thread_forward_filters(value: object) -> dict[str, dict]:
-    """Chuẩn hóa `thread_forward_filters`: dict key -> {enabled, url, tag_mode}.
+    """Chuẩn hóa `thread_forward_filters`: dict key -> {enabled, url, tag_mode, keyword}.
 
     Khóa = thread ('plat:bot:chat' | 'plat:chat') hoặc user ('<thread>:<user>').
     Thread bật + url → chuyển tiếp MỌI tin thread đó (bản ghi user enabled=False
@@ -465,6 +465,10 @@ def _normalize_thread_forward_filters(value: object) -> dict[str, dict]:
                     "enabled": bool(v.get("enabled")),
                     "url": str(v.get("url") or "").strip(),
                     "tag_mode": bool(v.get("tag_mode")),
+                    # Từ khóa TAG RIÊNG của chuyển tiếp; rỗng = dùng chung từ
+                    # khóa của ô «bắt buộc tag». Không giữ lại ở đây thì nút Lưu
+                    # nuốt mất, đúng như reply_to_self từng bị.
+                    "keyword": str(v.get("keyword") or "").strip(),
                 }
     return out
 

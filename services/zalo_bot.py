@@ -1978,13 +1978,19 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
 
     # Chuyển tiếp webhook — tagged = keyword / text @bot / platform group delivery
     _req_fw, _kw_fw = _caps.mention_required_for("zalo", _bot_id(), chat_id)
-    _tagged = _caps.tag_gate_allows(
-        required=True,  # chỉ tính cờ tagged, không chặn ở đây
-        keyword=_kw_fw,
-        text=text or "",
-        native_tagged=_native_txt or (not is_group),
-        platform_group_delivery=bool(is_group),
-    )
+    # Ô tag RIÊNG của chuyển tiếp thì chỉ xét ĐÚNG chuỗi đó (xem
+    # capabilities.forward_keyword_for): tag bot là để gọi AI.
+    _kw_only = _caps.forward_keyword_for("zalo", _bot_id(), chat_id, user_id)
+    if _kw_only:
+        _tagged = _kw_only.lower() in (text or "").lower()
+    else:
+        _tagged = _caps.tag_gate_allows(
+            required=True,  # chỉ tính cờ tagged, không chặn ở đây
+            keyword=_kw_fw,
+            text=text or "",
+            native_tagged=_native_txt or (not is_group),
+            platform_group_delivery=bool(is_group),
+        )
     if _caps.forward_event("zalo", _bot_id(), chat_id, user_id, {
         "platform": "zalo", "bot": _bot_id(), "chat_id": chat_id,
         "user_id": user_id, "sender": sender, "is_group": is_group,

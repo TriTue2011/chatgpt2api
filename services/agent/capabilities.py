@@ -7041,6 +7041,46 @@ def forward_rule_for(platform: str, bot_id: str, chat_id: str,
     return ("", tag_mode)
 
 
+def forward_keyword_for(platform: str, bot_id: str, chat_id: str,
+                        user_id: str | None,
+                        topic_id: str | int | None = None) -> str:
+    """TỪ KHÓA TAG RIÊNG của chuyển tiếp webhook — '' = dùng chung từ khóa của
+    ô «bắt buộc tag».
+
+    Vì sao phải có ô riêng: «bắt buộc tag» (`@bot`) là để GỌI AI, còn tag chuyển
+    tiếp (`@n8n`) là để ĐẨY ĐI CHỖ KHÁC rồi AI im — hai việc ngược nhau. Dùng
+    chung một ô thì trong cùng một thread không thể vừa gọi được AI vừa đẩy được
+    sang n8n. Rỗng thì giữ nguyên nếp cũ, cấu hình đang chạy không đổi hành vi.
+
+    Bản ghi user thắng bản ghi thread, giống ``tag_mode``.
+    """
+    def _lookup(key: str) -> dict | None:
+        try:
+            from services.config import config
+            m = config.get().get("thread_forward_filters") or {}
+            if isinstance(m, dict):
+                v = m.get(key)
+                if isinstance(v, dict):
+                    return v
+        except Exception:
+            pass
+        return None
+
+    # Bản ghi CỤ THỂ NHẤT có khai từ khóa thì thắng: thử khóa user trước, rồi
+    # khóa thread (topic trước cả nhóm). Bản ghi có mà bỏ trống từ khóa thì đi
+    # tiếp xuống bản ghi rộng hơn, chứ không dừng — bỏ trống nghĩa là "không
+    # khai", không phải "cấm kế thừa".
+    for keys in (_user_keys(platform, bot_id, chat_id, topic_id, user_id),
+                 _thread_keys(platform, bot_id, chat_id, topic_id)):
+        for k in keys:
+            v = _lookup(k)
+            if isinstance(v, dict):
+                kw = str(v.get("keyword") or "").strip()
+                if kw:
+                    return kw
+    return ""
+
+
 def forward_webhook_for(platform: str, bot_id: str, chat_id: str,
                         user_id: str | None,
                         topic_id: str | int | None = None) -> str:

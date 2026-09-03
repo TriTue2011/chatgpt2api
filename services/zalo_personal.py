@@ -3927,8 +3927,18 @@ def handle_event(body: dict, event_name: str = "message") -> None:
                 _req_fw, _kw_fw = _fw_caps.mention_required_for(
                     "zalop", str(ev.get("account_id") or ""),
                     str(ev.get("thread_id") or ""))
-                # Chung logic với cổng AI: keyword + mention native + @alias
-                _tagged = is_bot_tagged(ev, _kw_fw)
+                # Ô tag RIÊNG của chuyển tiếp, nếu có khai, quyết định một mình:
+                # chỉ xét ĐÚNG chuỗi đó, KHÔNG tính mention native hay @alias —
+                # tag bot là để gọi AI, không phải để đẩy sang webhook.
+                _kw_only = _fw_caps.forward_keyword_for(
+                    "zalop", str(ev.get("account_id") or ""),
+                    str(ev.get("thread_id") or ""),
+                    str(ev.get("sender_id") or ""))
+                if _kw_only:
+                    _tagged = _kw_only.lower() in str(ev.get("text") or "").lower()
+                else:
+                    # Chung logic với cổng AI: keyword + mention native + @alias
+                    _tagged = is_bot_tagged(ev, _kw_fw)
                 _fw_payload = _zca_js_payload(body, ev)
                 _fw_payload["tagged"] = _tagged
                 _fw_consumed = _fw_caps.forward_event(

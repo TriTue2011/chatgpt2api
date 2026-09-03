@@ -1739,9 +1739,16 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
     # CHỈ chuyển webhook (AI im lặng); không tag → ChatGPT trả lời như thường.
     _req_fw, _kw_fw = _caps.mention_required_for(
         "tg", _bot_id(), chat_id, _cur_topic())
-    _tagged = bool(native_mention) or (
-        bool(_kw_fw) and _kw_fw.lower() in (text or "").lower()
-    )
+    # Ô tag RIÊNG của chuyển tiếp thì chỉ xét ĐÚNG chuỗi đó (xem
+    # capabilities.forward_keyword_for): mention native là để gọi AI.
+    _kw_only = _caps.forward_keyword_for(
+        "tg", _bot_id(), chat_id, user_id, _cur_topic())
+    if _kw_only:
+        _tagged = _kw_only.lower() in (text or "").lower()
+    else:
+        _tagged = bool(native_mention) or (
+            bool(_kw_fw) and _kw_fw.lower() in (text or "").lower()
+        )
     if _caps.forward_event("tg", _bot_id(), chat_id, user_id, {
         "platform": "telegram", "bot": _bot_id(), "chat_id": chat_id,
         "topic_id": _cur_topic(), "user_id": user_id, "sender": sender,
