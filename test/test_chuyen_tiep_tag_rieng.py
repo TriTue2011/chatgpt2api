@@ -1,8 +1,8 @@
-"""Ô TAG RIÊNG cho chuyển tiếp webhook — `thread_forward_filters[...].keyword`.
+"""Hai ô mới của tab «Lọc thread»: tag riêng để chuyển tiếp, và tắt hẳn ChatGPT.
 
-«Bắt buộc tag» (`@bot`) là để GỌI AI, còn tag chuyển tiếp (`@n8n`) là để ĐẨY ĐI
-CHỖ KHÁC rồi AI im — hai việc ngược nhau, nên phải hai ô. Bộ test giữ ba tính
-chất:
+TAG RIÊNG (`thread_forward_filters[...].keyword`) — «bắt buộc tag» (`@bot`) là
+để GỌI AI, còn tag chuyển tiếp (`@n8n`) là để ĐẨY ĐI CHỖ KHÁC rồi AI im: hai
+việc ngược nhau nên phải hai ô. Bộ test giữ:
 
   1. Bộ chuẩn hoá config GIỮ LẠI trường `keyword`. Đây là chỗ từng nuốt mất
      `reply_to_self` khiến bấm Lưu xong tải lại là mất cấu hình.
@@ -10,6 +10,13 @@ chất:
      bản ghi bỏ trống thì đi tiếp xuống bản ghi rộng hơn chứ không chặn.
   3. Không khai gì → '' → caller giữ nguyên nếp cũ (dùng chung từ khóa của ô
      «bắt buộc tag»), nên cấu hình đang chạy không đổi hành vi.
+
+TẮT HẲN CHATGPT (`thread_mention_filters[...].ai_off`) — trước đây muốn AI im
+chỉ có hai đường vòng: bật chuyển tiếp nuốt hết (bắt buộc có URL), hoặc chặn
+thread (nhưng chặn nằm TRƯỚC bước chuyển tiếp nên webhook chết theo). Bộ test
+giữ: bật thì tắt, không khai thì AI vẫn chạy, bản ghi cũ không có cờ vẫn chạy,
+chuẩn hoá giữ được cờ mà không nhồi trường thừa khi tắt, và cờ này không đụng
+tới bộ lọc tag sẵn có.
 """
 from __future__ import annotations
 
@@ -84,6 +91,48 @@ class ForwardKeywordForTests(unittest.TestCase):
             self.assertEqual(
                 caps.forward_rule_for("zalop", "acc1", "th1", None),
                 ("http://u", True))
+
+
+class AiOffTests(unittest.TestCase):
+    """Cờ TẮT HẲN ChatGPT cho một thread."""
+
+    def _cfg(self, rec):
+        return {"thread_mention_filters": {"zalop:acc1:th1": rec}}
+
+    def test_bat_thi_tat_ai(self):
+        from services.agent import capabilities as caps
+        with mock.patch("services.config.config.get",
+                        return_value=self._cfg({"ai_off": True})):
+            self.assertTrue(caps.ai_off_for("zalop", "acc1", "th1"))
+
+    def test_khong_cau_hinh_thi_ai_van_chay(self):
+        from services.agent import capabilities as caps
+        with mock.patch("services.config.config.get", return_value={}):
+            self.assertFalse(caps.ai_off_for("zalop", "acc1", "th1"))
+
+    def test_ban_ghi_cu_khong_co_co_thi_ai_van_chay(self):
+        from services.agent import capabilities as caps
+        with mock.patch("services.config.config.get",
+                        return_value=self._cfg({"required": True, "keyword": "@bot"})):
+            self.assertFalse(caps.ai_off_for("zalop", "acc1", "th1"))
+
+    def test_chuan_hoa_giu_lai_ai_off(self):
+        from services.config import _normalize_thread_mention_filters as chuan
+        ra = chuan({"zalop:acc1:th1": {"required": True, "keyword": "@bot", "ai_off": True}})
+        self.assertTrue(ra["zalop:acc1:th1"]["ai_off"])
+
+    def test_chuan_hoa_khong_ghi_co_khi_tat(self):
+        # Tắt là mặc định → không nhồi trường thừa vào mọi bản ghi.
+        from services.config import _normalize_thread_mention_filters as chuan
+        ra = chuan({"zalop:acc1:th1": {"required": True, "keyword": "@bot"}})
+        self.assertNotIn("ai_off", ra["zalop:acc1:th1"])
+
+    def test_khong_dam_vao_bo_loc_tag_san_co(self):
+        from services.agent import capabilities as caps
+        with mock.patch("services.config.config.get", return_value=self._cfg(
+                {"required": True, "keyword": "@bot", "ai_off": True})):
+            self.assertEqual(caps.mention_required_for("zalop", "acc1", "th1"),
+                             (True, "@bot"))
 
 
 if __name__ == "__main__":

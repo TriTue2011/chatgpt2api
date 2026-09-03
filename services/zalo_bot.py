@@ -1999,6 +1999,12 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
     }, tagged=_tagged):
         return
 
+    # Thread TẮT HẲN ChatGPT (ô trong tab «Lọc thread»): chuyển tiếp và ghi nhật
+    # ký ở trên vẫn chạy, chỉ phần AI là im. Đặt NGOÀI nhánh nhóm — tắt là tắt
+    # cho cả chat 1-1.
+    if chat_id and _caps.ai_off_for("zalo", _bot_id(), chat_id):
+        return
+
     # Bộ lọc TAG (nhóm): required + keyword rỗng → tin OA đã tới = đã tag (không im).
     # Keyword có → phải khớp (hoặc text chứa id/label bot).
     if is_group and chat_id:

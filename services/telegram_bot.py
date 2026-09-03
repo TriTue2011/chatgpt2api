@@ -1759,6 +1759,12 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
     }, tagged=_tagged, topic_id=_cur_topic()):
         return
 
+    # Thread TẮT HẲN ChatGPT (ô trong tab «Lọc thread»): chuyển tiếp và ghi nhật
+    # ký ở trên vẫn chạy, chỉ phần AI là im. Đặt NGOÀI nhánh nhóm — tắt là tắt
+    # cho cả chat 1-1.
+    if chat_id and _caps.ai_off_for("tg", _bot_id(), chat_id, _cur_topic()):
+        return
+
     # Bộ lọc TAG: required → native @mention HOẶC keyword (keyword rỗng không
     # chặn native — tag_gate_allows). /id đã return ở trên.
     if is_group and chat_id:

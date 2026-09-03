@@ -420,7 +420,7 @@ def _normalize_thread_user_only(value: object) -> dict[str, bool]:
 
 def _normalize_thread_mention_filters(value: object) -> dict[str, dict]:
     """Chuẩn hóa `thread_mention_filters`: dict thread_key -> {required: bool,
-    keyword: str [, reply_to_self, self_keyword]}. Bỏ khóa rỗng; chấp nhận cả
+    keyword: str [, reply_to_self, self_keyword, ai_off]}. Bỏ khóa rỗng; chấp nhận cả
     giá trị bool (cũ) → {required, ''}.
 
     GIỮ `reply_to_self`/`self_keyword` («trả lời cả tin của chính chủ», per-thread):
@@ -443,6 +443,8 @@ def _normalize_thread_mention_filters(value: object) -> dict[str, dict]:
                 if v.get("reply_to_self") or _self_kw:
                     rec["reply_to_self"] = bool(v.get("reply_to_self"))
                     rec["self_keyword"] = _self_kw
+                if v.get("ai_off"):
+                    rec["ai_off"] = True
                 out[k.strip()] = rec
     return out
 

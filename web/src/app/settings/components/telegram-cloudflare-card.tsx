@@ -658,6 +658,8 @@ export function TelegramCloudflareCard() {
     users: UserRow[]; requireMention: boolean; mentionKeyword: string; replyToSelf: boolean; selfKeyword: string;
     /** Chỉ người trong danh sách mới được giao tiếp (config thread_user_only) */
     userOnly: boolean;
+    /** Tắt HẲN ChatGPT ở thread này (chuyển tiếp + nhật ký vẫn chạy) */
+    aiOff: boolean;
     forward: boolean; forwardUrl: string; forwardTagOnly: boolean; forwardKeyword: string;
     aiModel: string; haFastpath: string;
   };
@@ -669,6 +671,8 @@ export function TelegramCloudflareCard() {
     users: UserRow[]; requireMention: boolean; mentionKeyword: string; replyToSelf: boolean; selfKeyword: string;
     /** Chỉ người trong danh sách mới được giao tiếp (config thread_user_only) */
     userOnly: boolean;
+    /** Tắt HẲN ChatGPT ở thread này (chuyển tiếp + nhật ký vẫn chạy) */
+    aiOff: boolean;
     forward: boolean; forwardUrl: string;
     /** Chỉ chuyển webhook khi tin có tag — không tag thì ChatGPT trả lời */
     forwardTagOnly: boolean;
@@ -695,7 +699,7 @@ export function TelegramCloudflareCard() {
     if (filterInited.current) return;
     const tf = (config as any)?.thread_filters as Record<string, string[]> | undefined;
     const tuf = (config as any)?.thread_user_filters as Record<string, string[]> | undefined;
-    const tmf = (config as any)?.thread_mention_filters as Record<string, { required?: boolean; keyword?: string; reply_to_self?: boolean; self_keyword?: string }> | undefined;
+    const tmf = (config as any)?.thread_mention_filters as Record<string, { required?: boolean; keyword?: string; reply_to_self?: boolean; self_keyword?: string; ai_off?: boolean }> | undefined;
     const tuo = (config as any)?.thread_user_only as Record<string, boolean> | undefined;
     const tff = (config as any)?.thread_forward_filters as Record<string, { enabled?: boolean; url?: string; tag_mode?: boolean; keyword?: string }> | undefined;
     const tfMeta = (config as any)?.thread_filter_meta as Record<string, { kind?: string; name?: string }> | undefined;
@@ -734,7 +738,7 @@ export function TelegramCloudflareCard() {
         return {
           id: rowSeq.current++, botKey, chatId, kind: kindOf(key), name: nameOf(key),
           groups: Array.isArray(groups) ? groups : [], users: [],
-          requireMention: false, mentionKeyword: "", replyToSelf: false, selfKeyword: "", userOnly: false, forward: false, forwardUrl: "", forwardTagOnly: false, forwardKeyword: "",
+          requireMention: false, mentionKeyword: "", replyToSelf: false, selfKeyword: "", userOnly: false, aiOff: false, forward: false, forwardUrl: "", forwardTagOnly: false, forwardKeyword: "",
           aiModel: modelOf(key),
           haFastpath: fpOf(key),
           topics: [],
@@ -748,7 +752,7 @@ export function TelegramCloudflareCard() {
         r = {
           id: rowSeq.current++, botKey, chatId, kind: kindOf(k), name: nameOf(k),
           groups: [...FUNCTION_GROUPS.map(([gk]) => gk)], users: [],
-          requireMention: false, mentionKeyword: "", replyToSelf: false, selfKeyword: "", userOnly: false, forward: false, forwardUrl: "", forwardTagOnly: false, forwardKeyword: "",
+          requireMention: false, mentionKeyword: "", replyToSelf: false, selfKeyword: "", userOnly: false, aiOff: false, forward: false, forwardUrl: "", forwardTagOnly: false, forwardKeyword: "",
           aiModel: modelOf(k),
           haFastpath: fpOf(k),
           topics: [],
@@ -769,7 +773,7 @@ export function TelegramCloudflareCard() {
         t = {
           id: rowSeq.current++, topicId, name: nameOf(tk),
           groups: Array.isArray(tf?.[tk]) ? (tf as Record<string, string[]>)[tk] : [...r.groups],
-          users: [], requireMention: false, mentionKeyword: "", replyToSelf: false, selfKeyword: "", userOnly: false,
+          users: [], requireMention: false, mentionKeyword: "", replyToSelf: false, selfKeyword: "", userOnly: false, aiOff: false,
           forward: false, forwardUrl: "", forwardTagOnly: false, forwardKeyword: "",
           aiModel: modelOf(tk), haFastpath: fpOf(tk),
         };
@@ -825,6 +829,7 @@ export function TelegramCloudflareCard() {
       target.mentionKeyword = String(v?.keyword || "");
       target.replyToSelf = !!v?.reply_to_self;
       target.selfKeyword = String(v?.self_keyword || "");
+      target.aiOff = !!v?.ai_off;
     }
 
     // 2b. Chỉ-người-trong-danh-sách → gắn vào nhóm HOẶC topic
@@ -922,7 +927,7 @@ export function TelegramCloudflareCard() {
     setFilterRows(rows);
     const tf: Record<string, string[]> = {};
     const tuf: Record<string, string[]> = {};
-    const tmf: Record<string, { required: boolean; keyword: string; reply_to_self?: boolean; self_keyword?: string }> = {};
+    const tmf: Record<string, { required: boolean; keyword: string; reply_to_self?: boolean; self_keyword?: string; ai_off?: boolean }> = {};
     const tuo: Record<string, boolean> = {};
     const tff: Record<string, { enabled: boolean; url: string; tag_mode: boolean; keyword: string }> = {};
     const tfMeta: Record<string, { kind: string; name?: string }> = {};
@@ -952,8 +957,8 @@ export function TelegramCloudflareCard() {
                         tag_mode: r.forwardTagOnly, keyword: r.forwardKeyword.trim() };
       // Thread CÁ NHÂN: không lưu tag/lọc user (không áp dụng cho chat 1-1).
       if (r.kind !== "user") {
-        if (r.requireMention || r.mentionKeyword.trim() || r.replyToSelf || r.selfKeyword.trim())
-          tmf[parent] = { required: r.requireMention, keyword: r.mentionKeyword.trim(), reply_to_self: r.replyToSelf, self_keyword: r.selfKeyword.trim() };
+        if (r.requireMention || r.mentionKeyword.trim() || r.replyToSelf || r.selfKeyword.trim() || r.aiOff)
+          tmf[parent] = { required: r.requireMention, keyword: r.mentionKeyword.trim(), reply_to_self: r.replyToSelf, self_keyword: r.selfKeyword.trim(), ai_off: r.aiOff };
         if (r.userOnly) tuo[parent] = true;
         // Lớp user CẤP NHÓM (áp cho mọi topic chưa có bản ghi riêng cho user đó)
         // và lớp user TRONG TỪNG TOPIC — cùng một hàm ghi, chỉ khác tiền tố khóa.
@@ -994,8 +999,8 @@ export function TelegramCloudflareCard() {
           else if (t.haFastpath === "off") tfastpath[tkey] = false;
           const tpName = String(t.name || "").trim();
           tfMeta[tkey] = { kind: "topic", ...(tpName ? { name: tpName } : {}) };
-          if (t.requireMention || t.mentionKeyword.trim() || t.replyToSelf || t.selfKeyword.trim())
-            tmf[tkey] = { required: t.requireMention, keyword: t.mentionKeyword.trim(), reply_to_self: t.replyToSelf, self_keyword: t.selfKeyword.trim() };
+          if (t.requireMention || t.mentionKeyword.trim() || t.replyToSelf || t.selfKeyword.trim() || t.aiOff)
+            tmf[tkey] = { required: t.requireMention, keyword: t.mentionKeyword.trim(), reply_to_self: t.replyToSelf, self_keyword: t.selfKeyword.trim(), ai_off: t.aiOff };
           if (t.userOnly) tuo[tkey] = true;
           const tUrl = t.forwardUrl.trim();
           if (t.forward || tUrl)
@@ -1018,7 +1023,7 @@ export function TelegramCloudflareCard() {
     commitFilters([...filterRows, {
       id: rowSeq.current++, botKey: tabFilterOptions[0]?.value || chTab,
       chatId: "", kind: "group", name: "", groups: [], users: [],
-      requireMention: false, mentionKeyword: "", replyToSelf: false, selfKeyword: "", userOnly: false, forward: false, forwardUrl: "", forwardTagOnly: false, forwardKeyword: "",
+      requireMention: false, mentionKeyword: "", replyToSelf: false, selfKeyword: "", userOnly: false, aiOff: false, forward: false, forwardUrl: "", forwardTagOnly: false, forwardKeyword: "",
       aiModel: "",
       haFastpath: "",
       topics: [],
@@ -1052,7 +1057,7 @@ export function TelegramCloudflareCard() {
             // nhiên cắt mất chức năng nào; user tự bỏ tick những gì không muốn.
             id: rowSeq.current++, topicId: "", name: "", groups: [...r.groups],
             users: [], requireMention: r.requireMention,
-            mentionKeyword: r.mentionKeyword, replyToSelf: r.replyToSelf, selfKeyword: r.selfKeyword, userOnly: r.userOnly,
+            mentionKeyword: r.mentionKeyword, replyToSelf: r.replyToSelf, selfKeyword: r.selfKeyword, userOnly: r.userOnly, aiOff: r.aiOff,
             forward: false, forwardUrl: "", forwardTagOnly: false, forwardKeyword: "", aiModel: "", haFastpath: "",
           }],
         }
@@ -1851,8 +1856,20 @@ export function TelegramCloudflareCard() {
                 </p>
               )}
 
+              {/* TẮT HẲN ChatGPT — ngoài khối "chỉ hiện với nhóm" bên dưới, vì
+                  chat 1-1 cũng phải tắt được. Chuyển tiếp và nhật ký vẫn chạy. */}
+              <label className="flex items-center gap-1.5 rounded border border-dashed border-rose-500/50 p-2 text-xs cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  className="size-3.5"
+                  checked={row.aiOff}
+                  onChange={() => setFilterField(row.id, { aiOff: !row.aiOff })}
+                />
+                🚫 Không dùng ChatGPT ở thread này — chuyển tiếp webhook và nhật ký vẫn chạy
+              </label>
+
               {/* Bộ lọc TAG — chỉ trả lời khi bị tag (chỉ hiện với thread NHÓM) */}
-              {row.kind !== "user" && (
+              {!row.aiOff && row.kind !== "user" && (
               <div className="rounded border border-dashed border-border/70 p-2 space-y-1.5">
                 <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
                   <input

@@ -4008,6 +4008,16 @@ def handle_event(body: dict, event_name: str = "message") -> None:
             pass
         if _fw_consumed:
             return  # tin tag đã chuyển webhook — không đưa vào AI
+        # Thread TẮT HẲN ChatGPT (ô trong tab «Lọc thread»): chuyển tiếp ở trên
+        # vẫn chạy, chỉ phần AI là im. Tắt cho cả tin người khác lẫn tin chính
+        # chủ tự gõ — "không dùng ChatGPT ở thread này" thì không có ngoại lệ.
+        try:
+            from services.agent import capabilities as _caps_off
+            if _caps_off.ai_off_for("zalop", str(ev.get("account_id") or ""),
+                                    str(ev.get("thread_id") or "")):
+                return
+        except Exception:
+            pass
         if not _bool(_cfg(), "zalo_personal_ai_enabled", True):
             return
         _process_ai(ev)

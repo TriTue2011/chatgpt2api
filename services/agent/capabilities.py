@@ -6922,6 +6922,39 @@ def mention_required_for(platform: str, bot_id: str, chat_id: str,
     return (False, "")
 
 
+def ai_off_for(platform: str, bot_id: str, chat_id: str,
+               topic_id: str | int | None = None) -> bool:
+    """Thread này có TẮT HẲN ChatGPT không? (config `thread_mention_filters`,
+    trường `ai_off`). Không cấu hình → False = AI hoạt động như thường.
+
+    Vì sao cần: muốn AI im trong một nhóm, trước đây chỉ có hai đường vòng —
+    bật chuyển tiếp nuốt hết (bắt buộc phải có URL webhook), hoặc cho thread vào
+    danh sách chặn (nhưng chặn nằm TRƯỚC bước chuyển tiếp nên webhook cũng chết
+    theo). Cờ này tắt đúng phần AI, chuyển tiếp và ghi nhật ký vẫn chạy.
+
+    Tắt là tắt cho CẢ tin người khác lẫn tin chính chủ tự gõ — "không dùng
+    ChatGPT ở thread này" thì không có ngoại lệ nào cho dễ hiểu.
+
+    Có `topic_id`: bản ghi của topic thắng bản ghi cả nhóm, giống các cờ khác.
+    """
+    def _lookup(key: str) -> bool | None:
+        try:
+            from services.config import config
+            m = config.get().get("thread_mention_filters") or {}
+            if isinstance(m, dict) and key in m:
+                v = m.get(key)
+                if isinstance(v, dict):
+                    return bool(v.get("ai_off"))
+        except Exception:
+            pass
+        return None
+    for k in _thread_keys(platform, bot_id, chat_id, topic_id):
+        r = _lookup(k)
+        if r is not None:
+            return r
+    return False
+
+
 def reply_to_self_for(platform: str, bot_id: str, chat_id: str,
                       topic_id: str | int | None = None) -> tuple[bool, str]:
     """Thread có cho bot TRẢ LỜI CẢ TIN CỦA CHÍNH CHỦ (isSelf) không?
