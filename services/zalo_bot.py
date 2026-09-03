@@ -1638,6 +1638,26 @@ def process_update(body: dict, bot: dict) -> bool:
     msg = result.get("message") or body.get("message") or {}
     if not isinstance(msg, dict) or not msg:
         return False
+    # Ghi TÊN TRƯỜNG của mọi tin vào — đường long-poll (`_handle_update`) vốn đã
+    # ghi, còn đường webhook thì không, nên suốt thời gian chạy webhook mình mù
+    # hẳn về việc Zalo thật sự gửi những gì. Tài liệu không công bố trường trích
+    # dẫn; chỉ log này mới trả lời được là có hay không.
+    #
+    # Chỉ ghi TÊN trường, không ghi nội dung — trừ khi thấy khoá trích dẫn, lúc
+    # đó mới ghi thêm chính khối đó để biết hình dạng. Ghi cả payload mọi lượt
+    # là đổ nội dung chat của người dùng vào log mà chẳng để làm gì.
+    try:
+        _khoa_qd = [k for k in ("reply_to_message", "reply_to", "quote",
+                                "quoted_message") if msg.get(k)]
+        if _khoa_qd:
+            logger.info("Zalo IN keys=%s TRÍCH DẪN=%s", list(msg.keys()),
+                        json.dumps({k: msg.get(k) for k in _khoa_qd},
+                                   ensure_ascii=False)[:600])
+        else:
+            logger.info("Zalo IN keys=%s (không có trường trích dẫn)",
+                        list(msg.keys()))
+    except Exception:
+        pass
     # De-dupe: webhook có thể GỬI LẠI cùng 1 tin (retry) — dùng CHUNG bộ nhớ
     # per-token `_seen_ids` với đường poll (_handle_update) để không xử lý 2 lần
     # dù bot đang chạy webhook hay long-polling (hoặc đổi qua lại giữa 2 chế độ).
