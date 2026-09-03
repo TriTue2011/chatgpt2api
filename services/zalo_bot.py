@@ -1710,13 +1710,19 @@ def process_update(body: dict, bot: dict) -> bool:
     try:
         _khoa_qd = [k for k in ("reply_to_message", "reply_to", "quote",
                                 "quoted_message") if msg.get(k)]
+        # Kèm event_name và có chat_id hay không: payload thiếu `chat` sẽ bị bỏ
+        # ngay ở dưới, mà nhìn mỗi tên trường thì không biết đó là tin thật rơi
+        # mất hay chỉ là bản dội của tin BOT TỰ GỬI (Zalo có event riêng cho nó).
+        _ev = str(body.get("event_name") or result.get("event_name") or "?")
+        _co_chat = bool(str((msg.get("chat") or {}).get("id", "")).strip())
         if _khoa_qd:
-            logger.info("Zalo IN keys=%s TRÍCH DẪN=%s", list(msg.keys()),
+            logger.info("Zalo IN event=%s chat=%s keys=%s TRÍCH DẪN=%s",
+                        _ev, "có" if _co_chat else "THIẾU", list(msg.keys()),
                         json.dumps({k: msg.get(k) for k in _khoa_qd},
                                    ensure_ascii=False)[:600])
         else:
-            logger.info("Zalo IN keys=%s (không có trường trích dẫn)",
-                        list(msg.keys()))
+            logger.info("Zalo IN event=%s chat=%s keys=%s (không có trường trích dẫn)",
+                        _ev, "có" if _co_chat else "THIẾU", list(msg.keys()))
     except Exception:
         pass
     # De-dupe: webhook có thể GỬI LẠI cùng 1 tin (retry) — dùng CHUNG bộ nhớ
