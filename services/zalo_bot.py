@@ -1981,6 +1981,11 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
     # Ô tag RIÊNG của chuyển tiếp thì chỉ xét ĐÚNG chuỗi đó (xem
     # capabilities.forward_keyword_for): tag bot là để gọi AI.
     _kw_only = _caps.forward_keyword_for("zalo", _bot_id(), chat_id, user_id)
+    _ai_tagged = bool(_req_fw) and _caps.tag_gate_allows(
+        required=True, keyword=_kw_fw, text=text or "",
+        native_tagged=_native_txt or (not is_group),
+        platform_group_delivery=bool(is_group),
+    )
     if _kw_only:
         _tagged = _kw_only.lower() in (text or "").lower()
     else:
@@ -1996,7 +2001,7 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
         "user_id": user_id, "sender": sender, "is_group": is_group,
         "text": text or "", "tagged": _tagged, "photo_url": photo_url or "",
         "file_url": file_url or "", "file_name": file_name or "",
-    }, tagged=_tagged):
+    }, tagged=_tagged, ai_tagged=_ai_tagged):
         return
 
     # Thread TẮT HẲN ChatGPT (ô trong tab «Lọc thread»): chuyển tiếp và ghi nhật

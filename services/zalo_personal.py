@@ -3939,12 +3939,22 @@ def handle_event(body: dict, event_name: str = "message") -> None:
                 else:
                     # Chung logic với cổng AI: keyword + mention native + @alias
                     _tagged = is_bot_tagged(ev, _kw_fw)
+                # Tin có GỌI ĐÍCH DANH AI không? Dùng để nhường lượt khi webhook
+                # đang nhận tất. Tin của CHÍNH CHỦ gọi AI bằng ô từ khóa RIÊNG
+                # (@toi), không phải ô «bắt buộc tag» (@bot) của người khác.
+                if ev.get("is_self"):
+                    _s_on, _s_kw = _fw_caps.reply_to_self_for(
+                        "zalop", str(ev.get("account_id") or ""),
+                        str(ev.get("thread_id") or ""))
+                    _ai_tagged = bool(_s_on and is_bot_tagged(ev, _s_kw))
+                else:
+                    _ai_tagged = bool(_req_fw and is_bot_tagged(ev, _kw_fw))
                 _fw_payload = _zca_js_payload(body, ev)
                 _fw_payload["tagged"] = _tagged
                 _fw_consumed = _fw_caps.forward_event(
                     "zalop", str(ev.get("account_id") or ""),
                     str(ev.get("thread_id") or ""), str(ev.get("sender_id") or ""),
-                    _fw_payload, tagged=_tagged,
+                    _fw_payload, tagged=_tagged, ai_tagged=_ai_tagged,
                 )
         except Exception:
             pass

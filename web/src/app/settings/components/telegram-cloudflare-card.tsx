@@ -1982,9 +1982,19 @@ export function TelegramCloudflareCard() {
                         </>
                       ) : (
                         <>
-                          <b>Mọi</b> tin của thread này chuyển tới URL trên và <b>ChatGPT KHÔNG trả
-                          lời</b>. Không tích ở đây → từng user bên dưới tự bật + cài URL riêng
-                          (mỗi người một webhook khác nhau).
+                          <b>Mọi</b> tin của thread này chuyển tới URL trên và ChatGPT không trả
+                          lời — <b>trừ</b> tin gọi đích danh AI (nhóm bật «bắt buộc tag» thì tin
+                          có tag đó vẫn về AI; tin của chính bạn thì theo từ khóa riêng bên trên).
+                          Không tích ở đây → từng user bên dưới tự bật + cài URL riêng (mỗi người
+                          một webhook khác nhau).
+                          {!row.requireMention && row.kind !== "user" && (
+                            <span className="mt-1 block text-rose-500">
+                              ⚠️ Thread này cũng không bắt buộc tag, tức <b>cả hai đều nhận tin
+                              không tag</b> — webhook sẽ nuốt sạch và ChatGPT không bao giờ trả
+                              lời. Chọn một trong hai: bật «bắt buộc tag» ở trên, hoặc bật «chỉ
+                              chuyển khi có TAG» ngay đây.
+                            </span>
+                          )}
                         </>
                       )}
                     </p>

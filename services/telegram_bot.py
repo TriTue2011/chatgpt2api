@@ -1743,6 +1743,8 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
     # capabilities.forward_keyword_for): mention native là để gọi AI.
     _kw_only = _caps.forward_keyword_for(
         "tg", _bot_id(), chat_id, user_id, _cur_topic())
+    _ai_tagged = bool(_req_fw) and (bool(native_mention) or (
+        bool(_kw_fw) and _kw_fw.lower() in (text or "").lower()))
     if _kw_only:
         _tagged = _kw_only.lower() in (text or "").lower()
     else:
@@ -1756,7 +1758,7 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         "text": text or "", "tagged": _tagged,
         "has_photo": bool(photo),
         "document": str((document or {}).get("file_name") or ""),
-    }, tagged=_tagged, topic_id=_cur_topic()):
+    }, tagged=_tagged, topic_id=_cur_topic(), ai_tagged=_ai_tagged):
         return
 
     # Thread TẮT HẲN ChatGPT (ô trong tab «Lọc thread»): chuyển tiếp và ghi nhật

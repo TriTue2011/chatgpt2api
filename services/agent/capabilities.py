@@ -7123,21 +7123,35 @@ def forward_webhook_for(platform: str, bot_id: str, chat_id: str,
 
 def forward_event(platform: str, bot_id: str, chat_id: str, user_id: str | None,
                   payload: dict, tagged: bool = False,
-                  topic_id: str | int | None = None) -> bool:
+                  topic_id: str | int | None = None,
+                  ai_tagged: bool = False) -> bool:
     """Chuyển tiếp 1 tin nhắn bot tới webhook cấu hình trong 'Lọc chức năng theo
     thread' (HA / n8n / URL bất kỳ) — fire-and-forget, không bao giờ raise.
 
-    `tagged` = tin có TAG bot không (caller tự nhận diện theo nền tảng).
+    `tagged` = tin có TAG CHUYỂN TIẾP không; `ai_tagged` = tin có TAG GỌI AI
+    không (chỉ đúng khi thread đang BẮT BUỘC tag mới trả lời). Caller tự nhận
+    diện theo nền tảng.
+
     Trả True = tin đã bị webhook TIÊU THỤ → caller BỎ QUA AI (ChatGPT im lặng).
-    Quy tắc: HỄ đã chuyển tiếp thì AI không trả lời ("bật webhook = ChatGPT không
-    phản hồi"). Ngoại lệ duy nhất: tag_mode + tin KHÔNG tag → không chuyển, trả
-    False để ChatGPT trả lời như thường ("tag thì webhook, không tag thì AI")."""
+    Quy tắc: HỄ đã chuyển tiếp thì AI không trả lời. Hai ngoại lệ, và chúng dựng
+    nên đúng một cách chia việc không nhập nhằng:
+
+      - tag_mode BẬT + tin KHÔNG có tag chuyển tiếp → không chuyển, AI trả lời.
+        ("tag @n8n thì webhook, còn lại thì AI")
+      - tag_mode TẮT (chuyển tất) + tin CÓ tag gọi AI → nhường AI, không chuyển.
+        ("mọi tin đi webhook, trừ tin gọi đích danh @bot")
+
+    Thiếu ngoại lệ thứ hai thì cấu hình «webhook nhận tất, AI phải có tag» tự mâu
+    thuẫn: tin `@bot` cũng bị webhook nuốt nên AI không bao giờ tới lượt, và ô
+    từ khóa tag của thread thành vô nghĩa."""
     try:
         url, tag_mode = forward_rule_for(platform, bot_id, chat_id, user_id, topic_id)
         if not url:
             return False
         if tag_mode and not tagged:
             return False  # tag_mode: tin KHÔNG tag → không chuyển, AI trả lời
+        if not tag_mode and ai_tagged:
+            return False  # chuyển-tất nhưng tin gọi đích danh AI → nhường AI
         # Chỉ http/https (webhook LAN như HA/n8n hợp lệ) — chặn scheme lạ
         # (file://…) biến URL webhook thành đường đọc file khi config bị lộ.
         from services.net_guard import is_http_url

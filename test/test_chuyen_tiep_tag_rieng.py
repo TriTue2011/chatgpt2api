@@ -135,5 +135,52 @@ class AiOffTests(unittest.TestCase):
                              (True, "@bot"))
 
 
+class ChiaViecWebhookVaAiTests(unittest.TestCase):
+    """Ai nhận tin: webhook hay ChatGPT.
+
+    Luật: đúng MỘT trong hai được chạy khi tin KHÔNG có tag, cái còn lại phải có
+    tag. Bốn tổ hợp dưới đây là toàn bộ cách chia việc.
+    """
+
+    def _chay(self, tag_mode: bool, tagged: bool, ai_tagged: bool) -> bool:
+        """True = webhook nuốt tin (ChatGPT im).
+
+        Chặn `threading.Thread` để test không bắn HTTP thật, và tiện thể kiểm
+        một tính chất nữa: "nuốt tin" phải đi đôi với "thật sự có gửi đi" —
+        trả True mà không gửi là tin bốc hơi, không ai trả lời.
+        """
+        from services.agent import capabilities as caps
+        cfg = {"thread_forward_filters": {
+            "zalop:acc1:th1": {"enabled": True, "url": "http://n8n.local/x",
+                               "tag_mode": tag_mode}}}
+        with mock.patch("services.config.config.get", return_value=cfg), \
+                mock.patch("threading.Thread") as _luong:
+            ra = caps.forward_event("zalop", "acc1", "th1", "u9", {},
+                                    tagged=tagged, ai_tagged=ai_tagged)
+        self.assertEqual(bool(ra), _luong.called)
+        return ra
+
+    def test_webhook_can_tag__tin_co_tag_thi_webhook(self):
+        self.assertTrue(self._chay(tag_mode=True, tagged=True, ai_tagged=False))
+
+    def test_webhook_can_tag__tin_khong_tag_thi_ai(self):
+        self.assertFalse(self._chay(tag_mode=True, tagged=False, ai_tagged=False))
+
+    def test_webhook_nhan_tat__tin_thuong_thi_webhook(self):
+        self.assertTrue(self._chay(tag_mode=False, tagged=False, ai_tagged=False))
+
+    def test_webhook_nhan_tat__tin_goi_dich_danh_ai_thi_nhuong_ai(self):
+        # Đây là lỗ hổng trước khi có ai_tagged: cấu hình «webhook nhận tất, AI
+        # phải có tag» tự mâu thuẫn vì tin @bot cũng bị webhook nuốt, AI không
+        # bao giờ tới lượt và ô từ khóa tag của thread thành vô nghĩa.
+        self.assertFalse(self._chay(tag_mode=False, tagged=False, ai_tagged=True))
+
+    def test_khong_co_url_thi_khong_bao_gio_nuot(self):
+        from services.agent import capabilities as caps
+        with mock.patch("services.config.config.get", return_value={}):
+            self.assertFalse(caps.forward_event("zalop", "acc1", "th1", "u9", {},
+                                                tagged=True, ai_tagged=False))
+
+
 if __name__ == "__main__":
     unittest.main()
