@@ -167,7 +167,13 @@ export function setupEventListeners(api, loginResolve) {
                 const cfg = getSelfReplyConfig(tid);
                 if (cfg.enabled && cfg.keyword) {
                     const { text } = extractMessageContent(msg);
-                    msgWithOwnId.self_reply = typeof text === 'string' && text.includes(cfg.keyword);
+                    // Khớp KHÔNG phân biệt hoa thường, cho khớp cổng gateway
+                    // (`is_bot_tagged` dùng kw.lower() in text.lower()) và bản
+                    // add-on. Để lệch thì cùng một từ khóa lại xử sự khác nhau
+                    // tuỳ tầng nào quyết — đúng lỗi đã sửa bên add-on sáng nay.
+                    const kwThuong = String(cfg.keyword || '').toLowerCase();
+                    msgWithOwnId.self_reply = typeof text === 'string'
+                        && text.toLowerCase().includes(kwThuong);
                 } else {
                     msgWithOwnId.self_reply = false;
                 }
