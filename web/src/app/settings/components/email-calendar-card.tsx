@@ -315,7 +315,7 @@ export function EmailCalendarCard() {
               <div className="flex items-center gap-2 cursor-pointer select-none"
                 onClick={() => setOpenAcc((s) => ({ ...s, [a.uiId]: !open }))}>
                 <span className="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground">{open ? "▾" : "▸"}</span>
-                <span className="text-[11px] font-medium truncate flex-1">
+                <span className="min-w-0 text-[11px] font-medium truncate flex-1">
                   {a.label.trim() || a.user.trim() || "Hộp mail mới"}
                   {a.user.trim() ? <> · <span className="font-mono">{a.user.trim()}</span></> : null}
                 </span>
@@ -481,7 +481,7 @@ export function EmailCalendarCard() {
               <div className="flex items-center gap-2 cursor-pointer select-none"
                 onClick={() => setOpenCal((s) => ({ ...s, [c.uiId]: !open }))}>
                 <span className="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground">{open ? "▾" : "▸"}</span>
-                <span className="text-[11px] font-medium truncate flex-1">
+                <span className="min-w-0 text-[11px] font-medium truncate flex-1">
                   {c.label.trim() || "Lịch mới"}
                 </span>
                 <span className="text-[10px] text-muted-foreground shrink-0">

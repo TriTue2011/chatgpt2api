@@ -934,7 +934,7 @@ function IngestTab({ showToast }: TabProps) {
                   <div className="flex items-center gap-2 px-3 py-2">
                     <input type="checkbox" className="size-4 shrink-0" checked={it.on}
                       onChange={(e) => patch(it.id, { on: e.target.checked })} />
-                    <button className="text-sm text-left flex-1 truncate hover:underline"
+                    <button className="min-w-0 text-sm text-left flex-1 truncate hover:underline"
                       title={it.title}
                       onClick={() => setOpenId(openId === it.id ? null : it.id)}>
                       {it.title || "(chưa có tiêu đề)"}

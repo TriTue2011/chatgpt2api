@@ -256,7 +256,7 @@ export function ChatlogSettingsCard() {
           return (
             <div key={key} className="rounded-lg border border-border p-2.5 space-y-1.5">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[12px] font-medium truncate flex-1 min-w-[160px]">
+                <span className="min-w-0 text-[12px] font-medium truncate flex-1 min-w-[160px]">
                   {nhanMap.get(key) || key}
                 </span>
                 <label className="flex items-center gap-1 text-[11px]">

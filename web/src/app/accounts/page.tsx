@@ -2104,7 +2104,7 @@ function AccountsPageContent() {
                                               >
                                                 #{k.ordinal}
                                               </span>
-                                              <code className="text-[var(--muted-foreground)] font-mono text-[11px] truncate flex-1">{k.preview}</code>
+                                              <code className="min-w-0 text-[var(--muted-foreground)] font-mono text-[11px] truncate flex-1">{k.preview}</code>
                                               {k.plan && (
                                                 <Badge variant="secondary" className="rounded text-[9px] px-1 py-0 bg-amber-50 text-amber-700 border border-amber-200">
                                                   {k.plan}

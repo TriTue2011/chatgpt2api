@@ -900,7 +900,7 @@ export function VoiceSpeakersCard() {
             <div key={r.id} className="rounded-md border border-border p-2 flex flex-wrap items-center gap-2">
               <span className="text-xs font-semibold min-w-32">{r.name}</span>
               <span className="text-[10px] rounded bg-muted px-1.5 py-0.5">{KIND_LABEL[r.kind] || r.kind}</span>
-              <code className="text-[10px] flex-1 break-all text-muted-foreground">
+              <code className="min-w-0 text-[10px] flex-1 break-all text-muted-foreground">
                 {r.kind === "ha" ? r.entity_id : r.host}
               </code>
               <select

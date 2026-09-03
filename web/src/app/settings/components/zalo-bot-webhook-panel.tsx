@@ -218,10 +218,9 @@ export function ZaloBotWebhookPanel() {
           <span className="text-xs text-[var(--muted-foreground)]">
             {status?.bots_count ?? 0} bot · {status?.bots_polling ?? 0} đang poll
           </span>
-          <div className="flex-1" />
           <button
             onClick={() => void doiCheDo(!status?.webhook_enabled)}
-            className={status?.webhook_enabled ? BTN_DANGER : BTN_PRIMARY}
+            className={`ml-auto ${status?.webhook_enabled ? BTN_DANGER : BTN_PRIMARY}`}
             disabled={busy || !status?.configured}
           >
             <Webhook className="size-3.5" />
@@ -232,8 +231,10 @@ export function ZaloBotWebhookPanel() {
         <label className="mb-1 block text-xs font-semibold">
           URL webhook gốc — mỗi bot còn có URL riêng <code>…/webhook/&lt;bot_id&gt;</code>
         </label>
-        <div className="flex items-center gap-2">
-          <code className="flex-1 break-all rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs">
+        {/* min-w-0 + flex-wrap: thiếu min-w-0 thì ô code không co được dưới bề
+            rộng nội dung, nên trên điện thoại nó đẩy nút Copy tràn ra ngoài thẻ. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <code className="min-w-0 flex-1 break-all rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs">
             {expected || "(chưa có — đặt zalo_webhook_url hoặc base_url)"}
           </code>
           {expected && <CopyBtn text={expected} showToast={showToast} title="Copy URL webhook" />}
@@ -276,7 +277,7 @@ export function ZaloBotWebhookPanel() {
               return (
                 <div key={b.bot_id} className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-xs">
                   {b.ok ? <CheckCircle2 className="size-3.5 text-emerald-400" /> : <XCircle className="size-3.5 text-red-400" />}
-                  <span className="font-semibold">{b.label || b.bot_id}</span>
+                  <span className="min-w-0 break-words font-semibold">{b.label || b.bot_id}</span>
                   {b.polling && <span className="rounded bg-amber-400/15 px-1.5 py-0.5 text-amber-400">đang poll</span>}
                   {/* w-full: trên màn hình hẹp, `flex-1` bị mấy nhãn bên cạnh bóp
                       còn vài chục pixel nên `break-all` xuống dòng MỖI CHỮ CÁI.
@@ -284,18 +285,22 @@ export function ZaloBotWebhookPanel() {
                   <code className="w-full min-w-0 break-all text-[var(--muted-foreground)]">
                     {b.ok ? (zaloUrl || "(trống — chưa đặt webhook)") : b.error}
                   </code>
-                  {!!b.info?.updated_at && (
-                    <span className="text-[var(--muted-foreground)]">{tsLabel(b.info.updated_at)}</span>
-                  )}
-                  {!!b.expected_url && (
-                    <CopyBtn text={b.expected_url} showToast={showToast}
-                             title={`Copy URL riêng của bot này: ${b.expected_url}`} />
-                  )}
-                  {lech && (
-                    <span className="rounded bg-amber-400/15 px-1.5 py-0.5 text-amber-400" title="URL Zalo đang giữ khác URL ta sẽ đăng ký — bấm 'Áp lại chế độ'">
-                      lệch URL
-                    </span>
-                  )}
+                  <div className="flex w-full flex-wrap items-center gap-2">
+                    {!!b.info?.updated_at && (
+                      <span className="text-[var(--muted-foreground)]">{tsLabel(b.info.updated_at)}</span>
+                    )}
+                    {lech && (
+                      <span className="rounded bg-amber-400/15 px-1.5 py-0.5 text-amber-400" title="URL Zalo đang giữ khác URL ta sẽ đăng ký — bấm 'Áp lại chế độ'">
+                        lệch URL
+                      </span>
+                    )}
+                    {!!b.expected_url && (
+                      <span className="ml-auto">
+                        <CopyBtn text={b.expected_url} showToast={showToast}
+                                 title={`Copy URL riêng của bot này: ${b.expected_url}`} />
+                      </span>
+                    )}
+                  </div>
                   {/* NHÃN trạng thái và NÚT bấm phải nhìn ra khác nhau ngay. Bản
                       trước gộp làm một: nút hiện đúng chữ "polling" với nền mờ y
                       hệt nhãn "đang poll" bên cạnh, nên không ai đoán được là bấm

@@ -67,7 +67,7 @@ function ModelPickerModal({
                   isSelected ? "bg-emerald-50 border border-emerald-200" : "hover:bg-[var(--muted)] border border-transparent",
                 )}
               >
-                <span className="text-[13px] font-mono text-[var(--foreground)] truncate flex-1">{m.id}</span>
+                <span className="min-w-0 text-[13px] font-mono text-[var(--foreground)] truncate flex-1">{m.id}</span>
                 <span className="text-[10px] text-[var(--muted-foreground)]">{m.owned_by}</span>
                 {isSelected && <Check className="size-4 text-emerald-500 shrink-0" />}
               </button>
@@ -599,7 +599,7 @@ function CombosPageContent() {
                 <div key={idx} className="flex items-center gap-2 rounded-lg bg-[var(--secondary)]/50 px-3 py-2">
                   <span className={cn("text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center shrink-0", idx === 0 ? "bg-emerald-500/20 text-emerald-400" : "bg-[var(--secondary)] text-[var(--muted-foreground)]")}>{idx + 1}</span>
                   <CapIcon className="size-3 shrink-0 text-[var(--muted-foreground)]" />
-                  <span className="flex-1 text-xs font-mono text-[var(--foreground)] truncate">{modelId}</span>
+                  <span className="min-w-0 flex-1 text-xs font-mono text-[var(--foreground)] truncate">{modelId}</span>
                   {(info?.capability_labels || ["Chat"]).map((label: string) => {
                     const capKey = label === "Chat" ? "chat" : label === t("vision") ? "vision" : label === "Phân tích ảnh" ? "vision" : label === "Video" ? "video" : label === "Phân tích video" ? "video" : "image";
                     return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border", CAP_COLORS[capKey])}>{label}</span>;

@@ -330,7 +330,7 @@ function ModelsPageContent() {
                           key={modelId}
                           className="mb-1 break-inside-avoid flex items-center gap-2 rounded-lg px-3 py-1.5 bg-[var(--card)]/50"
                         >
-                          <span className="flex-1 text-xs font-mono text-[var(--foreground)] truncate">
+                          <span className="min-w-0 flex-1 text-xs font-mono text-[var(--foreground)] truncate">
                             {modelId}
                           </span>
                         </div>
@@ -409,7 +409,7 @@ function ModelsPageContent() {
                             {/* Model name */}
                             <span
                               className={cn(
-                                "flex-1 text-xs font-mono truncate transition",
+                                "min-w-0 flex-1 text-xs font-mono truncate transition",
                                 enabled ? "text-[var(--foreground)]" : "text-[var(--muted-foreground)]",
                               )}
                             >
@@ -466,7 +466,7 @@ function ModelsPageContent() {
                             </button>
                             <span
                               className={cn(
-                                "flex-1 text-xs font-mono truncate transition",
+                                "min-w-0 flex-1 text-xs font-mono truncate transition",
                                 enabled ? "text-[var(--foreground)]" : "text-[var(--muted-foreground)]",
                               )}
                             >

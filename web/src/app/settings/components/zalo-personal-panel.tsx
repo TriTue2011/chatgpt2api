@@ -362,7 +362,7 @@ function ChannelTab({ status, showToast }:
                       onClick={() => setOpen(s => ({ ...s, [a.ownId]: !isOpen }))}
                       title={isOpen ? "Thu gọn" : "Mở xem thêm cài đặt"}>
                       {isOpen ? <ChevronDown className="size-4 shrink-0" /> : <ChevronRight className="size-4 shrink-0" />}
-                      <span className="flex-1 truncate text-xs font-medium">{accountLabel(a)}</span>
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium">{accountLabel(a)}</span>
                     </div>
                   </div>
                   {isOpen && (
@@ -479,7 +479,7 @@ function WebhookInfraBlock({ showToast }: { showToast: (m: string, ok?: boolean)
   const urlRow = (label: string, u: string) => (
     <div key={label} className="flex items-center gap-1.5">
       <span className="w-28 shrink-0 text-[10px] text-[var(--muted-foreground)]">{label}</span>
-      <code className="flex-1 break-all rounded bg-[var(--background)] px-1.5 py-0.5 text-[11px]">{u}</code>
+      <code className="min-w-0 flex-1 break-all rounded bg-[var(--background)] px-1.5 py-0.5 text-[11px]">{u}</code>
       <CopyBtn text={u} showToast={showToast} title="Copy URL webhook" />
     </div>
   );
@@ -668,7 +668,7 @@ function WebhooksTab({ status, showToast }:
                     <span className="shrink-0 rounded bg-[var(--background)] px-1.5 py-0.5 text-[10px]">
                       {row.messageWebhookUrl ? "✓ đã đăng ký" : "tự sinh — bấm 'Trỏ tất cả về chatgpt2api'"}
                     </span>
-                    <code className="flex-1 break-all text-[11px]">{eff}</code>
+                    <code className="min-w-0 flex-1 break-all text-[11px]">{eff}</code>
                     <CopyBtn text={eff} showToast={showToast} title="Copy link webhook" />
                   </div>
                 ) : null;
@@ -756,7 +756,7 @@ function ProxiesTab({ showToast }: { showToast: (m: string, ok?: boolean) => voi
       <div className="space-y-2">
         {proxies.map(p => (
           <div key={p} className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-xs">
-            <span className="flex-1 break-all">{p}</span>
+            <span className="min-w-0 flex-1 break-all">{p}</span>
             <button onClick={() => void remove(p)} className={BTN_DANGER}><Trash2 className="size-3" /></button>
           </div>
         ))}
@@ -873,7 +873,7 @@ function ContactsTab({ status, showToast, refresh }:
           <div key={`${c.kind}:${c.id}`} className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-xs">
             <span className="rounded bg-[var(--background)] px-1.5 py-0.5">{c.kind === "group" ? "👥" : "👤"}</span>
             <span className="min-w-32 font-semibold">{c.name}</span>
-            <code className="flex-1 break-all text-[var(--muted-foreground)]">{c.id}</code>
+            <code className="min-w-0 flex-1 break-all text-[var(--muted-foreground)]">{c.id}</code>
             <CopyBtn text={c.id} showToast={showToast} title="Copy Thread ID" />
             <button onClick={() => void addTo("zalo_personal_chat_ids", c.id)} className={BTN_GHOST} title="Cho phép AI trả lời thread này">🤖 AI</button>
             <button onClick={() => void addTo("zalo_personal_forward", c.id, c.kind === "group" ? "group" : "user")} className={BTN_GHOST} title="Thêm thread vào webhook chuyển tiếp đầu tiên"><Home className="size-3" /> WH</button>
@@ -1045,7 +1045,7 @@ function AdminTab({ status, showToast }:
                     <div className="flex items-center gap-2 cursor-pointer select-none"
                       onClick={() => setOpenAdm((s) => ({ ...s, [akey]: !aOpen }))}>
                       {aOpen ? <ChevronDown className="size-4 shrink-0" /> : <ChevronRight className="size-4 shrink-0" />}
-                      <span className="flex-1 truncate font-mono text-xs">
+                      <span className="min-w-0 flex-1 truncate font-mono text-xs">
                         {e.chat_id.trim() || <span className="text-[var(--muted-foreground)] not-italic">Admin mới — nhập Thread ID</span>}
                       </span>
                       <span className="text-[10px] text-[var(--muted-foreground)]">{e.kind === "group" ? "Nhóm" : "Cá nhân"}</span>

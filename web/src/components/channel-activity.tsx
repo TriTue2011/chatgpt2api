@@ -356,7 +356,7 @@ export function ChannelActivityPanel({ platform, title }: { platform: Platform; 
                 {b.account || "chung"}
               </span>
               {b.name && <span className="font-medium">{b.name}</span>}
-              <code className="flex-1 truncate text-muted-foreground">{b.id}</code>
+              <code className="min-w-0 flex-1 truncate text-muted-foreground">{b.id}</code>
               <button
                 type="button"
                 onClick={() => void removeBlack(b.id, b.account || "")}

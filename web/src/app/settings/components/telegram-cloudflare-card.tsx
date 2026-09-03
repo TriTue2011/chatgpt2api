@@ -369,7 +369,7 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
               <div className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer select-none"
                 onClick={() => setOpenBot((s) => ({ ...s, [row.id]: !botOpen }))}>
                 <span className="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground">{botOpen ? "▾" : "▸"}</span>
-                <span className="text-xs font-medium truncate flex-1">{botTitle}</span>
+                <span className="min-w-0 text-xs font-medium truncate flex-1">{botTitle}</span>
                 <span className="text-[10px] text-muted-foreground shrink-0">
                   {bid ? `${bid} · ` : ""}{nAdm} admin
                 </span>
@@ -424,7 +424,7 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
                     onClick={() => setOpenAdmin((s) => ({ ...s, [akey]: !open }))}>
                     <span className="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground">{open ? "▾" : "▸"}</span>
                     <span className="text-xs font-semibold shrink-0">Admin #{idx + 1}</span>
-                    <span className="text-[11px] text-muted-foreground truncate flex-1">
+                    <span className="min-w-0 text-[11px] text-muted-foreground truncate flex-1">
                       {title}
                       {a.chat_id.trim() ? <> · <span className="font-mono">{a.chat_id.trim()}</span></> : null}
                     </span>
@@ -1416,7 +1416,7 @@ export function TelegramCloudflareCard() {
               <div className="flex items-center gap-2 cursor-pointer select-none"
                 onClick={() => setOpenFilterUser((s) => ({ ...s, [u.id]: !uOpen }))}>
                 <span className="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground">{uOpen ? "▾" : "▸"}</span>
-                <span className="text-[11px] truncate flex-1">
+                <span className="min-w-0 text-[11px] truncate flex-1">
                   {uTitle}
                   {u.userId.trim() ? <> · <span className="font-mono">{u.userId.trim()}</span></> : null}
                 </span>
@@ -1842,7 +1842,9 @@ export function TelegramCloudflareCard() {
                     ["Câu bot vừa trả lời", "không ai — không chứa tag nào"],
                   ].map(([a, b]) => (
                     <tr key={a} className="align-top">
-                      <td className="pr-2 py-0.5 whitespace-nowrap">{a}</td>
+                      {/* KHÔNG nowrap: câu tình huống dài cỡ «Người khác: “@n8n
+                          xuất báo cáo”», ép một dòng là tràn khỏi thẻ trên điện thoại. */}
+                      <td className="pr-2 py-0.5">{a}</td>
                       <td className="py-0.5 font-medium">→ {b}</td>
                     </tr>
                   ))}
@@ -1878,7 +1880,7 @@ export function TelegramCloudflareCard() {
               <div className="flex items-center gap-2 cursor-pointer select-none"
                 onClick={() => setOpenFilter((s) => ({ ...s, [row.id]: !fOpen }))}>
                 <span className="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground">{fOpen ? "▾" : "▸"}</span>
-                <span className="text-[11px] font-medium truncate flex-1">
+                <span className="min-w-0 text-[11px] font-medium truncate flex-1">
                   {fTitle}
                   {row.chatId.trim() ? <> · <span className="font-mono">{row.chatId.trim()}</span></> : null}
                 </span>
@@ -2202,7 +2204,7 @@ export function TelegramCloudflareCard() {
                     <div className="flex items-center gap-2 cursor-pointer select-none"
                       onClick={() => setOpenFilterTopic((s) => ({ ...s, [t.id]: !tOpen }))}>
                       <span className="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground">{tOpen ? "▾" : "▸"}</span>
-                      <span className="text-[11px] truncate flex-1">
+                      <span className="min-w-0 text-[11px] truncate flex-1">
                         {tTitle}
                         {t.topicId.trim() ? <> · <span className="font-mono">#{t.topicId.trim()}</span></> : null}
                       </span>
