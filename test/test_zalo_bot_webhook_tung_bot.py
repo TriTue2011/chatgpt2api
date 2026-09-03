@@ -4,7 +4,7 @@ Một tài khoản có thể nuôi nhiều bot cho nhiều việc (trợ lý, n8
 chỉ MỘT trong số đó có URL webhook công khai hợp lệ. Ép chung một công tắc thì
 hoặc bot kia im, hoặc phải hạ cả nhà xuống long-polling.
 
-Bộ test giữ bốn tính chất:
+Bộ test giữ năm tính chất:
 
   1. Bot không khai gì thì KẾ THỪA công tắc chung — cấu hình đang chạy không đổi
      hành vi, người dùng một bot khỏi phải khai thêm.
@@ -12,6 +12,8 @@ Bộ test giữ bốn tính chất:
   3. `apply_mode` chia hai nhóm: đặt webhook cho nhóm này, bật poll cho nhóm kia,
      và chỉ rút poll của đúng mấy bot chuyển sang webhook.
   4. `start_polling` bỏ qua đúng bot đang webhook, không bỏ qua cả nhà.
+  5. Bộ chuẩn hoá config GIỮ được cờ `webhook` — không giữ thì bấm nút xong cờ
+     bị cắt ngay lượt sau, giao diện báo đã bật mà thực ra không bật.
 """
 from __future__ import annotations
 
@@ -116,6 +118,35 @@ class StartPollingBoQuaDungBotTests(unittest.TestCase):
             self.assertTrue(zb.start_polling())
         self.assertEqual(chay, ["poll:2"])
         zb._poll_threads.clear()
+
+
+class ChuanHoaConfigGiuCoTests(unittest.TestCase):
+    """Bộ chuẩn hoá config phải GIỮ cờ `webhook` của từng bot.
+
+    `_normalize_bots` dựng lại bản ghi từ một danh sách trường cố định, nên
+    trường nào không khai ở đó là bị cắt mỗi lượt chuẩn hoá. Đã cắn ba lần trong
+    ngày: `reply_to_self`, `keyword` của chuyển tiếp, và lần này là `webhook` —
+    bấm nút thì ghi xuống rồi bị xoá ngay, giao diện báo đã bật mà thực ra không.
+    """
+
+    def test_giu_co_webhook_khi_co_khai(self):
+        from services.config import _normalize_bots
+        ra = _normalize_bots([{"token": "a:1", "webhook": True},
+                              {"token": "b:2", "webhook": False}], None, None, None)
+        self.assertEqual(ra[0]["webhook"], True)
+        self.assertEqual(ra[1]["webhook"], False)
+
+    def test_khong_khai_thi_KHONG_nhoi_them_truong(self):
+        # Vắng khoá = kế thừa công tắc chung. Nhồi False vào mọi bản ghi là biến
+        # "chưa khai" thành "khai là tắt", tức đổi hành vi của cấu hình đang chạy.
+        from services.config import _normalize_bots
+        ra = _normalize_bots([{"token": "a:1"}], None, None, None)
+        self.assertNotIn("webhook", ra[0])
+
+    def test_gia_tri_khong_phai_bool_thi_bo(self):
+        from services.config import _normalize_bots
+        ra = _normalize_bots([{"token": "a:1", "webhook": "true"}], None, None, None)
+        self.assertNotIn("webhook", ra[0])
 
 
 if __name__ == "__main__":

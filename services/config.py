@@ -670,6 +670,13 @@ def _normalize_bots(value: object, legacy_token: object,
                 "emphasis_units": bool(it.get("emphasis_units", True)),
                 "emphasis_key_info": bool(it.get("emphasis_key_info", True)),
                 "emphasis_style": str(it.get("emphasis_style") or "").strip()[:16],
+                # Chế độ nhận tin RIÊNG của bot này (webhook / long-polling).
+                # Chỉ giữ khi thật sự là bool: vắng khoá = kế thừa công tắc chung,
+                # nên nhồi False vào mọi bản ghi là biến "chưa khai" thành "khai
+                # là tắt". Không giữ ở đây thì bấm nút xong cờ bị cắt ngay lượt
+                # chuẩn hoá sau — giao diện báo đã bật mà thực ra không bật.
+                **({"webhook": bool(it["webhook"])}
+                   if isinstance(it.get("webhook"), bool) else {}),
             })
     if not bots:
         lt = str(legacy_token or "").strip()
