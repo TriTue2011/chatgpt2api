@@ -926,44 +926,99 @@ export function TelegramCloudflareCard() {
   // Những cấu hình TỰ MÂU THUẪN: lưu vào thì một tính năng chết lặng, người
   // dùng cài xong tưởng hỏng mà không có dấu vết nào để lần. Chặn ngay lúc ghi
   // và nói rõ chỗ sai, thay vì để backend âm thầm bỏ qua.
+  // Bộ cấu hình đủ để biết "ai nhận tin gì" — dùng chung cho bộ soát và bảng
+  // định tuyến hiện ngay trên màn hình.
+  const bang = (kw: string) => kw.trim().toLowerCase();
+  type CauHinhLoc = {
+    aiOff: boolean; requireMention: boolean; mentionKeyword: string;
+    replyToSelf: boolean; selfKeyword: string;
+    forward: boolean; forwardUrl: string; forwardTagOnly: boolean; forwardKeyword: string;
+  };
+
   const loiCauHinh = (rows: FilterRow[]): string[] => {
     const ra: string[] = [];
-    const bang = (kw: string) => kw.trim().toLowerCase();
-    const soat = (
-      ten: string, replyToSelf: boolean, selfKeyword: string,
-      mentionKeyword: string, forward: boolean, forwardTagOnly: boolean,
-      forwardKeyword: string,
-    ) => {
-      if (replyToSelf && !selfKeyword.trim())
+    const soat = (ten: string, c: CauHinhLoc) => {
+      if (c.replyToSelf && !c.selfKeyword.trim())
         ra.push(`${ten}: bật «trả lời tin của TÔI» thì bắt buộc phải có từ khóa riêng — bỏ trống là bot trả lời cả câu chính nó vừa gửi.`);
-      const fk = bang(forwardKeyword);
-      if (forward && forwardTagOnly && fk) {
-        if (fk === bang(mentionKeyword))
-          ra.push(`${ten}: tag chuyển tiếp trùng với «bắt buộc tag» (${forwardKeyword.trim()}) — tin mang tag đó luôn đi webhook, ChatGPT không bao giờ nhận được.`);
-        if (fk === bang(selfKeyword))
-          ra.push(`${ten}: tag chuyển tiếp trùng với từ khóa tin của TÔI (${forwardKeyword.trim()}) — tin bạn gõ luôn đi webhook, bạn không gọi được ChatGPT.`);
+      // Chuyển tiếp chỉ thật sự BẬT khi có URL; tick mà bỏ trống URL thì bản
+      // ghi lưu xuống với enabled=false và không có gì xảy ra.
+      if (!(c.forward && c.forwardUrl.trim())) return;
+      const fkKhai = c.forwardKeyword.trim();
+      // Tag chuyển tiếp THỰC TẾ: bỏ trống thì dùng chung từ khóa «bắt buộc tag»
+      // (nếp cũ, xem capabilities.forward_keyword_for).
+      const fkThuc = fkKhai || c.mentionKeyword.trim();
+      if (c.forwardTagOnly) {
+        if (!fkThuc) {
+          ra.push(`${ten}: bật «chỉ chuyển khi có TAG» mà không có tag nào — webhook sẽ không bao giờ nhận được tin. Điền tag riêng cho chuyển tiếp.`);
+        } else if (!fkKhai && c.requireMention && !c.aiOff) {
+          ra.push(`${ten}: chuyển tiếp đang mượn tag «${fkThuc}» của ChatGPT vì ô tag riêng bỏ trống — tin mang tag đó đi webhook, còn tin không tag thì «bắt buộc tag» chặn, thành ra KHÔNG AI trả lời cả. Điền tag riêng cho chuyển tiếp.`);
+        } else {
+          if (fkKhai && bang(fkKhai) === bang(c.mentionKeyword))
+            ra.push(`${ten}: tag chuyển tiếp trùng với «bắt buộc tag» (${fkKhai}) — tin mang tag đó luôn đi webhook, ChatGPT không bao giờ nhận được.`);
+          if (fkKhai && bang(fkKhai) === bang(c.selfKeyword))
+            ra.push(`${ten}: tag chuyển tiếp trùng với từ khóa tin của TÔI (${fkKhai}) — tin bạn gõ luôn đi webhook, bạn không gọi được ChatGPT.`);
+        }
+      } else if (!c.aiOff && !c.requireMention) {
+        // KHOÁ CHÉO: đúng MỘT trong hai được nhận tin không tag. Cả hai cùng
+        // nhận thì webhook luôn thắng (nó chạy trước), ChatGPT không bao giờ
+        // tới lượt — ô «trả lời mọi tin» thành lời hứa suông.
+        ra.push(`${ten}: webhook đang nhận MỌI tin mà ChatGPT cũng để «trả lời mọi tin» — webhook chạy trước nên ChatGPT không bao giờ tới lượt. Chọn một: bật «chỉ chuyển khi có TAG» cho webhook, hoặc bật «bắt buộc tag» cho ChatGPT, hoặc tick «Không dùng ChatGPT ở thread này».`);
       }
     };
     for (const r of rows) {
       if (!r.chatId.trim()) continue;
       const ten = `Thread ${r.name?.trim() || r.chatId.trim()}`;
-      soat(ten, r.replyToSelf, r.selfKeyword, r.mentionKeyword,
-           r.forward, r.forwardTagOnly, r.forwardKeyword);
+      soat(ten, r);
       for (const u of r.users) {
-        if (!u.userId.trim() || !u.forward || !u.forwardTagOnly) continue;
-        soat(`${ten} › user ${u.name?.trim() || u.userId.trim()}`,
-             false, r.selfKeyword, r.mentionKeyword,
-             u.forward, u.forwardTagOnly, u.forwardKeyword);
+        if (!u.userId.trim() || !u.forward) continue;
+        soat(`${ten} › user ${u.name?.trim() || u.userId.trim()}`, {
+          ...r, forward: u.forward, forwardUrl: u.forwardUrl,
+          forwardTagOnly: u.forwardTagOnly, forwardKeyword: u.forwardKeyword,
+        });
       }
       for (const t of r.topics) {
         if (!t.topicId.trim()) continue;
         soat(`${ten} › topic ${t.name?.trim() || t.topicId.trim()}`,
-             t.replyToSelf, t.selfKeyword, t.mentionKeyword,
-             t.forward, t.forwardTagOnly, t.forwardKeyword);
+             { ...t, aiOff: t.aiOff });
       }
     }
     return ra;
   };
+  // "Với cài đặt hiện tại thì ai nhận tin gì" — tính đúng theo thứ tự backend
+  // quyết: chuyển tiếp chạy TRƯỚC, hễ nó nhận thì ChatGPT im.
+  const bangDinhTuyen = (c: CauHinhLoc, laNhom: boolean): [string, string][] => {
+    const fwBat = c.forward && !!c.forwardUrl.trim();
+    const fkThuc = c.forwardKeyword.trim() || c.mentionKeyword.trim();
+    const kwAI = c.mentionKeyword.trim() || "(chưa đặt tag)";
+    const kwToi = c.selfKeyword.trim();
+    const WH = "→ webhook, ChatGPT im";
+    const AI = "→ ChatGPT trả lời";
+    const KO = "→ không ai trả lời";
+    const ra: [string, string][] = [];
+    const aiTraLoiKhongTag = !c.aiOff && !c.requireMention;
+
+    if (laNhom) {
+      ra.push([`Người khác nhắn, không tag`,
+        fwBat && !c.forwardTagOnly ? WH : aiTraLoiKhongTag ? AI : KO]);
+      if (c.requireMention && !c.aiOff)
+        ra.push([`Người khác nhắn “${kwAI} …”`,
+          fwBat && c.forwardTagOnly && bang(fkThuc) === bang(c.mentionKeyword) ? WH : AI]);
+    } else {
+      ra.push([`Người kia nhắn`,
+        fwBat && !c.forwardTagOnly ? WH : c.aiOff ? KO : AI]);
+    }
+    if (c.replyToSelf && kwToi && !c.aiOff)
+      ra.push([`Bạn nhắn “${kwToi} …”`,
+        fwBat && c.forwardTagOnly && bang(fkThuc) === bang(kwToi) ? WH : AI]);
+    ra.push([`Bạn nhắn, không tag`,
+      fwBat && !c.forwardTagOnly ? WH : KO]);
+    if (fwBat && c.forwardTagOnly && fkThuc)
+      ra.push([`Tin có tag chuyển tiếp “${fkThuc}”`, WH]);
+    ra.push([`Câu bot vừa trả lời`,
+      fwBat && !c.forwardTagOnly ? "→ webhook ⚠️ (gồm cả câu bot tự nói)" : KO]);
+    return ra;
+  };
+
   const [loiLoc, setLoiLoc] = useState<string[]>([]);
 
   const commitFilters = (rows: FilterRow[]) => {
@@ -2094,6 +2149,24 @@ export function TelegramCloudflareCard() {
                     </p>
                   </>
                 )}
+              </div>
+
+              {/* Bảng "ai nhận tin gì" theo đúng các ô đang tick — đọc một cái là
+                  hiểu, khỏi phải tự dựng lại trong đầu từ bốn ô rời rạc. */}
+              <div className="rounded border border-dashed border-emerald-500/50 p-2">
+                <p className="mb-1 text-[11px] font-medium">📬 Với cài đặt hiện tại</p>
+                <table className="w-full">
+                  <tbody>
+                    {bangDinhTuyen(row, row.kind !== "user").map(([a, b]) => (
+                      <tr key={a} className="align-top">
+                        <td className="pr-2 py-0.5 text-[10px] text-muted-foreground">{a}</td>
+                        <td className={"py-0.5 text-[10px] font-medium "
+                          + (b.startsWith("→ không ai") ? "text-muted-foreground"
+                             : b.includes("⚠️") ? "text-amber-600" : "")}>{b}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
 
               {/* ── TẦNG TOPIC (nhóm Telegram bật Topics) — cấp GIỮA nhóm và user ──
