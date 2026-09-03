@@ -697,9 +697,23 @@ class AccountService:
         with self._lock:
             for account in self._accounts.values():
                 status = account.get("status")
-                if status in {"disabled", "error", "limited"}:
-                    continue
                 group = account_group(account)
+                # Tài khoản Codex đã cạn lượt Codex (status="limited") vẫn còn
+                # quota ĐƯỜNG WEB FREE riêng — đo 03/09/2026: token codex gọi
+                # chatgpt.com web free ra gpt-5-6 bình thường DÙ đang limited
+                # Codex (hai quota tách biệt). Lúc này tài khoản đang nhàn rỗi
+                # (không phục vụ Codex được), nên cho nó gánh free là lãi ròng.
+                # KHÔNG đổi type/nhóm/status: quota_watcher tự lật về "active"
+                # khi qua restore_at → tài khoản quay lại phục vụ Codex ("hết
+                # limit về lại"). Đường free chỉ ghi status/note/demote theo
+                # token, không gọi upsert_free_token, nên không lặp lỗi trôi
+                # nhóm 15/08. Chỉ mượn khi phục vụ free, và chỉ tài khoản codex
+                # đang limited (codex active vẫn dành riêng cho Codex).
+                muon_cho_free = (account_type == "free"
+                                 and group == GROUP_CODEX
+                                 and status == "limited")
+                if status in {"disabled", "error", "limited"} and not muon_cho_free:
+                    continue
                 if group == GROUP_ANTIGRAVITY:
                     continue
                 # Web-session pools (claude / gemini_web_api / gemini_web /
@@ -715,7 +729,7 @@ class AccountService:
                 # accounts — plus/go/business carry Codex and must never leak
                 # into chatgpt/auto / HA / n8n free-tier traffic). "codex"
                 # means the paid group (codex token or paid plan).
-                if account_type and group != account_type:
+                if account_type and group != account_type and not muon_cho_free:
                     continue
                 token = account.get("access_token") or ""
                 if not token or token in excluded:
@@ -751,13 +765,36 @@ class AccountService:
                                 continue
                         except Exception:
                             pass
-                candidates.append((token, account))
+                candidates.append((token, account, muon_cho_free))
             if not candidates:
                 return ""
             if len(candidates) > 1:
                 # max() ổn định → khoá bằng nhau giữ nguyên thứ tự FIFO.
-                return max(candidates, key=lambda c: self._selection_key(c[1]))[0]
+                return max(candidates, key=lambda c: self._khoa_chon_free(c[1], c[2]))[0]
             return candidates[0][0]
+
+    @classmethod
+    def _khoa_chon_free(cls, account: dict, muon: bool) -> tuple:
+        """Khoá chọn cho pool free, có tính tài khoản codex MƯỢN (limited).
+
+        Giống `_selection_key` nhưng thêm hai điều cho tài khoản mượn:
+
+          - Trung hoà BẬC GÓI: một tài khoản codex gói `go`/`plus` khi mượn
+            sang free phải xếp ngang free (bậc 0), không thì bậc gói của nó
+            nuốt luôn free thật và một mình nó gánh hết. Trên đường web free
+            mọi tài khoản đều ra gpt-5-6 nên bậc gói vô nghĩa ở đây.
+          - Phá hoà nghiêng về free THẬT: khi mọi tiêu chí bằng nhau, tài
+            khoản free thật đứng trên tài khoản mượn — free thật là pool chính,
+            mượn chỉ để dàn thêm tải/đỡ khi free bận.
+
+        Nhờ vậy free thật với mượn cùng đua ở tiêu chí sức khoẻ (có né account
+        vừa dùng <60s của smart_pool), nên tải trải đều — mà không lượt nào để
+        tài khoản mượn chiếm ưu thế chỉ vì nó là gói trả phí.
+        """
+        t1, t2, t3 = cls._selection_key(account)
+        if muon:
+            return (t1, 0, t3, 0)      # bậc gói ép về 0; cờ cuối 0 = sau free thật
+        return (t1, t2, t3, 1)         # free thật: cờ cuối 1 = thắng khi hoà
 
     @staticmethod
     def _weighted_enabled() -> bool:
