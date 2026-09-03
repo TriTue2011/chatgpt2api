@@ -923,8 +923,55 @@ export function TelegramCloudflareCard() {
     return opts;
   };
 
+  // Những cấu hình TỰ MÂU THUẪN: lưu vào thì một tính năng chết lặng, người
+  // dùng cài xong tưởng hỏng mà không có dấu vết nào để lần. Chặn ngay lúc ghi
+  // và nói rõ chỗ sai, thay vì để backend âm thầm bỏ qua.
+  const loiCauHinh = (rows: FilterRow[]): string[] => {
+    const ra: string[] = [];
+    const bang = (kw: string) => kw.trim().toLowerCase();
+    const soat = (
+      ten: string, replyToSelf: boolean, selfKeyword: string,
+      mentionKeyword: string, forward: boolean, forwardTagOnly: boolean,
+      forwardKeyword: string,
+    ) => {
+      if (replyToSelf && !selfKeyword.trim())
+        ra.push(`${ten}: bật «trả lời tin của TÔI» thì bắt buộc phải có từ khóa riêng — bỏ trống là bot trả lời cả câu chính nó vừa gửi.`);
+      const fk = bang(forwardKeyword);
+      if (forward && forwardTagOnly && fk) {
+        if (fk === bang(mentionKeyword))
+          ra.push(`${ten}: tag chuyển tiếp trùng với «bắt buộc tag» (${forwardKeyword.trim()}) — tin mang tag đó luôn đi webhook, ChatGPT không bao giờ nhận được.`);
+        if (fk === bang(selfKeyword))
+          ra.push(`${ten}: tag chuyển tiếp trùng với từ khóa tin của TÔI (${forwardKeyword.trim()}) — tin bạn gõ luôn đi webhook, bạn không gọi được ChatGPT.`);
+      }
+    };
+    for (const r of rows) {
+      if (!r.chatId.trim()) continue;
+      const ten = `Thread ${r.name?.trim() || r.chatId.trim()}`;
+      soat(ten, r.replyToSelf, r.selfKeyword, r.mentionKeyword,
+           r.forward, r.forwardTagOnly, r.forwardKeyword);
+      for (const u of r.users) {
+        if (!u.userId.trim() || !u.forward || !u.forwardTagOnly) continue;
+        soat(`${ten} › user ${u.name?.trim() || u.userId.trim()}`,
+             false, r.selfKeyword, r.mentionKeyword,
+             u.forward, u.forwardTagOnly, u.forwardKeyword);
+      }
+      for (const t of r.topics) {
+        if (!t.topicId.trim()) continue;
+        soat(`${ten} › topic ${t.name?.trim() || t.topicId.trim()}`,
+             t.replyToSelf, t.selfKeyword, t.mentionKeyword,
+             t.forward, t.forwardTagOnly, t.forwardKeyword);
+      }
+    }
+    return ra;
+  };
+  const [loiLoc, setLoiLoc] = useState<string[]>([]);
+
   const commitFilters = (rows: FilterRow[]) => {
     setFilterRows(rows);
+    // Giữ nguyên chữ đang gõ, nhưng KHÔNG đẩy cấu hình hỏng xuống config.
+    const loi = loiCauHinh(rows);
+    setLoiLoc(loi);
+    if (loi.length) return;
     const tf: Record<string, string[]> = {};
     const tuf: Record<string, string[]> = {};
     const tmf: Record<string, { required: boolean; keyword: string; reply_to_self?: boolean; self_keyword?: string; ai_off?: boolean }> = {};
@@ -1714,6 +1761,18 @@ export function TelegramCloudflareCard() {
             tag + User ID (Nhận diện / gõ tên tương tự). 🔗 Webhook HA/n8n theo thread
             hoặc từng user.
           </p>
+          {loiLoc.length > 0 && (
+            <div className="rounded border border-red-500 bg-red-500/10 p-2 space-y-1">
+              <p className="text-xs font-semibold text-red-600">
+                ⛔ Chưa lưu được {loiLoc.length} chỗ — sửa xong sẽ tự lưu:
+              </p>
+              <ul className="list-disc pl-4 space-y-0.5">
+                {loiLoc.map((m, i) => (
+                  <li key={i} className="text-[11px] text-red-600">{m}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           {filterRows.filter((r) => r.botKey === chTab || r.botKey.startsWith(`${chTab}:`)).map((row) => {
             const fOpen = openFilter[row.id] ?? !row.chatId.trim();
             const fTitle = row.name?.trim() || (row.chatId.trim() ? "(chưa đặt tên)" : "Thread mới");
