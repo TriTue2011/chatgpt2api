@@ -114,6 +114,23 @@ export function ZaloBotWebhookPanel() {
     try {
       const r = await request.post("/api/zalo-bot/webhook-config", { token, enabled });
       const d = r.data as Record<string, unknown>;
+      // Đồng bộ NGAY vào bản chụp cấu hình của trang. Endpoint trên ghi thẳng
+      // cờ xuống máy chủ, nhưng store vẫn giữ danh sách bot CŨ — bấm «Lưu cấu
+      // hình kênh» sau đó là ghi đè cả `zalo_bots`, cờ vừa đặt bay mất, tải lại
+      // trang là về như cũ. Đúng lỗi đã gặp với `zalo_webhook_enabled`.
+      try {
+        const ds = (useSettingsStore.getState().config as
+          { zalo_bots?: Record<string, unknown>[] } | null)?.zalo_bots;
+        if (Array.isArray(ds)) {
+          setField("zalo_bots", ds.map((b) => {
+            if (String(b?.token || "") !== token) return b;
+            const moi = { ...b };
+            if (enabled === null) delete moi.webhook;   // quay về kế thừa
+            else moi.webhook = enabled;
+            return moi;
+          }));
+        }
+      } catch { /* store chưa nạp xong thì thôi, refresh bên dưới vẫn đúng */ }
       showToast(
         enabled === null ? "Đã bỏ cài riêng, bot theo công tắc chung ✓"
         : enabled ? "Đã bật webhook cho bot này ✓"
