@@ -156,7 +156,11 @@ class MoTaVaDuPhongTests(unittest.TestCase):
         s = td.mo_ta({"noi_dung": "tin cháy Lê Quang Đạo", "ts": luc, "cua_ai": "bot"})
         self.assertIn("chính em (bot)", s)
         self.assertIn("Lê Quang Đạo", s)
-        self.assertIn(time.strftime("%d/%m/%Y", time.localtime(luc)), s)
+        # `_luc` GHIM giờ Việt Nam (không phải giờ hệ thống). Kỳ vọng phải dựng
+        # cùng múi giờ — kẻo trên runner UTC, gần nửa đêm UTC ngày VN đã sang
+        # hôm sau nên lệch một ngày (đo CI 04/09 23:37 UTC).
+        from datetime import datetime as _dt
+        self.assertIn(_dt.fromtimestamp(luc, td._TZ).strftime("%d/%m/%Y"), s)
 
     def test_rong_thi_tra_chuoi_rong(self) -> None:
         self.assertEqual(td.mo_ta(None), "")
