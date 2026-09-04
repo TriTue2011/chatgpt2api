@@ -102,7 +102,9 @@ jobs:
       # này thành thứ người ta quen bỏ qua.
       - name: Web audit (critical chặn)
         working-directory: web
-        run: npm audit --omit=dev --audit-level=critical
+        # Qua npm-audit-gate.sh: endpoint npm chết (503) KHÔNG bị gán nhầm thành
+        # "phát hiện lỗ hổng" rồi đỏ CI — đo 04/09. Chỉ chặn khi ĐẾM ĐƯỢC lỗ hổng.
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/npm-audit-gate.sh" critical
 
       # Báo cáo mức high, KHÔNG chặn — để thấy mà xử lý có kế hoạch.
       - name: Web audit (high — chỉ báo cáo)
@@ -112,7 +114,7 @@ jobs:
 
       - name: Zalo-server audit (critical chặn)
         working-directory: zalo-server
-        run: npm audit --omit=dev --audit-level=critical
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/npm-audit-gate.sh" critical
 
   # Build each architecture on its NATIVE runner (fast; no QEMU emulation of the
   # ~9GB browser+ML image). arm64 uses GitHub's free hosted arm64 runner

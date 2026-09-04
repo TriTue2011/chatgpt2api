@@ -70,10 +70,10 @@ jobs:
           fi
       - name: npm audit high/critical (web SCA)
         working-directory: web
-        run: |
-          # --audit-level=high: chỉ fail high/critical (bỏ qua dev + optional deps như sharp của Next.js)
-          npm audit --omit=dev --omit=optional --audit-level=high \
-            || { echo "::error::npm audit high/critical findings"; exit 1; }
+        # --audit-level=high: chỉ fail high/critical (bỏ qua dev + optional deps
+        # như sharp của Next.js). Qua npm-audit-gate.sh để endpoint npm chết
+        # (503) KHÔNG bị gán nhầm thành "phát hiện lỗ hổng" — xem script.
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/npm-audit-gate.sh" high
 
       # zalo-server là code CHẠY THẬT trong image (Dockerfile: npm ci --omit=dev)
       # nhưng trước nay không hề được audit — CVE của express/ws/axios/sharp đi
@@ -95,7 +95,5 @@ jobs:
 
       - name: npm audit critical (zalo-server SCA — cổng chặn)
         working-directory: zalo-server
-        run: |
-          npm audit --omit=dev --omit=optional --audit-level=critical \
-            || { echo "::error::zalo-server có lỗ hổng CRITICAL"; exit 1; }
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/npm-audit-gate.sh" critical
 
