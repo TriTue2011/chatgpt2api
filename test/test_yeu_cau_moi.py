@@ -85,10 +85,29 @@ class ApChoCaBaKenhTests(unittest.TestCase):
         return (GOC / "services" / tep).read_text("utf-8")
 
     def test_moi_kenh_deu_goi_bo_nhan_dien(self):
+        """Kênh nào cũng phải xét yêu-cầu-mới, qua `nen_dong_ban_cho`.
+
+        Đổi tên 04/09: các kênh gọi `nen_dong_ban_cho(text, stage)` thay vì
+        `la_yeu_cau_moi(text)` trần. Bọc thêm một lớp vì cổng này phải TẮT ở bước
+        bot vừa hỏi câu MỞ — xem `test_ban_cho_hoi_mo.py`. Test này vẫn giữ đúng
+        mục đích cũ: không kênh nào được quên nối bộ nhận diện.
+        """
         for tep in self.KENH:
             with self.subTest(tep=tep):
-                self.assertIn("la_yeu_cau_moi", self._src(tep),
+                self.assertIn("nen_dong_ban_cho", self._src(tep),
                               f"{tep} chưa xét yêu cầu mới")
+
+    def test_moi_kenh_deu_truyen_stage_vao_cong(self):
+        """Gọi `nen_dong_ban_cho` mà quên truyền stage là mất luôn bản vá.
+
+        Không truyền stage thì hàm rơi về đúng hành vi `la_yeu_cau_moi` cũ, và
+        lỗi mất ảnh ngày 04/09 quay lại y nguyên mà không test nào kêu.
+        """
+        for tep in self.KENH:
+            with self.subTest(tep=tep):
+                s = self._src(tep)
+                self.assertIn('.get("stage")', s,
+                              f"{tep}: gọi cổng mà không truyền stage")
 
     def test_moi_kenh_deu_dong_ca_hai_loai_ban_cho(self):
         for tep in self.KENH:

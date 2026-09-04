@@ -84,5 +84,53 @@ class MuiGioTrichDanTests(unittest.TestCase):
         self.assertEqual(td._luc(None), "")
 
 
+class LenhTrongTanNguTests(unittest.TestCase):
+    """Zalo Bot không gửi trích dẫn → mệnh lệnh trống tân ngữ là manh mối duy nhất.
+
+    Đo trên máy chủ 04/09 (cả webhook lẫn getUpdates): payload chỉ có
+    ['date','chat','message_id','from','text'] — bot KHÔNG biết người dùng có
+    bấm trích dẫn hay không. Nên khi họ trích một tin rồi gõ "dịch sang tiếng
+    Anh", thứ duy nhất còn lại để suy ra "dịch CÁI GÌ" là chính dạng câu đó.
+    Trước bản này `_la_mo_ho` trả False nên bot trả lời trong mù.
+    """
+
+    def test_menh_lenh_trong_tan_ngu_duoc_bat(self):
+        from services.agent import tham_chieu as tc
+        for c in ("dịch sang tiếng Anh", "tóm tắt giúp anh", "giải thích thêm",
+                  "dịch giúp em", "tóm tắt lại", "phân tích giúp anh"):
+            with self.subTest(c=c):
+                self.assertTrue(tc._la_mo_ho(c))
+
+    def test_dai_tu_tro_van_bat_nhu_cu(self):
+        from services.agent import tham_chieu as tc
+        for c in ("cái này sao rồi", "vụ đó dập chưa", "tin này nói gì"):
+            with self.subTest(c=c):
+                self.assertTrue(tc._la_mo_ho(c))
+
+    def test_cau_tu_neu_doi_tuong_thi_khong_doan(self):
+        """Câu dài tự nêu đối tượng rồi — đoán thêm chỉ tổ nhiễu."""
+        from services.agent import tham_chieu as tc
+        for c in ("tóm tắt bài báo VnExpress hôm nay giúp anh",
+                  "dịch câu sau sang tiếng Anh: hello world",
+                  "Nghị định 105 quy định gì về người kiểm tra",
+                  "thời tiết Hà Nội hôm nay",
+                  "bật đèn phòng khách"):
+            with self.subTest(c=c):
+                self.assertFalse(tc._la_mo_ho(c))
+
+    def test_lenh_trong_thi_lay_TIN_BOT_gan_nhat_khong_tra_FTS(self):
+        """Chữ còn lại là ngôn ngữ đích/lời đệm, đem tra toàn văn chỉ vớ về rác."""
+        from services.agent import tham_chieu as tc
+        hist = [{"role": "assistant", "content": "U20 Việt Nam đi tiếp trong trường hợp nào?"}]
+        ra = tc.doan("u-test", "dịch sang tiếng Anh", hist)
+        self.assertIn("U20 Việt Nam", ra)
+        self.assertIn("PHỎNG ĐOÁN", ra, "phải đánh dấu là phỏng đoán, không nói chắc")
+
+    def test_cau_thuong_khong_sinh_khoi_doan(self):
+        from services.agent import tham_chieu as tc
+        hist = [{"role": "assistant", "content": "abc"}]
+        self.assertEqual(tc.doan("u-test", "xin chào em", hist), "")
+
+
 if __name__ == "__main__":
     unittest.main()

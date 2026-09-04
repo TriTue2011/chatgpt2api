@@ -48,12 +48,41 @@ def _fold(s: str) -> str:
     return (s or "").translate(str.maketrans(b, k))
 
 
+#: Động từ CẦN TÂN NGỮ mà người dùng hay gõ trống ngay sau khi bấm trích dẫn:
+#: "dịch sang tiếng Anh", "tóm tắt giúp anh", "giải thích thêm". Zalo Bot KHÔNG
+#: gửi trường trích dẫn nào (đo trên máy chủ 04/09, cả webhook lẫn getUpdates),
+#: nên câu kiểu này là manh mối DUY NHẤT cho biết họ đang trỏ vào tin trước đó.
+#: Không bắt thì bot trả lời trong mù — không biết dịch cái gì.
+_RE_LENH_CAN_TAN_NGU = re.compile(
+    r"(?iu)^\s*(dịch|tóm\s*tắt|giải\s*thích|phân\s*tích|rút\s*gọn|viết\s*lại|"
+    r"diễn\s*giải|đọc\s*giúp|kiểm\s*tra\s*giúp)\b"
+)
+
+#: Câu dài thường TỰ NÊU đối tượng ("tóm tắt bài trên VnExpress hôm nay"), không
+#: cần đoán. Chỉ nhận mệnh lệnh trống khi câu ngắn.
+_TOI_DA_TU_LENH_TRONG = 6
+
+
+def _lenh_trong_tan_ngu(user_text: str) -> bool:
+    """Câu là MỆNH LỆNH cần tân ngữ mà không nêu tân ngữ ("dịch sang tiếng Anh")."""
+    t = (user_text or "").strip()
+    if not t:
+        return False
+    return bool(_RE_LENH_CAN_TAN_NGU.match(t)
+                and len(t.split()) <= _TOI_DA_TU_LENH_TRONG)
+
+
 def _la_mo_ho(user_text: str) -> bool:
-    """Câu này có TRỎ về thứ đã nói mà không nêu tên không."""
+    """Câu này có TRỎ về thứ đã nói mà không nêu tên không.
+
+    Hai dạng: (a) có đại từ trỏ ("cái này", "vụ đó"); (b) mệnh lệnh cần tân ngữ
+    mà bỏ trống tân ngữ ("dịch sang tiếng Anh") — dạng (b) thêm 04/09 vì trên
+    Zalo Bot nó là dấu vết duy nhất còn lại của thao tác trích dẫn.
+    """
     t = (user_text or "").strip()
     if not t or len(t) > 120:
         return False
-    return bool(_RE_TRO.search(t))
+    return bool(_RE_TRO.search(t)) or _lenh_trong_tan_ngu(t)
 
 
 def _tu_khoa(user_text: str) -> list[str]:
@@ -92,10 +121,17 @@ def doan(user_id: str, user_text: str, hist: list[dict[str, Any]] | None,
 
     ung_vien: list[str] = []
 
+    # Mệnh lệnh trống tân ngữ ("dịch sang tiếng Anh") thì BỎ QUA tra FTS, đi
+    # thẳng tầng 1. Chữ còn lại trong câu là NGÔN NGỮ ĐÍCH / lời đệm ("sang",
+    # "tiếng anh", "giúp anh"), không phải đối tượng cần tra — đem đi tra toàn
+    # văn chỉ vớ về những lượt cũ trùng chữ "anh". Thứ họ muốn dịch gần như luôn
+    # là tin bot vừa gửi.
+    _bo_qua_fts = _lenh_trong_tan_ngu(user_text)
+
     # Tầng 2 — có chữ nội dung thì tra ngược nhật ký phiên (FTS toàn văn các lượt
     # của chính người này — nơi tin được trích nằm). Sổ nhóm (`chatlog`) chỉ tra
     # được theo người-được-@nhắc, không theo nội dung, nên không dùng ở đây.
-    tu = _tu_khoa(user_text)
+    tu = [] if _bo_qua_fts else _tu_khoa(user_text)
     if tu:
         q = " ".join(tu)
         try:
