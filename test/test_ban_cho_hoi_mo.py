@@ -132,5 +132,47 @@ class LenhTrongTanNguTests(unittest.TestCase):
         self.assertEqual(tc.doan("u-test", "xin chào em", hist), "")
 
 
+class GiuTronTinKhiLenhTrongTests(unittest.TestCase):
+    """Mệnh lệnh trống tân ngữ thì phải đưa TRỌN tin cho model, không cắt.
+
+    Lỗi thật 04/09 13:28 (chủ máy phát hiện): bot trả lời ngày âm lịch dài 445
+    ký tự (ngày tháng + việc nên/tránh + giờ hoàng đạo), người dùng gõ "Dịch
+    sang tiếng anh" thì bản dịch chỉ ra 129 ký tự — đúng MỘT câu đầu, hai đoạn
+    sau mất sạch. Vì khối phỏng đoán cắt ứng viên ở 200 ký tự.
+
+    Cắt là đúng khi đang ĐOÁN giữa nhiều tin (chỉ cần đủ nhận ra tin nào), nhưng
+    sai khi model phải LÀM VIỆC TRÊN chính tin đó.
+    """
+
+    TIN = ("Hôm nay là Thứ Sáu, ngày 4 tháng 9 năm 2026 dương lịch, nhằm ngày 23 "
+           "tháng 7 năm Bính Ngọ âm lịch. Đây là ngày Tân Tỵ, tháng Bính Thân, năm "
+           "Bính Ngọ, đang tiết Xử thử, trực Thu.\n\nNên thu hoạch, cầu tài, nhập "
+           "kho, mua sắm; nên tránh an táng, xuất hành xa và khởi sự lớn.\n\nGiờ "
+           "hoàng đạo gồm: giờ Sửu từ 1 đến 3 giờ, giờ Thìn từ 7 đến 9 giờ, giờ Ngọ "
+           "từ 11 đến 13 giờ, giờ Mùi từ 13 đến 15 giờ, giờ Tuất từ 19 đến 21 giờ "
+           "và giờ Hợi từ 21 đến 23 giờ.")
+
+    def _hist(self):
+        return [{"role": "assistant", "content": self.TIN}]
+
+    def test_giu_ca_doan_cuoi(self):
+        from services.agent import tham_chieu as tc
+        ra = tc.doan("u-test", "Dịch sang tiếng anh", self._hist())
+        self.assertIn("giờ Hợi từ 21 đến 23 giờ", ra, "đoạn CUỐI bị cắt mất")
+
+    def test_giu_du_ba_doan(self):
+        from services.agent import tham_chieu as tc
+        ra = tc.doan("u-test", "tóm tắt giúp anh", self._hist())
+        for moc in ("Xử thử", "Nên thu hoạch", "Giờ hoàng đạo"):
+            with self.subTest(moc=moc):
+                self.assertIn(moc, ra)
+
+    def test_cau_dai_tu_tro_van_cat_ngan(self):
+        """Không nới đại trà: đoán giữa nhiều tin thì đoạn ngắn là đủ."""
+        from services.agent import tham_chieu as tc
+        ra = tc.doan("u-test", "cái này sao rồi", self._hist())
+        self.assertLess(len(ra), 700, "nới cả nhánh đoán thì tốn token mỗi lượt")
+
+
 if __name__ == "__main__":
     unittest.main()

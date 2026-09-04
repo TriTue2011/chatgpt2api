@@ -110,6 +110,18 @@ def _tin_bot_gan_nhat(hist: list[dict[str, Any]]) -> str:
     return ""
 
 
+#: Cắt mỗi ứng viên khi ĐANG ĐOÁN giữa nhiều tin: chỉ cần đủ để model nhận ra
+#: "tin nào", không cần nguyên văn.
+_CAT_UNG_VIEN = 200
+
+#: Nhưng MỆNH LỆNH TRỐNG TÂN NGỮ ("dịch sang tiếng anh", "tóm tắt giúp anh") thì
+#: model phải LÀM VIỆC TRÊN chính tin đó — cắt là mất nội dung, không phải mất
+#: manh mối. Lỗi thật 04/09 13:28: tin bot dài 445 ký tự (ngày âm lịch + việc
+#: nên/tránh + giờ hoàng đạo), bản dịch chỉ ra 129 ký tự — đúng một câu đầu, hai
+#: đoạn sau mất sạch, vì phần còn lại đã bị cắt ở mốc 200.
+_CAT_LENH_TRONG = 4000
+
+
 def doan(user_id: str, user_text: str, hist: list[dict[str, Any]] | None,
          *, budget: int = 600) -> str:
     """Khối ngữ cảnh phỏng đoán cho system prompt, hoặc "" nếu không đoán được.
@@ -127,6 +139,12 @@ def doan(user_id: str, user_text: str, hist: list[dict[str, Any]] | None,
     # văn chỉ vớ về những lượt cũ trùng chữ "anh". Thứ họ muốn dịch gần như luôn
     # là tin bot vừa gửi.
     _bo_qua_fts = _lenh_trong_tan_ngu(user_text)
+    # Mệnh lệnh trống tân ngữ: chỉ có MỘT ứng viên và model phải xử lý trọn tin
+    # đó, nên nới cả mức cắt lẫn hạn khối. Trường hợp còn lại giữ nguyên mức cũ —
+    # đoán giữa nhiều tin thì đoạn ngắn là đủ, nới ra chỉ tốn token mỗi lượt.
+    _cat = _CAT_LENH_TRONG if _bo_qua_fts else _CAT_UNG_VIEN
+    if _bo_qua_fts:
+        budget = max(budget, _CAT_LENH_TRONG + 200)
 
     # Tầng 2 — có chữ nội dung thì tra ngược nhật ký phiên (FTS toàn văn các lượt
     # của chính người này — nơi tin được trích nằm). Sổ nhóm (`chatlog`) chỉ tra
@@ -141,7 +159,7 @@ def doan(user_id: str, user_text: str, hist: list[dict[str, Any]] | None,
                     c = str(h.get("content") or "").strip()
                     if c:
                         ai = "em (bot)" if h.get("role") == "assistant" else "người dùng"
-                        ung_vien.append(f"({ai}) {c[:200]}")
+                        ung_vien.append(f"({ai}) {c[:_cat]}")
         except Exception as exc:
             logger.debug("tham_chieu session: %s", exc)
 
@@ -149,7 +167,7 @@ def doan(user_id: str, user_text: str, hist: list[dict[str, Any]] | None,
     if not ung_vien:
         gan = _tin_bot_gan_nhat(hist or [])
         if gan:
-            ung_vien.append(f"(em (bot)) {gan[:200]}")
+            ung_vien.append(f"(em (bot)) {gan[:_cat]}")
 
     if not ung_vien:
         return ""
