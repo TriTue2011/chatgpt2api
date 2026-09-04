@@ -65,8 +65,8 @@ def _doc_them_of(ctx: dict | None) -> list[str]:
         return pham_vi_doc_them(str((ctx or {}).get("user_id") or ""))
     except Exception:
         return []
-from services.agent.runtime import (call_model, call_video, content_of,
-                                    first_image_url)
+from services.agent.runtime import (call_image, call_model, call_video,
+                                    content_of)
 
 logger = logging.getLogger(__name__)
 
@@ -267,8 +267,10 @@ def _h_generate_image(args: dict, ctx: dict) -> dict:
         prompt = _fold_params_into_prompt(prompt, chosen, spec)
     # Câu ngắn ("vẽ con mèo") → prompt chi tiết, như bên video.
     prompt = _mo_rong_prompt_media(prompt, "image", ctx)
-    resp = call_model(model, [{"role": "user", "content": f"Vẽ: {prompt}"}],
-                      timeout=320, max_tokens=600)
+    # Gọi ĐÚNG endpoint tạo ảnh (như call_video), KHÔNG đi nhờ chat. Đường chat
+    # cũ không mở được combo ảnh ("AI image") nên rơi về ChatGPT pool "vẽ hộ",
+    # và flow đứng đầu combo chưa bao giờ được thử — xem call_image.
+    resp = call_image(prompt, model=model)
     # deliver_now=True ở các nhánh THẤT BẠI: trả thẳng câu thật cho người dùng,
     # KHÔNG để vòng LLM tự "kể" là đã gửi ảnh trong khi thực ra chưa có ảnh nào.
     if resp.get("error"):
@@ -276,17 +278,48 @@ def _h_generate_image(args: dict, ctx: dict) -> dict:
         return {"deliver_now": True,
                 "text": f"Em vẽ bằng {model} bị lỗi 😥 ({resp['error']}). "
                         f"Anh/chị muốn em thử công cụ khác không (Flow/ChatGPT/Gemini)?"}
-    txt = content_of(resp)
-    url = first_image_url(txt)
-    if url:
-        return {"text": "Đây ạ 🎨", "image_url": url}
-    # CẢI TIẾN: Feedback rõ ràng khi không extract được URL từ response
-    if not txt or any(kw in (txt or "").lower() for kw in ("completed", "finished", "generated")):
-        return {"deliver_now": True,
-                "text": f"Em thử vẽ bằng {model} nhưng chưa lấy được ảnh — model này có thể "
-                        f"không tạo được ảnh. Anh/chị chọn công cụ ảnh khác giúp em nhé 🔄"}
+    urls = _luu_anh_tu_data(resp.get("data"))
+    if len(urls) > 1:
+        return {"text": "Đây ạ 🎨", "image_url": urls[0], "image_urls": urls}
+    if urls:
+        return {"text": "Đây ạ 🎨", "image_url": urls[0]}
+    # Không lấy được ảnh → câu ngắn nói rõ, TUYỆT ĐỐI không rò văn bản model ra
+    # (đó chính là thứ đẻ ra đoạn "temporary chat" và tệp .docx base64).
     return {"deliver_now": True,
-            "text": txt or "Em chưa vẽ được ảnh, anh/chị thử mô tả rõ hơn giúp em nhé."}
+            "text": f"Em thử vẽ bằng {model} nhưng chưa lấy được ảnh — model này có thể "
+                    f"không tạo được ảnh. Anh/chị chọn công cụ ảnh khác giúp em nhé 🔄"}
+
+
+def _luu_anh_tu_data(data: Any) -> list[str]:
+    """``resp["data"]`` của /v1/images/generations → danh sách URL ảnh gửi được.
+
+    Mỗi mục là ``{"url": …}`` hoặc ``{"b64_json": …}``. `call_image` xin
+    ``response_format="url"`` nên thường có sẵn `url`; `b64_json` là dự phòng cho
+    adapter chỉ trả base64 — lưu ra tệp rồi trả URL (như nhánh video).
+    """
+    if not isinstance(data, list):
+        return []
+    urls: list[str] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        u = str(item.get("url") or "").strip()
+        if u:
+            urls.append(u)
+            continue
+        b64 = str(item.get("b64_json") or "").strip()
+        if not b64:
+            continue
+        try:
+            import base64 as _b64
+            from services.protocol.conversation import save_image_bytes
+            raw = _b64.b64decode(b64.split(",", 1)[1] if b64.startswith("data:") else b64)
+            saved = save_image_bytes(raw)
+            if saved:
+                urls.append(str(saved))
+        except Exception as exc:
+            logger.warning("agent: lưu ảnh b64 lỗi: %s", exc)
+    return urls
 
 
 def _h_generate_music(args: dict, ctx: dict) -> dict:

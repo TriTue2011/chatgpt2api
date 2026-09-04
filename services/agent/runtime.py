@@ -17,7 +17,7 @@ import uuid
 from typing import Any, Optional
 
 from services.config import config
-from services.local_gateway import gateway_v1_url
+from services.local_gateway import gateway_base_url, gateway_v1_url
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +293,52 @@ def call_video(
         return {"error": f"HTTP {e.code}: {body}"}
     except Exception as exc:
         logger.warning("agent.runtime: video %s → %s", model, str(exc)[:150])
+        return {"error": str(exc)[:200]}
+
+
+def call_image(
+    prompt: str,
+    *,
+    model: str,
+    timeout: int = 320,
+    **kwargs,
+) -> dict[str, Any]:
+    """Tạo ảnh qua ĐÚNG endpoint /v1/images/generations (không đi nhờ chat).
+
+    Song sinh với `call_video`. Trước đây tạo ảnh gọi `call_model(model, "Vẽ:
+    …")` qua /chat/completions, nên một combo ảnh như "AI image" không được nhận
+    là combo (endpoint chat không mở-combo-ảnh) — nó rơi về chat mặc định "AI
+    text" rồi hỏi ChatGPT pool "vẽ hộ", và flow đứng đầu combo chưa bao giờ được
+    chạm. Endpoint ảnh thì mở combo và thử từng model tới khi ra ảnh.
+
+    `response_format="url"` + `base_url` tuyệt đối: bên gọi (agent/kênh) tải ảnh
+    qua HTTP nên một đường dẫn `/images/…` trần là vô dụng — cùng lý do
+    `_bridge_chat_image` đặt hai trường này.
+
+    Trả nguyên dict phản hồi (`{"data": [{"url"|"b64_json", …}]}`) hoặc
+    `{"error": "..."}` — KHÔNG bao giờ raise.
+    """
+    url = _base().replace("/chat/completions", "/images/generations")
+    base = str(config.base_url or "").strip().rstrip("/") or gateway_base_url()
+    payload = {"model": model, "prompt": prompt, "n": 1,
+               "response_format": "url", "base_url": base, **kwargs}
+    try:
+        req = urllib.request.Request(
+            url, data=json.dumps(payload).encode(),
+            headers={"Authorization": f"Bearer {config.auth_key}",
+                     "Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode()[:200]
+        except Exception:
+            pass
+        logger.warning("agent.runtime: image %s → HTTP %s %s", model, e.code, body)
+        return {"error": f"HTTP {e.code}: {body}"}
+    except Exception as exc:
+        logger.warning("agent.runtime: image %s → %s", model, str(exc)[:150])
         return {"error": str(exc)[:200]}
 
 
