@@ -18,6 +18,7 @@ lo dựng câu cho người dùng.
 from __future__ import annotations
 
 import logging
+import re
 from urllib.parse import urlencode
 
 import requests
@@ -84,25 +85,63 @@ def maps_link(diem_di: str, diem_den: str, travelmode: str = "driving") -> str:
     return f"https://www.google.com/maps/dir/?{q}"
 
 
+#: Chữ ĐỆM đứng trước mã toà/số nhà, bỏ khi tra khái quát (viết KHÔNG dấu).
+_DEM_DAU = {"toa", "nha", "so", "can", "ho", "phong", "chung", "cu", "khu"}
+
+
 def _bo_ma_toa(dc: str) -> str:
-    """Bỏ mã toà nhà đứng ĐẦU địa chỉ (CT4B X2, N01, R6…), GIỮ dấu phẩy còn lại.
+    """Bỏ mã toà nhà + chữ đệm đứng ĐẦU địa chỉ, GIỮ dấu phẩy còn lại.
 
     Nominatim thường thiếu từng toà nhưng CÓ khu đô thị/phố, và nó KÉN dấu phẩy:
     "phường Hoàng Liệt, Hà Nội" ra được còn bản gộp không phẩy thì không. Đo
-    04/09: "CT4B X2 Bắc Linh Đàm" ra đúng toà; bỏ mã toà "CT4B X2" → "Bắc Linh
-    Đàm" vẫn ra khu đô thị. Mã toà = token vừa có CHỮ vừa có SỐ (CT4B, X2, N01)."""
-    def la_ma(t: str) -> bool:
-        return any(c.isdigit() for c in t) and any(c.isalpha() for c in t)
+    04/09: "CT4B X2 Bắc Linh Đàm" ra đúng toà; bỏ "CT4B X2" → "Bắc Linh Đàm" vẫn
+    ra. Bỏ cả chữ đệm "tòa nhà"/"số"/"căn hộ" — "tòa nhà CT4Bx2 Bắc Linh Đàm" mà
+    không bỏ thì Nominatim trượt. Mã toà = token vừa có CHỮ vừa có SỐ."""
+    def bo_qua(t: str) -> bool:
+        f = _bo_dau(t)
+        la_ma = any(c.isdigit() for c in t) and any(c.isalpha() for c in t)
+        return f in _DEM_DAU or la_ma
 
     segs = [s.strip() for s in dc.split(",") if s.strip()]
     if not segs:
         return ""
     toks = segs[0].split()
     i = 0
-    while i < len(toks) and la_ma(toks[i]):
+    while i < len(toks) and bo_qua(toks[i]):
         i += 1
     segs[0] = " ".join(toks[i:]).strip()
     return ", ".join(s for s in segs if s)
+
+
+#: URL Google Maps (link chia sẻ rút gọn hoặc link đầy đủ).
+_RE_MAPS_URL = re.compile(
+    r"https?://(maps\.app\.goo\.gl|(www\.)?google\.[a-z.]+/maps|goo\.gl/maps)/", re.I)
+
+
+def _giai_link_maps(s: str) -> tuple[float, float] | str | None:
+    """Link Google Maps → toạ độ (lat, lon) hoặc chuỗi ĐỊA CHỈ; None nếu không phải link.
+
+    Người dùng hay chỉ vị trí bằng cách CHIA SẺ ghim Google Maps (maps.app.goo.gl).
+    Theo redirect tới link đầy đủ rồi lấy `@lat,lng` (chính xác nhất) hoặc tên
+    trong `/place/<địa chỉ>`. Đo 05/09: `maps.app.goo.gl/…` → `/place/CT4B-X2 Bắc
+    Linh Đàm, …, Hoàng Liệt, Hà Nội`."""
+    if not _RE_MAPS_URL.search(s or ""):
+        return None
+    from urllib.parse import unquote_plus
+    try:
+        r = requests.get(s.strip(), headers={"User-Agent": "Mozilla/5.0"},
+                         timeout=_TIMEOUT, allow_redirects=True)
+        url = r.url
+    except Exception as exc:
+        logger.warning("chi_duong: giải link maps lỗi: %s", exc)
+        return None
+    m = re.search(r"@(-?\d+\.\d+),(-?\d+\.\d+)", url)
+    if m:
+        return float(m.group(1)), float(m.group(2))
+    m = re.search(r"/place/([^/@?]+)", url)
+    if m:
+        return unquote_plus(m.group(1)).strip()
+    return None
 
 
 def _nominatim_1(q: str) -> tuple[float, float, str, str] | None:
@@ -145,6 +184,12 @@ def geocode(dia_chi: str, tinh_goi_y: str = "") -> tuple[float, float, str, str,
     dc = str(dia_chi or "").strip()
     if not dc:
         return None
+    # Link Google Maps (ghim chia sẻ) → toạ độ chính xác, hoặc địa chỉ để tra.
+    giai = _giai_link_maps(dc)
+    if isinstance(giai, tuple):
+        return giai[0], giai[1], "Vị trí đã ghim trên Google Maps", "", True
+    if isinstance(giai, str) and giai:
+        dc = giai
     fdc = _bo_dau(dc)
     hau_to = "" if ("viet nam" in fdc or "vietnam" in fdc) else ", Việt Nam"
     if tinh_goi_y and _bo_dau(tinh_goi_y) not in fdc:

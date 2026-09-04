@@ -5345,8 +5345,10 @@ CAPABILITIES: dict[str, Capability] = {
                      "ra, KHÔNG bỏ tên khu đô thị — làm vậy là bản đồ không tìm "
                      "ra. Hệ thống sẽ HỎI phương tiện rồi trả khoảng cách + chỉ "
                      "dẫn + link Google Maps. Chỉ truyền phuong_tien khi người "
-                     "dùng ĐÃ tự nêu (xe máy/ô tô/đi bộ/xe buýt). Không tự bịa "
-                     "đường hay khoảng cách — chỉ gọi tool."),
+                     "dùng ĐÃ tự nêu (xe máy/ô tô/đi bộ/xe buýt). Người dùng dán "
+                     "LINK Google Maps (maps.app.goo.gl/…) thì truyền NGUYÊN link "
+                     "đó vào diem_di/diem_den — tool tự giải ra vị trí. Không tự "
+                     "bịa đường hay khoảng cách — chỉ gọi tool."),
         parameters={"type": "object", "properties": {
             "diem_di": {"type": "string", "description": "Địa chỉ/điểm xuất phát"},
             "diem_den": {"type": "string", "description": "Địa chỉ/điểm đến"},

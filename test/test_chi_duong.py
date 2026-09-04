@@ -114,6 +114,35 @@ class GeocodeTests(unittest.TestCase):
         self.assertIsNotNone(r, "phải thử biến thể sau khi nguyên văn hỏng")
         self.assertEqual(calls["n"], 2, "đúng 2 lượt: nguyên văn + bỏ mã toà")
 
+    def test_bo_chu_dem_toa_nha(self):
+        # "tòa nhà"/"số"/"căn hộ" là chữ đệm — bỏ để tra khái quát.
+        self.assertEqual(cd._bo_ma_toa("tòa nhà CT4Bx2 Bắc Linh Đàm"), "Bắc Linh Đàm")
+        self.assertEqual(cd._bo_ma_toa("căn hộ N01 Ecohome"), "Ecohome")
+
+    def test_giai_link_maps_place(self):
+        eff = ("https://www.google.com/maps/place/"
+               "CT4B-X2+B%E1%BA%AFc+Linh+%C4%90%C3%A0m,+Ho%C3%A0ng+Li%E1%BB%87t,+H%C3%A0+N%E1%BB%99i/data=x")
+        resp = MagicMock(); resp.url = eff
+        with patch("services.chi_duong.requests.get", return_value=resp):
+            r = cd._giai_link_maps("https://maps.app.goo.gl/abc")
+        self.assertEqual(r, "CT4B-X2 Bắc Linh Đàm, Hoàng Liệt, Hà Nội")
+
+    def test_giai_link_maps_toa_do(self):
+        resp = MagicMock(); resp.url = "https://www.google.com/maps/@21.0114,105.8506,17z"
+        with patch("services.chi_duong.requests.get", return_value=resp):
+            r = cd._giai_link_maps("https://maps.app.goo.gl/xyz")
+        self.assertEqual(r, (21.0114, 105.8506))
+
+    def test_giai_link_maps_khong_phai_url(self):
+        self.assertIsNone(cd._giai_link_maps("114 Mai Hắc Đế"))
+
+    def test_geocode_link_maps_toa_do_dung_thang(self):
+        resp = MagicMock(); resp.url = "https://www.google.com/maps/@21.0114,105.8506,17z"
+        with patch("services.chi_duong.requests.get", return_value=resp):
+            g = cd.geocode("https://maps.app.goo.gl/xyz")
+        self.assertEqual((g[0], g[1]), (21.0114, 105.8506))
+        self.assertIn("ghim", g[2].lower())
+
     def test_geocode_khong_lam_qua_2_luot(self):
         """Tôn trọng giới hạn Nominatim: tối đa 2 lượt gọi."""
         calls = {"n": 0}
