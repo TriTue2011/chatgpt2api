@@ -1201,6 +1201,9 @@ _KW_WEB = _re_mod.compile(
     r"tin tuc|ban tin|diem tin|co gi moi|thoi su|gia vang|gia usd|gia dola|"
     r"ty gia|chung khoan|thoi tiet|tim kiem|tra cuu|\bsearch\b|tinh hinh|"
     r"ket qua tran|ty so|\btin\b|moi nhat|gia ca|gia dien|gia xang|xang dau")
+_KW_CHIDUONG = _re_mod.compile(
+    r"chi duong|duong (tu|di|ve)|di (tu|toi|den)|lam sao (den|toi|di)|"
+    r"hoi duong|bao xa|bao nhieu km|di the nao|duong nao")
 _KW_TUXOA = _re_mod.compile(
     r"tu dong xoa|tu xoa|thu hoi|xoa phan hoi|xoa (di|sau)|dung xoa|khong xoa")
 _KW_LICH = _re_mod.compile(
@@ -1363,6 +1366,11 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
      "đó, CHỈ trả tin LIÊN QUAN chủ đề (5–8 tin mới nhất, gạch đầu dòng ngắn). "
      "TUYỆT ĐỐI KHÔNG chia 8 mục, KHÔNG chèn tin lạc đề, KHÔNG thay chủ đề "
      "người dùng hỏi bằng bản tin tổng hợp chung."),
+    ("web", _KW_CHIDUONG,  # chi_duong thuộc nhóm web
+     "- Chỉ đường / hỏi đường giữa hai địa điểm ('đường từ A về B', 'đi tới … "
+     "thế nào', 'từ … đến … bao xa') → chi_duong(diem_di, diem_den). Hệ thống "
+     "HỎI phương tiện rồi trả khoảng cách + chỉ dẫn + link Google Maps. KHÔNG "
+     "tự bịa đường hay khoảng cách — chỉ gọi tool."),
     ("contacts", _KW_TUXOA,  # tu_xoa_tin thuộc nhóm contacts
      "- TỰ XOÁ / THU HỒI CÂU TRẢ LỜI ('tự động xoá phản hồi tin tức sau 15 "
      "phút', 'trả lời xong 1 phút sau xoá đi', 'thôi đừng xoá nữa') → "
