@@ -826,6 +826,34 @@ _SAU_DICH_KHONG_PHAI_LENH = {
 #: đường trợ lý như cũ, không bị bẻ lái.
 _DICH_TRAN_TU = 3
 
+#: Giới từ mở đầu phần chỉ định ngôn ngữ: "dịch SANG tiếng Anh", "dịch QUA en".
+#: Viết KHÔNG DẤU vì luôn so sau `_bo_dau`.
+_GIOI_TU_DICH = {"sang", "qua", "ra", "thanh"}
+
+
+def _chi_la_chi_dinh_ngon_ngu(con: list[str]) -> bool:
+    """Phần sau chữ "dịch" CHỈ nói ngôn ngữ đích, không có gì để dịch.
+
+    "dịch sang tiếng anh" nghĩa là dịch TIN VỪA ĐƯỢC TRÍCH (hoặc tin trước đó),
+    không phải dịch chuỗi chữ "sang tiếng anh". Lỗi thật trên Zalo Bot 04/09
+    12:38: người dùng trích một tin rồi gõ đúng câu này, bot trả
+    «🌐 vi → en (57%) / sang English» — tức đem dịch mấy chữ thừa.
+
+    Trả True thì `la_lenh_dich` NHẢ câu này xuống vòng trợ lý, nơi
+    `tham_chieu.doan` đoán ra tin đang được nhắc rồi model dịch đúng thứ đó.
+    Đúng tinh thần `_DICH_TRAN_TU` đã ghi: đường tắt chỉ để tra TỪ ĐƠN.
+    """
+    tu = [_bo_dau(w).strip(":,.") for w in con]
+    while tu and tu[0] in _GIOI_TU_DICH:
+        tu.pop(0)
+    if not tu:
+        return True                      # "dịch sang"
+    if tu[0] == "tieng":
+        return len(tu) <= 2              # "dịch sang tiếng anh"
+    if _MA_ISO.match(tu[0]):
+        return len(tu) == 1              # "dịch sang en"
+    return False
+
 
 def la_lenh_dich(text: str) -> bool:
     """Tin nhắn này có phải lệnh dịch.
@@ -851,6 +879,10 @@ def la_lenh_dich(text: str) -> bool:
     con = dau[1].split()
     if not con or len(con) > _DICH_TRAN_TU:
         return False
+    # Chỉ nêu ngôn ngữ đích mà không có gì để dịch → không phải lệnh tra từ;
+    # nhả xuống trợ lý để nó đoán ra tin đang được nhắc (xem hàm trên).
+    if _chi_la_chi_dinh_ngon_ngu(con):
+        return False
     return _bo_dau(con[0]).strip(":,.") not in _SAU_DICH_KHONG_PHAI_LENH
 
 
@@ -868,6 +900,13 @@ def _phan_giai_dich(noi_dung: str) -> tuple[str, str]:
     khi máy chủ chỉ có en,vi thì "ja" là NỘI DUNG, không phải ngôn ngữ đích.
     """
     tach = (noi_dung or "").strip().split()
+    if not tach:
+        return "", ""
+    # Bỏ giới từ dẫn ngôn ngữ đích: "sang tiếng anh …" / "qua en …". Không bỏ
+    # thì "sang" bị coi là NỘI DUNG và đem đi dịch — đúng lỗi «sang English»
+    # gặp trên Zalo Bot 04/09.
+    while tach and _bo_dau(tach[0]).strip(":,.") in _GIOI_TU_DICH:
+        tach = tach[1:]
     if not tach:
         return "", ""
     co = lang_codes()

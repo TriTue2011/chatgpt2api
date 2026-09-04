@@ -689,3 +689,54 @@ def test_detect_cau_dai_hoac_phi_latin_van_hoi_bo_do():
         assert ts.detect("日本語")[0] == "vi"
     assert any(p == "/detect" for p, _ in fake.calls)
 
+
+# ── "dịch sang tiếng anh" = dịch TIN VỪA TRÍCH, không phải dịch chữ đó ──────
+#
+# Lỗi thật trên Zalo Bot 04/09 12:38 (có ảnh chụp): người dùng trích một tin rồi
+# gõ "Dịch sang tiếng anh". `la_lenh_dich` nhận nhầm thành lệnh tra từ, còn
+# `_phan_giai_dich` không hiểu giới từ "sang" nên coi cả cụm là nội dung → bot
+# trả «🌐 vi → en (57%) / sang English». Làm hai lần, sai y hệt hai lần.
+#
+# Vi phạm đúng ý định đã ghi ở `_DICH_TRAN_TU`: đường tắt chỉ để tra TỪ ĐƠN,
+# còn "dịch … sang tiếng Anh" phải đi đường trợ lý.
+
+
+@pytest.mark.pure
+@pytest.mark.parametrize("text", [
+    "Dịch sang tiếng anh",
+    "dịch sang tiếng Anh",
+    "dịch qua en",
+    "dịch sang",
+    "dịch ra tiếng trung",
+])
+def test_chi_neu_ngon_ngu_thi_khong_phai_lenh_tra_tu(text):
+    """Nhả xuống trợ lý để `tham_chieu` đoán ra tin đang được nhắc."""
+    assert ts.la_lenh_dich(text) is False
+
+
+@pytest.mark.pure
+@pytest.mark.parametrize("text", ["dịch stroke", "/dich hello world", "dich en xin chao"])
+def test_van_giu_duong_tra_tu_don(text):
+    """Không được phá đường tra từ điển (lỗi 29/08: 'dịch stroke')."""
+    assert ts.la_lenh_dich(text) is True
+
+
+@pytest.mark.pure
+@pytest.mark.parametrize("vao,ra", [
+    ("sang tiếng anh hello", ("en", "hello")),
+    ("sang en hello", ("en", "hello")),
+    ("qua tiếng anh hello", ("en", "hello")),
+    ("sang tiếng anh", ("en", "")),
+    ("tiếng anh hello", ("en", "hello")),
+    ("en hello", ("en", "hello")),
+])
+def test_boc_gioi_tu_dan_ngon_ngu(vao, ra):
+    """"sang"/"qua" là giới từ, không phải nội dung cần dịch."""
+    assert ts._phan_giai_dich(vao) == ra
+
+
+@pytest.mark.pure
+def test_troi_xuong_tro_ly_thi_duoc_coi_la_mo_ho():
+    """Nhả xuống trợ lý mà trợ lý không đoán thì cũng vô ích."""
+    from services.agent.tham_chieu import _la_mo_ho
+    assert _la_mo_ho("Dịch sang tiếng anh") is True
