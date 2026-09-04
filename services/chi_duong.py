@@ -181,6 +181,46 @@ def _mo_ta_buoc(step: dict) -> str:
     return phan
 
 
+def _dinh_vi_hai_dau(diem_di: str, diem_den: str):
+    """Geocode hai đầu (bù tỉnh liên đầu) → (a, b, ly_do).
+
+    ``ly_do`` None nếu ổn; ngược lại "khong_ra_diem_den"/"khong_ra_diem_di"/
+    "tinh_khong_khop". Dùng chung cho `dinh_vi` (bước xác nhận) và `chi_duong`
+    (định tuyến) — một chỗ, khỏi lệch logic."""
+    # Điểm ĐẾN trước (landmark rõ), lấy tỉnh nó bù cho điểm đi — chữa "114 Mai
+    # Hắc Đế" một mình lạc sang Đà Nẵng (766 km).
+    b = geocode(diem_den)
+    if not b:
+        return None, None, "khong_ra_diem_den"
+    a = geocode(diem_di, tinh_goi_y=b[3])
+    if not a:
+        return None, None, "khong_ra_diem_di"
+    if a[3] and b[3] and _bo_dau(a[3]) != _bo_dau(b[3]):
+        return a, b, "tinh_khong_khop"
+    return a, b, None
+
+
+def dinh_vi(diem_di: str, diem_den: str, phuong_tien: str = "xe máy") -> dict:
+    """Chỉ GEOCODE (không định tuyến) — cho bước XÁC NHẬN địa chỉ.
+
+    ``ok=True`` → {tu, den, gan_dung, link}  (tên địa chỉ bot hiểu được, để hỏi
+    người dùng đúng chưa trước khi chỉ đường). ``ok=False`` → {ly_do, link,
+    [tinh_di, tinh_den]} như `chi_duong`."""
+    profile, travelmode, co_route = chuan_phuong_tien(phuong_tien)
+    link = maps_link(diem_di, diem_den, travelmode)
+    goc = {"link": link, "phuong_tien": phuong_tien}
+    # Xe buýt không định tuyến (chỉ link) → khỏi bước xác nhận địa chỉ.
+    if not co_route or not profile:
+        return {"ok": False, "ly_do": "khong_dinh_tuyen", **goc}
+    a, b, ly = _dinh_vi_hai_dau(diem_di, diem_den)
+    if ly == "tinh_khong_khop":
+        return {"ok": False, "ly_do": ly, "tinh_di": a[3], "tinh_den": b[3], **goc}
+    if ly:
+        return {"ok": False, "ly_do": ly, **goc}
+    return {"ok": True, "tu": a[2], "den": b[2],
+            "gan_dung": not (a[4] and b[4]), **goc}
+
+
 def chi_duong(diem_di: str, diem_den: str, phuong_tien: str = "xe máy") -> dict:
     """A→B → dict chỉ đường. KHÔNG raise; mọi lỗi thành `ok=False` + `ly_do`.
 
@@ -197,20 +237,11 @@ def chi_duong(diem_di: str, diem_den: str, phuong_tien: str = "xe máy") -> dict
     if not co_route or not profile:
         return {"ok": False, "ly_do": "khong_dinh_tuyen", **goc}
 
-    # Geocode ĐIỂM ĐẾN trước (thường là landmark rõ), lấy TỈNH của nó làm gợi ý
-    # cho điểm đi — chữa lỗi "114 Mai Hắc Đế" một mình lạc sang Đà Nẵng (766 km).
-    b = geocode(diem_den)
-    if not b:
-        return {"ok": False, "ly_do": "khong_ra_diem_den", **goc}
-    a = geocode(diem_di, tinh_goi_y=b[3])
-    if not a:
-        return {"ok": False, "ly_do": "khong_ra_diem_di", **goc}
-
-    # Hai đầu vẫn KHÁC TỈNH sau khi đã bù → không chắc chắn, HỎI LẠI thay vì đưa
-    # tuyến sai (đúng yêu cầu chủ máy 04/09: "sai km, không hỏi địa chỉ chính xác").
-    if a[3] and b[3] and _bo_dau(a[3]) != _bo_dau(b[3]):
-        return {"ok": False, "ly_do": "tinh_khong_khop",
-                "tinh_di": a[3], "tinh_den": b[3], **goc}
+    a, b, ly = _dinh_vi_hai_dau(diem_di, diem_den)
+    if ly == "tinh_khong_khop":
+        return {"ok": False, "ly_do": ly, "tinh_di": a[3], "tinh_den": b[3], **goc}
+    if ly:
+        return {"ok": False, "ly_do": ly, **goc}
 
     # OSRM: kinh độ,vĩ độ;kinh độ,vĩ độ  (LƯU Ý thứ tự lon,lat).
     toa_do = f"{a[1]},{a[0]};{b[1]},{b[0]}"

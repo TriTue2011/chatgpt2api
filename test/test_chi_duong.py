@@ -188,21 +188,35 @@ class HandlerTests(unittest.TestCase):
         self.assertIn("ĐIỂM ĐI", out["text"])
         self.assertNotIn("<<<ASK>>>", out["text"])
 
-    def test_du_tham_so_ok(self):
+    def test_co_phuong_tien_chua_xac_nhan_thi_HOI_XAC_NHAN(self):
+        """Bước 2 (chủ máy chốt 04/09: luôn xác nhận): hiện địa chỉ, chưa đưa km."""
+        dv = {"ok": True, "tu": "Hoàng Thành Tower, 114 Mai Hắc Đế", "den": "Bắc Linh Đàm",
+              "gan_dung": False, "link": "https://www.google.com/maps/dir/?api=1"}
+        with patch("services.chi_duong.dinh_vi", return_value=dv):
+            out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B", "phuong_tien": "xe máy"}, {})
+        self.assertIn("xác nhận lại địa chỉ", out["text"])
+        self.assertIn("Điểm đi", out["text"])
+        self.assertIn("<<<ASK>>>", out["text"])
+        self.assertIn("đã xác nhận địa chỉ", out["text"])   # nút re-gọi tool
+        self.assertNotIn("km", out["text"].lower(), "chưa được đưa km ở bước xác nhận")
+
+    def test_da_xac_nhan_thi_chi_duong_that(self):
         r = {"ok": True, "km": 7.3, "phut": 10, "buoc": ["Rẽ phải Phố X (~235 m)"],
              "link": "https://www.google.com/maps/dir/?api=1&x", "tu": "A", "den": "B"}
-        with patch.object(caps, "_h_chi_duong", wraps=caps._h_chi_duong), \
-             patch("services.chi_duong.chi_duong", return_value=r):
-            out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B", "phuong_tien": "xe máy"}, {})
+        with patch("services.chi_duong.chi_duong", return_value=r):
+            out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B",
+                                     "phuong_tien": "xe máy", "xac_nhan": True}, {})
         self.assertIn("7.3 km", out["text"])
         self.assertIn("google.com/maps", out["text"])
         self.assertNotIn("<<<ASK>>>", out["text"])
+        self.assertTrue(out.get("deliver_now"))
 
-    def test_khac_tinh_thi_handler_HOI_dia_chi_khong_dua_km(self):
-        r = {"ok": False, "ly_do": "tinh_khong_khop",
-             "tinh_di": "Thành phố Đà Nẵng", "tinh_den": "Thành phố Hà Nội",
-             "link": "https://www.google.com/maps/dir/?api=1"}
-        with patch("services.chi_duong.chi_duong", return_value=r):
+    def test_khac_tinh_o_buoc_xac_nhan_thi_HOI_dia_chi(self):
+        # dinh_vi (bước 2) phát hiện khác tỉnh → hỏi lại địa chỉ, KHÔNG đưa km.
+        dv = {"ok": False, "ly_do": "tinh_khong_khop",
+              "tinh_di": "Thành phố Đà Nẵng", "tinh_den": "Thành phố Hà Nội",
+              "link": "https://www.google.com/maps/dir/?api=1", "phuong_tien": "xe máy"}
+        with patch("services.chi_duong.dinh_vi", return_value=dv):
             out = caps._h_chi_duong({"diem_di": "Mai Hắc Đế", "diem_den": "Bắc Linh Đàm",
                                      "phuong_tien": "xe máy"}, {})
         self.assertIn("Đà Nẵng", out["text"])
@@ -210,20 +224,23 @@ class HandlerTests(unittest.TestCase):
         self.assertNotIn("km", out["text"].split("Google")[0].lower(), "không được đưa km sai")
         self.assertTrue(out.get("deliver_now"))
 
-    def test_gan_dung_thi_handler_them_ghi_chu(self):
+    def test_da_xac_nhan_gan_dung_thi_them_ghi_chu(self):
         r = {"ok": True, "km": 6.8, "phut": 9, "gan_dung": True,
              "buoc": ["Rẽ phải Phố X (~235 m)"], "tu": "A", "den": "B",
              "link": "https://www.google.com/maps/dir/?api=1"}
         with patch("services.chi_duong.chi_duong", return_value=r):
-            out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B", "phuong_tien": "xe máy"}, {})
+            out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B",
+                                     "phuong_tien": "xe máy", "xac_nhan": True}, {})
         self.assertIn("6.8 km", out["text"])
         self.assertIn("gần đúng", out["text"])
-        self.assertTrue(out.get("deliver_now"), "phải gửi thẳng, không cho model viết lại")
+        self.assertTrue(out.get("deliver_now"))
 
-    def test_xe_buyt_handler_ra_link(self):
-        r = {"ok": False, "ly_do": "khong_dinh_tuyen",
-             "link": "https://www.google.com/maps/dir/?api=1&travelmode=transit"}
-        with patch("services.chi_duong.chi_duong", return_value=r):
+    def test_xe_buyt_khong_xac_nhan_ra_thang_link(self):
+        # Xe buýt không định tuyến → bỏ bước xác nhận, ra link luôn.
+        dv = {"ok": False, "ly_do": "khong_dinh_tuyen",
+              "link": "https://www.google.com/maps/dir/?api=1&travelmode=transit",
+              "phuong_tien": "xe buýt"}
+        with patch("services.chi_duong.dinh_vi", return_value=dv):
             out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B", "phuong_tien": "xe buýt"}, {})
         self.assertIn("google.com/maps", out["text"])
         self.assertIn("transit", out["text"])

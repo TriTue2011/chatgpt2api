@@ -341,6 +341,8 @@ def _h_chi_duong(args: dict, ctx: dict) -> dict:
         return {"text": "Anh/chị cho em ĐIỂM ĐI và ĐIỂM ĐẾN ạ 🗺️ "
                         "(ví dụ: từ 114 Mai Hắc Đế đến CT4B X2 Bắc Linh Đàm)."}
 
+    xac_nhan = bool(args.get("xac_nhan"))
+
     # Chưa biết phương tiện → HỎI (trừ khi chạy tự động theo lịch/autonomy).
     if not phuong_tien and not ctx.get("auto_approve"):
         lines = [f'🗺️ Đi từ "{_mot_dong(diem_di)}" đến "{_mot_dong(diem_den)}" '
@@ -352,7 +354,30 @@ def _h_chi_duong(args: dict, ctx: dict) -> dict:
         return {"text": "\n".join(lines), "deliver_now": True}
 
     pt = phuong_tien or "xe máy"
-    kq = cd.chi_duong(diem_di, diem_den, pt)
+
+    # BƯỚC XÁC NHẬN ĐỊA CHỈ (chủ máy chốt 04/09: "luôn xác nhận cho đúng").
+    # Đã chọn phương tiện nhưng CHƯA xác nhận → geocode rồi hiện địa chỉ bot hiểu
+    # được để người dùng gật/sửa, TRƯỚC khi chỉ đường. Geocode hỏng/khác tỉnh thì
+    # rơi xuống nhánh lỗi bên dưới (hỏi lại địa chỉ) — không đưa vào bước xác nhận.
+    if not xac_nhan and not ctx.get("auto_approve"):
+        dv = cd.dinh_vi(diem_di, diem_den, pt)
+        if dv.get("ok"):
+            note = (" (gần đúng ở mức khu đô thị/phố)" if dv.get("gan_dung") else "")
+            return {"deliver_now": True, "text":
+                    "🗺️ Em xác nhận lại địa chỉ cho đúng nhé:\n"
+                    f"📍 Điểm đi: {str(dv['tu'])[:70]}\n"
+                    f"📍 Điểm đến: {str(dv['den'])[:70]}{note}\n\n"
+                    "Đúng chưa ạ? Đúng thì bấm dưới, sai thì anh/chị nhắn lại địa "
+                    "chỉ đầy đủ (kèm số nhà/tòa, phường, thành phố).\n"
+                    "<<<ASK>>>\n"
+                    f"✅ Đúng rồi, chỉ đường | chỉ đường từ {diem_di} đến {diem_den} "
+                    f"bằng {pt} (đã xác nhận địa chỉ)\n"
+                    "<<<END>>>"}
+        # dv không ok → dùng chung nhánh lỗi bên dưới qua kq.
+        kq = dv
+        kq.setdefault("phuong_tien", pt)
+    else:
+        kq = cd.chi_duong(diem_di, diem_den, pt)
     link = kq.get("link") or ""
     if kq.get("ok"):
         dong = [f"🗺️ {str(kq['tu'])[:60]} → {str(kq['den'])[:60]}",
@@ -5328,11 +5353,16 @@ CAPABILITIES: dict[str, Capability] = {
             "phuong_tien": {"type": "string",
                             "enum": ["xe máy", "ô tô", "đi bộ", "xe buýt"],
                             "description": "Phương tiện người dùng nêu; bỏ trống "
-                                           "để hệ thống hỏi"}},
+                                           "để hệ thống hỏi"},
+            "xac_nhan": {"type": "boolean",
+                         "description": "Đặt true KHI người dùng đã XÁC NHẬN địa "
+                                        "chỉ đúng (câu chứa '(đã xác nhận địa chỉ)' "
+                                        "sau khi hệ thống hỏi 'đúng chưa'). Mặc "
+                                        "định bỏ trống để hệ thống hỏi xác nhận."}},
             "required": ["diem_di", "diem_den"]},
-        workflow=("Hệ thống hỏi phương tiện trước, rồi trả khoảng cách + các bước "
-                  "rẽ + link Google Maps. KHÔNG tự nói khoảng cách/đường khi chưa "
-                  "có kết quả tool.")),
+        workflow=("Hệ thống hỏi phương tiện → hỏi xác nhận địa chỉ → mới trả "
+                  "khoảng cách + các bước rẽ + link. KHÔNG tự nói khoảng cách/"
+                  "đường khi chưa có kết quả tool.")),
     "generate_music": Capability(
         name="generate_music", risk=READ, handler=_h_generate_music,
         emoji="🎵", label="Sáng tác / tạo nhạc AI",
