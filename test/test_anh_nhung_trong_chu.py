@@ -106,5 +106,49 @@ class KhongDongWordKhiConAnhTests(unittest.TestCase):
             self.assertTrue(gui.called)
 
 
+class FirstImageUrlNhanDataUriTests(unittest.TestCase):
+    r"""NGUYÊN NHÂN GỐC: bộ bóc URL ảnh chỉ nhận http(s), bỏ sót data-URI.
+
+    `_IMG_RE` cũ là `!\[…\]\((https?://…)\)`. Nhà cung cấp trả
+    `![image_1](data:image/png;base64,…)` — ảnh hợp lệ, chỉ khác dạng — nên hàm
+    trả None, `_h_generate_image` hiểu là "không lấy được ảnh" rồi trả NGUYÊN
+    chuỗi base64 làm câu trả lời. Ba tầng sau đó chỉ là hệ quả.
+
+    Ba nơi gọi hàm này (trợ lý, `photo_intent`, `teacher_images`) nên sửa ở đây
+    là sửa cả ba đường tạo ảnh.
+    """
+
+    def test_van_nhan_url_http_nhu_cu(self):
+        from services.agent.runtime import first_image_url
+        self.assertEqual(first_image_url("![x](https://a.com/b.png)"),
+                         "https://a.com/b.png")
+
+    def test_nhan_data_uri_va_doi_thanh_url_gui_duoc(self):
+        from services.agent.runtime import first_image_url
+        ra = first_image_url("![image_1](data:image/png;base64," + _anh_that(3000) + ")")
+        self.assertIsNotNone(ra, "ảnh data-URI phải được nhận")
+        self.assertIn("/images/", ra, "phải đổi thành URL kênh gửi được, không trả data-URI trần")
+        self.assertNotIn("base64", ra)
+
+    def test_http_uu_tien_hon_data_uri(self):
+        from services.agent.runtime import first_image_url
+        van = "![a](https://x.com/1.png) ![b](data:image/png;base64," + _anh_that(100) + ")"
+        self.assertEqual(first_image_url(van), "https://x.com/1.png")
+
+    def test_base64_cat_cut_thi_None(self):
+        """Thà không có ảnh còn hơn gửi một tấm ảnh hỏng."""
+        from services.agent.runtime import first_image_url
+        self.assertIsNone(first_image_url(
+            "![x](data:image/png;base64," + _anh_that(3000)[:-3] + ")"))
+
+    def test_byte_khong_phai_anh_thi_None(self):
+        from services.agent.runtime import first_image_url
+        self.assertIsNone(first_image_url("![x](data:image/png;base64,abcQ)"))
+
+    def test_khong_co_anh_thi_None(self):
+        from services.agent.runtime import first_image_url
+        self.assertIsNone(first_image_url("câu thường không có ảnh"))
+
+
 if __name__ == "__main__":
     unittest.main()

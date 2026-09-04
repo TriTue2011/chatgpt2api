@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 _LOCAL = f"{gateway_v1_url()}/chat/completions"
 # Markdown image the image-gen pipeline emits: ![[Generated Image 0]](http://…)
 _IMG_RE = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
+#: Ảnh trả THẲNG trong chữ dạng data-URI — một số nhà cung cấp làm vậy thay vì
+#: đưa URL http. Đo 04/09 trên nhánh "AI image".
+_IMG_DATA_RE = re.compile(r"data:image/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+", re.I)
 
 # Model KHÔNG hỗ trợ native function-call đôi khi phát tool call dạng text:
 #   ```xml <tool_call name="schedule">{"op":"create",…}</tool_call>```
@@ -304,9 +307,48 @@ def content_of(resp: dict[str, Any]) -> str:
         return ""
 
 
+def _luu_anh_data_uri(data_uri: str) -> Optional[str]:
+    """``data:image/…;base64,…`` → URL ``/images/…``; None nếu không phải ảnh thật.
+
+    KHÔNG tự đệm ``=`` cho đủ bộ bốn: sai độ dài nghĩa là chuỗi đã bị CẮT, đệm
+    vào chỉ dựng ra một tấm ảnh hỏng rồi gửi đi. Giải mã được cũng chưa đủ —
+    ``"abcQ"`` cũng ra 3 byte hợp lệ — nên phải đúng magic bytes mới nhận.
+    """
+    try:
+        import base64
+        from services.image_utils import sniff_format
+        from services.protocol.conversation import save_image_bytes
+        raw = base64.b64decode(data_uri.split(",", 1)[1], validate=True)
+        if not sniff_format(raw):
+            logger.warning("first_image_url: %d byte không phải ảnh, bỏ", len(raw))
+            return None
+        return save_image_bytes(raw) or None
+    except Exception as exc:
+        logger.warning("first_image_url: lưu ảnh data-URI lỗi: %s", exc)
+        return None
+
+
 def first_image_url(text: str) -> Optional[str]:
+    """URL ảnh đầu tiên trong chữ, hoặc None.
+
+    Nhận CẢ ảnh nhúng dạng data-URI, và đổi nó thành URL ``/images/…`` ngay tại
+    đây — vì đó mới là thứ MỌI kênh gửi được. Trả về data-URI trần là đặt bẫy:
+    kênh nào chưa biết xử lý sẽ đem cả chuỗi base64 gửi đi như văn bản.
+
+    Lỗi thật 04/09 13:38: nhà cung cấp trả ``![image_1](data:image/png;base64,…)``
+    — ảnh hợp lệ, chỉ khác dạng. Hàm này khi ấy chỉ nhận ``http(s)://`` nên trả
+    None, `_h_generate_image` hiểu là "không lấy được ảnh" rồi trả NGUYÊN chuỗi
+    base64 làm câu trả lời; qua vài tầng nữa người dùng nhận một tệp .docx chứa
+    base64 thay vì tấm ảnh.
+
+    Ba nơi gọi hàm này — tạo ảnh qua trợ lý, tạo ảnh từ ảnh (`photo_intent`),
+    ảnh minh hoạ bài giảng (`teacher_images`) — nên sửa ở đây là sửa cả ba.
+    """
     m = _IMG_RE.search(text or "")
-    return m.group(1) if m else None
+    if m:
+        return m.group(1)
+    m = _IMG_DATA_RE.search(text or "")
+    return _luu_anh_data_uri(m.group(0)) if m else None
 
 
 # Link audio/video pipeline gma/nhạc emit: [▶️ Bấm để nghe/xem ...](http://…/x.mp3)
