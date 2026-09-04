@@ -404,11 +404,16 @@ class ChonTinChayThatTests(unittest.TestCase):
         self.assertEqual(self.model.calls, [],
                          "tin đã chọn thì tra thẳng, không vòng qua model")
 
-    def test_ma_khong_co_trong_ban_cho_thi_khong_tra_gi(self):
-        """Không có bản chờ thì "B2" là câu thường — không được tự đi tra web."""
+    def test_ma_khong_co_ban_cho_thi_noi_ly_do_that(self):
+        """Không có bản chờ mà gõ mã trần "B2" → CODE nói thẳng lý do THẬT
+        ("bảng đã trống"), KHÔNG tra web, KHÔNG vòng qua model (yêu cầu chủ máy
+        04/09: code nói lý do thật thay vì để model đọc thuộc)."""
         out = self.orch.orchestrate("B2", self._uid)
-        self.assertEqual(self.da_tra, [])
-        self.assertIn("dạ em nghe ạ", out.get("text") or "")
+        self.assertEqual(self.da_tra, [], "không được tự đi tra web")
+        self.assertEqual(self.model.calls, [], "code trả thẳng, không qua model")
+        txt = out.get("text") or ""
+        self.assertIn("B2", txt)
+        self.assertIn("chưa có danh sách", txt)
 
 
 class HuongDanChoTroLyTests(unittest.TestCase):

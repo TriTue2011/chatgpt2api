@@ -407,30 +407,51 @@ class TienToDungLaiDuoc(_Base):
 
 
 class PhienDaNghi(_Base):
-    """Idle-close: phiên nghỉ >10 phút thì lượt mới bỏ lịch sử cũ."""
+    """Idle-close HAI MỐC (đổi 04/09, thay cho một mốc 10 phút cũ).
 
-    def test_moc_10_phut(self):
-        self.assertEqual(orch._NGHI_DONG_PHIEN, 600.0)
+    Mốc cũ `_NGHI_DONG_PHIEN = 600` vừa cấp phiên mới vừa XOÁ đuôi hội thoại,
+    nên nghỉ ăn trưa xong hỏi tiếp là mất mạch. Nay:
+      * mềm (30') → chỉ đổi mã phiên, GIỮ đuôi;
+      * cứng (2h) → nén đuôi vào tóm tắt rồi mới xoá.
+    """
+
+    def _dat_gio_nghi(self, uid: str, giay: float):
+        import time
+        import services.agent.session as sess
+        sess.save_history(uid, [{"role": "user", "content": "đột quỵ"}])
+        with sess._lock:
+            sess._db().execute(
+                "UPDATE sessions SET updated_at=? WHERE user_id=?",
+                (time.time() - giay, uid))
+            sess._db().commit()
+
+    def test_hai_moc_doc_tu_cau_hinh(self):
+        import services.agent.session as sess
+        self.assertEqual(sess.soft_idle_s(), 1800.0)
+        self.assertEqual(sess.hard_idle_s(), 7200.0)
 
     def test_vua_hoat_dong_thi_khong_dong(self):
         import services.agent.session as sess
         if not sess.is_enabled():
             self.skipTest("session store tắt")
         sess.save_history("u_moi", [{"role": "user", "content": "xin chào"}])
-        self.assertFalse(orch._phien_da_nghi("u_moi"))
+        self.assertEqual(orch._muc_nghi("u_moi"), "")
 
-    def test_nghi_lau_thi_dong(self):
-        import time
+    def test_nghi_mot_tieng_chi_la_mem(self):
+        """1 tiếng: quá mốc mềm nhưng CHƯA tới mốc cứng → còn nối mạch được.
+        Mốc 10 phút cũ đã đóng hẳn hội thoại ở đây."""
         import services.agent.session as sess
         if not sess.is_enabled():
             self.skipTest("session store tắt")
-        sess.save_history("u_cu", [{"role": "user", "content": "đột quỵ"}])
-        with sess._lock:
-            sess._db().execute(
-                "UPDATE sessions SET updated_at=? WHERE user_id=?",
-                (time.time() - 3600, "u_cu"))
-            sess._db().commit()
-        self.assertTrue(orch._phien_da_nghi("u_cu"))
+        self._dat_gio_nghi("u_mot_tieng", 3600)
+        self.assertEqual(orch._muc_nghi("u_mot_tieng"), "soft")
+
+    def test_nghi_rat_lau_thi_dong_han(self):
+        import services.agent.session as sess
+        if not sess.is_enabled():
+            self.skipTest("session store tắt")
+        self._dat_gio_nghi("u_cu", sess.hard_idle_s() + 600)
+        self.assertEqual(orch._muc_nghi("u_cu"), "hard")
 
 
 if __name__ == "__main__":

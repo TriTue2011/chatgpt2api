@@ -1865,13 +1865,14 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
     # muốn làm gì, B nói câu bất kỳ là câu đó bị nhận làm trả lời của A. Chờ là
     # chờ theo từng người (chủ máy chốt 05/08).
     _pkey = f"tg:{_bot_id()}:{chat_id}:{user_id or ''}"
-    from services.yeu_cau_moi import la_yeu_cau_moi as _la_moi
-    if text and chat_id and _pi.has_pending(_pkey) and _la_moi(text):
+    from services.yeu_cau_moi import nen_dong_ban_cho as _nen_dong
+    _pdf_cho = _pi.get_pending(_pkey) if (text and chat_id) else None
+    if _pdf_cho and _nen_dong(text, str(_pdf_cho.get("stage") or "")):
         # Yêu cầu MỚI thì đóng bản chờ cũ rồi để câu này đi tiếp bình
         # thường — không nuốt câu của người dùng làm câu trả lời.
         _pi.pop_pending(_pkey)
-    elif text and chat_id and _pi.has_pending(_pkey):
-        _pend = _pi.get_pending(_pkey) or {}
+    elif _pdf_cho:
+        _pend = _pdf_cho
         # Bước 2: đang chờ lớp + môn cho RAG teacher
         if _pend.get("stage") == "teacher_meta":
             meta = _pi.parse_teacher_meta(text)
@@ -1904,10 +1905,11 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
     # Ảnh chờ: menu 1–4 / hỏi prompt / teacher meta
     from services import photo_intent as _phi
     _phkey = f"tg:{_bot_id()}:{chat_id}:{user_id or ''}"
-    if text and chat_id and _phi.has_pending(_phkey) and _la_moi(text):
+    _ph_cho = _phi.get_pending(_phkey) if (text and chat_id) else None
+    if _ph_cho and _nen_dong(text, str(_ph_cho.get("stage") or "")):
         _phi.pop_pending_full(_phkey)   # yêu cầu mới → đóng bản chờ
-    elif text and chat_id and _phi.has_pending(_phkey):
-        _pend = _phi.get_pending(_phkey) or {}
+    elif _ph_cho:
+        _pend = _ph_cho
         _allowed_ph = _phi.them_dang_facebook(_phi.allowed_intents(_allow), _allow)
         stage = str(_pend.get("stage") or "choose")
         if stage == "teacher_meta":

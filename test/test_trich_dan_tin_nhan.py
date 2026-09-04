@@ -267,7 +267,7 @@ class SoNuotLuaChonTests(unittest.TestCase):
         xong = {"choices": [{"message": {"content": "Dạ vâng ạ."}}]}
         with install_data_dir():
             with mock.patch.object(orch, "_get_history", return_value=list(hist)), \
-                 mock.patch.object(orch, "_phien_da_nghi", return_value=False), \
+                 mock.patch.object(orch, "_muc_nghi", return_value=""), \
                  mock.patch.object(orch, "call_model", return_value=xong) as fake:
                 orch.orchestrate(user_text, "zalo_songuot", trich_dan=trich_dan)
         return fake.call_args[0][1][0]["content"]   # system prompt
@@ -348,7 +348,7 @@ class DoanThamChieuTests(unittest.TestCase):
         xong = {"choices": [{"message": {"content": "Dạ rồi ạ."}}]}
         with install_data_dir():
             with mock.patch.object(orch, "_get_history", return_value=list(hist)), \
-                 mock.patch.object(orch, "_phien_da_nghi", return_value=False), \
+                 mock.patch.object(orch, "_muc_nghi", return_value=""), \
                  mock.patch.object(orch, "call_model", return_value=xong) as fake:
                 orch.orchestrate("cái này sao rồi", "zalo_doan")
         sp = fake.call_args[0][1][0]["content"]

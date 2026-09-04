@@ -73,3 +73,27 @@ def la_yeu_cau_moi(text: str) -> bool:
     if re.match(r"^\s*[1-9]\b", s):
         return False
     return bool(_MENH_LENH.search(bo_dau(s)))
+
+
+#: Bước mà bot VỪA HỎI MỘT CÂU MỞ ("em cần câu hỏi/yêu cầu cụ thể", "lớp mấy
+#: môn gì"). Ở những bước này KHÔNG được xét yêu-cầu-mới nữa.
+_BUOC_HOI_MO = frozenset({"need_prompt", "teacher_meta"})
+
+
+def nen_dong_ban_cho(text: str, stage: str = "") -> bool:
+    """Có nên ĐÓNG bản chờ vì người dùng chuyển sang việc khác không?
+
+    Chỉ xét ở bước `choose` — lúc đang chờ bấm số trong menu, một câu dài có
+    động từ ra lệnh đúng là dấu hiệu họ bỏ cuộc.
+
+    Ở bước bot VỪA HỎI MỘT CÂU MỞ thì mọi câu tới đều là câu trả lời, nên cổng
+    này phải TẮT. Lỗi thật 04/09 10:38: bot hỏi "em cần câu hỏi/yêu cầu cụ thể —
+    ví dụ `mô tả ảnh`", người dùng đáp "Mô tả ảnh và tìm kiếm thông tin"; chữ
+    "tìm kiếm" khớp `_MENH_LENH` nên bản chờ bị vứt, ảnh mất, model quay ra bảo
+    "anh gửi ảnh lên đây giúp em". Đúng cái docstring đầu file gọi là kiểu hỏng
+    khó chịu hơn hẳn bỏ sót — và `facebook_page.py` đã né bằng cách không dùng
+    cổng này. Muốn thoát ở bước hỏi mở thì nói "thôi/huỷ", không phải đoán mò.
+    """
+    if str(stage or "") in _BUOC_HOI_MO:
+        return False
+    return la_yeu_cau_moi(text)

@@ -18,6 +18,7 @@ import re
 import sqlite3
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,31 @@ def max_stored() -> int:
         return 200
 
 
+def soft_idle_s() -> float:
+    """Nghỉ quá mốc này → CẤP PHIÊN MỚI, nhưng KHÔNG xoá đuôi, KHÔNG nén.
+
+    Mốc "mềm": chỉ để gom lượt thành phiên (nén/tra theo phiên, trả lời được
+    "hôm qua mình bàn gì"). Nối lại trong mốc cứng thì hội thoại vẫn liền mạch.
+    """
+    try:
+        return max(60.0, float(_cfg().get("soft_idle_s") or 1800))
+    except (TypeError, ValueError):
+        return 1800.0
+
+
+def hard_idle_s() -> float:
+    """Nghỉ quá mốc này → hội thoại coi như ĐÓNG: xoá đuôi + nén vào tóm tắt.
+
+    Mốc "cứng". Trước đây chỉ có MỘT mốc 10 phút làm luôn việc này, nên nghỉ ăn
+    trưa xong hỏi tiếp là mất mạch. Để cấu hình được vì đánh đổi hai chiều: dài
+    quá thì chủ đề nguội bám dai — đúng lỗi mốc 10 phút sinh ra để chặn.
+    """
+    try:
+        return max(soft_idle_s(), float(_cfg().get("hard_idle_s") or 7200))
+    except (TypeError, ValueError):
+        return 7200.0
+
+
 def _db() -> sqlite3.Connection:
     global _conn
     if _conn is None:
@@ -81,6 +107,20 @@ def _db() -> sqlite3.Connection:
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS turns_fts USING fts5("
             "content, content='turns', content_rowid='id', tokenize='unicode61')"
+        )
+        # Cột thêm sau. `CREATE TABLE IF NOT EXISTS` KHÔNG thêm cột vào bảng đã
+        # nằm sẵn trên máy chủ (đúng cái bẫy `muc_luc.py` đã ghi lại), nên phải
+        # ALTER riêng. Chạy lại lần hai thì SQLite báo "duplicate column" — nuốt
+        # đúng lỗi đó, lỗi khác vẫn để nổi.
+        for bang, cot in (("turns", "message_id"), ("turns", "session_id"),
+                          ("sessions", "session_id")):
+            try:
+                conn.execute(f"ALTER TABLE {bang} ADD COLUMN {cot} TEXT")
+            except sqlite3.OperationalError as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_turns_msgid ON turns(user_id, message_id)"
         )
         conn.commit()
         _conn = conn
@@ -201,21 +241,33 @@ def save_history(user_id: str, messages: list[dict[str, Any]]) -> None:
         db.commit()
 
 
-def append_turn(user_id: str, role: str, content: str) -> None:
-    """Append one turn to the searchable turns log (best-effort, never raises)."""
+def append_turn(user_id: str, role: str, content: str, *,
+                message_id: str = "", session_id: str = "") -> int | None:
+    """Append one turn to the searchable turns log (best-effort, never raises).
+
+    ``message_id`` là mã tin của NỀN TẢNG (Zalo Bot gửi kèm mỗi tin) — có nó thì
+    tra lại tin được TRÍCH DẪN là khớp chính xác, thay cho đoán theo mốc thời
+    gian ±900 giây (trong nhóm đông, 15 phút có hàng chục tin → khớp nhầm).
+
+    Trả `rowid` của lượt vừa ghi (hoặc None) để bên gọi còn vá `message_id` vào
+    sau — lượt `assistant` được ghi TRƯỚC khi tin thật sự gửi đi, nên lúc ghi
+    chưa biết mã tin đầu ra.
+    """
     if not is_enabled() or not user_id:
-        return
+        return None
     role = str(role or "").strip()
     content = (content or "").strip()
     if role not in ("user", "assistant") or not content:
-        return
+        return None
     now = time.time()
     try:
         with _lock:
             db = _db()
             cur = db.execute(
-                "INSERT INTO turns (user_id, role, content, created_at) VALUES (?,?,?,?)",
-                (str(user_id), role, content[:8000], now),
+                "INSERT INTO turns (user_id, role, content, created_at,"
+                " message_id, session_id) VALUES (?,?,?,?,?,?)",
+                (str(user_id), role, content[:8000], now,
+                 str(message_id or ""), str(session_id or "")),
             )
             rid = cur.lastrowid
             if rid:
@@ -236,8 +288,92 @@ def append_turn(user_id: str, role: str, content: str) -> None:
                 db.execute(f"DELETE FROM turns_fts WHERE rowid IN ({qs})", ids)
                 db.execute(f"DELETE FROM turns WHERE id IN ({qs})", ids)
             db.commit()
+        return rid
     except Exception:
-        pass  # never break the chat path
+        return None  # never break the chat path
+
+
+def set_message_id(rowid: int | None, message_id: str) -> None:
+    """Vá mã tin vào một lượt đã ghi (best-effort).
+
+    Cần vì lượt `assistant` được ghi TRƯỚC lúc gửi: mã tin đầu ra chỉ có sau khi
+    nền tảng nhận. Nền tảng không trả mã thì bỏ qua, không phải lỗi.
+    """
+    if not is_enabled() or not rowid or not str(message_id or "").strip():
+        return
+    try:
+        with _lock:
+            db = _db()
+            db.execute("UPDATE turns SET message_id=? WHERE id=?",
+                       (str(message_id).strip(), int(rowid)))
+            db.commit()
+    except Exception:
+        pass
+
+
+def turn_by_message_id(user_id: str, message_id: str) -> dict[str, Any] | None:
+    """Lượt mang đúng mã tin này → dict, hoặc None.
+
+    Đường tra CHÍNH XÁC cho tin được trích dẫn, thay cho `turn_gan_ts` (khớp mốc
+    thời gian ±900 giây, dễ vớ nhầm tin khác trong nhóm đông).
+    """
+    if not is_enabled() or not user_id or not str(message_id or "").strip():
+        return None
+    try:
+        with _lock:
+            row = _db().execute(
+                "SELECT role, content, created_at FROM turns "
+                "WHERE user_id=? AND message_id=? ORDER BY created_at DESC LIMIT 1",
+                (str(user_id), str(message_id).strip()),
+            ).fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    return {"role": row[0], "content": row[1], "created_at": row[2]}
+
+
+def current_session_id(user_id: str) -> str:
+    """Mã phiên đang mở của người này ("" nếu chưa có)."""
+    if not is_enabled() or not user_id:
+        return ""
+    try:
+        with _lock:
+            row = _db().execute(
+                "SELECT session_id FROM sessions WHERE user_id=?", (str(user_id),)
+            ).fetchone()
+    except Exception:
+        return ""
+    return str(row[0] or "") if row else ""
+
+
+def moi_phien(user_id: str) -> str:
+    """Cấp mã phiên MỚI cho người này rồi trả về nó.
+
+    Gọi khi im lặng vượt mốc MỀM. Chỉ đổi mã gom nhóm — không đụng tới đuôi hội
+    thoại hay tóm tắt (việc đó là của mốc CỨNG).
+    """
+    if not is_enabled() or not user_id:
+        return ""
+    sid = uuid.uuid4().hex[:12]
+    try:
+        with _lock:
+            db = _db()
+            row = db.execute("SELECT user_id FROM sessions WHERE user_id=?",
+                             (str(user_id),)).fetchone()
+            if row is None:
+                db.execute(
+                    "INSERT INTO sessions (user_id, messages, summary, updated_at,"
+                    " session_id) VALUES (?,?,?,?,?)",
+                    (str(user_id), "[]", "", time.time(), sid),
+                )
+            else:
+                db.execute("UPDATE sessions SET session_id=? WHERE user_id=?",
+                           (sid, str(user_id)))
+            db.commit()
+    except Exception:
+        return ""
+    return sid
 
 
 def search(user_id: str, query: str, *, limit: int = 20) -> list[dict[str, Any]]:

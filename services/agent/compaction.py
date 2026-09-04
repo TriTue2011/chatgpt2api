@@ -92,6 +92,36 @@ def summarize(messages: list[dict[str, Any]], *, prev_summary: str = "") -> str:
     return text[:2500] if text else (prev_summary or "")
 
 
+def dong_phien(user_id: str, messages: list[dict[str, Any]]) -> bool:
+    """Nén TOÀN BỘ đuôi hội thoại vào tóm tắt khi phiên bị đóng vì nghỉ lâu.
+
+    Khác `maybe_compact`: hàm kia chỉ chạy khi lịch sử ĐỦ DÀI (>= compact_after),
+    nên một phiên ngắn bị đóng sẽ mất trắng — trước đây đuôi bị `hist.clear()`
+    vứt thẳng, không còn dấu vết. Ở đây nén bao nhiêu cũng nén, rồi bên gọi mới
+    xoá đuôi.
+
+    Trả True nếu đã ghi được tóm tắt mới. Hỏng thì trả False và KHÔNG raise —
+    mất tóm tắt không được phép làm hỏng lượt chat.
+    """
+    if not sess.is_enabled() or not user_id:
+        return False
+    msgs = [m for m in (messages or []) if isinstance(m, dict)
+            and m.get("role") in ("user", "assistant")]
+    if not msgs:
+        return False
+    try:
+        moi = summarize(msgs, prev_summary=sess.load_summary(user_id))
+    except Exception as exc:
+        logger.warning("agent.compaction dong_phien: %s", exc)
+        return False
+    if not moi:
+        return False
+    sess.set_summary(user_id, moi)
+    logger.info("agent.compaction: đóng phiên user=%s, nén %d lượt vào tóm tắt",
+                str(user_id)[:40], len(msgs))
+    return True
+
+
 def maybe_compact(user_id: str, messages: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
     """If history is long, compact, persist, and return the new shorter list.
 

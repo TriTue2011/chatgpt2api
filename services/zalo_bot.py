@@ -950,6 +950,7 @@ def _handle_update(upd: dict, bot: dict, seen: set[str]) -> None:
         threading.Thread(target=_process_message,
                          args=(text, chat_id, photo_url, bot, sender, f_url, f_name, f_id,
                                user_id, is_group, chat_name, voice_url, trich_dan),
+                         kwargs={"message_id": str(msg.get("message_id") or "").strip()},
                          daemon=True).start()
 
 
@@ -1772,7 +1773,8 @@ def process_update(body: dict, bot: dict) -> bool:
     # thread. Áp cho MỌI đường (webhook mới/cũ + long-poll) vì đều tới đây.
     return _zalo_worker(_process_message, text, chat_id, photo_url, bot, sender,
                         f_url, f_name, f_id, user_id, is_group, chat_name, voice_url,
-                        trich_dan)
+                        trich_dan,
+                        message_id=str(msg.get("message_id") or "").strip())
 
 
 def _extract_meta(msg: dict) -> tuple[str, bool]:
@@ -1839,8 +1841,38 @@ def _extract_quote(msg: dict) -> dict:
     except (TypeError, ValueError):
         ts = 0.0
     logger.info("zalo trích dẫn: keys=%s → %.60s", sorted(q.keys()), noi_dung)
+    # Mã tin ĐƯỢC TRÍCH (nếu payload có) → `trich_dan.mo_ta` tra chính xác trong
+    # nhật ký thay vì đoán theo mốc thời gian ±900 giây.
     return {"noi_dung": noi_dung, "ts": ts,
+            "message_id": str(q.get("message_id") or "").strip(),
             "cua_ai": "bot" if la_bot else nguoi, "co_dinh_kem": co_dinh_kem}
+
+
+def _ghi_ma_tin_bot(session_key: str, kq_gui: dict | None) -> None:
+    """Vá mã tin của tin BOT VỪA GỬI vào lượt đã ghi trong nhật ký.
+
+    Lượt `assistant` được ghi lúc orchestrate xong, tức TRƯỚC khi gửi, nên lúc
+    đó chưa có mã tin. Có mã thì sau này người dùng trích dẫn đúng tin ấy là tra
+    lại được CHÍNH XÁC (không phải đoán theo mốc thời gian).
+
+    CHƯA KIỂM CHỨNG được phản hồi `sendMessage` của Zalo Bot có kèm
+    `result.message_id` hay không (tài liệu bot.zapps.me không công bố đủ). Nên
+    ở đây dò rộng tay và im lặng bỏ qua khi không có — thiếu mã thì chỉ là mất
+    đường tra chính xác, không phải lỗi.
+    """
+    if not isinstance(kq_gui, dict) or not kq_gui.get("ok"):
+        return
+    kq = kq_gui.get("result")
+    mid = ""
+    if isinstance(kq, dict):
+        mid = str(kq.get("message_id") or kq.get("messageId") or "").strip()
+    if not mid:
+        return
+    try:
+        from services.agent.orchestrator import ghi_ma_tin_bot as _ghi
+        _ghi(session_key, mid)
+    except Exception as exc:
+        logger.debug("zalo: vá mã tin bot lỗi: %s", exc)
 
 
 def _extract_voice_url(msg: dict) -> str:
@@ -1859,7 +1891,7 @@ def _process_message(text: str, chat_id: str, photo_url: str = "", bot: dict | N
                      sender: str = "", file_url: str = "", file_name: str = "",
                      file_id: str = "", user_id: str = "", is_group: bool = False,
                      chat_name: str = "", voice_url: str = "",
-                     trich_dan: dict | None = None) -> None:
+                     trich_dan: dict | None = None, message_id: str = "") -> None:
     """Lưới AN TOÀN NGOÀI CÙNG quanh TOÀN BỘ pipeline (_process_message_inner):
     dedup message_id đã tiêu thụ ở handle_webhook/_handle_update TRƯỚC khi
     thread nền này chạy, nên một lỗi ở blacklist / lọc quyền / admin-workspace /
@@ -1871,6 +1903,7 @@ def _process_message(text: str, chat_id: str, photo_url: str = "", bot: dict | N
         _process_message_inner(
             text, chat_id, photo_url, bot, sender, file_url, file_name,
             file_id, user_id, is_group, chat_name, voice_url, trich_dan,
+            message_id=message_id,
         )
     except Exception as exc:
         logger.warning("zalo _process_message lỗi (chat=%s user=%s): %s", chat_id, user_id, exc)
@@ -1887,7 +1920,7 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
                            sender: str = "", file_url: str = "", file_name: str = "",
                            file_id: str = "", user_id: str = "", is_group: bool = False,
                            chat_name: str = "", voice_url: str = "",
-                           trich_dan: dict | None = None) -> None:
+                           trich_dan: dict | None = None, message_id: str = "") -> None:
     """Nội dung xử lý thật (bọc lưới an toàn ở _process_message phía trên)."""
     if bot is not None:
         _current.bot = bot  # luồng mới → gắn lại ngữ cảnh bot để gửi đúng token
@@ -2144,13 +2177,14 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
     # muốn làm gì, B nói câu bất kỳ là câu đó bị nhận làm trả lời của A. Chờ là
     # chờ theo từng người (chủ máy chốt 05/08).
     _pkey = f"zalo:{_bot_id()}:{chat_id}:{user_id or ''}"
-    from services.yeu_cau_moi import la_yeu_cau_moi as _la_moi
-    if text and chat_id and _pi.has_pending(_pkey) and _la_moi(text):
+    from services.yeu_cau_moi import nen_dong_ban_cho as _nen_dong
+    _pdf_cho = _pi.get_pending(_pkey) if (text and chat_id) else None
+    if _pdf_cho and _nen_dong(text, str(_pdf_cho.get("stage") or "")):
         # Yêu cầu MỚI thì đóng bản chờ cũ rồi để câu này đi tiếp bình
         # thường — không nuốt câu của người dùng làm câu trả lời.
         _pi.pop_pending(_pkey)
-    elif text and chat_id and _pi.has_pending(_pkey):
-        _pend = _pi.get_pending(_pkey) or {}
+    elif _pdf_cho:
+        _pend = _pdf_cho
         _full_allow = _pi.allowed_intents(_allow)
         if _pend.get("stage") == "teacher_meta":
             meta = _pi.parse_teacher_meta(text)
@@ -2197,10 +2231,11 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
     # Ảnh chờ: menu 1–4 / hỏi prompt / teacher meta (giống Telegram)
     from services import photo_intent as _phi
     _phkey = f"zalo:{_bot_id()}:{chat_id}:{user_id or ''}"
-    if text and chat_id and _phi.has_pending(_phkey) and _la_moi(text):
+    _ph_cho = _phi.get_pending(_phkey) if (text and chat_id) else None
+    if _ph_cho and _nen_dong(text, str(_ph_cho.get("stage") or "")):
         _phi.pop_pending_full(_phkey)   # yêu cầu mới → đóng bản chờ
-    elif text and chat_id and _phi.has_pending(_phkey):
-        _pend = _phi.get_pending(_phkey) or {}
+    elif _ph_cho:
+        _pend = _ph_cho
         _allowed_ph = _phi.allowed_intents(_allow)
         stage = str(_pend.get("stage") or "choose")
         if stage == "teacher_meta":
@@ -2365,7 +2400,7 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
         _td = _trichdan.mo_ta(trich_dan if isinstance(trich_dan, dict) else None,
                               session_key=_skey)
         out = orchestrate(text, _skey, allow=_allow, ha_fastpath=_fp, model=_model,
-                          is_admin=_la_admin, trich_dan=_td)
+                          is_admin=_la_admin, trich_dan=_td, message_id=message_id)
         try:
             from services import net_guard
             out = net_guard.filter_agent_output(out if isinstance(out, dict) else {})
@@ -2454,10 +2489,13 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
         # «Trả lời bằng giọng nói» = chỉ âm thanh; có nút chọn số thì vẫn gửi chữ
         # (kèm voice). Ngược lại: gửi được voice → bỏ chữ; không → gửi chữ.
         if has_choices:
-            send_message(chat_id, reply)
+            _kq_gui = send_message(chat_id, reply)
             _maybe_voice_reply(chat_id, user_id, reply, is_group=is_group)
-        elif not _maybe_voice_reply(chat_id, user_id, reply, is_group=is_group):
-            send_message(chat_id, reply)
+        else:
+            _kq_gui = None
+            if not _maybe_voice_reply(chat_id, user_id, reply, is_group=is_group):
+                _kq_gui = send_message(chat_id, reply)
+        _ghi_ma_tin_bot(_skey, _kq_gui)
         return
     except Exception as exc:
         logger.warning("Zalo orchestrator error %s: %s", chat_id, exc)

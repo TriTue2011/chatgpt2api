@@ -1519,13 +1519,21 @@ def _rut_trich_dan(quote: Any, own_id: str = "") -> dict:
     globalMsgId, cliMsgType, ts, msg, attach, fromD, ttl}`` — ``msg`` là nội
     dung tin được trích, ``fromD`` tên người gửi, ``ts`` mốc thời gian MILI-giây.
 
+    ``full_msg`` KHÔNG phải của Zalo: zalo-server tự gắn thêm khi tra được tin
+    GỐC trong kho theo ``globalMsgId`` (xem eventListeners.js). Zalo GỌT
+    ``msg`` với tin dài — bản tin đánh mã A1..E5 bị cắt mất mã cuối — nên có
+    ``full_msg`` thì ưu tiên dùng, đó mới là nguyên văn.
+
     Trả {} khi tin này không trích gì. Việc dựng câu (và tra nhật ký nếu thiếu
     nội dung) để cho `trich_dan.mo_ta` lo — nó cần khoá phiên, thứ chỉ có ở
     `_process_ai`.
     """
     if not isinstance(quote, dict):
         return {}
-    noi_dung = str(quote.get("msg") or "").strip()
+    # Nguyên văn tra từ kho (nếu có) thắng đoạn xem trước Zalo gửi kèm.
+    noi_dung = str(quote.get("full_msg") or "").strip()
+    if not noi_dung:
+        noi_dung = str(quote.get("msg") or "").strip()
     co_dinh_kem = bool(str(quote.get("attach") or "").strip())
     if not noi_dung and not co_dinh_kem:
         return {}
@@ -1537,6 +1545,17 @@ def _rut_trich_dan(quote: Any, own_id: str = "") -> dict:
         ts = float(quote.get("ts") or 0) / 1000.0  # zca-js dùng mili-giây
     except (TypeError, ValueError):
         ts = 0.0
+    # ĐO: Zalo có GỌT nội dung tin trích không? Bản tin do `muc_luc.danh_so` dựng
+    # LUÔN kết bằng dòng "(Muốn xem kỹ mục nào…". Nếu tin trích lại một bản tin mà
+    # `msg` KHÔNG còn dòng đó (hoặc mất mã cuối) thì Zalo đã cắt — lúc ấy mới cần
+    # log_chat/tra kho gốc. `globalMsgId` để sau nối tra kho theo mã tin.
+    try:
+        logger.info("zalop trích dẫn: nguon=%s len=%d co_dong_moi_ma=%s globalMsgId=%s bot=%s",
+                    ("kho" if quote.get("full_msg") else "zalo"),
+                    len(noi_dung), ("Muốn xem kỹ mục nào" in noi_dung),
+                    str(quote.get("globalMsgId") or ""), la_bot)
+    except Exception:
+        pass
     return {
         "noi_dung": noi_dung,
         "ts": ts if ts > 0 else 0.0,
@@ -3311,11 +3330,12 @@ def _process_ai(ev: dict) -> None:
 
     # PDF chờ: 1 kiến thức / 2 teacher / 3 Word / 4 Excel
     from services import pdf_intent as _pi
-    from services.yeu_cau_moi import la_yeu_cau_moi as _la_moi_pdf
-    if text and _pi.has_pending(pkey) and _la_moi_pdf(text):
+    from services.yeu_cau_moi import nen_dong_ban_cho as _nen_dong_pdf
+    _pdf_cho = _pi.get_pending(pkey) if text else None
+    if _pdf_cho and _nen_dong_pdf(text, str(_pdf_cho.get("stage") or "")):
         _pi.pop_pending(pkey)   # yêu cầu mới → đóng bản chờ, đi tiếp bình thường
-    elif text and _pi.has_pending(pkey):
-        _pend = _pi.get_pending(pkey) or {}
+    elif _pdf_cho:
+        _pend = _pdf_cho
         _acc = str(ev.get("account_id") or "")
         _uid = str(ev.get("sender_id") or "")
         if _pend.get("stage") == "teacher_meta":
@@ -3354,15 +3374,16 @@ def _process_ai(ev: dict) -> None:
     from services import photo_intent as _phi
     _acc = str(ev.get("account_id") or "")
     _uid = str(ev.get("sender_id") or "")
-    from services.yeu_cau_moi import la_yeu_cau_moi as _la_moi
-    if text and _phi.has_pending(pkey) and _la_moi(text):
+    from services.yeu_cau_moi import nen_dong_ban_cho as _nen_dong
+    _ph_cho = _phi.get_pending(pkey) if text else None
+    if _ph_cho and _nen_dong(text, str(_ph_cho.get("stage") or "")):
         # Yêu cầu MỚI thì đóng bản chờ cũ rồi để câu này đi tiếp như bình thường.
         # Không đóng thì: đang chờ mô tả ảnh mà nói "gửi file cho nhóm A" là câu
         # đó bị lấy làm mô tả ảnh; đang chờ lớp+môn thì bị hỏi lại mãi, khoá chặt
         # 10 phút. Quy tắc chủ máy chốt 05/08.
         _phi.pop_pending_full(pkey)
-    elif text and _phi.has_pending(pkey):
-        _pend = _phi.get_pending(pkey) or {}
+    elif _ph_cho:
+        _pend = _ph_cho
         _allowed_ph = _phi.them_dang_facebook(_phi.them_luu_online(
             _phi.allowed_intents(_allow), "zalop", str(thread_id),
             user=str(ev.get("sender_id") or "")), _allow)
@@ -3707,7 +3728,11 @@ def _process_ai(ev: dict) -> None:
             # hỏi (câu hỏi còn được đem đi tra cứu nguyên văn). Dựng câu ở đây vì
             # `trich_dan.mo_ta` cần `_skey` để tra lại nội dung từ nhật ký khi
             # nền tảng chỉ kèm mốc thời gian mà không kèm nội dung.
-            trich_dan=_trichdan.mo_ta(ev.get("trich_dan_raw"), session_key=_skey),
+            # gioi_han rộng (4000) để mã mục ở cuối bản tin dài (E-series…) không
+            # bị cắt trước khi `muc_luc.resolve_tu_trich` bóc được — phần chèn vào
+            # ngữ cảnh vẫn được orchestrator cắt lại ở _TRICH_DAN_MAX nên không phình.
+            trich_dan=_trichdan.mo_ta(ev.get("trich_dan_raw"), session_key=_skey,
+                                      gioi_han=4000),
         )
         try:
             from services import net_guard

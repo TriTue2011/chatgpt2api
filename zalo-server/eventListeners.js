@@ -1,7 +1,7 @@
 import { ThreadType } from "zca-js";
 import { getWebhookUrl, triggerN8nWebhook, getCookiesDir } from './utils/helpers.js';
 import { broadcastToWebsocket } from './services/webhookService.js';
-import { saveMessage } from './services/messageStore.js';
+import { saveMessage, getMessageById } from './services/messageStore.js';
 import fs from 'fs';
 import path from 'path';
 import { broadcastMessage } from './services/websocketHub.js';
@@ -153,7 +153,42 @@ export function setupEventListeners(api, loginResolve) {
         // api.undo đòi nhưng phản hồi lúc gửi không trả. Xem services/messageExpiry.js.
         if (msg?.isSelf) noteSelfMessage(msg, ownId);
         const messageWebhookUrl = getWebhookUrl("messageWebhookUrl", ownId);
-        const msgWithOwnId = enrichMessageEvent(msg, ownId);
+        let msgWithOwnId = enrichMessageEvent(msg, ownId);
+
+        // BÙ chỗ Zalo GỌT nội dung tin trích. Tin dài (bản tin đánh mã A1..E5)
+        // chỉ được Zalo kèm một đoạn xem trước ở `data.quote.msg`, nên mã nằm
+        // cuối bản tin không tra lại được. `quote.globalMsgId` là ID Zalo gán
+        // cho tin GỐC; tin đó đã đi qua chính listener này và được lưu ở khối
+        // cuối hàm (cả tin nhận lẫn tin bot tự gửi), nên tra ngược lấy được
+        // NGUYÊN VĂN.
+        //
+        // Gắn vào trường MỚI `quote.full_msg`, KHÔNG đè `quote.msg`: payload thô
+        // Zalo gửi phải giữ nguyên để bên đọc còn phân biệt được "Zalo gửi gì"
+        // với "mình tra thêm được gì". Bên Python (`_rut_trich_dan`) ưu tiên
+        // `full_msg`, thiếu thì dùng `msg` như cũ.
+        //
+        // Dựng object MỚI thay vì sửa tại chỗ: `enrichMessageEvent` chỉ spread
+        // NÔNG nên `data` còn dùng chung tham chiếu với `msg` — sửa tại chỗ là
+        // thò tay vào object mà `storeGroupMessage`/`noteSelfMessage` còn đọc.
+        try {
+            const gid = msg?.data?.quote?.globalMsgId;
+            const tid = msgWithOwnId.threadId;
+            if (gid && tid && Number(msg?.type) === ThreadType.User) {
+                const goc = getMessageById(ownId, tid, String(gid));
+                const daCo = String(msg.data.quote.msg || '');
+                if (goc?.content && String(goc.content).length > daCo.length) {
+                    msgWithOwnId = {
+                        ...msgWithOwnId,
+                        data: {
+                            ...msgWithOwnId.data,
+                            quote: { ...msgWithOwnId.data.quote, full_msg: String(goc.content) },
+                        },
+                    };
+                }
+            }
+        } catch (e) {
+            console.warn('[Event] Loi tra tin goc cho quote:', e.message);
+        }
 
         // Cờ CHỐNG LẶP cho "trả lời cả tin của chính chủ", THEO TỪNG THREAD. Bot
         // chạy trên chính tài khoản chủ: tin chủ tự gõ VÀ câu bot tự sinh đều là
@@ -190,20 +225,27 @@ export function setupEventListeners(api, loginResolve) {
 
         broadcastToWebsocket(msgWithOwnId);
 
-        // Lưu vào message store để có lịch sử chat cá nhân (cả tin nhận lẫn tin tự gửi từ app)
+        // Lưu vào message store để có lịch sử chat cá nhân (cả tin nhận lẫn tin
+        // tự gửi từ app) VÀ để tra lại tin GỐC khi nó bị trích dẫn (khối làm
+        // giàu quote ở trên).
+        //
+        // Trước đây chặn `!msg.isSelf` nên CHỈ lưu tin nhận — đúng thứ chú thích
+        // này nói là có mà thực ra không có. Hệ quả: bản tin do bot gửi (nơi mã
+        // mục A1..E5 sống) không bao giờ vào kho, nên người dùng trích dẫn lại
+        // bản tin thì không tra ngược được gì.
         try {
-            if (!msg.isSelf && msg.type === ThreadType.User) {
+            if (msg.type === ThreadType.User) {
                 const threadId = msg.threadId || msg.data?.idTo;
                 const { text, attachment } = extractMessageContent(msg);
                 if (threadId && (text || attachment)) {
                     saveMessage(ownId, threadId, {
                         id: msg.data?.msgId || ('ws_' + Date.now()),
-                        from: msg.data?.uidFrom,
-                        name: msg.data?.dName || 'Unknown',
+                        from: msg.isSelf ? ownId : msg.data?.uidFrom,
+                        name: msg.isSelf ? 'bot' : (msg.data?.dName || 'Unknown'),
                         content: text,
                         attachment: attachment || undefined,
                         ts: Number(msg.data?.ts || 0),
-                        isSelf: false
+                        isSelf: !!msg.isSelf
                     });
                 }
             }

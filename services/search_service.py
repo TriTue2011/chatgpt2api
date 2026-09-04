@@ -1370,10 +1370,19 @@ class SearchService:
                     else:
                         region = "all"
                     args = {"region": region}
+                elif server_id == "vn_law":
+                    # search_law(keyword, limit) — tên tham số là `keyword`, KHÔNG
+                    # phải `query` như mọi tool tra cứu khác (vn-mcp-hub/src/vn/law.py).
+                    # Đo thật 04/09 09:38: gửi `query` thì server trả
+                    # missing_argument('keyword') + unexpected_keyword_argument('query'),
+                    # ba lần liên tiếp — người dùng hỏi Nghị định 105 mà không có
+                    # dữ liệu luật nào, trong khi log chỉ là WARNING nên im ru.
+                    tool_name = _TOOL_MAP[server_id]
+                    args = {"keyword": query, "limit": max(2, self.max_results)}
                 else:
                     tool_name = _TOOL_MAP.get(server_id, "search_web")
                     args = {"query": query}
-                    if server_id in ("vn_search", "vn_news", "vn_law", "vn_stock"):
+                    if server_id in ("vn_search", "vn_news", "vn_stock"):
                         args["limit"] = max(2, self.max_results)
 
                 text = call_mcp_tool(

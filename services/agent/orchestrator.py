@@ -18,6 +18,7 @@ Returns ``{"text": str, "image_url": Optional[str]}``.
 
 from __future__ import annotations
 
+import contextvars as _ctxvars
 import json
 import logging
 import re
@@ -608,6 +609,28 @@ def _la_yeu_cau_phat_loa(text: str) -> dict | None:
 # Kept so a failed DB still allows the current process to converse.
 _history: dict[str, list[dict[str, Any]]] = {}
 
+# user_id → rowid của lượt `assistant` vừa ghi. Lượt bot được ghi TRƯỚC khi tin
+# thật sự gửi đi, nên lúc ghi chưa biết mã tin nền tảng cấp. Kênh nào lấy được
+# mã đó ở phản hồi lúc gửi thì gọi `ghi_ma_tin_bot(user_id, message_id)` sau khi
+# gửi xong để vá vào. Chỉ giữ lượt gần nhất — vá muộn hơn thế không còn ý nghĩa.
+_ma_luot_bot: dict[str, int | None] = {}
+
+
+def ghi_ma_tin_bot(user_id: str, message_id: str) -> None:
+    """Vá mã tin của nền tảng vào lượt `assistant` vừa ghi cho người này.
+
+    Gọi SAU khi gửi tin thành công. Nền tảng không trả mã (Zalo Bot có thể vậy)
+    thì bỏ qua êm — không có mã thì đường tra chính xác đơn giản là không dùng
+    được, chứ không phải lỗi.
+    """
+    if not user_id or not str(message_id or "").strip():
+        return
+    try:
+        sess.set_message_id(_ma_luot_bot.get(str(user_id)), str(message_id))
+    except Exception:
+        pass
+
+
 # FIX5 (audit 2026-07): khoá RIÊNG từng user_id, bọc toàn bộ một lượt
 # orchestrate() (load lịch sử → gọi LLM/tool → ghi lịch sử) — chống mất-cập-
 # nhật khi 2 luồng xử lý CÙNG user song song (vd: reminder mode=task bắn tới
@@ -1112,24 +1135,46 @@ def _tri_nho_theo_viec(mem: str, user_text: str,
     return "\n".join(dong[i] for i in sorted(giu)).strip()
 
 
-# Nghỉ quá mốc này (giây) thì coi hội thoại cũ đã ĐÓNG: lượt mới chạy từ đầu,
-# không để chủ đề nguội bám vào. Chủ máy chốt 10 phút — đủ để hỏi tiếp liền
-# mạch, nhưng một câu ngắn ("có") gõ sau đó lâu thì không bị chủ đề cũ cướp.
-_NGHI_DONG_PHIEN = 600.0
+# Mã phiên + mã tin của LƯỢT ĐANG CHẠY. Dùng ContextVar chứ không phải biến
+# module: `_persist_history` được gọi từ 18 chỗ trong `orchestrate`, luồn thêm
+# tham số qua từng chỗ vừa ồn vừa dễ sót, mà biến module thì hai người chat cùng
+# lúc (mỗi lượt một thread) sẽ giẫm lên nhau. ContextVar an toàn cho cả thread
+# lẫn async, và tự trả về mặc định khi chưa ai đặt.
+_PHIEN_HIEN_TAI: _ctxvars.ContextVar[str] = _ctxvars.ContextVar(
+    "agent_phien_hien_tai", default="")
+_MA_TIN_VAO: _ctxvars.ContextVar[str] = _ctxvars.ContextVar(
+    "agent_ma_tin_vao", default="")
 
 
-def _phien_da_nghi(user_id: str) -> bool:
-    """Phiên đã im lặng quá `_NGHI_DONG_PHIEN` → nên đóng, chạy lượt mới sạch."""
+def _muc_nghi(user_id: str) -> str:
+    """Người này im lặng tới mức nào rồi: "" / "soft" / "hard".
+
+    Trước đây chỉ có MỘT mốc 10 phút, và nó làm luôn việc nặng nhất — xoá sạch
+    đuôi hội thoại. Nghỉ ăn trưa xong hỏi tiếp là mất mạch. Nay tách hai:
+
+      * "soft" (mặc định 30') — chỉ CẤP PHIÊN MỚI để gom lượt. Đuôi hội thoại
+        GIỮ NGUYÊN, nối lại vẫn liền mạch.
+      * "hard" (mặc định 2h) — hội thoại coi như đóng thật: nén đuôi vào tóm
+        tắt rồi mới xoá, để chủ đề nguội không bám vào câu ngắn ("có") gõ sau
+        đó lâu. Đây mới là hành vi cũ của mốc 10 phút.
+
+    Hai mốc đọc từ cấu hình (`agent_session.soft_idle_s` / `hard_idle_s`).
+    """
     if not sess.is_enabled():
-        return False
+        return ""
     try:
         last = sess.last_activity(user_id)
     except Exception:
-        return False
+        return ""
     if not last:
-        return False
+        return ""
     import time
-    return (time.time() - last) > _NGHI_DONG_PHIEN
+    im_lang = time.time() - last
+    if im_lang > sess.hard_idle_s():
+        return "hard"
+    if im_lang > sess.soft_idle_s():
+        return "soft"
+    return ""
 
 
 # Từ khoá NHẬN DIỆN việc của lượt (viết KHÔNG DẤU vì so trên `_bo_dau`). Mỗi
@@ -1260,6 +1305,28 @@ _RE_DONG_SO = _re_mod.compile(r"(?im)^\s*(?:\d{1,2}[.)]\s+\S|mục\s+\d{1,2}\b)"
 # Tin người dùng LÀ một lựa chọn đứng riêng ("1", "a", "A1", "3.") — chỉ khi
 # đúng khuôn này thì con số MỚI có thể là chọn mục; ngoài ra là câu thường.
 _RE_CHON_TRAN = _re_mod.compile(r"^[\s.\-–)(]*[a-zA-Z]{0,2}\d{1,2}[a-zA-Z]{0,3}[\s.\-–)(]*$")
+
+
+def _ly_do_ma_hong(ma: str, trang_thai: str) -> str:
+    """Câu trả lời cho một MÃ TRẦN không chọn được — CODE nói lý do THẬT.
+
+    Trước đây một mã trần lọt tới model, và system prompt dặn model đọc thuộc
+    câu «quá 30 phút» cho MỌI trường hợp — kể cả khi lý do thật là mã sai hoặc
+    chưa mở danh sách nào. `trang_thai` (từ `muc_luc.trang_thai_chon`) cho biết
+    lý do thật; trả "" nếu không có câu phù hợp (để rơi về đường model)."""
+    ma = str(ma or "").strip().upper()
+    if trang_thai == "het_han":
+        return (f"Dạ mục «{ma}» thuộc danh sách em gửi hơn 30 phút trước nên đã "
+                "hết hiệu lực rồi ạ. Anh/chị nhắn lại yêu cầu cũ (ví dụ «tin tức "
+                "hôm nay») để em gửi bản mới rồi chọn tiếp nhé 😊")
+    if trang_thai == "khong_co":
+        return (f"Dạ danh sách đang mở không có mã «{ma}» ạ. Anh/chị xem lại mã "
+                "giúp em, hoặc trích dẫn lại đúng tin có mục đó rồi nhắn mã nhé.")
+    if trang_thai == "trong":
+        return (f"Dạ em chưa có danh sách nào đang mở để chọn mã «{ma}» ạ. "
+                "Anh/chị nhắn yêu cầu (ví dụ «tin tức hôm nay») để em gửi danh "
+                "sách, rồi nhắn mã mục trong đó nhé 😊")
+    return ""
 
 
 def _lich_su_co_danh_sach_so(hist: list[dict[str, Any]]) -> bool:
@@ -1838,13 +1905,27 @@ def _persist_history(user_id: str, hist: list[dict[str, Any]]) -> None:
     if not sess.is_enabled():
         return
     try:
-        # Log the latest exchange into FTS (user then assistant when available)
+        # Log the latest exchange into FTS (user then assistant when available).
+        # Đóng dấu mã phiên + mã tin của lượt này (ContextVar, xem _PHIEN_HIEN_TAI):
+        # mã tin CHỈ gắn cho lượt `user` — lượt `assistant` được ghi TRƯỚC khi tin
+        # gửi đi nên chưa có mã; kênh nào lấy được mã đầu ra thì vá sau bằng
+        # `sess.set_message_id` với rowid trả về ở `_ma_luot_bot`.
+        _sid = _PHIEN_HIEN_TAI.get()
+        _mid = _MA_TIN_VAO.get()
         if len(hist) >= 2 and hist[-1].get("role") == "assistant" and hist[-2].get("role") == "user":
-            sess.append_turn(user_id, "user", str(hist[-2].get("content") or ""))
-            sess.append_turn(user_id, "assistant", str(hist[-1].get("content") or ""))
+            sess.append_turn(user_id, "user", str(hist[-2].get("content") or ""),
+                             message_id=_mid, session_id=_sid)
+            _ma_luot_bot[user_id] = sess.append_turn(
+                user_id, "assistant", str(hist[-1].get("content") or ""),
+                session_id=_sid)
         elif hist:
             last = hist[-1]
-            sess.append_turn(user_id, str(last.get("role") or ""), str(last.get("content") or ""))
+            _rid = sess.append_turn(user_id, str(last.get("role") or ""),
+                                    str(last.get("content") or ""),
+                                    message_id=(_mid if last.get("role") == "user" else ""),
+                                    session_id=_sid)
+            if last.get("role") == "assistant":
+                _ma_luot_bot[user_id] = _rid
         new_hist = compact.maybe_compact(user_id, hist)
         if new_hist is not None:
             hist[:] = new_hist
@@ -1946,7 +2027,8 @@ def orchestrate(user_text: str, user_id: str,
                 model: str | None = None,
                 auto_approve: bool = False,
                 is_admin: bool = False,
-                trich_dan: str = "") -> dict[str, Any]:
+                trich_dan: str = "",
+                message_id: str = "") -> dict[str, Any]:
     """`allow` = tập nhóm chức năng threadID này được phép (None = tất cả). Lọc
     tool schema + chặn dispatch theo nhóm để giới hạn chức năng cho từng người.
 
@@ -1982,7 +2064,7 @@ def orchestrate(user_text: str, user_id: str,
             return _orchestrate_locked(
                 user_text, user_id, allow=allow, ha_fastpath=ha_fastpath,
                 model=model, auto_approve=auto_approve, is_admin=is_admin,
-                trich_dan=trich_dan,
+                trich_dan=trich_dan, message_id=message_id,
             )
         finally:
             # Khoá do CHÍNH thread chạy thân hàm nhả. Nếu hết giờ mà bên ngoài
@@ -2013,8 +2095,12 @@ def _orchestrate_locked(user_text: str, user_id: str,
                         model: str | None = None,
                         auto_approve: bool = False,
                         is_admin: bool = False,
-                        trich_dan: str = "") -> dict[str, Any]:
+                        trich_dan: str = "",
+                        message_id: str = "") -> dict[str, Any]:
     import time as _time
+    # Đặt Ở ĐÂY, không phải ở `orchestrate`: thân hàm chạy trong thread riêng của
+    # ThreadPoolExecutor, mà `pool.submit` KHÔNG mang ContextVar sang thread mới.
+    _MA_TIN_VAO.set(str(message_id or ""))
     t0 = _time.time()
     tools_used: list[str] = []
     steps_done = 0
@@ -2122,21 +2208,45 @@ def _orchestrate_locked(user_text: str, user_id: str,
     if not user_text:
         return {"text": "Dạ anh/chị cần em giúp gì ạ? 😊"}
 
-    # Người dùng bấm "Trả lời" một tin cụ thể → đó là tín hiệu RÕ RÀNG họ KHÔNG
-    # chọn mục trong danh sách đánh số cũ. Bỏ qua cả hai bộ dò lựa chọn và dọn
-    # luôn bản chờ, để một con số trong tin trích dẫn (vd trả lời vào "mục 3…"
-    # rồi hỏi tiếp) không bị nuốt thành "chọn phương án 3" của menu cũ.
     _co_trich_dan = bool(str(trich_dan or "").strip())
+    picked = None
+    _tin_da_chon = ""      # tiêu đề tin vừa được chọn bằng mã mục (mục 1.44)
+
+    # 0.0) TRÍCH DẪN + gõ một MÃ. Người dùng trích lại bản tin/danh sách cũ (mã
+    # D1/E2… đã được HỆ THỐNG in vào chữ của tin) rồi gõ đúng mã đó → chọn thẳng
+    # mục ấy, đọc lại từ CHÍNH tin trích. Bù chỗ bản chờ hết hạn (30') hoặc đã bị
+    # dọn sau lần chọn trước — mã in sẵn trong chữ nên không cần bản chờ còn sống
+    # (kênh cá nhân gửi lại nguyên nội dung tin trích). Chỉ ăn khi tin trích thật
+    # chứa mã đó; không thì rơi về nhánh cũ: coi trích dẫn là tín hiệu RÕ RÀNG họ
+    # KHÔNG chọn menu cũ, dọn bản chờ để một con số trong tin trích (trả lời vào
+    # "mục 3…" rồi hỏi tiếp) không bị nuốt thành "chọn phương án 3".
     if _co_trich_dan:
         try:
-            ask_choices.clear_pending(user_id)
             from services.agent import muc_luc as _ml
-            _ml.clear_pending(user_id)
+            _chon_tr = _ml.resolve_tu_trich(user_id, user_text, str(trich_dan))
         except Exception:
-            pass
+            _chon_tr = None
+        if _chon_tr:
+            user_text = _chon_tr["cau_hoi"]
+            if _chon_tr.get("nguon") == "tin":
+                _tin_da_chon = _chon_tr["noi_dung"]
+            # Đã chọn mục từ tin trích → người dùng bỏ qua menu ask_choices (nếu
+            # còn treo); dọn nó để lượt sau một con số không rơi vào menu cũ.
+            try:
+                ask_choices.clear_pending(user_id)
+            except Exception:
+                pass
+            # Đã tiêu hoá tin trích thành LỰA CHỌN → đừng để các nhánh dưới đối
+            # xử nó như trích dẫn ngữ cảnh (chèn lại nguyên tin, đoán mơ hồ…).
+            _co_trich_dan = False
+        else:
+            try:
+                ask_choices.clear_pending(user_id)
+                _ml.clear_pending(user_id)
+            except Exception:
+                pass
 
     # 0) Resolve a pending ask-choice (user tapped button or replied 1/2/…)
-    picked = None
     if not _co_trich_dan:
         try:
             picked = ask_choices.resolve_reply(user_id, user_text)
@@ -2148,8 +2258,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # 0.1) Không phải lựa chọn của câu hỏi nào → có thể là MÃ MỤC của danh sách
     # vừa gửi ("A1", "3"). Tra sau ask_choices: câu hỏi model chủ động đặt được
     # ưu tiên, vì bản chờ mã mục sống tới 30 phút nên hay còn tồn.
-    _tin_da_chon = ""      # tiêu đề tin vừa được chọn bằng mã mục (mục 1.44)
-    if not picked and not _co_trich_dan:
+    if not picked and not _tin_da_chon and not _co_trich_dan:
         try:
             from services.agent import muc_luc as _ml
             _chon_muc = _ml.resolve_reply(user_id, user_text)
@@ -2216,14 +2325,39 @@ def _orchestrate_locked(user_text: str, user_id: str,
         approval_gate.clear_pending(user_id)
 
     hist = _get_history(user_id)
-    # ĐÓNG hội thoại cũ khi đã nghỉ lâu (xem _phien_da_nghi). Hai lượt cách nhau
-    # quá 10 phút thì cuộc cũ coi như xong: bỏ phần đối thoại từng lượt đã nguội
-    # để chủ đề cũ (vd vừa tra "đột quỵ") KHÔNG bám vào một câu ngắn không liên
-    # quan ("có"). Tóm tắt dài hạn + trí nhớ vẫn giữ, chỉ dọn cái tail đã cũ.
-    if hist and _phien_da_nghi(user_id):
-        logger.info({"event": "phien_dong_do_nghi",
-                     "user_id": str(user_id)[:40], "bo_luot": len(hist)})
-        hist.clear()
+    # Nghỉ lâu → xử theo HAI MỨC (xem `_muc_nghi`).
+    #
+    #   soft (30') — chỉ cấp phiên mới để gom lượt. GIỮ đuôi hội thoại: nghỉ ăn
+    #     trưa xong hỏi tiếp vẫn liền mạch, đây là chỗ mốc 10 phút cũ làm hỏng.
+    #   hard (2h)  — cuộc cũ coi như xong: NÉN đuôi vào tóm tắt rồi mới dọn, để
+    #     chủ đề nguội (vd vừa tra "đột quỵ") không bám vào một câu ngắn không
+    #     liên quan ("có"). Trước đây đuôi bị vứt thẳng, không nén gì.
+    _muc = _muc_nghi(user_id)
+    if _muc:
+        _sid_moi = ""
+        try:
+            _sid_moi = sess.moi_phien(user_id)
+        except Exception:
+            pass
+        if _muc == "hard" and hist:
+            try:
+                compact.dong_phien(user_id, list(hist))
+            except Exception as exc:
+                logger.debug("agent: nén khi đóng phiên lỗi: %s", exc)
+            logger.info({"event": "phien_dong_do_nghi", "muc": "hard",
+                         "user_id": str(user_id)[:40], "bo_luot": len(hist),
+                         "session_id": _sid_moi})
+            hist.clear()
+        else:
+            logger.info({"event": "phien_moi_do_nghi", "muc": _muc,
+                         "user_id": str(user_id)[:40], "giu_luot": len(hist),
+                         "session_id": _sid_moi})
+    # Mã phiên của lượt này — đóng dấu lên mọi turn ghi xuống (xem _persist_history).
+    try:
+        _sid = sess.current_session_id(user_id) or sess.moi_phien(user_id)
+    except Exception:
+        _sid = ""
+    _PHIEN_HIEN_TAI.set(_sid)
     # Snapshot for SuperContext (before this turn becomes "history").
     hist_before = list(hist)
     hist.append({"role": "user", "content": user_text})
@@ -2231,6 +2365,29 @@ def _orchestrate_locked(user_text: str, user_id: str,
     max_h = sess.max_history() if sess.is_enabled() else 16
     if len(hist) > max_h * 2:
         del hist[: len(hist) - max_h * 2]
+
+    # 1.25) MÃ TRẦN (E1, D12…) không chọn được → CODE nói lý do THẬT, không để
+    # model đọc thuộc. Tới đây mà user_text CÒN NGUYÊN là một mã (mọi resolve ở
+    # trên đã thất bại: bản chờ hết hạn / mã sai / chưa mở danh sách), nên hỏi
+    # `muc_luc` lý do thật rồi trả thẳng. Chỉ bắt token CÓ CHỮ SỐ đứng riêng
+    # (`_RE_MA_TRAN`) nên "ok"/"vg"/"co" không dính. Đo thật 03/09: chọn D1 xong
+    # bản chờ bị dọn, D1 lần sau bot đổ cho "quá 30 phút" trong khi lý do thật là
+    # bảng đã trống.
+    if _RE_MA_TRAN.match((user_text or "").strip().lower()):
+        try:
+            from services.agent import muc_luc as _ml
+            _tt = _ml.trang_thai_chon(user_id, (user_text or "").strip())
+        except Exception:
+            _tt = ""
+        _loi_ma = _ly_do_ma_hong((user_text or "").strip(), _tt)
+        if _loi_ma:
+            out_ml = _finalize(user_id, {"text": _loi_ma})
+            hist.append({"role": "assistant", "content": out_ml.get("text") or _loi_ma})
+            _persist_history(user_id, hist)
+            _journal(str(out_ml.get("text") or ""), status="ma_khong_khop")
+            logger.info({"event": "ma_khong_khop", "ma": (user_text or "").strip()[:12],
+                         "trang_thai": _tt})
+            return out_ml
 
     # 1.3) Chọn MỘT TIN trong bản tin bằng mã mục (A1/E1…) → tra THẲNG bằng
     # chính TIÊU ĐỀ đó, không đưa vào vòng trợ lý.

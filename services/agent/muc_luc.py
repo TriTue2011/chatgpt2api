@@ -378,6 +378,111 @@ def resolve_reply(user_id: str, user_text: str) -> Optional[dict[str, str]]:
     return None
 
 
+def _doc_tho(user_id: str) -> Optional[tuple[list, str, float]]:
+    """``(muc, nguon, ts)`` của bản chờ, KHÔNG xoá khi hết hạn — để phân biệt
+    'hết hạn' với 'chưa từng có'. ``None`` nếu không có bản ghi nào."""
+    uid = str(user_id)
+    with _lock:
+        p = _pending.get(uid)
+    if p:
+        return (list(p.get("muc") or []), str(p.get("nguon") or ""),
+                float(p.get("ts") or 0))
+    try:
+        import json
+        c = _db()
+        if c is None:
+            return None
+        row = c.execute("SELECT muc, ts FROM muc_pending WHERE user_id=?",
+                        (uid,)).fetchone()
+        if not row:
+            return None
+        data = json.loads(row[0] or "[]")
+        if isinstance(data, list):
+            data = {"muc": data, "nguon": ""}
+        return (list(data.get("muc") or []), str(data.get("nguon") or ""),
+                float(row[1] or 0))
+    except Exception:
+        return None
+
+
+def trang_thai_chon(user_id: str, ma: str) -> str:
+    """Vì sao một mã trần KHÔNG chọn được — để CODE nói lý do THẬT thay vì để
+    model đọc thuộc một lý do có thể sai.
+
+    Trả một trong: ``"khop"`` (mã có trong bản chờ còn sống — đáng lẽ
+    ``resolve_reply`` đã ăn), ``"het_han"`` (có bản chờ nhưng quá 30'/TTL),
+    ``"khong_co"`` (bản chờ còn sống nhưng KHÔNG có mã này), ``"trong"`` (không
+    có bản chờ nào — chưa gửi danh sách, hoặc đã chọn/dọn)."""
+    tho = _doc_tho(user_id)
+    if not tho:
+        return "trong"
+    muc, _nguon, ts = tho
+    if time.time() - float(ts or 0) > _TTL:
+        return "het_han"
+    ma_l = str(ma or "").strip().lower()
+    for it in muc:
+        if str(it.get("ma") or "").lower() == ma_l:
+            return "khop"
+    return "khong_co"
+
+
+def _boc_ma_tu_van(van: str, ma: str) -> str:
+    """Tìm dòng mang mã ``ma`` trong tin ĐÃ ĐÁNH MÃ (bot in `D1. …` vào chữ),
+    trả nội dung dòng đó (đã làm sạch), "" nếu không thấy.
+
+    Tin trích có thể đã bị lột markdown (`**`, `##`) khi gửi qua Zalo, nên bỏ
+    qua các dấu bọc / gạch đầu dòng ở đầu trước khi so mã. Mã so KHÔNG phân biệt
+    hoa-thường và phải đứng RIÊNG (theo sau là `.` / `)` / khoảng trắng) để 'D1'
+    không dính vào 'D12'.
+    """
+    if not van or not ma:
+        return ""
+    pat = re.compile(
+        r"^[\s>*#.)\-–•(]*" + re.escape(ma) + r"[.)\s*]+(?P<nd>\S.*)$",
+        re.IGNORECASE)
+    for dong in van.split("\n"):
+        m = pat.match(dong)
+        if m:
+            nd = _lam_sach(m.group("nd"))
+            if nd:
+                return nd
+    return ""
+
+
+def resolve_tu_trich(user_id: str, user_text: str,
+                     trich_dan: str) -> Optional[dict[str, str]]:
+    """Người dùng TRÍCH DẪN một tin cũ đã đánh mã rồi gõ một mã → chọn mục đó.
+
+    Bù đúng chỗ bản chờ hết hạn (30') hoặc đã bị dọn sau lần chọn trước: mã đã
+    in sẵn trong CHỮ của tin (`D1. …`), mà kênh cá nhân gửi lại nguyên nội dung
+    tin trích, nên đọc lại được kể cả khi bản chờ không còn.
+
+    Ưu tiên bản chờ nếu còn sống (giữ đúng ``nguon`` — vd "tin" → orchestrator
+    tra thẳng tiêu đề); hết bản chờ thì bóc mã từ chính tin trích và đi nhánh
+    CHUNG (``nguon=""`` → để model đọc nội dung đã có, tự tra khi cần). Trả None
+    nếu câu không phải một mã trần, hoặc tin trích không chứa mã đó."""
+    t = (user_text or "").strip()
+    if not t or len(t) > 8:
+        return None
+    m = _RE_CHON.match(t)
+    if not m:
+        return None
+    ma = (m.group(1) or "").strip()
+    if not ma:
+        return None
+    # 1) Bản chờ còn sống → dùng nó (authoritative; tự dọn pending khi khớp).
+    picked = resolve_reply(user_id, user_text)
+    if picked:
+        return picked
+    # 2) Hết bản chờ → bóc mã từ chữ trong tin trích.
+    noi_dung = _boc_ma_tu_van(str(trich_dan or ""), ma)
+    if not noi_dung:
+        return None
+    logger.info({"event": "muc_luc_chon_trich", "ma": ma})
+    return {"ma": ma, "noi_dung": noi_dung, "nguon": "",
+            "cau_hoi": _cau_hoi(noi_dung)}
+
+
 def apply_to_result(result: dict[str, Any], user_id: str) -> dict[str, Any]:
     """Đánh mã cho danh sách trong `result["text"]` và ghi bản chờ.
 
