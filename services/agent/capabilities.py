@@ -5296,12 +5296,15 @@ CAPABILITIES: dict[str, Capability] = {
         name="chi_duong", risk=READ, handler=_h_chi_duong,
         emoji="🗺️", label="Chỉ đường",
         description=("Chỉ đường / hỏi đường giữa hai địa điểm. GỌI với diem_di + "
-                     "diem_den (nêu ĐÚNG địa chỉ người dùng nói, kèm quận/thành "
-                     "nếu có). Hệ thống sẽ HỎI người dùng đi bằng phương tiện gì "
-                     "rồi mới trả khoảng cách + chỉ dẫn + link Google Maps. Chỉ "
-                     "truyền phuong_tien khi người dùng ĐÃ tự nêu (xe máy/ô tô/đi "
-                     "bộ/xe buýt). TUYỆT ĐỐI không tự bịa đường hay khoảng cách — "
-                     "chỉ gọi tool."),
+                     "diem_den truyền NGUYÊN VĂN như người dùng viết — GIỮ tên "
+                     "khu đô thị/landmark ('Bắc Linh Đàm'), GIỮ khoảng trắng "
+                     "trong mã toà ('CT4B X2', không nối thành 'CT4BX2'). TUYỆT "
+                     "ĐỐI KHÔNG tự chuẩn hoá, KHÔNG thêm phường/quận em tự suy "
+                     "ra, KHÔNG bỏ tên khu đô thị — làm vậy là bản đồ không tìm "
+                     "ra. Hệ thống sẽ HỎI phương tiện rồi trả khoảng cách + chỉ "
+                     "dẫn + link Google Maps. Chỉ truyền phuong_tien khi người "
+                     "dùng ĐÃ tự nêu (xe máy/ô tô/đi bộ/xe buýt). Không tự bịa "
+                     "đường hay khoảng cách — chỉ gọi tool."),
         parameters={"type": "object", "properties": {
             "diem_di": {"type": "string", "description": "Địa chỉ/điểm xuất phát"},
             "diem_den": {"type": "string", "description": "Địa chỉ/điểm đến"},

@@ -84,34 +84,66 @@ def maps_link(diem_di: str, diem_den: str, travelmode: str = "driving") -> str:
     return f"https://www.google.com/maps/dir/?{q}"
 
 
-def geocode(dia_chi: str) -> tuple[float, float, str] | None:
-    """Địa chỉ → (lat, lon, tên hiển thị) qua Nominatim; None nếu không thấy.
+def _bo_ma_toa(dc: str) -> str:
+    """Bỏ mã toà nhà đứng ĐẦU địa chỉ (CT4B X2, N01, R6…), GIỮ dấu phẩy còn lại.
 
-    Thêm ", Việt Nam" nếu câu chưa nhắc nước/tỉnh, để Nominatim khỏi lạc sang
-    trùng tên ở nước khác."""
-    dc = str(dia_chi or "").strip()
-    if not dc:
-        return None
-    if _bo_dau(dc).find("viet nam") < 0 and "vietnam" not in _bo_dau(dc):
-        dc = dc + ", Việt Nam"
+    Nominatim thường thiếu từng toà nhưng CÓ khu đô thị/phố, và nó KÉN dấu phẩy:
+    "phường Hoàng Liệt, Hà Nội" ra được còn bản gộp không phẩy thì không. Đo
+    04/09: "CT4B X2 Bắc Linh Đàm" ra đúng toà; bỏ mã toà "CT4B X2" → "Bắc Linh
+    Đàm" vẫn ra khu đô thị. Mã toà = token vừa có CHỮ vừa có SỐ (CT4B, X2, N01)."""
+    def la_ma(t: str) -> bool:
+        return any(c.isdigit() for c in t) and any(c.isalpha() for c in t)
+
+    segs = [s.strip() for s in dc.split(",") if s.strip()]
+    if not segs:
+        return ""
+    toks = segs[0].split()
+    i = 0
+    while i < len(toks) and la_ma(toks[i]):
+        i += 1
+    segs[0] = " ".join(toks[i:]).strip()
+    return ", ".join(s for s in segs if s)
+
+
+def _nominatim_1(q: str) -> tuple[float, float, str] | None:
     try:
         r = requests.get(
-            _NOMINATIM,
-            params={"q": dc, "format": "json", "limit": 1},
+            _NOMINATIM, params={"q": q, "format": "json", "limit": 1},
             headers={"User-Agent": _UA}, timeout=_TIMEOUT)
         r.raise_for_status()
         data = r.json()
     except Exception as exc:
-        logger.warning("chi_duong.geocode(%.40s) lỗi: %s", dia_chi, exc)
+        logger.warning("chi_duong.geocode(%.40s) lỗi: %s", q, exc)
         return None
     if not isinstance(data, list) or not data:
         return None
     top = data[0]
     try:
-        return (float(top["lat"]), float(top["lon"]),
-                str(top.get("display_name") or dia_chi))
+        return float(top["lat"]), float(top["lon"]), str(top.get("display_name") or q)
     except (KeyError, TypeError, ValueError):
         return None
+
+
+def geocode(dia_chi: str) -> tuple[float, float, str] | None:
+    """Địa chỉ → (lat, lon, tên hiển thị) qua Nominatim; None nếu không thấy.
+
+    Thử theo bậc: NGUYÊN VĂN trước (chính xác nhất), thất bại thì BỎ MÃ TOÀ đứng
+    đầu rồi thử lại (khái quát về khu đô thị/phố — kém chính xác nhưng còn hơn
+    link trần). Tối đa 2 lượt gọi để tôn trọng giới hạn 1 req/giây của Nominatim.
+    Thêm ", Việt Nam" nếu câu chưa nhắc nước, để khỏi lạc sang trùng tên nước khác."""
+    dc = str(dia_chi or "").strip()
+    if not dc:
+        return None
+    hau_to = "" if ("viet nam" in _bo_dau(dc) or "vietnam" in _bo_dau(dc)) else ", Việt Nam"
+    bien_the: list[str] = [dc]
+    ngan = _bo_ma_toa(dc)
+    if ngan and ngan != dc and len(ngan.split()) >= 2:
+        bien_the.append(ngan)
+    for q in bien_the:
+        kq = _nominatim_1(q + hau_to)
+        if kq:
+            return kq
+    return None
 
 
 #: Chỉ các bước RẼ thật mới gắn hướng (trái/phải); depart/arrive/new name…

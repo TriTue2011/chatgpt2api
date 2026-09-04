@@ -86,6 +86,38 @@ class GeocodeTests(unittest.TestCase):
         with patch("services.chi_duong.requests.get", side_effect=RuntimeError("timeout")):
             self.assertIsNone(cd.geocode("x"))
 
+    def test_bo_ma_toa_giu_phay(self):
+        # 1 đoạn: bỏ token mã đứng đầu.
+        self.assertEqual(cd._bo_ma_toa("CT4B X2 Bắc Linh Đàm"), "Bắc Linh Đàm")
+        # Nhiều đoạn: bỏ đoạn mã đầu, GIỮ dấu phẩy (Nominatim kén phẩy).
+        self.assertEqual(cd._bo_ma_toa("CT4BX2, phường Hoàng Liệt, quận Hoàng Mai"),
+                         "phường Hoàng Liệt, quận Hoàng Mai")
+        self.assertEqual(cd._bo_ma_toa("Bắc Linh Đàm"), "Bắc Linh Đàm")
+
+    def test_geocode_thu_bien_the_khi_nguyen_van_hong(self):
+        """Nguyên văn (có mã toà) không ra → bỏ mã toà thử lại."""
+        seq = [[], _GEO_DEN]   # lượt 1 rỗng, lượt 2 (đã bỏ mã toà) ra
+        calls = {"n": 0}
+
+        def _g(url, params=None, headers=None, timeout=None):
+            i = calls["n"]; calls["n"] += 1
+            return _resp(seq[i] if i < len(seq) else [])
+        with patch("services.chi_duong.requests.get", side_effect=_g):
+            r = cd.geocode("CT4B X2 Bắc Linh Đàm")
+        self.assertIsNotNone(r, "phải thử biến thể sau khi nguyên văn hỏng")
+        self.assertEqual(calls["n"], 2, "đúng 2 lượt: nguyên văn + bỏ mã toà")
+
+    def test_geocode_khong_lam_qua_2_luot(self):
+        """Tôn trọng giới hạn Nominatim: tối đa 2 lượt gọi."""
+        calls = {"n": 0}
+
+        def _g(url, params=None, headers=None, timeout=None):
+            calls["n"] += 1
+            return _resp([])
+        with patch("services.chi_duong.requests.get", side_effect=_g):
+            cd.geocode("CT4B X2 Bắc Linh Đàm")
+        self.assertLessEqual(calls["n"], 2)
+
 
 class ChiDuongTests(unittest.TestCase):
     def test_full_ok(self):
