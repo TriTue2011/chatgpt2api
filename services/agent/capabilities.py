@@ -322,6 +322,62 @@ def _luu_anh_tu_data(data: Any) -> list[str]:
     return urls
 
 
+_CHI_DUONG_EMOJI = {"xe máy": "🏍️", "ô tô": "🚗", "đi bộ": "🚶", "xe buýt": "🚌"}
+
+
+def _h_chi_duong(args: dict, ctx: dict) -> dict:
+    """Chỉ đường A→B: HỎI phương tiện trước, rồi trả link + chỉ dẫn + khoảng cách.
+
+    Bám khuôn `_h_generate_image`: thiếu tham số (phương tiện) → trả khối
+    `<<<ASK>>>`, mỗi lựa chọn mang send-value tự nhiên tái gọi tool với phương
+    tiện đã điền. Đủ tham số → gọi `chi_duong` (Nominatim + OSRM + Google Maps
+    deep-link, miễn phí, không key)."""
+    from services import chi_duong as cd
+
+    diem_di = str(args.get("diem_di") or "").strip()
+    diem_den = str(args.get("diem_den") or "").strip()
+    phuong_tien = str(args.get("phuong_tien") or "").strip()
+    if not diem_di or not diem_den:
+        return {"text": "Anh/chị cho em ĐIỂM ĐI và ĐIỂM ĐẾN ạ 🗺️ "
+                        "(ví dụ: từ 114 Mai Hắc Đế đến CT4B X2 Bắc Linh Đàm)."}
+
+    # Chưa biết phương tiện → HỎI (trừ khi chạy tự động theo lịch/autonomy).
+    if not phuong_tien and not ctx.get("auto_approve"):
+        lines = [f'🗺️ Đi từ "{_mot_dong(diem_di)}" đến "{_mot_dong(diem_den)}" '
+                 "— anh/chị đi bằng gì ạ?", "<<<ASK>>>"]
+        for pt in cd.MENU_PHUONG_TIEN:
+            lines.append(f"{_CHI_DUONG_EMOJI.get(pt, '')} {pt.capitalize()} | "
+                         f"chỉ đường từ {diem_di} đến {diem_den} bằng {pt}")
+        lines.append("<<<END>>>")
+        return {"text": "\n".join(lines), "deliver_now": True}
+
+    pt = phuong_tien or "xe máy"
+    kq = cd.chi_duong(diem_di, diem_den, pt)
+    link = kq.get("link") or ""
+    if kq.get("ok"):
+        dong = [f"🗺️ {str(kq['tu'])[:60]} → {str(kq['den'])[:60]}",
+                f"📍 ~{kq['km']} km, ~{kq['phut']} phút ({pt})"]
+        buoc = kq.get("buoc") or []
+        if buoc:
+            hien = buoc[:14]
+            dong.append("")
+            dong += [f"{i}. {b}" for i, b in enumerate(hien, 1)]
+            if len(buoc) > len(hien):
+                dong.append(f"… và {len(buoc) - len(hien)} bước nữa (xem đầy đủ trong link)")
+        dong += ["", f"🧭 Mở chỉ đường (bấm để dẫn đường): {link}"]
+        return {"text": "\n".join(dong)}
+
+    ly = kq.get("ly_do")
+    if ly in ("khong_ra_diem_di", "khong_ra_diem_den"):
+        thieu = "điểm đi" if ly == "khong_ra_diem_di" else "điểm đến"
+        return {"text": f"Em chưa tìm ra {thieu} trên bản đồ 😥. Anh/chị ghi rõ "
+                        f"hơn giúp em (kèm quận/phường/thành phố).\n"
+                        f"Tạm thời mở Google Maps: {link}"}
+    # khong_dinh_tuyen: xe buýt (OSRM không làm transit) hoặc OSRM lỗi.
+    return {"text": f"🚌 Với {pt}, em mở thẳng Google Maps để anh/chị xem tuyến "
+                    f"và giờ chạy nhé:\n{link}"}
+
+
 def _h_generate_music(args: dict, ctx: dict) -> dict:
     """Tạo nhạc THẬT qua trình duyệt Gemini (Lyria) — trả mp4 (audio + bìa động).
 
@@ -5236,6 +5292,27 @@ CAPABILITIES: dict[str, Capability] = {
         workflow=("Hệ thống hỏi công cụ trước khi vẽ. Vẽ xong ảnh được gửi kèm — "
                   "chỉ chú thích ngắn. Nếu lỗi/không ra ảnh: hệ thống đã báo thật; "
                   "KHÔNG nói 'đã gửi ở trên' khi chưa có ảnh.")),
+    "chi_duong": Capability(
+        name="chi_duong", risk=READ, handler=_h_chi_duong,
+        emoji="🗺️", label="Chỉ đường",
+        description=("Chỉ đường / hỏi đường giữa hai địa điểm. GỌI với diem_di + "
+                     "diem_den (nêu ĐÚNG địa chỉ người dùng nói, kèm quận/thành "
+                     "nếu có). Hệ thống sẽ HỎI người dùng đi bằng phương tiện gì "
+                     "rồi mới trả khoảng cách + chỉ dẫn + link Google Maps. Chỉ "
+                     "truyền phuong_tien khi người dùng ĐÃ tự nêu (xe máy/ô tô/đi "
+                     "bộ/xe buýt). TUYỆT ĐỐI không tự bịa đường hay khoảng cách — "
+                     "chỉ gọi tool."),
+        parameters={"type": "object", "properties": {
+            "diem_di": {"type": "string", "description": "Địa chỉ/điểm xuất phát"},
+            "diem_den": {"type": "string", "description": "Địa chỉ/điểm đến"},
+            "phuong_tien": {"type": "string",
+                            "enum": ["xe máy", "ô tô", "đi bộ", "xe buýt"],
+                            "description": "Phương tiện người dùng nêu; bỏ trống "
+                                           "để hệ thống hỏi"}},
+            "required": ["diem_di", "diem_den"]},
+        workflow=("Hệ thống hỏi phương tiện trước, rồi trả khoảng cách + các bước "
+                  "rẽ + link Google Maps. KHÔNG tự nói khoảng cách/đường khi chưa "
+                  "có kết quả tool.")),
     "generate_music": Capability(
         name="generate_music", risk=READ, handler=_h_generate_music,
         emoji="🎵", label="Sáng tác / tạo nhạc AI",
@@ -6556,6 +6633,9 @@ _CAP_GROUP: dict[str, str] = {
     "generate_music": "music",
     "generate_video": "video",
     "web_search": "web", "read_webpage": "web", "youtube_transcript": "web",
+    # Chỉ đường tra dịch vụ ngoài (Nominatim/OSRM/Google Maps) — cùng nhóm "web"
+    # với tra cứu: thread nào search được thì hỏi đường được.
+    "chi_duong": "web",
     "write_code": "code",
     "home_status": "homeassistant", "control_home": "homeassistant",
     "describe_device": "homeassistant",
