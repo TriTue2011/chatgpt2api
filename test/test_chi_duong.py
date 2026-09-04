@@ -208,6 +208,7 @@ class HandlerTests(unittest.TestCase):
         self.assertIn("Đà Nẵng", out["text"])
         self.assertIn("Hà Nội", out["text"])
         self.assertNotIn("km", out["text"].split("Google")[0].lower(), "không được đưa km sai")
+        self.assertTrue(out.get("deliver_now"))
 
     def test_gan_dung_thi_handler_them_ghi_chu(self):
         r = {"ok": True, "km": 6.8, "phut": 9, "gan_dung": True,
@@ -217,6 +218,7 @@ class HandlerTests(unittest.TestCase):
             out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B", "phuong_tien": "xe máy"}, {})
         self.assertIn("6.8 km", out["text"])
         self.assertIn("gần đúng", out["text"])
+        self.assertTrue(out.get("deliver_now"), "phải gửi thẳng, không cho model viết lại")
 
     def test_xe_buyt_handler_ra_link(self):
         r = {"ok": False, "ly_do": "khong_dinh_tuyen",

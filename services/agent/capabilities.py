@@ -368,24 +368,30 @@ def _h_chi_duong(args: dict, ctx: dict) -> dict:
             if len(buoc) > len(hien):
                 dong.append(f"… và {len(buoc) - len(hien)} bước nữa (xem đầy đủ trong link)")
         dong += ["", f"🧭 Mở chỉ đường (bấm để dẫn đường): {link}"]
-        return {"text": "\n".join(dong)}
+        # deliver_now=True: gửi THẲNG các bước rẽ cho người dùng. Không có nó thì
+        # model diễn giải lại kết quả và BỎ MẤT danh sách bước — đúng lỗi 04/09
+        # "không chi tiết hướng dẫn đi đường".
+        return {"text": "\n".join(dong), "deliver_now": True}
 
     ly = kq.get("ly_do")
     if ly == "tinh_khong_khop":
         # Hai đầu ở tỉnh khác nhau (vd "Mai Hắc Đế" có ở cả Hà Nội lẫn Đà Nẵng)
         # → HỎI LẠI thay vì đưa km sai.
-        return {"text": f"Em thấy điểm đi đang ở **{kq.get('tinh_di')}** còn điểm "
-                        f"đến ở **{kq.get('tinh_den')}** — có vẻ trùng tên khác "
+        return {"deliver_now": True,
+                "text": f"Em thấy điểm đi đang ở {kq.get('tinh_di')} còn điểm "
+                        f"đến ở {kq.get('tinh_den')} — có vẻ trùng tên khác "
                         f"thành phố ạ. Anh/chị ghi rõ giúp em ĐỊA CHỈ đầy đủ kèm "
                         f"quận/thành phố (vd 'số 114 Mai Hắc Đế, Hà Nội') để em "
                         f"chỉ đường đúng nhé 🗺️"}
     if ly in ("khong_ra_diem_di", "khong_ra_diem_den"):
         thieu = "điểm đi" if ly == "khong_ra_diem_di" else "điểm đến"
-        return {"text": f"Em chưa tìm ra {thieu} trên bản đồ 😥. Anh/chị ghi rõ "
+        return {"deliver_now": True,
+                "text": f"Em chưa tìm ra {thieu} trên bản đồ 😥. Anh/chị ghi rõ "
                         f"hơn giúp em (kèm quận/phường/thành phố).\n"
                         f"Tạm thời mở Google Maps: {link}"}
     # khong_dinh_tuyen: xe buýt (OSRM không làm transit) hoặc OSRM lỗi.
-    return {"text": f"🚌 Với {pt}, em mở thẳng Google Maps để anh/chị xem tuyến "
+    return {"deliver_now": True,
+            "text": f"🚌 Với {pt}, em mở thẳng Google Maps để anh/chị xem tuyến "
                     f"và giờ chạy nhé:\n{link}"}
 
 
