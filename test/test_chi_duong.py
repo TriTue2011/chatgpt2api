@@ -28,8 +28,14 @@ def _resp(json_data):
     return m
 
 
-_GEO_DI = [{"lat": "21.0114", "lon": "105.8506", "display_name": "114 Mai Hắc Đế, Hà Nội"}]
-_GEO_DEN = [{"lat": "20.9653", "lon": "105.8232", "display_name": "CT4B X2 Bắc Linh Đàm, Hà Nội"}]
+_HN = {"city": "Thành phố Hà Nội"}
+_DN = {"city": "Thành phố Đà Nẵng"}
+_GEO_DI = [{"lat": "21.0114", "lon": "105.8506",
+            "display_name": "114 Mai Hắc Đế, Hà Nội", "address": _HN}]
+_GEO_DEN = [{"lat": "20.9653", "lon": "105.8232",
+             "display_name": "CT4B X2 Bắc Linh Đàm, Hà Nội", "address": _HN}]
+_GEO_DI_DN = [{"lat": "16.0544", "lon": "108.2022",
+               "display_name": "Mai Hắc Đế, Đà Nẵng", "address": _DN}]
 _OSRM_OK = {"code": "Ok", "routes": [{"distance": 7300, "duration": 600, "legs": [{"steps": [
     {"name": "Phố Mai Hắc Đế", "distance": 235, "maneuver": {"type": "turn", "modifier": "right"}},
     {"name": "Đường Giải Phóng", "distance": 1400, "maneuver": {"type": "new name"}},
@@ -73,10 +79,11 @@ class ChuanPhuongTienTests(unittest.TestCase):
 
 
 class GeocodeTests(unittest.TestCase):
-    def test_doc_lat_lon_ten(self):
+    def test_doc_lat_lon_ten_tinh(self):
         with patch("services.chi_duong.requests.get", return_value=_resp(_GEO_DI)):
             self.assertEqual(cd.geocode("114 Mai Hắc Đế"),
-                             (21.0114, 105.8506, "114 Mai Hắc Đế, Hà Nội"))
+                             (21.0114, 105.8506, "114 Mai Hắc Đế, Hà Nội",
+                              "Thành phố Hà Nội", True))
 
     def test_rong_tra_none(self):
         with patch("services.chi_duong.requests.get", return_value=_resp([])):
@@ -121,20 +128,44 @@ class GeocodeTests(unittest.TestCase):
 
 class ChiDuongTests(unittest.TestCase):
     def test_full_ok(self):
-        with patch("services.chi_duong.requests.get", side_effect=_fake_get([_GEO_DI, _GEO_DEN])):
+        # Thứ tự geocode: ĐIỂM ĐẾN trước (lấy tỉnh gợi ý), rồi ĐIỂM ĐI.
+        with patch("services.chi_duong.requests.get", side_effect=_fake_get([_GEO_DEN, _GEO_DI])):
             r = cd.chi_duong("114 Mai Hắc Đế", "CT4B X2 Bắc Linh Đàm", "xe máy")
         self.assertTrue(r["ok"])
         self.assertEqual(r["km"], 7.3)
         self.assertEqual(r["phut"], 10)
+        self.assertFalse(r["gan_dung"], "cả hai đầu khớp nguyên văn → chính xác")
         self.assertTrue(any("Phố Mai Hắc Đế" in b for b in r["buoc"]))
-        self.assertIn("google.com/maps", r["link"])
 
     def test_geocode_diem_den_rong(self):
-        with patch("services.chi_duong.requests.get", side_effect=_fake_get([_GEO_DI, []])):
+        # Điểm đến geocode TRƯỚC — rỗng thì dừng ngay, không geocode điểm đi.
+        with patch("services.chi_duong.requests.get", side_effect=_fake_get([[]])):
             r = cd.chi_duong("A có thật", "địa chỉ ma", "xe máy")
         self.assertFalse(r["ok"])
         self.assertEqual(r["ly_do"], "khong_ra_diem_den")
         self.assertIn("google.com/maps", r["link"])   # link vẫn dựng được
+
+    def test_hai_dau_khac_tinh_thi_HOI_LAI_khong_dua_km_sai(self):
+        """Đúng lỗi 04/09: 'Mai Hắc Đế' lạc sang Đà Nẵng → 766 km. Nay HỎI LẠI.
+
+        Điểm đến (Bắc Linh Đàm) ở Hà Nội; điểm đi vẫn ra Đà Nẵng dù đã bù tỉnh
+        → khác tỉnh → không định tuyến, trả ly_do để handler hỏi."""
+        # den → Hà Nội; di (cả nguyên văn lẫn biến thể) → Đà Nẵng.
+        seq = [_GEO_DEN, _GEO_DI_DN, _GEO_DI_DN]
+        with patch("services.chi_duong.requests.get", side_effect=_fake_get(seq)):
+            r = cd.chi_duong("Mai Hắc Đế", "Bắc Linh Đàm", "xe máy")
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["ly_do"], "tinh_khong_khop")
+        self.assertIn("Đà Nẵng", r["tinh_di"])
+        self.assertIn("Hà Nội", r["tinh_den"])
+
+    def test_gan_dung_khi_mot_dau_dung_bien_the(self):
+        """Điểm đến chỉ ra được sau khi bỏ mã toà (biến thể) → gan_dung=True."""
+        seq = [[], _GEO_DEN, _GEO_DI]   # den: nguyên văn rỗng → biến thể ra; rồi di
+        with patch("services.chi_duong.requests.get", side_effect=_fake_get(seq)):
+            r = cd.chi_duong("114 Mai Hắc Đế", "CT4BX2 Bắc Linh Đàm", "xe máy")
+        self.assertTrue(r["ok"])
+        self.assertTrue(r["gan_dung"])
 
     def test_xe_buyt_khong_goi_osrm(self):
         # requests.get side_effect nổ nếu bị gọi → chứng minh xe buýt KHÔNG geocode/route.
@@ -166,6 +197,26 @@ class HandlerTests(unittest.TestCase):
         self.assertIn("7.3 km", out["text"])
         self.assertIn("google.com/maps", out["text"])
         self.assertNotIn("<<<ASK>>>", out["text"])
+
+    def test_khac_tinh_thi_handler_HOI_dia_chi_khong_dua_km(self):
+        r = {"ok": False, "ly_do": "tinh_khong_khop",
+             "tinh_di": "Thành phố Đà Nẵng", "tinh_den": "Thành phố Hà Nội",
+             "link": "https://www.google.com/maps/dir/?api=1"}
+        with patch("services.chi_duong.chi_duong", return_value=r):
+            out = caps._h_chi_duong({"diem_di": "Mai Hắc Đế", "diem_den": "Bắc Linh Đàm",
+                                     "phuong_tien": "xe máy"}, {})
+        self.assertIn("Đà Nẵng", out["text"])
+        self.assertIn("Hà Nội", out["text"])
+        self.assertNotIn("km", out["text"].split("Google")[0].lower(), "không được đưa km sai")
+
+    def test_gan_dung_thi_handler_them_ghi_chu(self):
+        r = {"ok": True, "km": 6.8, "phut": 9, "gan_dung": True,
+             "buoc": ["Rẽ phải Phố X (~235 m)"], "tu": "A", "den": "B",
+             "link": "https://www.google.com/maps/dir/?api=1"}
+        with patch("services.chi_duong.chi_duong", return_value=r):
+            out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B", "phuong_tien": "xe máy"}, {})
+        self.assertIn("6.8 km", out["text"])
+        self.assertIn("gần đúng", out["text"])
 
     def test_xe_buyt_handler_ra_link(self):
         r = {"ok": False, "ly_do": "khong_dinh_tuyen",

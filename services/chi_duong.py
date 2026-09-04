@@ -105,10 +105,16 @@ def _bo_ma_toa(dc: str) -> str:
     return ", ".join(s for s in segs if s)
 
 
-def _nominatim_1(q: str) -> tuple[float, float, str] | None:
+def _nominatim_1(q: str) -> tuple[float, float, str, str] | None:
+    """Một lượt Nominatim → (lat, lon, tên, TỈNH) hoặc None.
+
+    `addressdetails=1` để lấy TỈNH/THÀNH: dùng đối chiếu hai đầu tuyến. "Mai Hắc
+    Đế" có ở CẢ Hà Nội lẫn Đà Nẵng — đo 04/09: thiếu thành phố thì Nominatim
+    chọn Đà Nẵng rồi ra 766 km."""
     try:
         r = requests.get(
-            _NOMINATIM, params={"q": q, "format": "json", "limit": 1},
+            _NOMINATIM,
+            params={"q": q, "format": "json", "limit": 1, "addressdetails": 1},
             headers={"User-Agent": _UA}, timeout=_TIMEOUT)
         r.raise_for_status()
         data = r.json()
@@ -118,31 +124,39 @@ def _nominatim_1(q: str) -> tuple[float, float, str] | None:
     if not isinstance(data, list) or not data:
         return None
     top = data[0]
+    ad = top.get("address") or {}
+    tinh = str(ad.get("city") or ad.get("state") or ad.get("province") or "").strip()
     try:
-        return float(top["lat"]), float(top["lon"]), str(top.get("display_name") or q)
+        return float(top["lat"]), float(top["lon"]), str(top.get("display_name") or q), tinh
     except (KeyError, TypeError, ValueError):
         return None
 
 
-def geocode(dia_chi: str) -> tuple[float, float, str] | None:
-    """Địa chỉ → (lat, lon, tên hiển thị) qua Nominatim; None nếu không thấy.
+def geocode(dia_chi: str, tinh_goi_y: str = "") -> tuple[float, float, str, str, bool] | None:
+    """Địa chỉ → (lat, lon, tên, tỉnh, chính_xác) qua Nominatim; None nếu không thấy.
 
-    Thử theo bậc: NGUYÊN VĂN trước (chính xác nhất), thất bại thì BỎ MÃ TOÀ đứng
-    đầu rồi thử lại (khái quát về khu đô thị/phố — kém chính xác nhưng còn hơn
-    link trần). Tối đa 2 lượt gọi để tôn trọng giới hạn 1 req/giây của Nominatim.
-    Thêm ", Việt Nam" nếu câu chưa nhắc nước, để khỏi lạc sang trùng tên nước khác."""
+    ``tinh_goi_y``: tỉnh/thành của ĐẦU KIA để bù khi câu thiếu thành phố — "114
+    Mai Hắc Đế" một mình lạc sang Đà Nẵng, thêm ", Hà Nội" (tỉnh của điểm đến)
+    thì ra đúng. Chỉ thêm khi câu chưa nhắc tỉnh đó.
+
+    ``chính_xác`` = khớp NGUYÊN VĂN (True); phải BỎ MÃ TOÀ mới ra (False, vị trí
+    gần đúng ở mức khu đô thị/phố). Bên gọi dùng để nói rõ độ chính xác.
+    Tối đa 2 lượt gọi để tôn trọng giới hạn 1 req/giây của Nominatim."""
     dc = str(dia_chi or "").strip()
     if not dc:
         return None
-    hau_to = "" if ("viet nam" in _bo_dau(dc) or "vietnam" in _bo_dau(dc)) else ", Việt Nam"
-    bien_the: list[str] = [dc]
+    fdc = _bo_dau(dc)
+    hau_to = "" if ("viet nam" in fdc or "vietnam" in fdc) else ", Việt Nam"
+    if tinh_goi_y and _bo_dau(tinh_goi_y) not in fdc:
+        hau_to = f", {tinh_goi_y}" + hau_to
+    bien_the: list[tuple[str, bool]] = [(dc, True)]
     ngan = _bo_ma_toa(dc)
     if ngan and ngan != dc and len(ngan.split()) >= 2:
-        bien_the.append(ngan)
-    for q in bien_the:
+        bien_the.append((ngan, False))
+    for q, chinh_xac in bien_the:
         kq = _nominatim_1(q + hau_to)
         if kq:
-            return kq
+            return (*kq, chinh_xac)
     return None
 
 
@@ -170,8 +184,10 @@ def _mo_ta_buoc(step: dict) -> str:
 def chi_duong(diem_di: str, diem_den: str, phuong_tien: str = "xe máy") -> dict:
     """A→B → dict chỉ đường. KHÔNG raise; mọi lỗi thành `ok=False` + `ly_do`.
 
-    ``ok=True``  → {km, phut, buoc:[str], link, tu, den, phuong_tien}
-    ``ok=False`` → {ly_do, link, phuong_tien}  (link luôn dựng được từ chữ gốc)
+    ``ok=True``  → {km, phut, buoc:[str], link, tu, den, phuong_tien, gan_dung}
+    ``ok=False`` → {ly_do, link, phuong_tien, [tinh_di, tinh_den]}
+        ly_do: khong_dinh_tuyen | khong_ra_diem_di | khong_ra_diem_den |
+               tinh_khong_khop (hai đầu ở tỉnh khác nhau — hỏi lại địa chỉ)
     """
     profile, travelmode, co_route = chuan_phuong_tien(phuong_tien)
     link = maps_link(diem_di, diem_den, travelmode)
@@ -181,12 +197,20 @@ def chi_duong(diem_di: str, diem_den: str, phuong_tien: str = "xe máy") -> dict
     if not co_route or not profile:
         return {"ok": False, "ly_do": "khong_dinh_tuyen", **goc}
 
-    a = geocode(diem_di)
-    if not a:
-        return {"ok": False, "ly_do": "khong_ra_diem_di", **goc}
+    # Geocode ĐIỂM ĐẾN trước (thường là landmark rõ), lấy TỈNH của nó làm gợi ý
+    # cho điểm đi — chữa lỗi "114 Mai Hắc Đế" một mình lạc sang Đà Nẵng (766 km).
     b = geocode(diem_den)
     if not b:
         return {"ok": False, "ly_do": "khong_ra_diem_den", **goc}
+    a = geocode(diem_di, tinh_goi_y=b[3])
+    if not a:
+        return {"ok": False, "ly_do": "khong_ra_diem_di", **goc}
+
+    # Hai đầu vẫn KHÁC TỈNH sau khi đã bù → không chắc chắn, HỎI LẠI thay vì đưa
+    # tuyến sai (đúng yêu cầu chủ máy 04/09: "sai km, không hỏi địa chỉ chính xác").
+    if a[3] and b[3] and _bo_dau(a[3]) != _bo_dau(b[3]):
+        return {"ok": False, "ly_do": "tinh_khong_khop",
+                "tinh_di": a[3], "tinh_den": b[3], **goc}
 
     # OSRM: kinh độ,vĩ độ;kinh độ,vĩ độ  (LƯU Ý thứ tự lon,lat).
     toa_do = f"{a[1]},{a[0]};{b[1]},{b[0]}"
@@ -215,5 +239,8 @@ def chi_duong(diem_di: str, diem_den: str, phuong_tien: str = "xe máy") -> dict
         "link": link,
         "tu": a[2],
         "den": b[2],
+        # Một trong hai đầu chỉ ra được ở mức khu đô thị/phố (bỏ mã toà) → km là
+        # GẦN ĐÚNG; bên gọi nói rõ để người dùng biết mà tin có mức độ.
+        "gan_dung": not (a[4] and b[4]),
         "phuong_tien": phuong_tien,
     }

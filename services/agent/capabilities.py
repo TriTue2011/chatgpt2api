@@ -357,6 +357,9 @@ def _h_chi_duong(args: dict, ctx: dict) -> dict:
     if kq.get("ok"):
         dong = [f"🗺️ {str(kq['tu'])[:60]} → {str(kq['den'])[:60]}",
                 f"📍 ~{kq['km']} km, ~{kq['phut']} phút ({pt})"]
+        if kq.get("gan_dung"):
+            dong.append("(vị trí gần đúng ở mức khu đô thị/phố — muốn chính xác "
+                        "hơn thì anh/chị ghi rõ số nhà/tòa kèm phường ạ)")
         buoc = kq.get("buoc") or []
         if buoc:
             hien = buoc[:14]
@@ -368,6 +371,14 @@ def _h_chi_duong(args: dict, ctx: dict) -> dict:
         return {"text": "\n".join(dong)}
 
     ly = kq.get("ly_do")
+    if ly == "tinh_khong_khop":
+        # Hai đầu ở tỉnh khác nhau (vd "Mai Hắc Đế" có ở cả Hà Nội lẫn Đà Nẵng)
+        # → HỎI LẠI thay vì đưa km sai.
+        return {"text": f"Em thấy điểm đi đang ở **{kq.get('tinh_di')}** còn điểm "
+                        f"đến ở **{kq.get('tinh_den')}** — có vẻ trùng tên khác "
+                        f"thành phố ạ. Anh/chị ghi rõ giúp em ĐỊA CHỈ đầy đủ kèm "
+                        f"quận/thành phố (vd 'số 114 Mai Hắc Đế, Hà Nội') để em "
+                        f"chỉ đường đúng nhé 🗺️"}
     if ly in ("khong_ra_diem_di", "khong_ra_diem_den"):
         thieu = "điểm đi" if ly == "khong_ra_diem_di" else "điểm đến"
         return {"text": f"Em chưa tìm ra {thieu} trên bản đồ 😥. Anh/chị ghi rõ "
