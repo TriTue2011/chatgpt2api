@@ -12,7 +12,18 @@
 # Dùng: npm-audit-gate.sh <high|critical>   (chạy trong thư mục có package.json)
 set -uo pipefail
 LEVEL="${1:-critical}"
-OUT="$(npm audit --omit=dev --omit=optional --json 2>/dev/null || true)"
+# CHẶN CỨNG thời gian: khi endpoint npm chậm/chết, `npm audit` mặc định retry
+# tới ~15 phút (fetch-timeout 5' × 2 retry) trước khi trả về. Đo 04/09: ba bước
+# audit ngốn ~18 phút, đẩy test job vượt timeout-minutes:25 rồi bị HUỶ (dù test
+# đã xanh). `--fetch-retries=1 --fetch-timeout=15000` chặn npm còn ~30s; thêm
+# `timeout 90` làm trần cứng (ubuntu có; macOS không nên bỏ qua). Output rỗng/
+# không parse được → coi như endpoint lỗi → cảnh báo và cho qua.
+AUDIT="npm audit --omit=dev --omit=optional --json --fetch-retries=1 --fetch-timeout=15000"
+if command -v timeout >/dev/null 2>&1; then
+  OUT="$(timeout 90 sh -c "$AUDIT" 2>/dev/null || true)"
+else
+  OUT="$(sh -c "$AUDIT" 2>/dev/null || true)"
+fi
 COUNT="$(printf '%s' "$OUT" | node -e '
 let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
   let j; try { j = JSON.parse(s) } catch (e) { return process.stdout.write("ERR") }
