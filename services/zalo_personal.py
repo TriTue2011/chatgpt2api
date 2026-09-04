@@ -1173,6 +1173,61 @@ def _cong_khai_media(src: str) -> str:
         return s
 
 
+#: Ảnh base64 nhúng THẲNG trong chữ trả lời.
+_RE_ANH_NHUNG = re.compile(r"data:image/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+", re.I)
+#: Cả cú pháp markdown bọc ngoài, để gỡ xong không còn `![x]()` trơ lại.
+_RE_ANH_NHUNG_MD = re.compile(
+    r"!\[[^\]]*\]\(\s*data:image/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+\s*\)", re.I)
+
+
+def _boc_anh_nhung(reply: str) -> tuple[str, list[str]]:
+    """Bóc ảnh base64 nhúng trong chữ ra thành URL ảnh gửi được.
+
+    Một số nhà cung cấp trả ảnh THẲNG trong chữ (``![image_1](data:image/png;
+    base64,…)``) thay vì đặt vào khoá ``image_url``. Kênh chỉ nhìn ``image_url``
+    nên không thấy ảnh, và cả khối base64 đi ra như văn bản.
+
+    Lỗi thật 04/09 13:38: người dùng nhắn "Tạo ảnh em bé", ảnh sinh ra xong bị
+    `tool_compress` nén cụt (3.945 ký tự base64, giải mã lỗi), kênh gửi chữ, chữ
+    dài 4.124 ký tự nên rơi tiếp vào đường "đóng thành Word" — người dùng nhận
+    một tệp .docx chứa base64 hỏng thay vì tấm ảnh.
+
+    Trả ``(chữ đã gỡ ảnh, [URL ảnh])``. Ảnh nào giải mã hỏng thì BỎ QUA — đã
+    hỏng thì gửi ra cũng vô nghĩa, và cứ để nguyên trong chữ mới là thứ đẻ ra
+    tệp Word rác.
+    """
+    chu = str(reply or "")
+    if "data:image/" not in chu:
+        return chu, []
+    duong: list[str] = []
+    for m in _RE_ANH_NHUNG.finditer(chu):
+        try:
+            import base64 as _b64
+            from services.image_utils import sniff_format
+            from services.protocol.conversation import save_image_bytes
+            b64 = m.group(0).split(",", 1)[1]
+            # KHÔNG tự chèn "=" cho đủ bộ bốn. Base64 sai độ dài nghĩa là chuỗi
+            # đã bị CẮT; đệm thêm chỉ khiến nó giải mã ra được một mớ byte cụt
+            # rồi mình gửi đi một tấm ảnh hỏng — tệ hơn là không gửi gì.
+            raw = _b64.b64decode(b64, validate=True)
+            # Giải mã được chưa đủ: "abcQ" cũng ra 3 byte hợp lệ. Phải đúng
+            # magic bytes của một định dạng ảnh thật thì mới gửi.
+            if not sniff_format(raw):
+                logger.warning("zalop: bỏ ảnh nhúng — %d byte không phải ảnh", len(raw))
+                continue
+            u = save_image_bytes(raw)
+            if u:
+                duong.append(str(u))
+        except Exception as exc:
+            logger.warning("zalop: bóc ảnh nhúng lỗi (%d ký tự base64): %s",
+                           len(m.group(0)), exc)
+    # Gỡ khỏi chữ dù giải mã được hay không: để lại chuỗi base64 trong câu trả
+    # lời thì vừa vô nghĩa với người đọc vừa kéo dài quá ngưỡng đóng Word.
+    chu = _RE_ANH_NHUNG_MD.sub("", chu)
+    chu = _RE_ANH_NHUNG.sub("", chu)
+    return chu.strip(), duong
+
+
 def _media_fetch_candidates(url_or_path: str) -> list[str]:
     """URL zalo-server có thể fetch — ưu tiên http://127.0.0.1/images/… (trong Docker).
 
@@ -2358,6 +2413,13 @@ def _tra_loi_dai_ra_word(thread_id: str, thread_type: int, reply: str) -> bool:
     if len(chu) <= NGUONG_TRA_LOI_WORD:
         return False
     if "```" in chu:
+        return False
+    # Lưới an toàn: chữ còn chuỗi base64 ảnh (bóc hỏng, hoặc nhà cung cấp trả
+    # kiểu lạ) thì ĐỪNG đóng Word — tệp .docx chứa base64 là rác thuần tuý, mà
+    # người dùng lại tưởng bot vừa gửi cho mình cái gì đó có ích. Đúng ca
+    # 04/09 13:38, xem `_boc_anh_nhung`.
+    if "data:image/" in chu:
+        logger.warning("zalop: bỏ đóng Word vì chữ còn ảnh base64 (%d ký tự)", len(chu))
         return False
     try:
         _serve_bytes(thread_id, thread_type,
@@ -3753,8 +3815,18 @@ def _process_ai(ev: dict) -> None:
             _phi_xin.danh_dau_neu_xin_anh(pkey, reply)
         except Exception:
             pass
+        # Ảnh nhúng trong chữ → tách ra gửi thành ẢNH (xem `_boc_anh_nhung`).
+        reply, _anh_nhung = _boc_anh_nhung(reply)
         image_url = out.get("image_url")
         image_urls = out.get("image_urls")
+        if _anh_nhung:
+            _co_san = ([str(u) for u in image_urls] if isinstance(image_urls, list)
+                       else ([str(image_url)] if image_url else []))
+            _gop = _co_san + _anh_nhung
+            if len(_gop) > 1:
+                image_urls, image_url = _gop, None
+            else:
+                image_urls, image_url = None, _gop[0]
         sent_media = False
         if isinstance(image_urls, list) and len(image_urls) > 1:
             # Nhiều ảnh → MỘT tin (album). Đây là lợi thế riêng của Zalo Cá Nhân:

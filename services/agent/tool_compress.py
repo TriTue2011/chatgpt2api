@@ -248,6 +248,28 @@ def co_menu_chon(text: str) -> bool:
     return bool(_MENU_RE.search(text or ""))
 
 
+#: Ảnh nhúng thẳng trong chữ (một số nhà cung cấp ảnh trả kiểu này thay vì đặt
+#: vào khoá `image_url`).
+_ANH_NHUNG_RE = re.compile(r"data:image/[a-z0-9.+-]+;base64,", re.I)
+
+
+def co_anh_nhung(text: str) -> bool:
+    """True khi text mang ẢNH base64 — tuyệt đối không được nén.
+
+    Base64 KHÔNG phải văn xuôi: cắt bớt cho ngắn là ảnh hỏng hẳn, không dựng lại
+    được, mà bản nén lại trông vẫn "có vẻ có ảnh".
+
+    Lỗi thật 04/09 13:38 (Zalo cá nhân): người dùng nhắn "Tạo ảnh em bé", ảnh
+    sinh ra xong bị nén cụt còn 3.945 ký tự base64 — độ dài không chia hết cho 4
+    nên giải mã lỗi. Kênh không thấy khoá `image_url` nên gửi chữ; chữ dài 4.124
+    ký tự nên rơi tiếp vào đường "đóng thành Word". Người dùng nhận một tệp
+    .docx chứa base64 hỏng thay vì tấm ảnh.
+
+    Cùng lý do `co_menu_chon` tồn tại: có những khối chữ mà nén là phá.
+    """
+    return bool(_ANH_NHUNG_RE.search(text or ""))
+
+
 def compress(
     text: str,
     *,
@@ -258,6 +280,8 @@ def compress(
         return text or ""
     raw = text or ""
     if co_menu_chon(raw):
+        return raw
+    if co_anh_nhung(raw):
         return raw
     if len(raw.encode("utf-8", errors="replace")) < min_bytes():
         return raw
