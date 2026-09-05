@@ -23,6 +23,7 @@ model tải một lần là giữ qua mọi lần update container.
 | **NghiTTS** | 19 giọng tiếng Việt (22 kHz, Bắc + Nam bộ) — tải từng giọng, mỗi giọng ~64 MB | `data/nghitts` | `download_nghitts_voices.py` |
 | **Zipformer tiếng Việt** | STT — nghe tin nhắn thoại tiếng Việt | `data/stt` | `download_stt_model.py` |
 | **Parakeet-TDT 0.6B v2** | STT — nghe **tiếng Anh** (CPU, nhanh hơn Whisper) | `data/stt-en` | `download_stt_en_model.py` |
+| **Silero VAD** | Dò giọng nói — bỏ quãng lặng trước khi nghe (629 KB) | `data/vad` | `download_silero_vad.py` |
 
 ### 1.1. Tải model trên server (Docker)
 
@@ -31,6 +32,7 @@ model tải một lần là giữ qua mọi lần update container.
 # DÙNG /app/.venv/bin/python (python hệ thống thiếu thư viện):
 docker exec c2a /app/.venv/bin/python /app/scripts/download_stt_model.py --hf   # STT tiếng Việt
 docker exec c2a /app/.venv/bin/python /app/scripts/download_stt_en_model.py     # STT tiếng Anh
+docker exec c2a /app/.venv/bin/python /app/scripts/download_silero_vad.py      # VAD (không bắt buộc)
 
 # NghiTTS — xem danh mục rồi tải riêng từng giọng muốn dùng (đừng tải cả 19,
 # hết 1,2 GB mà thường chỉ dùng một hai giọng).

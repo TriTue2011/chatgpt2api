@@ -119,12 +119,25 @@ def _doc_wav(duong: str):
 
 
 def _khung_co_tieng(mau, rate: int):
-    """Mặt nạ năng lượng 100 ms dùng chung cho nghe và soát độ phủ GPU."""
+    """Mặt nạ 100 ms dùng chung cho nghe và soát độ phủ GPU.
+
+    Ưu tiên Silero VAD (mạng nơ-ron) vì ngưỡng năng lượng bên dưới nhận nhầm
+    tiếng ồn đều và to là tiếng nói, đồng thời cắt mất giọng nhỏ trong bản thu
+    ồn. Chưa tải model thì dùng năng lượng như cũ — không có model, mọi thứ vẫn
+    chạy y hệt trước đây.
+    """
     import numpy as np
 
     khung = int(rate * 0.1)
     if len(mau) < khung:
         return None, khung
+    try:
+        from services.voice import vad_silero
+        noi_vad = vad_silero.mat_na_khung(mau, rate, 0.1)
+    except Exception:
+        noi_vad = None
+    if noi_vad is not None:
+        return noi_vad, khung
     n = len(mau) // khung
     rms = np.sqrt((mau[: n * khung].reshape(n, khung) ** 2).mean(axis=1))
     # Hai chốt chặn cho hai kiểu tệp cực đoan: "nhân 3 nền ồn" chết ở tệp NÓI

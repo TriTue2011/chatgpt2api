@@ -55,6 +55,9 @@ KOKORO_DIR = Path(DATA_DIR) / "kokoro"   # Kokoro-82M (TTS tiếng Anh)
 KOKORO_ZH_DIR = Path(DATA_DIR) / "kokoro-zh"     # Kokoro đa ngữ v1.1 (100 giọng Trung)
 SUPERTONIC_DIR = Path(DATA_DIR) / "supertonic"   # Supertonic-3 (31 tiếng, dùng ja/ko)
 NGHI_DIR = Path(DATA_DIR) / "nghitts"    # 19 giọng NghiTTS (VITS tiếng Việt)
+#: Silero VAD — dò giọng nói bằng mạng nơ-ron, dùng chung cho phần nghe
+#: video và tin nhắn thoại. Tải bằng scripts/download_silero_vad.py.
+VAD_DIR = Path(DATA_DIR) / "vad"
 MEDIA_DIR = Path(DATA_DIR) / "voice" / "media"
 # Manifest 19 giọng (nằm TRONG image — chỉ là danh mục, không phải model).
 VOICES_MANIFEST = Path(BASE_DIR) / "voices" / "piper" / "voices.json"
@@ -861,6 +864,16 @@ def stt_model_dir() -> Path | None:
     if not list(base.glob("encoder*.onnx")):
         return None
     return base
+
+
+def vad_model_path() -> Path | None:
+    """File silero_vad.onnx trên volume, hoặc None nếu chưa tải.
+
+    Không có model thì phần nghe tự lùi về cắt đoạn theo năng lượng, nên đây là
+    tính năng CỘNG THÊM chứ không phải điều kiện để chạy.
+    """
+    p = VAD_DIR / "silero_vad.onnx"
+    return p if p.is_file() else None
 
 
 def stt_language() -> str:

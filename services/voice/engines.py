@@ -1289,6 +1289,14 @@ def transcribe(audio: bytes, src_hint: str = "", lang: str = "") -> str:
     else:
         lang = "vi"
     wav16 = to_wav_16k_mono(audio, src_hint)
+    # Bỏ quãng không có tiếng trước khi nghe: tin nhắn thoại hay có vài giây im
+    # lặng đầu/cuối, và chính chỗ lặng dài là nơi mọi bộ nghe bịa chữ. Chưa tải
+    # model VAD thì hàm này trả nguyên bản.
+    try:
+        from services.voice import vad_silero
+        wav16 = vad_silero.cat_im_lang_wav(wav16)
+    except Exception as exc:
+        logger.debug("voice: bỏ qua VAD: %s", str(exc)[:80])
     if lang == "auto":
         # Local auto: thử theo nhóm tiếng của tính năng tin nhắn thoại (14/08 —
         # trước đây cứng vi rồi en). Thứ tự giữ vi trước: máy ưu tiên tiếng Việt.
