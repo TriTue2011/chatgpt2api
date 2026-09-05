@@ -2931,9 +2931,11 @@ def _do_photo_request(
             reply = _ltd.luu_ngay("zalop", str(thread_id), tep=_tam, ten_tep=_ten,
                                   user=str(user_id or ""))
             send_message(thread_id, reply, thread_type)
-            # Ghi vào MỤC LỤC để sau "gửi ảnh thuốc" tìm lại được (việc phụ).
-            _phi.luu_vao_muc_luc(file_data, user_id=str(user_id or ""),
-                                 ten=_ten, channel="zalop")
+            # Lưu bản gửi-lại-được rồi HỎI mô tả để ghi mục lục (chờ câu sau).
+            _hoi_ml = _phi.luu_vao_muc_luc(file_data, user_id=str(user_id or ""),
+                                           ten=_ten, channel="zalop")
+            if _hoi_ml:
+                send_message(thread_id, _hoi_ml, thread_type)
             return
 
         if it == _phi.GENERATE:
@@ -3306,6 +3308,21 @@ def _process_ai(ev: dict) -> None:
     # lời của A — B cướp mất lượt mà không ai biết, và A trả lời sau thì bản chờ
     # đã bị lấy đi rồi. Chờ là chờ theo từng người (chủ máy chốt 05/08).
     # `pkey` đã tính ở trên, ngay trước cổng tag — cổng đó cần tra bản chờ.
+
+    # MỤC LỤC: câu này có phải trả lời bước HỎI-mô-tả (vừa Lưu kho) hay CHỌN-số
+    # (vừa tìm ra nhiều ảnh) không? Xét TRƯỚC các bản chờ khác vì một con số ("1")
+    # dễ bị menu ảnh/pdf nuốt.
+    if text:
+        from services.agent import so_da_luu as _sdl
+        _ml = _sdl.xu_ly_tra_loi(str(ev.get("sender_id") or ""), text)
+        if _ml is not None:
+            _mlu = _ml.get("image_url")
+            if _mlu and _send_photo_robust(thread_id, str(_mlu),
+                                           _ml.get("text") or "", thread_type,
+                                           account=str(ev.get("account_id") or "")):
+                return
+            send_message(thread_id, _ml.get("text") or "", thread_type)
+            return
 
     # Dịch chờ: menu chọn kiểu kết quả + tiếng đích (chữ / link / tệp video /
     # tệp phụ đề). Xét TRƯỚC bản chờ PDF vì hai sổ chờ dùng cùng khoá phiên và

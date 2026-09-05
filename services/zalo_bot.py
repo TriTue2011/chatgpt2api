@@ -1596,8 +1596,10 @@ def _do_photo_request(
             _tam = _ltd.luu_vao_thu_muc_lam_viec(_ten, file_data)
             send_message(chat_id, _ltd.luu_ngay("zalo", str(chat_id), tep=_tam,
                                                 ten_tep=_ten, user=str(user_id or "")))
-            _phi.luu_vao_muc_luc(file_data, user_id=str(user_id or ""),
-                                 ten=_ten, channel="zalo")
+            _hoi_ml = _phi.luu_vao_muc_luc(file_data, user_id=str(user_id or ""),
+                                           ten=_ten, channel="zalo")
+            if _hoi_ml:
+                send_message(chat_id, _hoi_ml)
             return
 
         if it == _phi.GENERATE:
@@ -2190,6 +2192,18 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
     # muốn làm gì, B nói câu bất kỳ là câu đó bị nhận làm trả lời của A. Chờ là
     # chờ theo từng người (chủ máy chốt 05/08).
     _pkey = f"zalo:{_bot_id()}:{chat_id}:{user_id or ''}"
+    # MỤC LỤC: trả lời bước HỎI-mô-tả (vừa Lưu kho) hay CHỌN-số (vừa tìm nhiều)?
+    if text and chat_id:
+        from services.agent import so_da_luu as _sdl
+        _ml = _sdl.xu_ly_tra_loi(str(user_id or ""), text)
+        if _ml is not None:
+            _mlu = _ml.get("image_url")
+            if _mlu and send_photo(chat_id, str(_mlu),
+                                   (_ml.get("text") or "")[:1000]).get("ok"):
+                return
+            send_message(chat_id, _ml.get("text") or "")
+            return
+
     from services.yeu_cau_moi import nen_dong_ban_cho as _nen_dong
     _pdf_cho = _pi.get_pending(_pkey) if (text and chat_id) else None
     if _pdf_cho and _nen_dong(text, str(_pdf_cho.get("stage") or "")):

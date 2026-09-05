@@ -3443,26 +3443,26 @@ def _h_tim_da_luu(args: dict, ctx: dict) -> dict:
     if not mo_ta:
         return {"text": "Anh/chị muốn tìm lại thứ gì ạ? Cho em vài từ mô tả nhé "
                         "(ví dụ «ảnh thuốc», «tài liệu hợp đồng»)."}
-    kq = so_da_luu.tim(uid, mo_ta, kind=kind, so=3)
+    kq = so_da_luu.tim(uid, mo_ta, kind=kind, so=8)
     if not kq:
         return {"text": f"Em chưa thấy thứ nào đã lưu khớp «{mo_ta}» ạ. Em chỉ "
                         "tìm được thứ anh/chị đã bấm «☁️ Lưu kho» trước đó thôi."}
-    anh = [m for m in kq if m.get("kind") == so_da_luu.KIND_ANH and m.get("ref")]
-    if anh:
-        urls = [str(m["ref"]) for m in anh]
-        cap = str(anh[0].get("mo_ta") or anh[0].get("ten") or "ảnh đã lưu")[:120]
-        if len(urls) == 1:
-            return {"text": f"Đây ạ — {cap} 🖼️", "image_url": urls[0]}
-        return {"text": f"{len(urls)} ảnh khớp «{mo_ta}» ạ.", "image_urls": urls}
-    dong = [f"Em tìm thấy {len(kq)} mục đã lưu khớp «{mo_ta}» ạ:"]
-    for m in kq:
-        nhan = str(m.get("ten") or m.get("mo_ta") or "tài liệu")[:80]
-        ref = str(m.get("ref") or "")
-        if ref.startswith(("http://", "https://")):
-            dong.append(f"• {nhan} — {ref}")
-        else:
-            dong.append(f"• {nhan} (đã lưu trên kho đám mây)")
-    return {"text": "\n".join(dong)}
+    # Đúng MỘT kết quả → gửi luôn.
+    if len(kq) == 1:
+        m = kq[0]
+        nhan = str(m.get("mo_ta") or m.get("ten") or "đã lưu")[:120]
+        if m.get("kind") == so_da_luu.KIND_ANH and str(m.get("ref") or "").startswith(("http://", "https://")):
+            return {"text": f"Đây ạ — {nhan} 🖼️", "image_url": str(m["ref"])}
+        return {"text": f"• {nhan} (đã lưu trên kho đám mây)"}
+    # NHIỀU kết quả → cho CHỌN số (chủ máy chốt: không gửi tất cả). Câu trả lời
+    # số được kênh bắt qua so_da_luu.xu_ly_tra_loi → gửi đúng mục.
+    so_da_luu.dat_cho_chon(uid, kq)
+    dong = [f"Có {len(kq)} mục khớp «{mo_ta}» — anh/chị trả lời SỐ để em gửi ạ:"]
+    for i, m in enumerate(kq, 1):
+        nhan = str(m.get("mo_ta") or m.get("ten") or "đã lưu")[:70]
+        icon = "🖼️" if m.get("kind") == so_da_luu.KIND_ANH else "📄"
+        dong.append(f"{i}. {icon} {nhan}")
+    return {"text": "\n".join(dong), "deliver_now": True}
 
 
 def _h_theo_doi_chu_de(args: dict, ctx: dict) -> dict:

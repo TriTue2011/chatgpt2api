@@ -151,3 +151,91 @@ def liet_ke(user_id: str, *, kind: str = "", so: int = 20) -> list[dict]:
     if kind:
         ds = [m for m in ds if str(m.get("kind")) == kind]
     return ds[: max(1, so)]
+
+
+# ── Trạng thái HỎI-KHI-LƯU và CHỌN-KHI-TÌM (trong RAM, ngắn hạn) ────────────
+# Chủ máy chốt: lúc lưu thì HỎI mô tả (cho bỏ qua); lúc tìm nhiều thì cho CHỌN,
+# không gửi tất cả. Hai trạng thái này sống theo người, TTL ngắn; mất (restart)
+# thì chỉ lỡ một lượt hỏi/chọn, không hại dữ liệu.
+_CHO_TTL = 600.0
+_cho_mo_ta: dict[str, dict] = {}     # user → {ref, ten, kind, ts}
+_cho_chon: dict[str, dict] = {}      # user → {items:[{ref,mo_ta,kind,ten}], ts}
+
+
+def _tuoi_ok(rec: dict | None) -> bool:
+    return bool(rec) and (time.time() - float(rec.get("ts", 0)) <= _CHO_TTL)
+
+
+def dat_cho_mo_ta(user_id: str, *, ref: str, ten: str = "",
+                  kind: str = KIND_ANH) -> None:
+    """Vừa lưu một thứ, đang CHỜ người dùng nhập mô tả để ghi mục lục."""
+    uid = str(user_id or "").strip()
+    if uid and ref:
+        _cho_mo_ta[uid] = {"ref": ref, "ten": ten, "kind": kind, "ts": time.time()}
+
+
+def dat_cho_chon(user_id: str, items: list[dict]) -> None:
+    """Tìm ra NHIỀU mục, đang CHỜ người dùng chọn số để gửi."""
+    uid = str(user_id or "").strip()
+    if uid and items:
+        _cho_chon[uid] = {"items": list(items)[:9], "ts": time.time()}
+
+
+def _la_bo_qua(text: str) -> bool:
+    return _fold(text) in {
+        "thoi", "bo", "bo qua", "khong", "khong can", "huy", "thoi khoi",
+        "khoi", "skip", "k", "ko",
+    }
+
+
+def xu_ly_tra_loi(user_id: str, text: str) -> dict | None:
+    """Câu này có phải trả lời cho bước HỎI-mô-tả / CHỌN-số của mục lục không?
+
+    Trả None nếu không liên quan (để kênh xử lý bình thường). Ngược lại trả
+    ``{"text": ..., ["image_url": ...]}`` để kênh gửi — và đã dọn trạng thái."""
+    uid = str(user_id or "").strip()
+    t = str(text or "").strip()
+    if not uid or not t:
+        return None
+
+    # (1) Đang chờ CHỌN số sau khi tìm ra nhiều mục.
+    rec = _cho_chon.get(uid)
+    if _tuoi_ok(rec):
+        import re as _re
+        m = _re.match(r"^\s*(\d{1,2})\b", t)
+        if m:
+            i = int(m.group(1)) - 1
+            items = rec.get("items") or []
+            if 0 <= i < len(items):
+                _cho_chon.pop(uid, None)
+                muc = items[i]
+                nhan = str(muc.get("mo_ta") or muc.get("ten") or "đã lưu")[:120]
+                if muc.get("kind") == KIND_ANH:
+                    return {"text": f"Đây ạ — {nhan} 🖼️", "image_url": str(muc.get("ref"))}
+                return {"text": f"• {nhan} (đã lưu trên kho đám mây)"}
+        # Không phải một con số hợp lệ → thôi chờ chọn, để câu đi tiếp bình thường.
+        _cho_chon.pop(uid, None)
+
+    # (2) Đang chờ MÔ TẢ sau khi vừa lưu.
+    rec = _cho_mo_ta.get(uid)
+    if _tuoi_ok(rec):
+        from services.yeu_cau_moi import la_yeu_cau_moi
+        # Câu là yêu cầu MỚI (có động từ ra lệnh) → không phải mô tả: lưu theo tên
+        # rồi để câu đi tiếp.
+        if la_yeu_cau_moi(t):
+            _cho_mo_ta.pop(uid, None)
+            ghi(uid, ref=str(rec.get("ref")), kind=str(rec.get("kind") or KIND_ANH),
+                mo_ta="", ten=str(rec.get("ten") or ""), tu_khoa=str(rec.get("ten") or ""))
+            return None
+        _cho_mo_ta.pop(uid, None)
+        if _la_bo_qua(t):
+            ghi(uid, ref=str(rec.get("ref")), kind=str(rec.get("kind") or KIND_ANH),
+                mo_ta="", ten=str(rec.get("ten") or ""), tu_khoa=str(rec.get("ten") or ""))
+            return {"text": "Vâng, em lưu rồi ạ (tìm lại theo tên tệp cũng được)."}
+        ghi(uid, ref=str(rec.get("ref")), kind=str(rec.get("kind") or KIND_ANH),
+            mo_ta=t, ten=str(rec.get("ten") or ""), tu_khoa=str(rec.get("ten") or ""))
+        goi = t.split()[0] if t.split() else "…"
+        return {"text": f"Đã ghi vào mục lục: «{t[:80]}» ✅ Sau anh/chị nhắn "
+                        f"«gửi ảnh {goi}» là em tìm ra ạ."}
+
+    return None

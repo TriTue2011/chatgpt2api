@@ -753,17 +753,17 @@ def ingest_teacher_from_photo(
 
 
 def luu_vao_muc_luc(image_bytes: bytes, *, user_id: str, ten: str = "",
-                    channel: str = "") -> bool:
-    """Ghi ảnh người dùng vừa LƯU vào MỤC LỤC để sau tìm lại theo mô tả.
+                    channel: str = "") -> str:
+    """Vừa LƯU ảnh → giữ một bản gửi-lại-được rồi HỎI mô tả để ghi mục lục.
 
-    Lưu một bản vào images_dir (gateway phục vụ → URL gửi lại được ở mọi kênh),
-    sinh MÔ TẢ ngắn bằng vision (để "gửi ảnh thuốc" tra ra dù tên tệp không có
-    chữ "thuốc"), rồi ghi `so_da_luu`. Việc PHỤ của luồng «Lưu kho» — mọi lỗi
-    nuốt, không chặn xác nhận đã lưu."""
+    Chủ máy chốt: KHÔNG tự sinh caption nữa — HỎI người dùng đặt tên/mô tả (cho
+    bỏ qua). Lưu một bản vào images_dir (gateway phục vụ → URL gửi lại được ở mọi
+    kênh), đặt trạng thái CHỜ-mô-tả trong `so_da_luu`, rồi trả CÂU HỎI để kênh
+    gửi tiếp. Trả "" nếu không giữ được ảnh (khi đó bỏ qua bước hỏi)."""
     try:
         uid = str(user_id or "").strip()
         if not uid:
-            return False
+            return ""
         from services.agent import so_da_luu
         from services.image_utils import normalize
         from services.protocol.conversation import save_image_bytes
@@ -779,21 +779,15 @@ def luu_vao_muc_luc(image_bytes: bytes, *, user_id: str, ten: str = "",
                     or str(c.get("telegram_webhook_url") or "").strip()).rstrip("/") \
                 or gateway_base_url()
             url = base + (url if str(url).startswith("/") else "/" + str(url))
-        mo_ta = ""
-        try:
-            mo_ta = analyze_photo(
-                image_bytes,
-                "Mô tả NGẮN GỌN trong 1 câu để TÌM LẠI ảnh này sau: vật/người/chủ "
-                "đề chính và chữ nổi bật nếu có. Chỉ ghi mô tả, không mở đầu.",
-                channel=channel, neo_tieng_viet=True, max_tokens=120,
-            ).strip()[:300]
-        except Exception as exc:
-            logger.debug("luu_vao_muc_luc: bỏ caption: %s", exc)
-        return so_da_luu.ghi(uid, ref=str(url), kind=so_da_luu.KIND_ANH,
-                             mo_ta=mo_ta, ten=ten, tu_khoa=ten)
+        if not url:
+            return ""
+        so_da_luu.dat_cho_mo_ta(uid, ref=str(url), ten=ten,
+                                kind=so_da_luu.KIND_ANH)
+        return ("📝 Anh/chị đặt TÊN/MÔ TẢ cho ảnh này để sau tìm lại nhé "
+                "(ví dụ «thuốc Concor», «ảnh con trai») — gõ «thôi» nếu không cần ạ.")
     except Exception as exc:
         logger.warning("luu_vao_muc_luc: %s", str(exc)[:150])
-        return False
+        return ""
 
 
 def them_luu_online(intents: set[str], kenh: str, chat: str, *,
