@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import {
   ArrowLeft,
@@ -10,7 +9,6 @@ import {
   Files,
   KeyRound,
   LoaderCircle,
-  ServerCog,
   Upload,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -123,7 +121,6 @@ function MethodCard({
 }
 
 export function AccountImportDialog({ disabled, onImported }: AccountImportDialogProps) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [method, setMethod] = useState<ImportMethod>("menu");
   const [tokenInput, setTokenInput] = useState("");
@@ -1236,16 +1233,6 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
           onClick={() => setMethod("cpa")}
         />
         <MethodCard
-          title="Nhập từ máy chủ CPA từ xa"
-          description="Vào trang cài đặt để cấu hình máy chủ CPA từ xa trước khi thực hiện nhập."
-          icon={Files}
-          onClick={() => {
-            setOpen(false);
-            resetState();
-            router.push("/settings");
-          }}
-        />
-        <MethodCard
           title="Nhập OAuth Token (9router)"
           description="Dán Codex OAuth token từ backup 9router. Gọi thẳng OpenAI API — không giới hạn 24KB."
           icon={KeyRound}
@@ -1280,22 +1267,6 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
           description="Tương tự nhưng dùng mã 6 số từ Google Authenticator. Khi cần mã, ô nhập sẽ sáng đèn."
           icon={KeyRound}
           onClick={() => setMethod("multi_auth")}
-        />
-        <MethodCard
-          title="Lấy token tạo ảnh"
-          description="Mở chatgpt.com — đăng nhập → copy JSON → paste vào mục Session JSON ở trên."
-          icon={KeyRound}
-          onClick={() => window.open("https://chatgpt.com/api/auth/session", "_blank")}
-        />
-        <MethodCard
-          title="Nhập từ máy chủ Sub2API"
-          description="Vào trang cài đặt để cấu hình máy chủ Sub2API, sau đó chọn tài khoản OpenAI để nhập."
-          icon={ServerCog}
-          onClick={() => {
-            setOpen(false);
-            resetState();
-            router.push("/settings");
-          }}
         />
       </div>
     );
