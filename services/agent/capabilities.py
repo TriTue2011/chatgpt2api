@@ -4582,6 +4582,11 @@ def _h_control_home(args: dict, ctx: dict) -> dict:
     command = str(args.get("command") or "").strip()
     if not command:
         return {"text": "Anh/chị muốn em điều khiển thiết bị gì ạ?"}
+    # Chụp trạng thái TRƯỚC khi ra lệnh để lát nữa còn đối chiếu. Pipeline HA
+    # trả "đã thực hiện xong" kể cả khi thiết bị mất kết nối hay khớp nhầm sang
+    # thực thể khác, nên lời nó nói không đủ để bot khẳng định với người dùng.
+    from services import ha_xac_minh as _hxm
+    _truoc = _hxm.chup()
     resp = call_model(_ha_model(), [{"role": "user", "content": command}],
                       timeout=60, allow_fastpath=True)
     if resp.get("error"):
@@ -4590,7 +4595,18 @@ def _h_control_home(args: dict, ctx: dict) -> dict:
     # Return the raw HA result as DATA (not the final reply) so the orchestrator
     # loop lets the model phrase it warmly ("Dạ em bật đèn phòng khách rồi ạ 😊")
     # instead of echoing the pipeline's canned "Đã thực hiện xong lệnh...".
-    return {"text": f"[kết quả từ hệ thống nhà cho lệnh '{command}']: {raw or 'đã gửi lệnh'}"}
+    do_duoc = _hxm.mo_ta(_hxm.doi_chieu(_truoc))
+    if do_duoc:
+        raw = f"{raw or 'đã gửi lệnh'} — {do_duoc}"
+    elif _truoc:
+        # Đọc được trạng thái nhà mà không thiết bị nào đổi: nói thẳng là chưa
+        # thấy đổi, đừng để model khẳng định "em bật rồi ạ" cho một cái đèn vẫn
+        # đang tắt. Thiết bị vốn đã đúng trạng thái cũng rơi vào đây, nên câu
+        # phải nêu cả hai khả năng chứ không kết luận là lỗi.
+        raw = (f"{raw or 'đã gửi lệnh'} — đọc lại trạng thái nhà thì CHƯA thiết bị "
+               "nào đổi: hoặc thiết bị vốn đã ở đúng trạng thái đó, hoặc lệnh "
+               "chưa ăn. Nói đúng điều này, đừng khẳng định là đã đổi.")
+    return {"text": f"[kết quả từ hệ thống nhà cho lệnh '{command}']: {raw}"}
 
 
 _REMOTE_CMDS = [
