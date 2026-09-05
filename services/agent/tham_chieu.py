@@ -170,6 +170,20 @@ def doan(user_id: str, user_text: str, hist: list[dict[str, Any]] | None,
             ung_vien.append(f"(em (bot)) {gan[:_cat]}")
 
     if not ung_vien:
+        # Mệnh lệnh trống tân ngữ ("dịch sang tiếng anh") mà KHÔNG tìm được tin
+        # nào để xử lý — thường vì người dùng trích một tin em không lưu (Zalo
+        # Bot không gửi trích dẫn, và thông báo admin không nằm trong lịch sử).
+        # Không có guard này thì model DỊCH CHÍNH câu lệnh: "dịch sang tiếng
+        # anh" → "Translate into English" (đo Zalo Bot 05/09). Bắt nó HỎI LẠI.
+        if _lenh_trong_tan_ngu(user_text):
+            return (
+                "\n\n## Người dùng muốn xử lý một tin nhưng em KHÔNG thấy nội dung\n"
+                "Câu này là mệnh lệnh (dịch/tóm tắt/giải thích…) nhưng em không có "
+                "nội dung nào để xử lý — có thể họ trích một tin em không lưu. "
+                "TUYỆT ĐỐI đừng dịch/xử lý chính câu lệnh này ('dịch sang tiếng "
+                "anh' KHÔNG được thành 'Translate into English'). Hãy HỎI LẠI một "
+                "câu ngắn: «Anh/chị muốn em dịch/xử lý nội dung nào ạ? Gửi lại "
+                "giúp em nội dung đó nhé.»")
         return ""
 
     than = "\n".join(f"- {u}" for u in ung_vien)[:budget]

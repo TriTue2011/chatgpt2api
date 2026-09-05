@@ -174,5 +174,33 @@ class GiuTronTinKhiLenhTrongTests(unittest.TestCase):
         self.assertLess(len(ra), 700, "nới cả nhánh đoán thì tốn token mỗi lượt")
 
 
+class LenhTrongKhongCoNoiDungTests(unittest.TestCase):
+    """Lệnh trống tân ngữ mà không tìm được tin nào → HỎI LẠI, đừng dịch câu lệnh.
+
+    Zalo Bot 05/09: người dùng trích một THÔNG BÁO ADMIN ('ChatGPT free: …') rồi
+    gõ 'Dịch sang tiếng anh'. Zalo Bot không gửi trích dẫn, và thông báo admin
+    không nằm trong lịch sử hội thoại → không đoán được. Bot dịch CHÍNH câu lệnh:
+    'Dịch sang tiếng anh' → 'Translate into English'. Guard bắt nó hỏi lại.
+    """
+
+    def test_khong_co_lich_su_thi_bao_hoi_lai(self):
+        from services.agent import tham_chieu as tc
+        r = tc.doan("u", "Dịch sang tiếng anh", [])
+        self.assertIn("HỎI LẠI", r)
+        self.assertIn("đừng dịch", r.lower())
+        self.assertIn("Translate into English", r)   # nêu đúng cái KHÔNG được làm
+
+    def test_co_tin_bot_thi_van_doan_nhu_cu(self):
+        from services.agent import tham_chieu as tc
+        r = tc.doan("u", "dịch sang tiếng anh",
+                    [{"role": "assistant", "content": "Tin cháy ở Lê Quang Đạo"}])
+        self.assertIn("Lê Quang Đạo", r)
+        self.assertIn("PHỎNG ĐOÁN", r)
+
+    def test_cau_thuong_van_rong(self):
+        from services.agent import tham_chieu as tc
+        self.assertEqual(tc.doan("u", "xin chào em", []), "")
+
+
 if __name__ == "__main__":
     unittest.main()
