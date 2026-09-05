@@ -187,6 +187,15 @@ def doan(user_id: str, user_text: str, hist: list[dict[str, Any]] | None,
         return ""
 
     than = "\n".join(f"- {u}" for u in ung_vien)[:budget]
+    # Chỉ dặn "thực hiện lệnh trên nội dung" khi câu ĐÚNG là mệnh lệnh — với câu
+    # đại từ trỏ ("cái này sao rồi") thì lời dặn này thừa và tốn token mỗi lượt.
+    dan_lenh = ""
+    if _lenh_trong_tan_ngu(user_text):
+        dan_lenh = (
+            " Câu này là MỆNH LỆNH (dịch/tóm tắt/giải thích…) → THỰC HIỆN nó "
+            "TRÊN nội dung đoán được ở trên; 'dịch sang tiếng anh' = dịch NỘI "
+            "DUNG đó, TUYỆT ĐỐI đừng dịch chính câu lệnh ('dịch sang tiếng anh' "
+            "KHÔNG được thành 'Translate into English').")
     return (
         "\n\n## Có thể người dùng đang nhắc tới (PHỎNG ĐOÁN)\n"
         + than
@@ -194,4 +203,5 @@ def doan(user_id: str, user_text: str, hist: list[dict[str, Any]] | None,
           "Nếu nó khớp câu hỏi thì trả lời thẳng dựa vào đó; nếu thấy KHÔNG "
           "liên quan thì ĐỪNG bịa — hỏi lại một câu ngắn «anh/chị đang nhắc "
           "tới điều gì ạ?»."
+        + dan_lenh
     )

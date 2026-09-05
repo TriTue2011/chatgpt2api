@@ -2948,7 +2948,11 @@ def _orchestrate_locked(user_text: str, user_id: str,
             + str(trich_dan).strip()[:_TRICH_DAN_MAX]
             + "\n\nCâu của họ ở lượt này nói VỀ đoạn trích trên: "
               "\"cái này\", \"vụ đó\", \"chỗ đó\" là trỏ vào đó. "
-              "Đừng hỏi lại họ đang nhắc tới gì."
+              "Đừng hỏi lại họ đang nhắc tới gì. Nếu câu là MỆNH LỆNH "
+              "(dịch/tóm tắt/giải thích/viết lại…) thì THỰC HIỆN mệnh lệnh đó "
+              "TRÊN nội dung đoạn trích — 'dịch sang tiếng anh' = dịch ĐOẠN "
+              "TRÍCH sang tiếng Anh, TUYỆT ĐỐI đừng dịch/xử lý chính câu lệnh "
+              "('dịch sang tiếng anh' KHÔNG được thành 'Translate into English')."
         )
     else:
         # Không có trích dẫn thật từ nền tảng (vd Zalo Bot không gửi) mà câu lại

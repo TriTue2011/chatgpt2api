@@ -131,6 +131,25 @@ class LenhTrongTanNguTests(unittest.TestCase):
         hist = [{"role": "assistant", "content": "abc"}]
         self.assertEqual(tc.doan("u-test", "xin chào em", hist), "")
 
+    def test_lenh_trong_dan_THUC_HIEN_tren_noi_dung_khong_dich_cau_lenh(self):
+        """Đo 05/09 (cả 2 kênh): "Dịch sang tiếng anh" trên tin được nhắc bị dịch
+        CHÍNH câu lệnh → "Translate into English". Khối phỏng đoán phải dặn model
+        THỰC HIỆN lệnh TRÊN nội dung, kèm ví dụ phủ định."""
+        from services.agent import tham_chieu as tc
+        hist = [{"role": "assistant", "content": "U20 Việt Nam đi tiếp trong trường hợp nào?"}]
+        ra = tc.doan("u-test", "dịch sang tiếng Anh", hist)
+        self.assertIn("THỰC HIỆN", ra)
+        self.assertIn("Translate into English", ra, "phải có ví dụ phủ định")
+
+    def test_khoi_trich_dan_that_orchestrator_co_chi_dan_menh_lenh(self):
+        """Kênh cá nhân có TRÍCH DẪN THẬT: khối chèn trich_dan trong orchestrator
+        cũng phải dặn thực hiện mệnh lệnh trên đoạn trích (không dịch câu lệnh)."""
+        from pathlib import Path
+        src = (Path(__file__).resolve().parents[1]
+               / "services/agent/orchestrator.py").read_text(encoding="utf-8")
+        self.assertIn("Translate into English", src)
+        self.assertIn("THỰC HIỆN mệnh lệnh", src)
+
 
 class GiuTronTinKhiLenhTrongTests(unittest.TestCase):
     """Mệnh lệnh trống tân ngữ thì phải đưa TRỌN tin cho model, không cắt.
