@@ -161,7 +161,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         {/* Glass top header — viền dưới gold */}
         <header
-          className="glass-strong sticky top-0 z-30 h-14 flex items-center justify-between px-4 sm:px-6 !rounded-none"
+          className="glass-strong sticky top-0 z-30 h-14 flex items-center justify-between gap-3 px-4 sm:px-5 lg:px-6 xl:px-8 !rounded-none"
           style={{ borderBottom: "1px solid color-mix(in srgb, var(--primary) 18%, transparent)" }}
         >
           <div className="flex items-center gap-3 min-w-0">
@@ -233,7 +233,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </header>
 
         {/* Page content — chừa chỗ cho bottom-nav trên mobile */}
-        <main className="flex-1 min-w-0 p-4 sm:p-6 pb-20 lg:pb-6">{children}</main>
+        {/* Bề ngang có TRẦN: trên màn 27 inch mà để nội dung kéo hết chiều
+            ngang thì mỗi dòng dài cả gang tay, đọc phải quét mắt ngang. Đệm
+            tăng dần theo khổ màn thay vì nhảy một nấc ở sm. */}
+        <main className="flex-1 min-w-0 pb-20 lg:pb-6">
+          <div className="mx-auto w-full max-w-[1600px] p-4 sm:p-5 lg:p-6 xl:p-8">
+            {children}
+          </div>
+        </main>
       </div>
 
       {/* Bottom nav — mobile only, 5 mục hot, active gold */}

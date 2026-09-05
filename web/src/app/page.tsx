@@ -49,10 +49,12 @@ const PERIODS = [
   { value: "60d", label: "60D" },
 ];
 
-// Gold-first palette for provider series (brand đen–xanh + vàng kim)
+// Bảng màu chuỗi biểu đồ. Đi qua token nên tự đổi theo chủ đề: bản cũ ghi cứng
+// toàn màu dành cho nền tối — trong đó có #e8eef7 gần trắng — nên ở chủ đề sáng
+// mấy chuỗi đó mất hút trên thẻ trắng.
 const NEON_COLORS = [
-  "#D4AF37", "#38bdf8", "#34d399", "#f87171",
-  "#a78bfa", "#fbbf24", "#60a5fa", "#e8eef7",
+  "var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)",
+  "var(--chart-5)", "var(--chart-6)", "var(--chart-7)", "var(--chart-8)",
 ];
 
 // Granularity modes for the Provider Usage chart
@@ -511,7 +513,7 @@ export default function DashboardPage() {
                 <Bar
                   dataKey={dailyMode === "tokens" ? "tokens" : "requests"}
                   name={dailyMode === "tokens" ? "Tokens" : "Requests"}
-                  fill="#D4AF37"
+                  fill="var(--chart-1)"
                   radius={[4, 4, 0, 0]}
                   maxBarSize={28}
                 />

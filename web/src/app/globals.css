@@ -106,11 +106,15 @@
   --tone-info: var(--neon-magenta);
   --tone-ok: var(--neon-lime);
   --tone-warn: var(--neon-amber);
+  /* Bảng biểu đồ: 8 chuỗi, mỗi màu ≥3:1 trên thẻ (WCAG 1.4.11 cho đồ hoạ). */
   --chart-1: #7a5c12;
   --chart-2: #0369a1;
   --chart-3: #0f7a54;
   --chart-4: #5b21b6;
   --chart-5: #92400e;
+  --chart-6: #9f1239;
+  --chart-7: #115e59;
+  --chart-8: #44474f;
   --sidebar: rgba(255, 255, 255, 0.92);
   --sidebar-foreground: #3f4756;
   --sidebar-primary: #7a5c12;
@@ -164,7 +168,10 @@
   --chart-2: #38bdf8;
   --chart-3: #34d399;
   --chart-4: #a78bfa;
-  --chart-5: #f87171;
+  --chart-5: #fbbf24;
+  --chart-6: #f87171;
+  --chart-7: #2dd4bf;
+  --chart-8: #94a3b8;
   --sidebar: rgba(5, 8, 15, 0.88);
   --sidebar-foreground: #b4c0d4;
   --sidebar-primary: #d4af37;
