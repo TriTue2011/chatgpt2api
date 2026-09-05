@@ -342,14 +342,20 @@ def _h_chi_duong(args: dict, ctx: dict) -> dict:
                         "(ví dụ: từ 114 Mai Hắc Đế đến CT4B X2 Bắc Linh Đàm)."}
 
     xac_nhan = bool(args.get("xac_nhan"))
+    # xac_nhan (bước sau) hiển nhiên đã qua bước chọn phương tiện → coi như đã chọn.
+    da_chon_pt = bool(args.get("da_chon_pt")) or xac_nhan
 
-    # Chưa biết phương tiện → HỎI (trừ khi chạy tự động theo lịch/autonomy).
-    if not phuong_tien and not ctx.get("auto_approve"):
+    # LUÔN hỏi phương tiện ở lượt đầu — chốt CỨNG, KỆ phuong_tien model tự điền.
+    # Model chỉ được đặt da_chon_pt=true khi câu chứa "(đã chọn phương tiện)" — dấu
+    # do CHÍNH menu này sinh ra (cùng cơ chế xac_nhan). Không có chốt này thì model
+    # tự đoán "xe máy" rồi bỏ qua bước hỏi (đo 05/09: "không hỏi phương tiện").
+    if not da_chon_pt and not ctx.get("auto_approve"):
         lines = [f'🗺️ Đi từ "{_mot_dong(diem_di)}" đến "{_mot_dong(diem_den)}" '
                  "— anh/chị đi bằng gì ạ?", "<<<ASK>>>"]
         for pt in cd.MENU_PHUONG_TIEN:
             lines.append(f"{_CHI_DUONG_EMOJI.get(pt, '')} {pt.capitalize()} | "
-                         f"chỉ đường từ {diem_di} đến {diem_den} bằng {pt}")
+                         f"chỉ đường từ {diem_di} đến {diem_den} bằng {pt} "
+                         "(đã chọn phương tiện)")
         lines.append("<<<END>>>")
         return {"text": "\n".join(lines), "deliver_now": True}
 
@@ -5434,6 +5440,12 @@ CAPABILITIES: dict[str, Capability] = {
                             "enum": ["xe máy", "ô tô", "đi bộ", "xe buýt"],
                             "description": "Phương tiện người dùng nêu; bỏ trống "
                                            "để hệ thống hỏi"},
+            "da_chon_pt": {"type": "boolean",
+                           "description": "Đặt true CHỈ KHI câu chứa '(đã chọn "
+                                          "phương tiện)' — dấu do menu phương tiện "
+                                          "sinh ra sau khi người dùng bấm. Lượt "
+                                          "ĐẦU (chưa có dấu đó) LUÔN để trống, kể cả "
+                                          "khi đoán được phương tiện."},
             "xac_nhan": {"type": "boolean",
                          "description": "Đặt true KHI người dùng đã XÁC NHẬN địa "
                                         "chỉ đúng (câu chứa '(đã xác nhận địa chỉ)' "

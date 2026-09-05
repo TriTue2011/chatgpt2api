@@ -242,7 +242,8 @@ class HandlerTests(unittest.TestCase):
         dv = {"ok": True, "tu": "Hoàng Thành Tower, 114 Mai Hắc Đế", "den": "Bắc Linh Đàm",
               "gan_dung": False, "link": "https://www.google.com/maps/dir/?api=1"}
         with patch("services.chi_duong.dinh_vi", return_value=dv):
-            out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B", "phuong_tien": "xe máy"}, {})
+            out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B",
+                                     "phuong_tien": "xe máy", "da_chon_pt": True}, {})
         self.assertIn("xác nhận lại địa chỉ", out["text"])
         self.assertIn("Điểm đi", out["text"])
         self.assertIn("<<<ASK>>>", out["text"])
@@ -267,7 +268,7 @@ class HandlerTests(unittest.TestCase):
               "link": "https://www.google.com/maps/dir/?api=1", "phuong_tien": "xe máy"}
         with patch("services.chi_duong.dinh_vi", return_value=dv):
             out = caps._h_chi_duong({"diem_di": "Mai Hắc Đế", "diem_den": "Bắc Linh Đàm",
-                                     "phuong_tien": "xe máy"}, {})
+                                     "phuong_tien": "xe máy", "da_chon_pt": True}, {})
         self.assertIn("Đà Nẵng", out["text"])
         self.assertIn("Hà Nội", out["text"])
         self.assertNotIn("km", out["text"].split("Google")[0].lower(), "không được đưa km sai")
@@ -290,9 +291,19 @@ class HandlerTests(unittest.TestCase):
               "link": "https://www.google.com/maps/dir/?api=1&travelmode=transit",
               "phuong_tien": "xe buýt"}
         with patch("services.chi_duong.dinh_vi", return_value=dv):
-            out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B", "phuong_tien": "xe buýt"}, {})
+            out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B",
+                                     "phuong_tien": "xe buýt", "da_chon_pt": True}, {})
         self.assertIn("google.com/maps", out["text"])
         self.assertIn("transit", out["text"])
+
+    def test_co_phuong_tien_nhung_CHUA_chon_thi_van_hoi(self):
+        # Model tự điền phuong_tien mà chưa có dấu "(đã chọn phương tiện)" → VẪN
+        # hỏi phương tiện (chốt cứng 05/09: "không hỏi phương tiện").
+        out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B",
+                                 "phuong_tien": "xe máy"}, {})
+        self.assertIn("<<<ASK>>>", out["text"])
+        self.assertIn("đi bằng gì", out["text"])
+        self.assertIn("(đã chọn phương tiện)", out["text"])
 
 
 def _pb_body(lat, lng, ten, full, tinh, *, rong_nhanh=False):
