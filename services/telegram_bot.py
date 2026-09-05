@@ -1917,6 +1917,7 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         if _ml is not None:
             _ml_docs = [str(p) for p in (_ml.get("doc_paths") or []) if p]
             _ml_has_anh = bool(_ml.get("image_url") or _ml.get("image_urls"))
+            _ml_gui_ok = 0
             for _i, _doc in enumerate(_ml_docs):
                 try:
                     from pathlib import Path as _P
@@ -1926,9 +1927,17 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
                                   _p.name,
                                   caption=(_ml.get("text") or "")[:1000]
                                   if not _ml_has_anh and _i == 0 else "")
+                    _ml_gui_ok += 1
                 except Exception as _exc:
                     logger.warning("tg gửi lại tệp mục lục: %s", _exc)
             if _ml_docs and not _ml_has_anh:
+                # Hỏng HẾT (tệp quá trần Telegram, tệp đã bị dọn…) thì phải nói
+                # ra: người dùng vừa chọn mục mà không nhận gì là im lặng đúng
+                # nghĩa, họ không biết nên chờ hay chọn lại.
+                if not _ml_gui_ok:
+                    send_message(chat_id, (_ml.get("text") or "")
+                                 + "\nEm chưa gửi lại được tệp đã chọn (tệp quá lớn "
+                                   "hoặc không còn trên máy). Anh/chị thử lại giúp em ạ.")
                 return
             _mlus = _ml.get("image_urls")
             if isinstance(_mlus, list) and _mlus:

@@ -137,7 +137,7 @@ class BaKenhDeuDungMotCongTacTests(unittest.TestCase):
                 self.assertIn("tach_phien_theo_nguoi", self._src(ten))
 
     def test_khoa_phien_kem_nguoi_gui(self):
-        for ten, mau in (("zalo_personal.py", ':u{_snd}"'),
+        for ten, mau in (("zalo_personal.py", ':u{snd}"'),
                          ("telegram_bot.py", ':u{user_id}"'),
                          ("zalo_bot.py", ':u{user_id}"')):
             with self.subTest(kenh=ten):

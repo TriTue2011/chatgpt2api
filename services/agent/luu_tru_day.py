@@ -449,8 +449,10 @@ def _day(tep: str, dich: str, *, pham_vi: tuple[str, str, str, str] | None = Non
                 try:
                     khi_xong(str(kq.get("duong_dan") or ""))
                 except Exception as exc:
-                    logger.warning("luu_tru_online: callback sau đẩy %s lỗi: %s",
-                                   Path(tep).name, str(exc)[:150])
+                    # utils.log.Logger nhận ĐÚNG một tham số: %-format nhiều vế
+                    # ném TypeError ngay tại lời gọi, nuốt mất chính lỗi cần xem.
+                    logger.warning(f"luu_tru_online: callback sau đẩy "
+                                   f"{Path(tep).name} lỗi: {str(exc)[:150]}")
         else:
             logger.warning(f"luu_tru_online: đẩy {Path(tep).name} hỏng: "
                            f"{str(kq.get('error'))[:150]}")

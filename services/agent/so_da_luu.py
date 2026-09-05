@@ -203,6 +203,7 @@ _cho_chon: dict[str, dict] = {}      # user → {items:[{ref,mo_ta,kind,ten}], t
 _cho_xoa: dict[str, dict] = {}       # user → danh sách đang chọn để xóa
 _xac_nhan_xoa: dict[str, dict] = {}  # user → danh sách đã chọn, chờ gật đầu
 _TOI_DA_CHON = 100
+_TOI_DA_TAI_TEP = 3      # tệp tải lại mỗi lượt (mỗi tệp là một lệnh rclone)
 
 
 def _tuoi_ok(rec: dict | None) -> bool:
@@ -276,6 +277,15 @@ def _la_bo_qua(text: str) -> bool:
         "thoi", "bo", "bo qua", "khong", "khong can", "huy", "thoi khoi",
         "khoi", "skip", "k", "ko",
     }
+
+
+#: Câu GẬT ĐẦU cho bước xác nhận xóa. Bước này vừa in danh sách và cảnh báo
+#: "không khôi phục được", nên một tiếng "đồng ý"/"xác nhận" là ý định rõ ràng —
+#: bắt gõ đúng chữ «xóa» thì người dùng trả lời đúng nghĩa lại bị hủy lệnh.
+_GAT_DAU_XOA = frozenset({
+    "xoa", "dong y xoa", "xac nhan xoa", "ok xoa", "yes xoa",
+    "dong y", "xac nhan", "dung roi", "ok", "yes",
+})
 
 
 def _chon_nhieu(text: str, so_muc: int) -> list[int] | None:
@@ -394,10 +404,17 @@ def _noi_ket_qua_xoa(kq: dict) -> str:
 
 def _ket_qua_gui(items: list[dict], *, tai_tep: bool = True) -> dict:
     """Dựng kết quả gửi lại; nhiều ảnh dùng ``image_urls`` cho adapter gửi loạt."""
-    urls = [str(m.get("ref") or "") for m in items
-            if m.get("kind") == KIND_ANH
-            and str(m.get("ref") or "").startswith(("http://", "https://"))]
-    tep = [m for m in items if m.get("kind") != KIND_ANH]
+    urls: list[str] = []
+    tep: list[dict] = []
+    for m in items:
+        r = str(m.get("ref") or "")
+        if m.get("kind") == KIND_ANH and r.startswith(("http://", "https://")):
+            urls.append(r)
+        else:
+            # Ảnh KHÔNG có URL gửi lại được (bản ghi cũ chỉ có đường dẫn kho) đi
+            # cùng đường với tài liệu: tải về rồi gửi thành tệp. Bản trước bỏ nó
+            # khỏi cả hai danh sách nên mục đó biến mất khỏi câu trả lời.
+            tep.append(m)
     if len(items) == 1 and len(urls) == 1:
         return {"text": f"Đây ạ — {_nhan(items[0], dai=120)} 🖼️", "image_url": urls[0]}
     dong: list[str] = []
@@ -412,9 +429,13 @@ def _ket_qua_gui(items: list[dict], *, tai_tep: bool = True) -> dict:
         # Tài liệu lưu bằng đường dẫn rclone có thể gửi lại thành FILE thật ở
         # Telegram/Zalo cá nhân. Không có đường dẫn kho (bản ghi cũ) thì chỉ
         # nêu đúng giới hạn, không dựng một link giả.
+        # Mỗi lần tải là một lệnh rclone copyto (trần 600 giây) chạy NGAY trong
+        # luồng đang xử lý tin nhắn, nên chọn "tất cả" tám tệp có thể treo lượt
+        # chat rất lâu. Tải tối đa vài tệp một lượt, phần còn lại nói rõ.
+        cho_sau = tep[_TOI_DA_TAI_TEP:]
         try:
             from services import rclone_service
-            for m in tep:
+            for m in tep[:_TOI_DA_TAI_TEP]:
                 ref = str(m.get("ref_kho") or m.get("ref") or "")
                 if not _la_ref_kho(ref):
                     tep_loi.append(_nhan(m, dai=50))
@@ -429,11 +450,15 @@ def _ket_qua_gui(items: list[dict], *, tai_tep: bool = True) -> dict:
                     tep_loi.append(_nhan(m, dai=50))
         except Exception as exc:
             logger.warning("so_da_luu: tải lại tệp lỗi: %s", str(exc)[:150])
-            tep_loi.extend(_nhan(m, dai=50) for m in tep if _nhan(m, dai=50) not in tep_loi)
+            tep_loi.extend(_nhan(m, dai=50) for m in tep[:_TOI_DA_TAI_TEP]
+                           if _nhan(m, dai=50) not in tep_loi)
         if duong_tep:
             dong.append(f"Gửi {len(duong_tep)} tệp đã chọn ạ 📄")
         if tep_loi:
             dong.append("Chưa tải lại được: " + "; ".join(tep_loi))
+        if cho_sau:
+            dong.append(f"Còn {len(cho_sau)} tệp nữa — anh/chị nhắn tiếp để em "
+                        "gửi nốt, em gửi từng nhóm nhỏ cho khỏi nghẽn ạ.")
     out: dict[str, Any] = {"text": "\n".join(dong) or "Em chưa gửi lại được mục đã chọn ạ."}
     if urls:
         out["image_urls"] = urls
@@ -460,15 +485,18 @@ def xu_ly_tra_loi(user_id: str, text: str) -> dict | None:
     if not uid or not t:
         return None
 
-    # (0) Đang chờ XÁC NHẬN xóa. Không hiểu thành lệnh mới thì giữ nguyên bản
-    # chờ; gõ nhầm một câu không được biến thành xóa thật.
+    # (0) Đang chờ XÁC NHẬN xóa. Gõ nhầm một câu không được biến thành xóa
+    # thật, nên câu lạ chỉ được NHẮC LẠI — nhưng đúng MỘT lần. Nhắc mãi thì bản
+    # chờ (10 phút) nuốt mọi câu ngắn của người dùng: `la_yeu_cau_moi` trả False
+    # cho câu dưới ba từ và câu mở đầu bằng số, nên "ok", "sao vậy", "2+2 bằng
+    # mấy" đều rơi vào nhánh nhắc và bot không trả lời gì khác suốt 10 phút.
     rec = _xac_nhan_xoa.get(uid)
     if _tuoi_ok(rec):
         ft = _fold(t)
         if _la_bo_qua(t):
             _xac_nhan_xoa.pop(uid, None)
             return {"text": "Đã thôi xóa, các mục vẫn giữ nguyên ạ."}
-        if ft in {"xoa", "dong y xoa", "xac nhan xoa", "ok xoa", "yes xoa"}:
+        if ft in _GAT_DAU_XOA:
             _xac_nhan_xoa.pop(uid, None)
             return {"text": _noi_ket_qua_xoa(xoa_muc(uid, rec.get("items") or []))}
         try:
@@ -478,6 +506,11 @@ def xu_ly_tra_loi(user_id: str, text: str) -> dict | None:
                 return None
         except Exception:
             pass
+        if rec.get("da_nhac"):
+            # Đã nhắc rồi mà vẫn không phải xác nhận: họ đã chuyển việc khác.
+            _xac_nhan_xoa.pop(uid, None)
+            return None
+        rec["da_nhac"] = True
         return {"text": "Để xóa các mục đã chọn, anh/chị gõ đúng «xóa»; hoặc gõ «thôi» để hủy ạ."}
     _xac_nhan_xoa.pop(uid, None)
 

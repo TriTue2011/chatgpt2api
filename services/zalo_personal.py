@@ -3348,14 +3348,23 @@ def _process_ai(ev: dict) -> None:
         if _ml is not None:
             _ml_docs = [str(p) for p in (_ml.get("doc_paths") or []) if p]
             _ml_has_anh = bool(_ml.get("image_url") or _ml.get("image_urls"))
+            _ml_gui_ok = 0
             for _i, _doc in enumerate(_ml_docs):
                 try:
                     _serve_path(thread_id, thread_type, _doc, Path(_doc).name,
                                 (_ml.get("text") or "")[:1000]
                                 if not _ml_has_anh and _i == 0 else "")
+                    _ml_gui_ok += 1
                 except Exception as _exc:
                     logger.warning("zalop gửi lại tệp mục lục: %s", _exc)
             if _ml_docs and not _ml_has_anh:
+                # Hỏng HẾT thì phải nói ra, đừng để người vừa chọn mục nhận về
+                # đúng sự im lặng.
+                if not _ml_gui_ok:
+                    send_message(thread_id, (_ml.get("text") or "")
+                                 + "\nEm chưa gửi lại được tệp đã chọn (tệp không còn "
+                                   "trên máy hoặc quá lớn). Anh/chị thử lại giúp em ạ.",
+                                 thread_type)
                 return
             _mlus = _ml.get("image_urls")
             if isinstance(_mlus, list) and _mlus:

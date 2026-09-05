@@ -82,8 +82,9 @@ class HangSoTests(unittest.TestCase):
         src = (GOC / "services/telegram_bot.py").read_text(encoding="utf-8")
         self.assertNotIn("with open(src, \"rb\") as f", src,
                          "còn đường đọc video không qua trần")
-        self.assertEqual(src.count("_doc_media_co_tran("), 4,
-                         "video + audio + tài liệu phải cùng đi qua helper (3 nơi gọi + 1 định nghĩa)")
+        self.assertEqual(src.count("_doc_media_co_tran("), 5,
+                         "video + audio + tài liệu (gồm tệp gửi lại từ mục lục) "
+                         "phải cùng đi qua helper (4 nơi gọi + 1 định nghĩa)")
 
 
 if __name__ == "__main__":

@@ -241,3 +241,72 @@ def test_handler_liet_ke_va_hoi_xoa_chon_nhieu(tmp_path, monkeypatch):
     assert "1,3-5" in deleting["text"]
     preview = s.xu_ly_tra_loi("uCatalog", "tất cả")
     assert preview and "xác nhận" in preview["text"].lower()
+
+
+def test_xac_nhan_xoa_nhac_mot_lan_roi_nha_cau(tmp_path, monkeypatch):
+    """Bản chờ xác nhận không được nuốt mọi câu ngắn suốt 10 phút."""
+    _patch_dir(tmp_path, monkeypatch)
+    from services.agent import so_da_luu as s
+    s.ghi("uStuck", ref="drive:f/a.pdf", kind=s.KIND_TAILIEU, mo_ta="hóa đơn A")
+    s.dat_cho_xoa("uStuck", s.liet_ke("uStuck"))
+    s.xu_ly_tra_loi("uStuck", "1")
+    # Câu lạ đầu tiên: nhắc lại cách xác nhận.
+    nhac = s.xu_ly_tra_loi("uStuck", "sao vậy")
+    assert nhac and "xóa" in nhac["text"].lower()
+    # Câu lạ thứ hai: nhả câu cho kênh xử lý bình thường, không nhắc mãi.
+    assert s.xu_ly_tra_loi("uStuck", "2+2 bằng mấy") is None
+    assert len(s.liet_ke("uStuck")) == 1     # và không xóa gì cả
+
+
+def test_gat_dau_bang_dong_y_van_xoa(tmp_path, monkeypatch):
+    _patch_dir(tmp_path, monkeypatch)
+    from services.agent import so_da_luu as s
+    s.ghi("uYes", ref="drive:f/c.pdf", kind=s.KIND_TAILIEU, mo_ta="hóa đơn C")
+    s.dat_cho_xoa("uYes", s.liet_ke("uYes"))
+    s.xu_ly_tra_loi("uYes", "1")
+    monkeypatch.setattr(s, "_xoa_ref_kho", lambda ref: {"ok": True})
+    out = s.xu_ly_tra_loi("uYes", "đồng ý")
+    assert out and "đã xóa" in out["text"].lower()
+    assert s.liet_ke("uYes") == []
+
+
+def test_tai_lai_tep_gioi_han_moi_luot(tmp_path, monkeypatch):
+    """Chọn nhiều tệp không được kéo cả loạt rclone trong một lượt chat."""
+    _patch_dir(tmp_path, monkeypatch)
+    from services.agent import so_da_luu as s
+    goi: list[str] = []
+
+    class _Gia:
+        @staticmethod
+        def tai_ve(duong_dan, *, ten_luu=""):
+            goi.append(duong_dan)
+            return {"ok": True, "duong_dan": str(tmp_path / ten_luu)}
+
+    import services
+    monkeypatch.setattr(services, "rclone_service", _Gia, raising=False)
+    items = [{"ref": f"drive:f/{i}.pdf", "kind": s.KIND_TAILIEU,
+              "mo_ta": f"hóa đơn {i}", "ten": f"{i}.pdf"} for i in range(5)]
+    out = s.gui_lai(items)
+    assert len(goi) == s._TOI_DA_TAI_TEP
+    assert len(out.get("doc_paths") or []) == s._TOI_DA_TAI_TEP
+    assert "Còn 2 tệp nữa" in out["text"]
+
+
+def test_anh_khong_co_url_van_duoc_noi_den(tmp_path, monkeypatch):
+    """Ảnh chỉ có đường dẫn kho không được biến mất khỏi câu trả lời."""
+    _patch_dir(tmp_path, monkeypatch)
+    from services.agent import so_da_luu as s
+
+    class _Gia:
+        @staticmethod
+        def tai_ve(duong_dan, *, ten_luu=""):
+            return {"ok": False, "error": "mất mạng"}
+
+    import services
+    monkeypatch.setattr(services, "rclone_service", _Gia, raising=False)
+    out = s.gui_lai([
+        {"ref": "http://x/1.png", "kind": s.KIND_ANH, "mo_ta": "thuốc A"},
+        {"ref": "drive:Anh/cu.jpg", "kind": s.KIND_ANH, "mo_ta": "ảnh cũ"},
+    ])
+    assert out.get("image_urls") == ["http://x/1.png"]
+    assert "ảnh cũ" in out["text"]
