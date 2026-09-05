@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from urllib.parse import quote, urlencode
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 import requests
 
@@ -129,6 +129,20 @@ def maps_link(diem_di: str, diem_den: str, travelmode: str = "driving") -> str:
     return f"https://www.google.com/maps/dir/?{q}"
 
 
+def maps_search_link(lat: float, lon: float) -> str:
+    """URL ghim một điểm, dùng làm lựa chọn không mơ hồ giữa các kết quả tìm.
+
+    Không nhét địa chỉ chữ vào menu rồi tìm lại ở lượt sau: một tên phố có thể
+    xuất hiện ở nhiều tỉnh và Google/Nominatim có thể đổi thứ hạng. URL chuẩn
+    Maps URLs với ``query=lat,lon`` giữ nguyên chính xác ghim người dùng bấm.
+    """
+    def _toa(v: float) -> str:
+        return f"{float(v):.7f}".rstrip("0").rstrip(".")
+
+    q = urlencode({"api": 1, "query": f"{_toa(lat)},{_toa(lon)}"})
+    return f"https://www.google.com/maps/search/?{q}"
+
+
 #: Chữ ĐỆM đứng trước mã toà/số nhà, bỏ khi tra khái quát (viết KHÔNG dấu).
 _DEM_DAU = {"toa", "nha", "so", "can", "ho", "phong", "chung", "cu", "khu"}
 
@@ -160,6 +174,40 @@ def _bo_ma_toa(dc: str) -> str:
 #: URL Google Maps (link chia sẻ rút gọn hoặc link đầy đủ).
 _RE_MAPS_URL = re.compile(
     r"https?://(maps\.app\.goo\.gl|(www\.)?google\.[a-z.]+/maps|goo\.gl/maps)/", re.I)
+_RE_TOA_DO_MAPS = re.compile(
+    r"\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*")
+
+
+def _toa_do_tu_url_maps(raw: str) -> tuple[float, float] | None:
+    """Lấy tọa độ từ URL Maps canonical, không gọi mạng."""
+    try:
+        parsed = urlparse(raw)
+        queries = parse_qs(parsed.query)
+        for value in queries.get("query") or queries.get("q") or []:
+            m = _RE_TOA_DO_MAPS.fullmatch(value)
+            if m:
+                return float(m.group(1)), float(m.group(2))
+        m = re.search(r"@(-?\d+\.\d+),(-?\d+\.\d+)", raw)
+        if m:
+            return float(m.group(1)), float(m.group(2))
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _truy_van_tu_link_maps(raw: str) -> str:
+    """URL `/maps/search/?query=<chữ>` → chữ cần tìm, không coi là ghim."""
+    try:
+        parsed = urlparse(raw)
+        if "/maps/search" not in parsed.path.lower():
+            return raw
+        queries = parse_qs(parsed.query)
+        for value in queries.get("query") or queries.get("q") or []:
+            if value.strip() and not _RE_TOA_DO_MAPS.fullmatch(value):
+                return value.strip()
+    except (TypeError, ValueError):
+        pass
+    return raw
 
 
 def _giai_link_maps(s: str) -> tuple[float, float] | str | None:
@@ -169,11 +217,17 @@ def _giai_link_maps(s: str) -> tuple[float, float] | str | None:
     Theo redirect tới link đầy đủ rồi lấy `@lat,lng` (chính xác nhất) hoặc tên
     trong `/place/<địa chỉ>`. Đo 05/09: `maps.app.goo.gl/…` → `/place/CT4B-X2 Bắc
     Linh Đàm, …, Hoàng Liệt, Hà Nội`."""
-    if not _RE_MAPS_URL.search(s or ""):
+    raw = str(s or "").strip()
+    if not _RE_MAPS_URL.search(raw):
         return None
+    # Menu lựa chọn dùng URL này. Đọc ngay từ query, không gọi mạng và không để
+    # redirect/thứ hạng Google thay đổi ghim mà người dùng vừa chọn.
+    toa_do = _toa_do_tu_url_maps(raw)
+    if toa_do:
+        return toa_do
     from urllib.parse import unquote_plus
     try:
-        r = requests.get(s.strip(), headers={"User-Agent": "Mozilla/5.0"},
+        r = requests.get(raw, headers={"User-Agent": "Mozilla/5.0"},
                          timeout=_TIMEOUT, allow_redirects=True)
         url = r.url
     except Exception as exc:
@@ -188,31 +242,62 @@ def _giai_link_maps(s: str) -> tuple[float, float] | str | None:
     return None
 
 
+def la_ghim_maps(dia_chi: str) -> bool:
+    """Có phải một ghim Maps do người dùng đã chỉ rõ hay không.
+
+    Link chia sẻ ngắn / `place` và URL có tọa độ là một vị trí người dùng đã
+    chọn. URL ``/maps/search/?query=<chữ>`` chỉ là truy vấn mơ hồ, vẫn phải ra
+    menu; nếu không nó lại lách yêu cầu không tự chọn top-1.
+    """
+    raw = str(dia_chi or "").strip()
+    if not _RE_MAPS_URL.search(raw):
+        return False
+    if _toa_do_tu_url_maps(raw):
+        return True
+    try:
+        parsed = urlparse(raw)
+        host = parsed.netloc.lower()
+        path = parsed.path.lower()
+        return host in {"maps.app.goo.gl", "goo.gl"} or "/maps/place/" in path
+    except (TypeError, ValueError):
+        return False
+
+
 def _nominatim_1(q: str) -> tuple[float, float, str, str] | None:
     """Một lượt Nominatim → (lat, lon, tên, TỈNH) hoặc None.
 
     `addressdetails=1` để lấy TỈNH/THÀNH: dùng đối chiếu hai đầu tuyến. "Mai Hắc
     Đế" có ở CẢ Hà Nội lẫn Đà Nẵng — đo 04/09: thiếu thành phố thì Nominatim
     chọn Đà Nẵng rồi ra 766 km."""
+    out = _nominatim_nhieu(q, so=1)
+    return out[0] if out else None
+
+
+def _nominatim_nhieu(q: str, so: int = 8) -> list[tuple[float, float, str, str]]:
+    """Các kết quả Nominatim, chỉ làm đường lùi khi Google không đủ lựa chọn."""
     try:
         r = requests.get(
             _NOMINATIM,
-            params={"q": q, "format": "json", "limit": 1, "addressdetails": 1},
+            params={"q": q, "format": "json", "limit": max(1, min(int(so), 8)),
+                    "addressdetails": 1},
             headers={"User-Agent": _UA}, timeout=_TIMEOUT)
         r.raise_for_status()
         data = r.json()
     except Exception as exc:
-        logger.warning("chi_duong.geocode(%.40s) lỗi: %s", q, exc)
-        return None
-    if not isinstance(data, list) or not data:
-        return None
-    top = data[0]
-    ad = top.get("address") or {}
-    tinh = str(ad.get("city") or ad.get("state") or ad.get("province") or "").strip()
-    try:
-        return float(top["lat"]), float(top["lon"]), str(top.get("display_name") or q), tinh
-    except (KeyError, TypeError, ValueError):
-        return None
+        logger.warning("chi_duong.tim_dia_diem(%.40s) Nominatim lỗi: %s", q, exc)
+        return []
+    out: list[tuple[float, float, str, str]] = []
+    for item in data if isinstance(data, list) else []:
+        try:
+            ad = item.get("address") or {}
+            out.append((
+                float(item["lat"]), float(item["lon"]),
+                str(item.get("display_name") or q),
+                str(ad.get("city") or ad.get("state") or ad.get("province") or "").strip(),
+            ))
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+    return out
 
 
 def _duyet_toa_do(x, out: list[tuple[float, float]]) -> None:
@@ -269,23 +354,87 @@ def _boc_pb(data) -> tuple[float, float, str, str] | None:
     return lat, lon, ten, tinh
 
 
-def _gmaps_pb(q: str) -> tuple[float, float, str, str] | None:
-    """Địa chỉ → (lat, lon, địa_chỉ_đầy_đủ, tỉnh) BÓC TỪ WEB Google Maps.
+def _boc_pb_nhieu(data) -> list[tuple[float, float, str, str]]:
+    """Bóc mọi hàng kết quả Maps mà format hiện tại công khai được.
 
-    Giống nếp accuweather: curl_cffi giả lập Chrome để qua chặn bot, đọc JSON
-    nhúng (mở đầu ")]}'"). None nếu không ra/hỏng/format lạ — bên gọi tụt xuống
-    Nominatim."""
+    Google đặt kết quả tại ``data[0][1][i][14]``; `_boc_pb` vẫn giữ lại để
+    tương thích đường geocode cũ (một kết quả + fallback quét cây JSON).
+    """
+    out: list[tuple[float, float, str, str]] = []
+    try:
+        rows = data[0][1]
+    except (IndexError, TypeError, KeyError):
+        rows = []
+    for row in rows if isinstance(rows, list) else []:
+        # Tái dùng parser cũ cho từng hàng, gồm cả đường lùi quét toạ độ.
+        one = _boc_pb([[None, [row]]])
+        if one and not any(abs(one[0] - x[0]) < 1e-7 and abs(one[1] - x[1]) < 1e-7
+                           for x in out):
+            out.append(one)
+    if out:
+        return out
+    one = _boc_pb(data)
+    return [one] if one else []
+
+
+def _doc_gmaps_pb(q: str):
+    """Gọi endpoint Maps một lần; parser một/nhiều kết quả dùng chung body này."""
     try:
         from curl_cffi import requests as creq
         url = f"{_GMAPS_SEARCH}?tbm=map&hl=vi&gl=vn&q={quote(_bo_tinh_tp(q))}&pb={_PB_TMPL}"
         body = creq.get(url, impersonate="chrome", timeout=_TIMEOUT,
                         headers={"Accept-Language": "vi,en;q=0.9"}).text
         nl = body.find("\n")
-        data = json.loads(body[nl + 1:] if nl != -1 else body.lstrip(")]}'"))
+        return json.loads(body[nl + 1:] if nl != -1 else body.lstrip(")]}'"))
     except Exception as exc:
         logger.warning("chi_duong.gmaps_pb(%.40s) lỗi: %s", q, exc)
         return None
+
+
+def _gmaps_pb(q: str) -> tuple[float, float, str, str] | None:
+    """Địa chỉ → (lat, lon, địa_chỉ_đầy_đủ, tỉnh) BÓC TỪ WEB Google Maps.
+
+    Giống nếp accuweather: curl_cffi giả lập Chrome để qua chặn bot, đọc JSON
+    nhúng (mở đầu ")]}'"). None nếu không ra/hỏng/format lạ — bên gọi tụt xuống
+    Nominatim."""
+    data = _doc_gmaps_pb(q)
+    if data is None:
+        return None
     return _boc_pb(data)
+
+
+def _gmaps_pb_nhieu(q: str) -> list[tuple[float, float, str, str]]:
+    """Danh sách kết quả Google Maps; hỏng thì list rỗng để gọi Nominatim."""
+    data = _doc_gmaps_pb(q)
+    return _boc_pb_nhieu(data) if data is not None else []
+
+
+def tim_dia_diem(dia_chi: str, so: int = 8) -> list[dict[str, object]]:
+    """Tìm tối đa tám ghim để người dùng chọn, tuyệt đối không tự lấy top-1.
+
+    Kết quả có URL Maps ghim toạ độ: handler đưa URL đó vào lựa chọn, nên sau
+    khi bấm chỉ đường dùng đúng tọa độ người dùng chọn thay vì search tên lần nữa.
+    """
+    dc = _truy_van_tu_link_maps(str(dia_chi or "").strip())
+    if not dc:
+        return []
+    limit = max(1, min(int(so), 8))
+    raw = _gmaps_pb_nhieu(dc)
+    if len(raw) < limit:
+        raw += _nominatim_nhieu(f"{dc}, Việt Nam", so=limit)
+    out: list[dict[str, object]] = []
+    for lat, lon, ten, tinh in raw:
+        if any(abs(float(lat) - float(x["lat"])) < 1e-7 and
+               abs(float(lon) - float(x["lon"])) < 1e-7 for x in out):
+            continue
+        out.append({
+            "lat": float(lat), "lon": float(lon),
+            "ten": str(ten or dc).strip(), "tinh": str(tinh or "").strip(),
+            "link": maps_search_link(float(lat), float(lon)),
+        })
+        if len(out) >= limit:
+            break
+    return out
 
 
 def geocode(dia_chi: str, tinh_goi_y: str = "") -> tuple[float, float, str, str, bool] | None:

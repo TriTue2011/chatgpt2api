@@ -2633,7 +2633,7 @@ def _do_pdf_intent(
             # Ghi vào MỤC LỤC để sau "tìm tài liệu <tên>" thấy được (việc phụ).
             try:
                 from services.agent import so_da_luu as _sdl
-                _sdl.ghi(str(user_id or ""), ref=name, kind=_sdl.KIND_TAILIEU,
+                _sdl.ghi(_skey_zalop(thread_id, thread_type, user_id), ref=name, kind=_sdl.KIND_TAILIEU,
                          mo_ta=name, ten=name, tu_khoa=name)
             except Exception:
                 pass
@@ -2937,7 +2937,8 @@ def _do_photo_request(
                                   user=str(user_id or ""))
             send_message(thread_id, reply, thread_type)
             # Lưu bản gửi-lại-được rồi HỎI mô tả để ghi mục lục (chờ câu sau).
-            _hoi_ml = _phi.luu_vao_muc_luc(file_data, user_id=str(user_id or ""),
+            _hoi_ml = _phi.luu_vao_muc_luc(file_data,
+                                           user_id=_skey_zalop(thread_id, thread_type, user_id),
                                            ten=_ten, channel="zalop")
             if _hoi_ml:
                 send_message(thread_id, _hoi_ml, thread_type)
@@ -2987,7 +2988,7 @@ def _do_photo_request(
             # dich_anh_hoi). Câu trả lời số/tên tiếng bắt ở đầu dispatch.
             kind = "photo_dich"
             from services import dich_anh_hoi as _dah
-            _r = _dah.khoi_dong(str(user_id or thread_id), file_data, channel="zalop")
+            _r = _dah.khoi_dong(_skey_zalop(thread_id, thread_type, user_id), file_data, channel="zalop")
             send_message(thread_id, _r.get("text") or "", thread_type)
             return
 
@@ -3005,6 +3006,22 @@ def _do_photo_request(
             user_text=(request_text or "[ảnh]")[:500], reply=reply,
             status=status, error=err, t0=t0,
         )
+
+
+def _skey_zalop(thread_id, thread_type, sender_id) -> str:
+    """Khoá phiên = user_id truyền vào orchestrate. MỌI trạng thái theo-người (mục
+    lục, dịch ảnh) PHẢI dùng ĐÚNG khoá này — lưu bằng sender_id trần thì tra cứu
+    (dùng khoá này) không khớp (thiếu tiền tố 'zalop_'), đúng lỗi 05/09 "gửi ảnh
+    thuốc không ra dù đã ghi mục lục"."""
+    skey = f"zalop_{thread_id}"
+    try:
+        from services.agent.scope import tach_phien_theo_nguoi as _tach
+        snd = str(sender_id or "")
+        if int(thread_type or 0) == 1 and snd and _tach():
+            skey = f"zalop_{thread_id}:u{snd}"
+    except Exception:
+        pass
+    return skey
 
 
 def _process_ai(ev: dict) -> None:
@@ -3304,7 +3321,7 @@ def _process_ai(ev: dict) -> None:
     # ảnh không? Xét TRƯỚC các bản chờ khác vì một con số ("1") dễ bị menu nuốt.
     if text:
         from services import dich_anh_hoi as _dah
-        _dr = _dah.tra_loi(str(ev.get("sender_id") or ""), text)
+        _dr = _dah.tra_loi(_skey_zalop(thread_id, thread_type, ev.get("sender_id")), text)
         if _dr is not None:
             send_message(thread_id, _dr.get("text") or "", thread_type)
             return
@@ -3314,7 +3331,7 @@ def _process_ai(ev: dict) -> None:
     # dễ bị menu ảnh/pdf nuốt.
     if text:
         from services.agent import so_da_luu as _sdl
-        _ml = _sdl.xu_ly_tra_loi(str(ev.get("sender_id") or ""), text)
+        _ml = _sdl.xu_ly_tra_loi(_skey_zalop(thread_id, thread_type, ev.get("sender_id")), text)
         if _ml is not None:
             _mlu = _ml.get("image_url")
             if _mlu and _send_photo_robust(thread_id, str(_mlu),
@@ -3795,14 +3812,7 @@ def _process_ai(ev: dict) -> None:
         # Nhóm (thread_type=1): mỗi USER một phiên riêng; 1-1 giữ key cũ.
         # CHỈ hội thoại live tách theo người — bộ nhớ và nhật ký vẫn dùng chung
         # cả nhóm (`scope.khoa_du_lieu` / `khoa_nhat_ky` tự bỏ người ra).
-        _skey = f"zalop_{thread_id}"
-        try:
-            from services.agent.scope import tach_phien_theo_nguoi as _tach
-            _snd = str(ev.get("sender_id") or "")
-            if int(thread_type) == 1 and _snd and _tach():
-                _skey = f"zalop_{thread_id}:u{_snd}"
-        except Exception:
-            pass
+        _skey = _skey_zalop(thread_id, thread_type, ev.get("sender_id"))
         # Rồi mới áp LUẬT tự xoá lâu dài của phạm vi này (nếu có). Do CODE áp
         # chứ không nhờ model nhớ gọi lại công cụ — model quên là luật chết
         # lặng lẽ, mà người dùng thì tin rằng đã đặt xong.

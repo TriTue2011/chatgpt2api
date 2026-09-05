@@ -326,7 +326,7 @@ _CHI_DUONG_EMOJI = {"xe máy": "🏍️", "ô tô": "🚗", "đi bộ": "🚶", 
 
 
 def _h_chi_duong(args: dict, ctx: dict) -> dict:
-    """Chỉ đường A→B: HỎI phương tiện trước, rồi trả link + chỉ dẫn + khoảng cách.
+    """Chỉ đường A→B: hỏi phương tiện, chọn từng ghim, rồi mới định tuyến.
 
     Bám khuôn `_h_generate_image`: thiếu tham số (phương tiện) → trả khối
     `<<<ASK>>>`, mỗi lựa chọn mang send-value tự nhiên tái gọi tool với phương
@@ -361,10 +361,41 @@ def _h_chi_duong(args: dict, ctx: dict) -> dict:
 
     pt = phuong_tien or "xe máy"
 
-    # BƯỚC XÁC NHẬN ĐỊA CHỈ (chủ máy chốt 04/09: "luôn xác nhận cho đúng").
-    # Đã chọn phương tiện nhưng CHƯA xác nhận → geocode rồi hiện địa chỉ bot hiểu
-    # được để người dùng gật/sửa, TRƯỚC khi chỉ đường. Geocode hỏng/khác tỉnh thì
-    # rơi xuống nhánh lỗi bên dưới (hỏi lại địa chỉ) — không đưa vào bước xác nhận.
+    def hoi_chon_diem(ben: str, truy_van: str) -> dict:
+        """Hiện các kết quả của một đầu tuyến dưới dạng menu ghim."""
+        ds = cd.tim_dia_diem(truy_van)
+        if not ds:
+            return {"deliver_now": True,
+                    "text": f"Em chưa tìm thấy kết quả nào cho {ben.lower()} \"{_mot_dong(truy_van)}\" 😥. "
+                            "Anh/chị ghi rõ hơn giúp em (số nhà/tòa, phường, quận, thành phố) "
+                            "hoặc gửi link ghim Google Maps nhé."}
+        noi = "điểm đi" if ben == "ĐIỂM ĐI" else "điểm đến"
+        lines = [f"🔎 Em tìm được {len(ds)} địa chỉ khớp với \"{_mot_dong(truy_van)}\".",
+                 f"Chọn {ben} đúng nhé (em chưa chỉ đường hay tự chọn địa chỉ):",
+                 "<<<ASK>>>"]
+        for i, item in enumerate(ds, 1):
+            ten = _mot_dong(str(item.get("ten") or truy_van))[:150]
+            ghim = str(item.get("link") or "")
+            if not ghim:
+                continue
+            if noi == "điểm đi":
+                send = f"chỉ đường từ {ghim} đến {diem_den} bằng {pt} (đã chọn phương tiện)"
+            else:
+                send = f"chỉ đường từ {diem_di} đến {ghim} bằng {pt} (đã chọn phương tiện)"
+            lines.append(f"{i}. 📍 {ten} | {send}")
+        lines.append("<<<END>>>")
+        return {"text": "\n".join(lines), "deliver_now": True}
+
+    # Địa chỉ chữ luôn cần người dùng chọn ghim. Sau khi bấm menu, URL
+    # `query=lat,lon` giữ chính xác lựa chọn qua lượt tool kế tiếp; không search
+    # lại theo tên rồi vô tình lấy kết quả top-1 khác.
+    if not cd.la_ghim_maps(diem_di):
+        return hoi_chon_diem("ĐIỂM ĐI", diem_di)
+    if not cd.la_ghim_maps(diem_den):
+        return hoi_chon_diem("ĐIỂM ĐẾN", diem_den)
+
+    # BƯỚC XÁC NHẬN CUỐI: chỉ hiện SAU KHI người dùng đã chọn ghim cho từng đầu.
+    # Geocode hỏng/khác tỉnh thì rơi xuống nhánh lỗi bên dưới (hỏi lại địa chỉ).
     if not xac_nhan and not ctx.get("auto_approve"):
         dv = cd.dinh_vi(diem_di, diem_den, pt)
         if dv.get("ok"):
@@ -5425,8 +5456,9 @@ CAPABILITIES: dict[str, Capability] = {
                      "trong mã toà ('CT4B X2', không nối thành 'CT4BX2'). TUYỆT "
                      "ĐỐI KHÔNG tự chuẩn hoá, KHÔNG thêm phường/quận em tự suy "
                      "ra, KHÔNG bỏ tên khu đô thị — làm vậy là bản đồ không tìm "
-                     "ra. Hệ thống sẽ HỎI phương tiện rồi trả khoảng cách + chỉ "
-                     "dẫn + link Google Maps. LẦN GỌI ĐẦU LUÔN BỎ TRỐNG "
+                     "ra. Hệ thống sẽ HỎI phương tiện, TÌM các địa chỉ khớp và "
+                     "BẮT người dùng chọn từng điểm trước khi trả khoảng cách + "
+                     "chỉ dẫn + link Google Maps. LẦN GỌI ĐẦU LUÔN BỎ TRỐNG "
                      "phuong_tien — kể cả khi đoán được — để hệ thống HỎI người "
                      "dùng chọn; chỉ truyền phuong_tien khi người dùng ĐÃ tự nêu "
                      "(xe máy/ô tô/đi bộ/xe buýt). Người dùng dán "
@@ -5452,9 +5484,9 @@ CAPABILITIES: dict[str, Capability] = {
                                         "sau khi hệ thống hỏi 'đúng chưa'). Mặc "
                                         "định bỏ trống để hệ thống hỏi xác nhận."}},
             "required": ["diem_di", "diem_den"]},
-        workflow=("Hệ thống hỏi phương tiện → hỏi xác nhận địa chỉ → mới trả "
-                  "khoảng cách + các bước rẽ + link. KHÔNG tự nói khoảng cách/"
-                  "đường khi chưa có kết quả tool.")),
+        workflow=("Hệ thống hỏi phương tiện → tìm/chọn ĐIỂM ĐI → tìm/chọn "
+                  "ĐIỂM ĐẾN → hỏi xác nhận → mới trả khoảng cách + các bước rẽ "
+                  "+ link. KHÔNG tự nói khoảng cách/đường khi chưa có kết quả tool.")),
     "generate_music": Capability(
         name="generate_music", risk=READ, handler=_h_generate_music,
         emoji="🎵", label="Sáng tác / tạo nhạc AI",

@@ -224,11 +224,16 @@ def build_send_message_payload(
     bot: dict | None = None,
     rich: bool = True,
     max_len: int = 1990,
+    max_chunks: int | None = 6,
 ) -> list[dict[str, Any]]:
     """Một hoặc nhiều payload sendMessage (cắt ≤2000).
 
     rich=True → parse_mode=markdown + emphasis/color.
     rich=False → plain text (notify hệ thống / fallback).
+
+    ``max_chunks=None`` dành cho nội dung người dùng đã yêu cầu phải nhận đủ
+    (ví dụ dịch tệp). Mặc định vẫn chặn sáu tin để một câu trả lời AI lỗi không
+    biến thành spam trên Zalo.
     """
     raw = (text or "...").strip() or "..."
     if rich:
@@ -243,8 +248,9 @@ def build_send_message_payload(
     # marker mồ côi lộ ra ở đầu/cuối chunk (vd còn "**" hoặc "{orange}" trơ trọi).
     from services.telegram.format import split_message
     chunks = split_message(body, limit=max_len, prefer=max_len) or ["..."]
+    limit = len(chunks) if max_chunks is None else max(1, int(max_chunks))
     out: list[dict[str, Any]] = []
-    for ch in chunks[:6]:
+    for ch in chunks[:limit]:
         p: dict[str, Any] = {"chat_id": str(chat_id), "text": ch}
         if parse_mode:
             p["parse_mode"] = parse_mode

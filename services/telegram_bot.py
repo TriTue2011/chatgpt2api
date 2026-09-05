@@ -1162,7 +1162,7 @@ def _do_pdf_intent(
             # Ghi vào MỤC LỤC để sau "tìm tài liệu <tên>" thấy được (việc phụ).
             try:
                 from services.agent import so_da_luu as _sdl
-                _sdl.ghi(str(user_id or ""), ref=name, kind=_sdl.KIND_TAILIEU,
+                _sdl.ghi(khoa_phien(chat_id, _cur_topic(), user_id), ref=name, kind=_sdl.KIND_TAILIEU,
                          mo_ta=name, ten=name, tu_khoa=name)
             except Exception:
                 pass
@@ -1379,7 +1379,7 @@ def _do_photo_request(
                                   topic=str(_cur_topic() or ""),
                                   user=str(user_id or ""))
             send_message(chat_id, reply)
-            _hoi_ml = _phi.luu_vao_muc_luc(file_data, user_id=str(user_id or ""),
+            _hoi_ml = _phi.luu_vao_muc_luc(file_data, user_id=khoa_phien(chat_id, _cur_topic(), user_id),
                                            ten=_ten, channel="tg")
             if _hoi_ml:
                 send_message(chat_id, _hoi_ml)
@@ -1448,7 +1448,7 @@ def _do_photo_request(
             # Câu trả lời số/tên tiếng bắt ở đầu dispatch.
             kind = "photo_dich"
             from services import dich_anh_hoi as _dah
-            _r = _dah.khoi_dong(str(user_id or chat_id), file_data, channel="tg")
+            _r = _dah.khoi_dong(khoa_phien(chat_id, _cur_topic(), user_id), file_data, channel="tg")
             send_message(chat_id, _r.get("text") or "")
             return
 
@@ -1885,7 +1885,7 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
     # DỊCH ẢNH: trả lời bước chọn phần/tiếng đích của luồng dịch ảnh?
     if text and chat_id:
         from services import dich_anh_hoi as _dah
-        _dr = _dah.tra_loi(str(user_id or ""), text)
+        _dr = _dah.tra_loi(khoa_phien(chat_id, _cur_topic(), user_id), text)
         if _dr is not None:
             send_message(chat_id, _dr.get("text") or "")
             return
@@ -1893,7 +1893,7 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
     # MỤC LỤC: trả lời bước HỎI-mô-tả (vừa Lưu kho) hay CHỌN-số (vừa tìm nhiều)?
     if text and chat_id:
         from services.agent import so_da_luu as _sdl
-        _ml = _sdl.xu_ly_tra_loi(str(user_id or ""), text)
+        _ml = _sdl.xu_ly_tra_loi(khoa_phien(chat_id, _cur_topic(), user_id), text)
         if _ml is not None:
             _mlu = _ml.get("image_url")
             if _mlu and _api_call("sendPhoto", {

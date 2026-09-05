@@ -50,6 +50,32 @@ class ZaloBotMediaTests(unittest.TestCase):
             self.assertIn("không gửi file", msg.lower())
             self.assertNotIn("http", msg.lower())
 
+    def test_pdf_translate_sends_all_text_chunks(self) -> None:
+        """Zalo Bot không gửi file nên bản dịch dài không được dừng ở tin thứ sáu."""
+        pending = {"path": "/tmp/x.pdf", "name": "x.pdf"}
+        with mock.patch.object(zb, "send_message") as sm, \
+             mock.patch.object(zb, "_api_call", return_value={"ok": True}), \
+             mock.patch("services.translate_service.dich_tep", return_value={"ok": True}), \
+             mock.patch("services.translate_service.bao_cao_dich", return_value="Bản dịch đầy đủ"), \
+             mock.patch("os.unlink"):
+            from services import pdf_intent as pi
+            zb._do_pdf_intent("c1", pending, pi.DICH)
+        sm.assert_called_once_with("c1", "Bản dịch đầy đủ", all_chunks=True)
+
+    def test_send_all_chunks_bao_loi_neu_mat_mot_doan_o_giua(self) -> None:
+        """Không để đoạn cuối thành công che mất một đoạn dịch bị rơi ở giữa."""
+        responses = [
+            {"ok": True},
+            {"ok": False, "description": "rate limited"},
+            {"ok": False, "description": "rate limited"},
+            {"ok": True},
+        ]
+        with mock.patch.object(zb, "_api_call", side_effect=responses):
+            out = zb.send_message("c1", "x" * (1990 * 3), rich=False, all_chunks=True)
+        self.assertFalse(out.get("ok"))
+        self.assertEqual(out.get("failed_chunks"), [2])
+        self.assertEqual(out.get("chunks_sent"), 2)
+
     def test_extract_voice_url(self) -> None:
         self.assertEqual(zb._extract_voice_url({"voice_url": "https://x/a.aac"}), "https://x/a.aac")
         self.assertEqual(

@@ -22,6 +22,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
 
 import services.telegram_bot as tg  # noqa: E402
+import services.zalo_bot as zb  # noqa: E402
+import services.zalo_personal as zp  # noqa: E402
 
 GOC = pathlib.Path(__file__).resolve().parents[1]
 
@@ -121,6 +123,25 @@ class NutBamKhongTieuLuaChonCuaNguoiKhac(unittest.TestCase):
         """Chính là lý do nút bấm trong nhóm im lặng ở bản cũ."""
         self.ask.set_pending("-100:u9", [{"label": "Flow", "send": "flow"}])
         self.assertFalse(self.ask.get_pending("-100"))
+
+
+class ZaloLuuAnhDungKhoaPhien(unittest.TestCase):
+    """Lưu ảnh và 'gửi ảnh …' phải cùng khoá với orchestrator của từng Zalo."""
+
+    def test_khoa_1_1_trung_voi_phien_orchestrator(self):
+        self.assertEqual(zb._skey_zalo("chat-1", "user-1"), "zalo_chat-1")
+        self.assertEqual(zp._skey_zalop("thread-1", 0, "user-1"), "zalop_thread-1")
+
+    def test_duong_luu_va_tra_loi_cung_dung_helper(self):
+        bot_src = (GOC / "services" / "zalo_bot.py").read_text("utf-8")
+        personal_src = (GOC / "services" / "zalo_personal.py").read_text("utf-8")
+        self.assertIn("_skey = _skey_zalo(chat_id, user_id, is_group)", bot_src)
+        self.assertIn("user_id=_skey_zalo(chat_id, user_id, is_group)", bot_src)
+        self.assertIn("_dah.khoi_dong(_skey_zalo(chat_id, user_id, is_group)", bot_src)
+        self.assertIn("xu_ly_tra_loi(_skey_zalo(chat_id, user_id, is_group), text)", bot_src)
+        self.assertIn("user_id=_skey_zalop(thread_id, thread_type, user_id)", personal_src)
+        self.assertIn("xu_ly_tra_loi(_skey_zalop(thread_id, thread_type, ev.get(\"sender_id\")), text)",
+                      personal_src)
 
 
 if __name__ == "__main__":

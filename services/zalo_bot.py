@@ -955,7 +955,7 @@ def _handle_update(upd: dict, bot: dict, seen: set[str]) -> None:
 
 
 def send_message(chat_id: str, text: str, *, rich: bool = True,
-                 bot: dict | None = None) -> dict:
+                 bot: dict | None = None, all_chunks: bool = False) -> dict:
     """Gửi text qua Zalo Bot sendMessage (docs bot.zapps.me).
 
     rich=True (mặc định, trả lời AI):
@@ -964,6 +964,8 @@ def send_message(chat_id: str, text: str, *, rich: bool = True,
       - ``parse_mode=markdown``; lỗi → plain
 
     rich=False: plain (notify hệ thống / account_log — tránh vỡ email/URL).
+    all_chunks=True: gửi đủ mọi đoạn, chỉ dùng cho nội dung người dùng yêu cầu
+    nguyên vẹn như bản dịch tệp (mặc định vẫn giới hạn để tránh spam).
 
     Docs: parse_mode markdown hỗ trợ **đậm**, *nghiêng*, {red|orange|yellow|green},
     {big}, {underline}, list…  hoặc text_styles (b/i/c_hex).
@@ -972,11 +974,15 @@ def send_message(chat_id: str, text: str, *, rich: bool = True,
     active = bot if isinstance(bot, dict) else _active_bot()
     payloads = build_send_message_payload(
         str(chat_id), text or "...", bot=active, rich=rich, max_len=_MAX_LEN,
+        max_chunks=None if all_chunks else 6,
     )
     last: dict = {"ok": False}
-    for p in payloads:
+    sent = 0
+    failed: list[int] = []
+    for i, p in enumerate(payloads, 1):
         last = _api_call("sendMessage", p)
         if last.get("ok"):
+            sent += 1
             continue
         # Fallback plain: bỏ parse_mode + strip tag màu / ** nếu server từ chối markup
         plain = str(p.get("text") or "")
@@ -985,6 +991,16 @@ def send_message(chat_id: str, text: str, *, rich: bool = True,
         last = _api_call("sendMessage", {
             "chat_id": str(chat_id), "text": plain[:_MAX_LEN] or "...",
         })
+        if last.get("ok"):
+            sent += 1
+        else:
+            failed.append(i)
+    if failed:
+        logger.warning("zalo sendMessage thiếu đoạn chat=%s sent=%s/%s failed=%s",
+                       chat_id, sent, len(payloads), failed)
+        return {"ok": False, "error": "send_message_chunks_failed",
+                "chunks_total": len(payloads), "chunks_sent": sent,
+                "failed_chunks": failed, "last": last}
     return last
 
 
@@ -1492,7 +1508,20 @@ def _do_pdf_intent(
             if not r.get("ok"):
                 status = "error"
                 err = str(r.get("error") or "")[:200]
-            send_message(chat_id, reply)
+            # Zalo Bot không có API gửi tài liệu. Vì vậy bản dịch phải được gửi
+            # thành nhiều tin nếu dài; không được cắt im lặng ở đoạn thứ sáu.
+            sent = send_message(chat_id, reply, all_chunks=True)
+            if not sent.get("ok"):
+                status = "error"
+                failed = ", ".join(str(x) for x in sent.get("failed_chunks") or [])
+                err = f"translation_chunks_failed:{failed or 'unknown'}"
+                notice = ("⚠️ Em chưa gửi đủ bản dịch do Zalo lỗi ở đoạn "
+                          f"{failed or 'không rõ'}. Anh/chị nhắn «dịch lại file» "
+                          "hoặc nhận qua Telegram/Zalo Cá nhân để có bản đầy đủ nhé.")
+                reply += "\n\n" + notice
+                # Thử gửi cảnh báo riêng: nếu Zalo vừa phục hồi, người dùng biết
+                # bản dịch trước đó thiếu đoạn, thay vì tưởng đoạn cuối = hoàn tất.
+                send_message(chat_id, notice, rich=False)
             return
         if intent == _pi.RAG_TEACHER:
             kind = "pdf_teacher"
@@ -1559,6 +1588,19 @@ def _do_pdf_intent(
             pass
 
 
+def _skey_zalo(chat_id, user_id, is_group: bool = False) -> str:
+    """Khoá phiên = user_id truyền vào orchestrate. Trạng thái theo-người (mục
+    lục, dịch ảnh) PHẢI dùng đúng khoá này, không thì lưu một khoá tra một khoá."""
+    skey = f"zalo_{chat_id}"
+    try:
+        from services.agent.scope import tach_phien_theo_nguoi as _tach
+        if is_group and user_id and _tach():
+            skey = f"zalo_{chat_id}:u{user_id}"
+    except Exception:
+        pass
+    return skey
+
+
 def _do_photo_request(
     chat_id: str,
     file_data: bytes,
@@ -1567,6 +1609,7 @@ def _do_photo_request(
     *,
     intent: str | None = None,
     user_id: str = "",
+    is_group: bool = False,
 ) -> None:
     """Xử lý ảnh: rag_knowledge | rag_teacher | analyze | generate (img2img)."""
     import time as _time
@@ -1596,7 +1639,8 @@ def _do_photo_request(
             _tam = _ltd.luu_vao_thu_muc_lam_viec(_ten, file_data)
             send_message(chat_id, _ltd.luu_ngay("zalo", str(chat_id), tep=_tam,
                                                 ten_tep=_ten, user=str(user_id or "")))
-            _hoi_ml = _phi.luu_vao_muc_luc(file_data, user_id=str(user_id or ""),
+            _hoi_ml = _phi.luu_vao_muc_luc(file_data,
+                                           user_id=_skey_zalo(chat_id, user_id, is_group),
                                            ten=_ten, channel="zalo")
             if _hoi_ml:
                 send_message(chat_id, _hoi_ml)
@@ -1645,7 +1689,7 @@ def _do_photo_request(
             # Câu trả lời số/tên tiếng bắt ở đầu dispatch.
             kind = "photo_dich"
             from services import dich_anh_hoi as _dah
-            _r = _dah.khoi_dong(str(user_id or chat_id), file_data, channel="zalo")
+            _r = _dah.khoi_dong(_skey_zalo(chat_id, user_id, is_group), file_data, channel="zalo")
             send_message(chat_id, _r.get("text") or "")
             return
 
@@ -2191,7 +2235,7 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
     # DỊCH ẢNH: trả lời bước chọn phần/tiếng đích của luồng dịch ảnh?
     if text and chat_id:
         from services import dich_anh_hoi as _dah
-        _dr = _dah.tra_loi(str(user_id or ""), text)
+        _dr = _dah.tra_loi(_skey_zalo(chat_id, user_id, is_group), text)
         if _dr is not None:
             send_message(chat_id, _dr.get("text") or "")
             return
@@ -2199,7 +2243,7 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
     # MỤC LỤC: trả lời bước HỎI-mô-tả (vừa Lưu kho) hay CHỌN-số (vừa tìm nhiều)?
     if text and chat_id:
         from services.agent import so_da_luu as _sdl
-        _ml = _sdl.xu_ly_tra_loi(str(user_id or ""), text)
+        _ml = _sdl.xu_ly_tra_loi(_skey_zalo(chat_id, user_id, is_group), text)
         if _ml is not None:
             _mlu = _ml.get("image_url")
             if _mlu and send_photo(chat_id, str(_mlu),
@@ -2253,7 +2297,7 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
                 try:
                     from services.agent import so_da_luu as _sdl
                     if _tl_ten:
-                        _sdl.ghi(str(user_id or ""), ref=_tl_ten,
+                        _sdl.ghi(_skey_zalo(chat_id, user_id, is_group), ref=_tl_ten,
                                  kind=_sdl.KIND_TAILIEU, mo_ta=_tl_ten,
                                  ten=_tl_ten, tu_khoa=_tl_ten)
                 except Exception:
@@ -2300,7 +2344,7 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
             if full and full.get("data"):
                 _do_photo_request(
                     chat_id, full["data"], text.strip(), _allow,
-                    intent=intent, user_id=user_id,
+                    intent=intent, user_id=user_id, is_group=is_group,
                 )
             return
         # stage=choose
@@ -2323,7 +2367,7 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
             if full and full.get("data"):
                 _do_photo_request(
                     chat_id, full["data"], text.strip(), _allow,
-                    intent=intent, user_id=user_id,
+                    intent=intent, user_id=user_id, is_group=is_group,
                 )
             return
 
@@ -2406,7 +2450,8 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
                 _phi.ASK_PROMPT_GENERATE if intent == _phi.GENERATE else _phi.ASK_PROMPT_ANALYZE,
             )
             return
-        _do_photo_request(chat_id, data, caption, _allow, intent=intent, user_id=user_id)
+        _do_photo_request(chat_id, data, caption, _allow, intent=intent,
+                          user_id=user_id, is_group=is_group)
         return
 
     if not text:
@@ -2427,16 +2472,9 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
         except Exception:
             _fp = bool(_active_bot().get("ha_fastpath", True))
         _model = _zalo_model(chat_id)
-        # Nhóm: mỗi USER một phiên riêng; 1-1 giữ key cũ (không mất lịch sử).
-        # Nhóm: mỗi USER một phiên riêng. CHỈ hội thoại live tách theo người —
-        # bộ nhớ và nhật ký vẫn dùng chung cả nhóm.
-        _skey = f"zalo_{chat_id}"
-        try:
-            from services.agent.scope import tach_phien_theo_nguoi as _tach
-            if is_group and user_id and _tach():
-                _skey = f"zalo_{chat_id}:u{user_id}"
-        except Exception:
-            pass
+        # Chung một factory với lưu ảnh/dịch ảnh: nhóm tách theo người, 1-1 giữ
+        # khóa cũ. Không tự dựng lại công thức ở đây rồi để các luồng lệch nhau.
+        _skey = _skey_zalo(chat_id, user_id, is_group)
         _la_admin = _is_admin_chat(chat_id, user_id, is_group=is_group)
         # Dựng câu trích dẫn ở ĐÂY vì `trich_dan.mo_ta` cần `_skey` để tra lại
         # nội dung từ nhật ký khi Zalo chỉ kèm tham chiếu/mốc thời gian.

@@ -142,6 +142,22 @@ class GeocodeTests(unittest.TestCase):
             r = cd._giai_link_maps("https://maps.app.goo.gl/xyz")
         self.assertEqual(r, (21.0114, 105.8506))
 
+    def test_giai_link_maps_search_toa_do_khong_goi_mang(self):
+        """Lựa chọn trong menu được ghim bằng URL Maps có tọa độ chính xác."""
+        r = cd._giai_link_maps(
+            "https://www.google.com/maps/search/?api=1&query=21.0114%2C105.8506"
+        )
+        self.assertEqual(r, (21.0114, 105.8506))
+
+    def test_link_maps_tim_bang_chu_chua_phai_la_ghim_da_chon(self):
+        """URL search chữ vẫn phải quay lại menu, không được tin là điểm chính xác."""
+        self.assertFalse(cd.la_ghim_maps(
+            "https://www.google.com/maps/search/?api=1&query=Mai+H%E1%BA%AFc+%C4%90%E1%BA%BF"
+        ))
+        self.assertTrue(cd.la_ghim_maps(
+            "https://www.google.com/maps/search/?api=1&query=21.0114%2C105.8506"
+        ))
+
     def test_giai_link_maps_khong_phai_url(self):
         self.assertIsNone(cd._giai_link_maps("114 Mai Hắc Đế"))
 
@@ -162,6 +178,18 @@ class GeocodeTests(unittest.TestCase):
         with patch("services.chi_duong.requests.get", side_effect=_g):
             cd.geocode("CT4B X2 Bắc Linh Đàm")
         self.assertLessEqual(calls["n"], 2)
+
+    def test_tim_dia_diem_tra_nhieu_lua_chon_voi_ghim_toa_do(self):
+        """Địa chỉ trùng tên phải trả từng lựa chọn, không giấu kết quả thứ hai."""
+        google = [
+            (21.0114, 105.8506, "Mai Hắc Đế, Hai Bà Trưng, Hà Nội", "Hà Nội"),
+            (16.0544, 108.2022, "Mai Hắc Đế, Sơn Trà, Đà Nẵng", "Đà Nẵng"),
+        ]
+        with patch("services.chi_duong._gmaps_pb_nhieu", return_value=google), \
+             patch("services.chi_duong._nominatim_nhieu", return_value=[]):
+            out = cd.tim_dia_diem("Mai Hắc Đế")
+        self.assertEqual([x["ten"] for x in out], [x[2] for x in google])
+        self.assertIn("query=21.0114%2C105.8506", out[0]["link"])
 
 
 class ChiDuongTests(unittest.TestCase):
@@ -237,24 +265,62 @@ class HandlerTests(unittest.TestCase):
         self.assertIn("ĐIỂM ĐI", out["text"])
         self.assertNotIn("<<<ASK>>>", out["text"])
 
-    def test_co_phuong_tien_chua_xac_nhan_thi_HOI_XAC_NHAN(self):
-        """Bước 2 (chủ máy chốt 04/09: luôn xác nhận): hiện địa chỉ, chưa đưa km."""
-        dv = {"ok": True, "tu": "Hoàng Thành Tower, 114 Mai Hắc Đế", "den": "Bắc Linh Đàm",
+    def test_co_phuong_tien_phai_cho_chon_diem_di_truoc(self):
+        """Không được tự lấy kết quả geocode đầu tiên để bắt đầu chỉ đường."""
+        candidates = [
+            {"ten": "Mai Hắc Đế, Hai Bà Trưng, Hà Nội", "link": "https://maps/1"},
+            {"ten": "Mai Hắc Đế, Sơn Trà, Đà Nẵng", "link": "https://maps/2"},
+        ]
+        with patch("services.chi_duong.tim_dia_diem", return_value=candidates), \
+             patch("services.chi_duong.dinh_vi", side_effect=AssertionError("chưa được tự định vị")):
+            out = caps._h_chi_duong({"diem_di": "Mai Hắc Đế", "diem_den": "Bắc Linh Đàm",
+                                     "phuong_tien": "xe máy", "da_chon_pt": True}, {})
+        self.assertIn("Chọn ĐIỂM ĐI", out["text"])
+        self.assertIn("Hai Bà Trưng", out["text"])
+        self.assertIn("Sơn Trà", out["text"])
+        self.assertIn("<<<ASK>>>", out["text"])
+
+    def test_da_chon_diem_di_phai_cho_chon_diem_den(self):
+        """Sau điểm đi đã ghim, vẫn phải cho người dùng chọn chính xác điểm đến."""
+        candidates = [{"ten": "Bắc Linh Đàm, Hoàng Mai, Hà Nội", "link": "https://maps/den"}]
+        diem_di = "https://www.google.com/maps/search/?api=1&query=21.0114%2C105.8506"
+        with patch("services.chi_duong.tim_dia_diem", return_value=candidates), \
+             patch("services.chi_duong.dinh_vi", side_effect=AssertionError("chưa được tự định vị")):
+            out = caps._h_chi_duong({"diem_di": diem_di, "diem_den": "Bắc Linh Đàm",
+                                     "phuong_tien": "xe máy", "da_chon_pt": True}, {})
+        self.assertIn("Chọn ĐIỂM ĐẾN", out["text"])
+        self.assertIn("Hoàng Mai", out["text"])
+        self.assertIn("<<<ASK>>>", out["text"])
+
+    def test_link_maps_tim_bang_chu_van_phai_cho_chon(self):
+        """Không để URL Google Maps search chữ lách bước chọn điểm đi."""
+        candidates = [{"ten": "Mai Hắc Đế, Hai Bà Trưng, Hà Nội", "link": "https://maps/1"}]
+        url_tim = "https://www.google.com/maps/search/?api=1&query=Mai+H%E1%BA%AFc+%C4%90%E1%BA%BF"
+        with patch("services.chi_duong.tim_dia_diem", return_value=candidates), \
+             patch("services.chi_duong.dinh_vi", side_effect=AssertionError("chưa được tự định vị")):
+            out = caps._h_chi_duong({"diem_di": url_tim, "diem_den": "Bắc Linh Đàm",
+                                     "phuong_tien": "xe máy", "da_chon_pt": True}, {})
+        self.assertIn("Chọn ĐIỂM ĐI", out["text"])
+
+    def test_hai_diem_da_chon_moi_hoi_xac_nhan(self):
+        """Chỉ sau khi mỗi đầu là một ghim do người dùng chọn mới hiện xác nhận."""
+        dv = {"ok": True, "tu": "Vị trí đã ghim", "den": "Vị trí đã ghim",
               "gan_dung": False, "link": "https://www.google.com/maps/dir/?api=1"}
+        di = "https://www.google.com/maps/search/?api=1&query=21.0114%2C105.8506"
+        den = "https://www.google.com/maps/search/?api=1&query=20.9653%2C105.8232"
         with patch("services.chi_duong.dinh_vi", return_value=dv):
-            out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B",
+            out = caps._h_chi_duong({"diem_di": di, "diem_den": den,
                                      "phuong_tien": "xe máy", "da_chon_pt": True}, {})
         self.assertIn("xác nhận lại địa chỉ", out["text"])
-        self.assertIn("Điểm đi", out["text"])
         self.assertIn("<<<ASK>>>", out["text"])
-        self.assertIn("đã xác nhận địa chỉ", out["text"])   # nút re-gọi tool
         self.assertNotIn("km", out["text"].lower(), "chưa được đưa km ở bước xác nhận")
 
     def test_da_xac_nhan_thi_chi_duong_that(self):
         r = {"ok": True, "km": 7.3, "phut": 10, "buoc": ["Rẽ phải Phố X (~235 m)"],
              "link": "https://www.google.com/maps/dir/?api=1&x", "tu": "A", "den": "B"}
         with patch("services.chi_duong.chi_duong", return_value=r):
-            out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B",
+            out = caps._h_chi_duong({"diem_di": "https://www.google.com/maps/search/?api=1&query=21%2C105",
+                                     "diem_den": "https://www.google.com/maps/search/?api=1&query=20%2C105",
                                      "phuong_tien": "xe máy", "xac_nhan": True}, {})
         self.assertIn("7.3 km", out["text"])
         self.assertIn("google.com/maps", out["text"])
@@ -267,7 +333,8 @@ class HandlerTests(unittest.TestCase):
               "tinh_di": "Thành phố Đà Nẵng", "tinh_den": "Thành phố Hà Nội",
               "link": "https://www.google.com/maps/dir/?api=1", "phuong_tien": "xe máy"}
         with patch("services.chi_duong.dinh_vi", return_value=dv):
-            out = caps._h_chi_duong({"diem_di": "Mai Hắc Đế", "diem_den": "Bắc Linh Đàm",
+            out = caps._h_chi_duong({"diem_di": "https://www.google.com/maps/search/?api=1&query=16%2C108",
+                                     "diem_den": "https://www.google.com/maps/search/?api=1&query=21%2C105",
                                      "phuong_tien": "xe máy", "da_chon_pt": True}, {})
         self.assertIn("Đà Nẵng", out["text"])
         self.assertIn("Hà Nội", out["text"])
@@ -279,7 +346,8 @@ class HandlerTests(unittest.TestCase):
              "buoc": ["Rẽ phải Phố X (~235 m)"], "tu": "A", "den": "B",
              "link": "https://www.google.com/maps/dir/?api=1"}
         with patch("services.chi_duong.chi_duong", return_value=r):
-            out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B",
+            out = caps._h_chi_duong({"diem_di": "https://www.google.com/maps/search/?api=1&query=21%2C105",
+                                     "diem_den": "https://www.google.com/maps/search/?api=1&query=20%2C105",
                                      "phuong_tien": "xe máy", "xac_nhan": True}, {})
         self.assertIn("6.8 km", out["text"])
         self.assertIn("gần đúng", out["text"])
@@ -291,7 +359,8 @@ class HandlerTests(unittest.TestCase):
               "link": "https://www.google.com/maps/dir/?api=1&travelmode=transit",
               "phuong_tien": "xe buýt"}
         with patch("services.chi_duong.dinh_vi", return_value=dv):
-            out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B",
+            out = caps._h_chi_duong({"diem_di": "https://www.google.com/maps/search/?api=1&query=21%2C105",
+                                     "diem_den": "https://www.google.com/maps/search/?api=1&query=20%2C105",
                                      "phuong_tien": "xe buýt", "da_chon_pt": True}, {})
         self.assertIn("google.com/maps", out["text"])
         self.assertIn("transit", out["text"])
@@ -342,6 +411,24 @@ class GmapsPbTests(unittest.TestCase):
         self.assertEqual(g, (21.0103763, 105.8507264,
                              "114 P. Mai Hắc Đế, Hai Bà Trưng, Hà Nội, Việt Nam",
                              "Hà Nội"))
+
+    def test_boc_nhieu_ghim_khi_dia_chi_trung_ten(self):
+        """Parser lựa chọn phải giữ hàng thứ hai, không chỉ trả top-1."""
+        import json
+        first = json.loads(_pb_body(21.0104, 105.8507, "Mai Hắc Đế Hà Nội",
+                                    "Mai Hắc Đế, Hai Bà Trưng, Hà Nội, Việt Nam", "Hà Nội")
+                           .split("\n", 1)[1])
+        second = json.loads(_pb_body(16.0544, 108.2022, "Mai Hắc Đế Đà Nẵng",
+                                     "Mai Hắc Đế, Sơn Trà, Đà Nẵng, Việt Nam", "Đà Nẵng")
+                            .split("\n", 1)[1])
+        first[0][1].append(second[0][1][0])
+        body = ")]}'\n" + json.dumps(first, ensure_ascii=False)
+        with self._mock_pb(body):
+            out = cd._gmaps_pb_nhieu("Mai Hắc Đế")
+        self.assertEqual([x[2] for x in out], [
+            "Mai Hắc Đế, Hai Bà Trưng, Hà Nội, Việt Nam",
+            "Mai Hắc Đế, Sơn Trà, Đà Nẵng, Việt Nam",
+        ])
 
     def test_duyet_cay_khi_ket_qua_dau_rong_nhanh(self):
         body = _pb_body(20.9651653, 105.8234007, "", "", "", rong_nhanh=True)

@@ -37,6 +37,13 @@ class ZaloBotFormatTests(unittest.TestCase):
         self.assertNotIn("parse_mode", ps[0])
         self.assertEqual(ps[0]["text"], "a@b.com _raw_")
 
+    def test_payload_all_chunks_keeps_entire_file_translation(self) -> None:
+        """Luồng dịch tệp được phép gửi nhiều tin, không âm thầm cắt ở tin thứ 6."""
+        raw = "x" * (1990 * 8)
+        ps = build_send_message_payload("c", raw, rich=False, max_chunks=None)
+        self.assertEqual("".join(p["text"] for p in ps), raw)
+        self.assertGreaterEqual(len(ps), 8)
+
     def test_resolve_color_default_orange(self) -> None:
         self.assertEqual(resolve_zalo_bot_color({}), "orange")
         self.assertIsNone(resolve_zalo_bot_color({"markdown_color": "none"}))
