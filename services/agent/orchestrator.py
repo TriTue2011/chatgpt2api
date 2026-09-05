@@ -1226,6 +1226,9 @@ _KW_MUCLUC = _re_mod.compile(
     r"tim.{0,10}(lai )?(anh|tai lieu|tep|file)|"
     r"(anh|tai lieu|tep|hinh).{0,10}da luu|da luu.{0,10}(anh|tai lieu|tep)|"
     r"cho (toi |minh )?xem.{0,8}(anh|tai lieu)")
+_KW_THEODOI = _re_mod.compile(
+    r"theo doi|cap nhat (cho|giup|tinh hinh|tin|dum|ho)|co gi moi|co tin gi moi|"
+    r"dang theo doi|bo theo doi|dung theo doi|thoi theo doi")
 
 # Chín nhóm việc dưới đây TRƯỚC NAY KHÔNG HỀ có nhánh chỉ đường (kiểm kê
 # 28/08: bảng cũ chỉ phủ 10/23 nhóm). Thiếu chỉ đường thì model chỉ còn schema
@@ -1371,6 +1374,13 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
      "đó, CHỈ trả tin LIÊN QUAN chủ đề (5–8 tin mới nhất, gạch đầu dòng ngắn). "
      "TUYỆT ĐỐI KHÔNG chia 8 mục, KHÔNG chèn tin lạc đề, KHÔNG thay chủ đề "
      "người dùng hỏi bằng bản tin tổng hợp chung."),
+    ("web", _KW_THEODOI,  # theo_doi_chu_de thuộc nhóm web
+     "- THEO DÕI CHỦ ĐỀ để sau hỏi lại: 'theo dõi vụ cháy Hải Dương', 'cập nhật "
+     "giúp tôi tình hình bão' → theo_doi_chu_de(op=add, chu_de=…). 'Có gì mới về "
+     "<chủ đề>' → gọi web_search(<chủ đề>) LẤY TIN MỚI (đừng chỉ nhắc lại tin cũ). "
+     "'Có gì mới không' mà KHÔNG nêu chủ đề → theo_doi_chu_de(op=list) xem đang "
+     "theo dõi gì rồi web_search chủ đề gần nhất. 'Đang theo dõi gì' → op=list; "
+     "'bỏ theo dõi X' → op=remove."),
     ("image", _KW_MUCLUC,  # tim_da_luu thuộc nhóm image
      "- GỬI LẠI thứ ĐÃ LƯU theo MÔ TẢ ('gửi ảnh thuốc', 'gửi lại ảnh con trai', "
      "'tài liệu hợp đồng đã lưu') → tim_da_luu(mo_ta[, kind]). KHÁC library_media "

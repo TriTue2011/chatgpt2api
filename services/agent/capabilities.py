@@ -3465,6 +3465,39 @@ def _h_tim_da_luu(args: dict, ctx: dict) -> dict:
     return {"text": "\n".join(dong)}
 
 
+def _h_theo_doi_chu_de(args: dict, ctx: dict) -> dict:
+    """Ghi nhớ CHỦ ĐỀ để người dùng quay lại hỏi 'có gì mới' — không tự lấy tin.
+
+    Lấy tin mới là việc của web_search; tool này chỉ quản danh sách theo dõi."""
+    from services.agent import tracked_topic as tt
+    uid = str((ctx or {}).get("user_id") or "").strip()
+    op = str(args.get("op") or "add").strip().lower()
+    chu_de = str(args.get("chu_de") or "").strip()
+    if not uid:
+        return {"text": "Em chưa xác định được anh/chị để lưu theo dõi ạ."}
+    if op in ("list", "liet_ke", "xem", "ds"):
+        ds = tt.liet_ke(uid)
+        if not ds:
+            return {"text": "Hiện anh/chị chưa theo dõi chủ đề nào ạ. Nói «theo dõi "
+                            "<chủ đề>» để em bắt đầu nhé."}
+        dong = ["📌 Chủ đề anh/chị đang theo dõi:"]
+        dong += [f"• {str(m.get('chu_de'))[:80]}" for m in ds]
+        dong.append("Hỏi «có gì mới về …» là em đi lấy tin mới nhất ạ.")
+        return {"text": "\n".join(dong)}
+    if op in ("remove", "xoa", "bo", "huy", "delete"):
+        if not chu_de:
+            return {"text": "Anh/chị muốn bỏ theo dõi chủ đề nào ạ?"}
+        ok = tt.xoa(uid, chu_de)
+        return {"text": (f"Em đã bỏ theo dõi «{chu_de}» ạ." if ok else
+                         f"Em không thấy «{chu_de}» trong danh sách theo dõi ạ.")}
+    if not chu_de:
+        return {"text": "Anh/chị muốn em theo dõi chủ đề gì ạ?"}
+    tt.them(uid, chu_de)
+    return {"text": f"Vâng, em sẽ theo dõi «{chu_de}» 📌 Khi nào anh/chị hỏi «có gì "
+                    f"mới về {chu_de}» (hay «có gì mới không»), em đi lấy tin mới "
+                    "nhất giúp. Anh/chị muốn em xem luôn bây giờ không ạ?"}
+
+
 def _h_library_media(args: dict, ctx: dict) -> dict:
     """Lấy media ĐÃ TẠO (ảnh/video/nhạc) và gửi lại — có PHÂN QUYỀN.
 
@@ -5533,6 +5566,22 @@ CAPABILITIES: dict[str, Capability] = {
         workflow=("Xoá là việc không lấy lại được: lần gọi đầu LUÔN để xac_nhan "
                   "trống để người dùng thấy 'bao nhiêu tệp, bao nhiêu MB, từ "
                   "ngày nào', chờ họ gật rồi mới gọi lại với xac_nhan=true.")),
+    "theo_doi_chu_de": Capability(
+        name="theo_doi_chu_de", risk=READ, handler=_h_theo_doi_chu_de,
+        emoji="📌", label="Theo dõi chủ đề tin tức",
+        description=("Ghi nhớ một CHỦ ĐỀ để người dùng quay lại hỏi 'có gì mới' về "
+                     "sau (vụ việc/sự kiện đang diễn tiến). op: 'add' (theo dõi chủ "
+                     "đề mới — 'theo dõi vụ cháy Hải Dương', 'cập nhật giúp tôi tình "
+                     "hình bão số 3'), 'list' (xem đang theo dõi gì), 'remove' (bỏ "
+                     "theo dõi). TOOL NÀY CHỈ GHI NHỚ chủ đề — muốn LẤY TIN mới thì "
+                     "gọi web_search với chính chủ đề đó."),
+        parameters={"type": "object", "properties": {
+            "op": {"type": "string", "enum": ["add", "list", "remove"],
+                   "description": "add=theo dõi mới; list=xem; remove=bỏ (mặc định add)"},
+            "chu_de": {"type": "string",
+                       "description": "Chủ đề (bắt buộc với add/remove)"}}},
+        workflow=("Ghi nhớ chủ đề xong thì gợi ý người dùng hỏi 'có gì mới về …'. "
+                  "Lấy tin mới là việc của web_search, không phải tool này.")),
     "tim_da_luu": Capability(
         name="tim_da_luu", risk=READ, handler=_h_tim_da_luu,
         emoji="🗂️", label="Tìm lại thứ đã lưu (theo mô tả)",
@@ -6746,6 +6795,7 @@ _CAP_GROUP: dict[str, str] = {
     # thread xem được thư viện mà không dọn được, hoặc ngược lại.
     "generate_image": "image", "library_media": "image", "delete_media": "image",
     "tim_da_luu": "image",
+    "theo_doi_chu_de": "web",
     "generate_music": "music",
     "generate_video": "video",
     "web_search": "web", "read_webpage": "web", "youtube_transcript": "web",
