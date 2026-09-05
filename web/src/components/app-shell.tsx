@@ -10,6 +10,8 @@ import { getValidatedAuthSession } from "@/lib/auth-session";
 import { clearStoredAuthSession, type StoredAuthSession } from "@/store/auth";
 import { useRouter } from "next/navigation";
 import { request } from "@/lib/request";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { TimNhanh } from "@/components/tim-nhanh";
 import { cn } from "@/lib/utils";
 
 const pageTitles: Record<string, string> = {
@@ -133,6 +135,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     .filter((i) => isAdmin || studioPaths.includes(i.href));
 
   return (
+    <TooltipProvider>
     <div className="flex min-h-screen bg-[var(--background)] overflow-x-hidden">
       {/* Sidebar (desktop cố định; mobile = drawer) */}
       <Sidebar
@@ -180,6 +183,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {pill && <StatusPill status={pill.status} label={pill.label} className="hidden sm:inline-flex" />}
           </div>
           <div className="flex items-center gap-2">
+            <TimNhanh />
             {/* Bộ chọn THEME thương hiệu (độc lập với sáng/tối) */}
             <select
               value={brand}
@@ -258,5 +262,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </nav>
       )}
     </div>
+    </TooltipProvider>
   );
 }
