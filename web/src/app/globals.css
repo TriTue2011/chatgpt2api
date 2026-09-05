@@ -106,7 +106,8 @@
   --tone-info: var(--neon-magenta);
   --tone-ok: var(--neon-lime);
   --tone-warn: var(--neon-amber);
-  /* Bảng biểu đồ: 8 chuỗi, mỗi màu ≥3:1 trên thẻ (WCAG 1.4.11 cho đồ hoạ). */
+  /* Bảng biểu đồ: 8 chuỗi. Ngưỡng ≥3:1 trên thẻ do scripts/kiem-tuong-phan.mjs
+     kiểm ở MỌI chủ đề — không phải lời hứa trong chú thích. */
   --chart-1: #7a5c12;
   --chart-2: #0369a1;
   --chart-3: #0f7a54;
@@ -224,7 +225,7 @@ html[data-brand="linear"]:not(.dark) {
   --neon-violet: #6b74e0;
   --neon-amber: #b45309;
   --chart-1: #4c55c7;
-  --chart-2: #828fff;
+  --chart-2: #4c55c7;
   --chart-3: #1f8c3b;
   --chart-4: #7a7fad;
   --chart-5: #b45309;
@@ -329,7 +330,7 @@ html[data-brand="supabase"]:not(.dark) {
   --neon-violet: #7c66d9;
   --neon-amber: #b45309;
   --chart-1: #1d8f65;
-  --chart-2: #3ecf8e;
+  --chart-2: #0f766e;
   --chart-3: #644fc1;
   --chart-4: #b45309;
   --chart-5: #dc2626;

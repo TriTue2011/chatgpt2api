@@ -23,8 +23,10 @@ export type TrangThaiHeThong = {
   config: SettingsConfig | null;
   soTaiKhoan: number;
   soTaiKhoanSong: number;
-  /** Đã gọi xong API chưa — chưa xong thì đừng kết luận "còn thiếu". */
-  daTai: boolean;
+  /** Đọc được /api/settings chưa. Người dùng thường không có quyền. */
+  coConfig: boolean;
+  /** Đọc được /api/v1/health chưa. */
+  coHealth: boolean;
 };
 
 export type MucTinhNang = {
@@ -42,6 +44,14 @@ export type MucTinhNang = {
   tuKhoa: string[];
   /** Bỏ trống = không kiểm được trạng thái, sẽ không vào checklist. */
   daXong?: (tt: TrangThaiHeThong) => boolean;
+  /**
+   * Phép kiểm cần dữ liệu từ đâu. Thiếu nguồn thì mục bị BỎ QUA chứ không bị
+   * coi là "còn thiếu" — /api/v1/health có thể tốn tới 30 giây ở lần gọi nguội
+   * (api/system.py:1099 mô tả ~16 lời gọi HTTP tuần tự), và lúc nó chưa về mà
+   * đã kết luận thì màn hình báo đỏ "chưa có tài khoản nào" trên một hệ thống
+   * đầy tài khoản đang chạy tốt.
+   */
+  nguon?: "config" | "health";
 };
 
 // ── Trợ giúp đọc config an toàn ─────────────────────────────────────────────
@@ -80,6 +90,7 @@ export const SO_TRA: MucTinhNang[] = [
     nhom: "Nền tảng",
     tuKhoa: ["tài khoản", "account", "token", "đăng nhập", "chatgpt", "codex", "gemini"],
     daXong: (tt) => tt.soTaiKhoan > 0,
+    nguon: "health",
   },
   {
     id: "tai-khoan-song",
@@ -94,6 +105,7 @@ export const SO_TRA: MucTinhNang[] = [
     nhom: "Nền tảng",
     tuKhoa: ["tài khoản lỗi", "hết hạn", "rate limit", "khoá"],
     daXong: (tt) => tt.soTaiKhoanSong > 0,
+    nguon: "health",
   },
   {
     id: "dia-chi-goc",
@@ -107,7 +119,10 @@ export const SO_TRA: MucTinhNang[] = [
     duong: "/settings",
     nhom: "Nền tảng",
     tuKhoa: ["base url", "địa chỉ", "domain", "tên miền", "webhook", "link"],
-    daXong: (tt) => coChu(lay(tt.config, "base_url")),
+    // KHÔNG kiểm được từ đây. `Config.base_url` là property giải theo thứ tự
+    // biến môi trường CHATGPT2API_BASE_URL → data["base_url"] → options.json
+    // của HA add-on (services/config.py:1168), mà /api/settings chỉ trả `data`
+    // thô. Máy khai bằng env sẽ bị báo thiếu vĩnh viễn, nên thà không kiểm.
   },
 
   // ═══ Nên có — chạy được nhưng thiếu thì sớm muộn cũng gặp phiền ═══
@@ -123,7 +138,16 @@ export const SO_TRA: MucTinhNang[] = [
     duong: "/providers",
     nhom: "Nền tảng",
     tuKhoa: ["provider", "nhà cung cấp", "api key", "gemini", "nvidia", "openai"],
-    daXong: (tt) => coPhanTu(lay(tt.config, "providers")),
+    // Không đếm được bằng "providers có rỗng không": services/config.py:1272 tự
+    // chèn providers.flow.captcha_solver_url mặc định, nên nó KHÔNG BAO GIỜ rỗng
+    // và phép kiểm cũ luôn báo xong ngay trên máy vừa cài. Chỉ tính nhà cung cấp
+    // do người dùng thật sự khai, tức khác `flow`.
+    daXong: (tt) => {
+      const pv = lay(tt.config, "providers");
+      if (!pv || typeof pv !== "object") return false;
+      return Object.keys(pv as Record<string, unknown>).some((k) => k !== "flow");
+    },
+    nguon: "config",
   },
   {
     id: "sao-luu",
@@ -141,6 +165,7 @@ export const SO_TRA: MucTinhNang[] = [
       const b = lay(tt.config, "backup");
       return !!(b && typeof b === "object" && (b as { enabled?: boolean }).enabled);
     },
+    nguon: "config",
   },
   {
     id: "proxy",
@@ -155,6 +180,7 @@ export const SO_TRA: MucTinhNang[] = [
     nhom: "Nền tảng",
     tuKhoa: ["proxy", "socks", "mạng", "ip", "vpn"],
     daXong: (tt) => coChu(lay(tt.config, "proxy")),
+    nguon: "config",
   },
 
   // ═══ Kênh trò chuyện ═══
@@ -171,6 +197,7 @@ export const SO_TRA: MucTinhNang[] = [
     nhom: "Kênh trò chuyện",
     tuKhoa: ["telegram", "bot", "botfather", "webhook", "chat"],
     daXong: (tt) => coChu(lay(tt.config, "telegram_webhook_url")),
+    nguon: "config",
   },
   {
     id: "zalo",
@@ -196,6 +223,7 @@ export const SO_TRA: MucTinhNang[] = [
     nhom: "Kênh trò chuyện",
     tuKhoa: ["facebook", "messenger", "fanpage", "trang"],
     daXong: (tt) => coPhanTu(lay(tt.config, "facebook")),
+    nguon: "config",
   },
 
   // ═══ Nhà thông minh và giọng nói ═══
@@ -212,6 +240,7 @@ export const SO_TRA: MucTinhNang[] = [
     nhom: "Nhà thông minh",
     tuKhoa: ["home assistant", "nhà thông minh", "đèn", "thiết bị", "ha", "camera"],
     daXong: (tt) => coPhanTu(lay(tt.config, "home_assistant")),
+    nguon: "config",
   },
   {
     id: "giong-noi",
@@ -271,6 +300,7 @@ export const SO_TRA: MucTinhNang[] = [
       const r = lay(tt.config, "ai_review");
       return !!(r && typeof r === "object" && (r as { enabled?: boolean }).enabled);
     },
+    nguon: "config",
   },
 ];
 
@@ -311,16 +341,29 @@ export function timMuc(id: string): MucTinhNang | undefined {
   return SO_TRA.find((m) => m.id === id);
 }
 
+/** Nguồn dữ liệu của mục này đã về chưa. Chưa về thì không kết luận gì. */
+function coNguon(m: MucTinhNang, tt: TrangThaiHeThong): boolean {
+  if (!m.daXong) return false;
+  if (m.nguon === "health") return tt.coHealth;
+  if (m.nguon === "config") return tt.coConfig;
+  return false;
+}
+
+/** Mục kiểm được ngay lúc này (đủ nguồn dữ liệu). */
+function mucKiemDuoc(tt: TrangThaiHeThong): MucTinhNang[] {
+  return SO_TRA.filter((m) => coNguon(m, tt));
+}
+
 /** Mục CHƯA xong và kiểm được — đây là thứ hiện trong checklist. */
 export function mucConThieu(tt: TrangThaiHeThong): MucTinhNang[] {
-  if (!tt.daTai) return [];
-  return SO_TRA.filter((m) => m.daXong && !m.daXong(tt)).sort((a, b) => a.thuTu - b.thuTu);
+  return mucKiemDuoc(tt)
+    .filter((m) => !m.daXong!(tt))
+    .sort((a, b) => a.thuTu - b.thuTu);
 }
 
 /** Đã cấu hình xong bao nhiêu trên tổng số kiểm được. */
 export function tienDo(tt: TrangThaiHeThong): { xong: number; tong: number } {
-  const kiemDuoc = SO_TRA.filter((m) => m.daXong);
-  if (!tt.daTai) return { xong: 0, tong: kiemDuoc.length };
+  const kiemDuoc = mucKiemDuoc(tt);
   return {
     xong: kiemDuoc.filter((m) => m.daXong!(tt)).length,
     tong: kiemDuoc.length,
@@ -330,6 +373,11 @@ export function tienDo(tt: TrangThaiHeThong): { xong: number; tong: number } {
 /** Còn thiếu thứ BẮT BUỘC nào không — quyết định trang chủ hiện checklist hay KPI. */
 export function conThieuBatBuoc(tt: TrangThaiHeThong): boolean {
   return mucConThieu(tt).some((m) => m.mucDo === "bat-buoc");
+}
+
+/** Mục đã cấu hình xong — dùng cho phần "xem mục đã xong". */
+export function mucDaXong(tt: TrangThaiHeThong): MucTinhNang[] {
+  return mucKiemDuoc(tt).filter((m) => m.daXong!(tt));
 }
 
 export const NHAN_MUC_DO: Record<MucDo, string> = {

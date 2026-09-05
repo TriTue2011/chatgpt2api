@@ -7,9 +7,9 @@ import { Check, ChevronDown, ChevronRight, CircleDashed, ArrowRight } from "luci
 import { cn } from "@/lib/utils";
 import { GiaiThich } from "@/components/giai-thich";
 import {
-  SO_TRA,
   NHAN_MUC_DO,
   mucConThieu,
+  mucDaXong,
   tienDo,
   type MucDo,
   type MucTinhNang,
@@ -112,11 +112,11 @@ export function BatDauODay({ tt }: { tt: TrangThaiHeThong }) {
   const thieu = mucConThieu(tt);
   const { xong, tong } = tienDo(tt);
   const batBuocThieu = thieu.filter((m) => m.mucDo === "bat-buoc");
-  const kiemDuoc = SO_TRA.filter((m) => m.daXong);
+  const daXong = mucDaXong(tt);
 
-  // Chưa gọi xong API thì không kết luận gì. Kết luận sớm sẽ chớp một nhịp
+  // Chưa API nào về thì không kết luận gì. Kết luận sớm sẽ chớp một nhịp
   // "thiếu mọi thứ" — đúng cái nhịp làm người mới cài hoảng.
-  if (!tt.daTai) return null;
+  if (tong === 0) return null;
 
   const donXong = thieu.length === 0;
 
@@ -176,11 +176,9 @@ export function BatDauODay({ tt }: { tt: TrangThaiHeThong }) {
 
           {moRong && (
             <ul className="mt-2 space-y-2">
-              {kiemDuoc
-                .filter((m) => m.daXong!(tt))
-                .map((m) => (
-                  <Dong key={m.id} muc={m} xong />
-                ))}
+              {daXong.map((m) => (
+                <Dong key={m.id} muc={m} xong />
+              ))}
             </ul>
           )}
         </>
@@ -192,7 +190,7 @@ export function BatDauODay({ tt }: { tt: TrangThaiHeThong }) {
 /** Dải một dòng cho người đã cấu hình xong — không chắn đường lên KPI. */
 export function DaiTienDo({ tt }: { tt: TrangThaiHeThong }) {
   const { xong, tong } = tienDo(tt);
-  if (!tt.daTai) return null;
+  if (tong === 0) return null;
   return (
     <Link
       href="/settings"

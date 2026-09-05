@@ -28,12 +28,15 @@ import { useTrangThaiHeThong } from "@/lib/use-trang-thai-he-thong";
 export function TimNhanh() {
   const [mo, datMo] = React.useState(false);
   const router = useRouter();
-  const tt = useTrangThaiHeThong();
+  // Chỉ đi hỏi trạng thái khi người dùng thật sự mở ô tìm.
+  const [daMoLanNao, datDaMoLanNao] = React.useState(false);
+  const tt = useTrangThaiHeThong(daMoLanNao);
 
   React.useEffect(() => {
     const nhan = (e: KeyboardEvent) => {
       if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
+        datDaMoLanNao(true);
         datMo((v) => !v);
       }
     };
@@ -57,7 +60,10 @@ export function TimNhanh() {
     <>
       <button
         type="button"
-        onClick={() => datMo(true)}
+        onClick={() => {
+          datDaMoLanNao(true);
+          datMo(true);
+        }}
         aria-label="Tìm nhanh chức năng và cài đặt"
         className={cn(
           "group inline-flex h-9 items-center gap-2 rounded-xl border border-[var(--border)]",

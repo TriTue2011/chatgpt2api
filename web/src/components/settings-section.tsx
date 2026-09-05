@@ -32,19 +32,33 @@ export function SettingsSection({
   // ngầm lúc /settings vừa tải (xem ActivityCollapse trong telegram-cloudflare-card.tsx).
   // Mở rồi thì giữ mounted luôn để đóng lại không mất dữ liệu đang sửa dở.
   const [hasOpened, setHasOpened] = useState(defaultOpen);
-  const dangMo = boLoc.dangLoc ? true : open;
+  const dangMo = open;
   useEffect(() => {
     if (dangMo) setHasOpened(true);
   }, [dangMo]);
 
-  // Đang lọc mà mục không khớp thì bỏ hẳn khỏi trang: để lại một hàng tiêu đề
-  // xám thì người dùng vẫn phải đọc lướt qua nó, đúng việc ô lọc sinh ra để bỏ.
-  if (boLoc.dangLoc && !khop) return null;
+  // Lọc trúng thì mở bằng CHÍNH state `open`, không phải một cờ hiển thị riêng.
+  // Nếu ép mở bằng cờ riêng thì nút gập bấm vào không thấy gì đổi — nó lật một
+  // state đang bị cờ kia che, và cái lật đó chỉ lòi ra sau khi xoá bộ lọc.
+  useEffect(() => {
+    if (boLoc.dangLoc && khop) setOpen(true);
+  }, [boLoc.dangLoc, khop]);
+
+  // Báo lên bộ lọc để nó biết khi nào không còn mục nào khớp.
+  useEffect(() => {
+    boLoc.bao(title, khop);
+  }, [boLoc, title, khop]);
+
+  // Không khớp thì ẨN, không tháo khỏi cây. Tháo ra là mất trạng thái form đang
+  // gõ dở — đúng điều chú thích hasOpened ở trên đang cố tránh.
+  const bienMat = boLoc.dangLoc && !khop;
 
   return (
     <div
+      hidden={bienMat}
       className={cn(
         "overflow-hidden rounded-[16px] border border-[var(--border)] bg-[var(--card)]",
+        bienMat && "hidden",
         "transition-all duration-300",
         dangMo
           ? "shadow-[0_8px_28px_color-mix(in_srgb,var(--neon-cyan)_10%,transparent),0_2px_8px_rgba(0,0,0,0.08)] border-[color-mix(in_srgb,var(--neon-cyan)_25%,var(--border))]"

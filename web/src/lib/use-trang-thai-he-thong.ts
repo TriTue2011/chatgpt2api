@@ -13,7 +13,8 @@ const RONG: TrangThaiHeThong = {
   config: null,
   soTaiKhoan: 0,
   soTaiKhoanSong: 0,
-  daTai: false,
+  coConfig: false,
+  coHealth: false,
 };
 
 /**
@@ -23,11 +24,20 @@ const RONG: TrangThaiHeThong = {
  * endpoint mới. `/api/v1/health` có sẵn bộ nhớ đệm 30 giây phía máy chủ
  * (api/system.py) nên gọi ở đây không tạo thêm tải.
  *
- * `daTai` chỉ bật khi CẢ HAI lời gọi xong. Chưa xong mà đã kết luận thì
- * checklist sẽ chớp một nhịp "còn thiếu mọi thứ" rồi mới đúng — người mới cài
- * nhìn thấy đúng cái nhịp đó sẽ hoảng.
+ * Hai cờ RIÊNG chứ không gộp một. Gộp lại thì một API hỏng cũng bị coi là đã
+ * tải đủ, và phần dữ liệu thiếu bị đọc thành "chưa cấu hình": health có thể tốn
+ * tới 30 giây ở lần gọi nguội, lúc đó màn hình sẽ báo đỏ "chưa có tài khoản nào"
+ * trên hệ thống đầy tài khoản đang chạy tốt.
  */
-export function useTrangThaiHeThong(): TrangThaiHeThong & { taiLai: () => void } {
+export function useTrangThaiHeThong(
+  /**
+   * Bật/tắt việc gọi API. Ô tìm nhanh nằm trong AppShell nên mount ở MỌI trang;
+   * gọi ngay lúc mount là mỗi lần chuyển trang lại thêm hai lời gọi, và với
+   * người dùng thường thì một trong hai luôn trả 403 vì /api/settings chỉ cho
+   * admin. Truyền false cho tới lúc thật sự cần.
+   */
+  batDau = true,
+): TrangThaiHeThong & { taiLai: () => void } {
   const [tt, datTt] = useState<TrangThaiHeThong>(RONG);
 
   const tai = useCallback(async () => {
@@ -47,13 +57,15 @@ export function useTrangThaiHeThong(): TrangThaiHeThong & { taiLai: () => void }
       config,
       soTaiKhoan: acc.total ?? 0,
       soTaiKhoanSong: acc.active ?? 0,
-      daTai: cfg.status === "fulfilled" || health.status === "fulfilled",
+      coConfig: cfg.status === "fulfilled",
+      coHealth: health.status === "fulfilled",
     });
   }, []);
 
   useEffect(() => {
+    if (!batDau) return;
     void tai();
-  }, [tai]);
+  }, [batDau, tai]);
 
   return { ...tt, taiLai: () => void tai() };
 }

@@ -66,6 +66,16 @@ const CAP = [
   ["Vòng focus trên nền", "ring", "background", AA_TO, true],
   ["Vòng focus trên thẻ", "ring", "card", AA_TO, true],
   ["Viền trang trí trên nền", "border", "background", AA_TO, false],
+  // Chuỗi biểu đồ là ĐỐI TƯỢNG ĐỒ HOẠ mang thông tin (WCAG 1.4.11 → 3:1).
+  // Trang chủ vẽ chúng trên thẻ nên nền so sánh là --card.
+  ["Biểu đồ chuỗi 1", "chart-1", "card", AA_TO, true],
+  ["Biểu đồ chuỗi 2", "chart-2", "card", AA_TO, true],
+  ["Biểu đồ chuỗi 3", "chart-3", "card", AA_TO, true],
+  ["Biểu đồ chuỗi 4", "chart-4", "card", AA_TO, true],
+  ["Biểu đồ chuỗi 5", "chart-5", "card", AA_TO, true],
+  ["Biểu đồ chuỗi 6", "chart-6", "card", AA_TO, true],
+  ["Biểu đồ chuỗi 7", "chart-7", "card", AA_TO, true],
+  ["Biểu đồ chuỗi 8", "chart-8", "card", AA_TO, true],
 ];
 
 // ── Đọc và phân giải biến ───────────────────────────────────────────────────

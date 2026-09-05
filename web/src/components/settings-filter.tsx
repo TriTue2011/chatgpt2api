@@ -20,9 +20,15 @@ type BoLoc = {
   tuKhoa: string;
   /** Có đang lọc không — dùng để quyết định tự mở mục khớp. */
   dangLoc: boolean;
+  /** Mỗi mục báo lên nó có khớp không, để biết khi nào không còn mục nào. */
+  bao: (id: string, khop: boolean) => void;
 };
 
-const Ctx = React.createContext<BoLoc>({ tuKhoa: "", dangLoc: false });
+const Ctx = React.createContext<BoLoc>({
+  tuKhoa: "",
+  dangLoc: false,
+  bao: () => {},
+});
 
 export function useBoLocCaiDat() {
   return React.useContext(Ctx);
@@ -69,10 +75,20 @@ export function BoLocCaiDat({ children }: { children: React.ReactNode }) {
     return () => document.removeEventListener("keydown", nhan);
   }, []);
 
+  // Các mục tự báo lên có khớp không. Không có cách nào biết "không còn mục nào"
+  // bằng CSS thuần, mà lọc ra trắng trang không một lời giải thích thì người
+  // dùng tưởng trang hỏng.
+  const [soKhop, datSoKhop] = React.useState<Record<string, boolean>>({});
+  const bao = React.useCallback((id: string, khop: boolean) => {
+    datSoKhop((cu) => (cu[id] === khop ? cu : { ...cu, [id]: khop }));
+  }, []);
+
   const giaTri = React.useMemo(
-    () => ({ tuKhoa, dangLoc: tuKhoa.trim().length > 0 }),
-    [tuKhoa],
+    () => ({ tuKhoa, dangLoc: tuKhoa.trim().length > 0, bao }),
+    [tuKhoa, bao],
   );
+  const khongCoGi =
+    tuKhoa.trim().length > 0 && Object.values(soKhop).every((v) => !v);
 
   return (
     <Ctx.Provider value={giaTri}>
@@ -108,6 +124,11 @@ export function BoLocCaiDat({ children }: { children: React.ReactNode }) {
         </div>
       </div>
       {children}
+      {khongCoGi && (
+        <p className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] px-4 py-8 text-center text-sm text-[var(--muted-foreground)]">
+          Không có cài đặt nào khớp «{tuKhoa}».
+        </p>
+      )}
     </Ctx.Provider>
   );
 }
