@@ -175,6 +175,133 @@ def _la_yeu_cau_tin_tuc(text: str) -> str | None:
     return "ngay" if _TIN_NGAY_KHAC.search(t) else "moi"
 
 
+# Theo dõi chủ đề có trạng thái/chọn lựa, nên không thể chỉ nhắc model qua
+# prompt. Những câu dưới đây phải được xử lý XÁC ĐỊNH: một chủ đề → tra ngay;
+# nhiều chủ đề → bắt người dùng chọn, tuyệt đối không lấy ``gan_nhat`` đoán hộ.
+_TT_BARE_UPDATE = _re_mod.compile(r"^\s*(?:có|co)\s+(?:gì|gi)\s+mới\s*(?:không|khong)?\s*[?!。.]*\s*$", _re_mod.I)
+_TT_UPDATE_TOPIC = _re_mod.compile(r"^\s*(?:có|co)\s+(?:gì|gi)\s+mới\s+(?:về|ve)\s+(.+?)\s*[?!。.]*\s*$", _re_mod.I)
+_TT_ADD = _re_mod.compile(r"^\s*theo\s+(?:dõi|doi)\s+(.+?)\s*[.!]*\s*$", _re_mod.I)
+_TT_SENTINEL = _re_mod.compile(
+    r"^__tracked_topic__:(view|alert|pause|remove):([0-9a-f]{8,64})(?::(\d{1,5}))?$",
+    _re_mod.I,
+)
+
+
+def _topic_menu(item: dict[str, Any], *, added: bool = False) -> dict[str, Any]:
+    """Menu ngắn dùng chung cho Zalo/Telegram sau một hành động chủ đề."""
+    iid = str(item.get("id") or "")
+    name = str(item.get("chu_de") or "chủ đề")[:100]
+    interval = item.get("alert_interval_min")
+    if interval:
+        choices = [
+            {"label": "Xem tin mới ngay", "send": f"__tracked_topic__:view:{iid}"},
+            {"label": "Tạm dừng báo", "send": f"__tracked_topic__:pause:{iid}"},
+            {"label": "Bỏ theo dõi", "send": f"__tracked_topic__:remove:{iid}"},
+        ]
+        intro = f"«{name}» đang báo mỗi {int(interval)} phút."
+    else:
+        choices = [
+            {"label": "Xem tin mới ngay", "send": f"__tracked_topic__:view:{iid}"},
+            {"label": "Báo khi có tin mới (mỗi giờ)", "send": f"__tracked_topic__:alert:{iid}:60"},
+            {"label": "Báo một lần mỗi ngày", "send": f"__tracked_topic__:alert:{iid}:1440"},
+            {"label": "Bỏ theo dõi", "send": f"__tracked_topic__:remove:{iid}"},
+        ]
+        intro = f"Đã lưu «{name}» 📌" if added else f"«{name}» hiện chỉ được lưu."
+    return {"text": intro + " Chọn việc tiếp theo:", "choices": choices}
+
+
+def _topic_web_result(item: dict[str, Any], user_id: str) -> dict[str, Any]:
+    cap = caps.get("web_search")
+    if cap is None:
+        return {"text": "Hiện chưa có công cụ tra tin mới ạ."}
+    try:
+        result = cap.handler({"query": str(item.get("query") or item.get("chu_de") or "")},
+                             {"user_id": user_id})
+        body = str((result or {}).get("text") or "").strip()
+    except Exception as exc:
+        logger.warning({"event": "tracked_topic_search_error", "error": str(exc)[:160]})
+        body = ""
+    if not body:
+        return {"text": f"Em chưa lấy được tin mới về «{item.get('chu_de')}» ạ."}
+    try:
+        from services.agent import tracked_topic as tt
+        tt.ghi_ket_qua(user_id, str(item.get("id") or ""), body)
+    except Exception:
+        pass
+    return {"text": f"📌 Tin mới về «{item.get('chu_de')}»:\n{body}"}
+
+
+def _tracked_topic_shortcut(text: str, user_id: str,
+                            allow: set[str] | None = None) -> dict[str, Any] | None:
+    """Các thao tác chủ đề phải chính xác, không phụ thuộc model chọn hộ.
+
+    Trả ``None`` nếu câu không thuộc luồng này để các yêu cầu web thông thường
+    vẫn đi theo pipeline cũ.
+    """
+    if allow is not None and "web" not in allow:
+        return None
+    raw = str(text or "").strip()
+    if not raw or not user_id:
+        return None
+    from services.agent import tracked_topic as tt
+
+    sent = _TT_SENTINEL.match(raw)
+    if sent:
+        action, iid, interval_s = sent.groups()
+        item = tt.lay_muc(user_id, iid)
+        if item is None:
+            return {"text": "Mục theo dõi này không còn nữa ạ. Anh/chị xem lại danh sách giúp em nhé."}
+        if action == "view":
+            return _topic_web_result(item, user_id)
+        if action == "remove":
+            ok = tt.xoa(user_id, iid)
+            return {"text": f"Đã bỏ theo dõi «{item.get('chu_de')}» ạ." if ok else
+                    "Em chưa bỏ được mục này, anh/chị thử lại giúp em nhé."}
+        if action == "pause":
+            ok = tt.tam_dung_bao(user_id, iid)
+            return {"text": f"Đã tạm dừng báo «{item.get('chu_de')}»; chủ đề vẫn được lưu ạ." if ok else
+                    "Em chưa tạm dừng được mục này ạ."}
+        if action == "alert":
+            delivery, is_group = caps._delivery_theo_doi_chu_de(user_id)
+            ok = tt.bat_bao(user_id, iid, int(interval_s or 0), delivery=delivery)
+            if not ok:
+                return {"text": "Em chưa bật được báo tin; anh/chị thử lại giúp em nhé."}
+            item = tt.lay_muc(user_id, iid) or item
+            where = " trong nhóm này" if is_group else " tại đây"
+            return {"text": (f"Đã bật báo «{item.get('chu_de')}» mỗi {item.get('alert_interval_min')} phút{where}. "
+                             "Em chỉ gửi khi có nguồn mới."),
+                    "choices": _topic_menu(item)["choices"]}
+
+    add = _TT_ADD.match(raw)
+    if add:
+        subject = add.group(1).strip()
+        if not subject:
+            return {"text": "Anh/chị muốn em theo dõi chủ đề gì ạ?"}
+        if not tt.them(user_id, subject):
+            return {"text": "Em chưa lưu được chủ đề này; anh/chị thử lại giúp em nhé."}
+        item = tt.lay_muc(user_id, subject)
+        return _topic_menu(item or {"chu_de": subject}, added=True)
+
+    update_topic = _TT_UPDATE_TOPIC.match(raw)
+    if update_topic:
+        subject = update_topic.group(1).strip()
+        found = tt.lay_muc(user_id, subject)
+        return _topic_web_result(found or {"chu_de": subject, "query": subject}, user_id)
+
+    if not _TT_BARE_UPDATE.match(raw):
+        return None
+    topics = tt.liet_ke(user_id)
+    if not topics:
+        return {"text": "Anh/chị chưa theo dõi chủ đề nào. Nói «theo dõi <chủ đề>» để em lưu nhé."}
+    if len(topics) == 1:
+        return _topic_web_result(topics[0], user_id)
+    choices = [{"label": str(item.get("chu_de") or "")[:40],
+                "send": f"__tracked_topic__:view:{item.get('id')}"}
+               for item in topics[:8]]
+    return {"text": "Anh/chị đang theo dõi nhiều chủ đề — chọn một chủ đề để em tra tin mới:",
+            "choices": choices}
+
+
 # ── Đường tắt TẠO ẢNH / TẠO VIDEO ────────────────────────────────────────────
 #
 # Menu chọn model chỉ là GHÉP CHUỖI từ danh sách model đã cache — gần như tức
@@ -1873,6 +2000,14 @@ def _finalize(user_id: str, result: dict[str, Any],
         result = ask_choices.apply_to_result(result, user_id)
     except Exception:
         pass
+    # Một số đường tắt xác định (vd theo dõi chủ đề) dựng choices có cấu trúc
+    # luôn, không cần chèn khối <<<ASK>>> vào text. Vẫn phải lưu pending để câu
+    # trả lời số trên Zalo được giải mã ở lượt kế tiếp.
+    try:
+        if isinstance(result, dict) and isinstance(result.get("choices"), list):
+            ask_choices.set_pending(user_id, result["choices"])
+    except Exception:
+        pass
     # Danh sách dài (bản tin, danh mục…) → đánh mã mục A1/B2 để người dùng chọn
     # xem chi tiết. Chạy SAU ask_choices và tự bỏ qua khi tin đã là menu chọn,
     # nên hai hệ mã không bao giờ nằm chung một tin.
@@ -2398,6 +2533,18 @@ def _orchestrate_locked(user_text: str, user_id: str,
     max_h = sess.max_history() if sess.is_enabled() else 16
     if len(hist) > max_h * 2:
         del hist[: len(hist) - max_h * 2]
+
+    # 1.2) THEO DÕI CHỦ ĐỀ — câu ngắn "có gì mới không" không được giao cho
+    # model tự đoán chủ đề. Một mục thì tra thẳng; nhiều mục thì trả menu chọn.
+    # Đặt sau resolve ask_choices để số người dùng bấm trong menu ở lượt trước
+    # đã được đổi thành sentinel an toàn trước khi vào đây.
+    _topic_out = _tracked_topic_shortcut(user_text, user_id, allow)
+    if _topic_out is not None:
+        out_topic = _finalize(user_id, _topic_out, ap_loi_dan=user_text)
+        hist.append({"role": "assistant", "content": out_topic.get("text") or ""})
+        _persist_history(user_id, hist)
+        _journal(str(out_topic.get("text") or ""), status="tracked_topic")
+        return out_topic
 
     # 1.25) MÃ TRẦN (E1, D12…) không chọn được → CODE nói lý do THẬT, không để
     # model đọc thuộc. Tới đây mà user_text CÒN NGUYÊN là một mã (mọi resolve ở

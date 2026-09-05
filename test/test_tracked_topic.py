@@ -122,3 +122,29 @@ def test_bao_tin_can_bat_ro_rang_va_co_the_tam_dung(tmp_path, monkeypatch):
     assert tt.liet_ke("u1")[0]["alert_interval_min"] == 1440
     assert tt.tam_dung_bao("u1", topic["id"])
     assert tt.liet_ke("u1")[0]["alert_interval_min"] is None
+
+
+def test_handler_bat_bao_can_chi_ro_tan_suat_va_luu_dung_chat_zalo(tmp_path, monkeypatch):
+    _patch_dir(tmp_path, monkeypatch)
+    from services.agent import capabilities as caps
+    from services.agent import tracked_topic as tt
+
+    uid = "zalo_123:u456"
+    assert tt.them(uid, "giá vàng")
+    topic = tt.liet_ke(uid)[0]
+    hoi = caps._h_theo_doi_chu_de({"op": "alert", "id": topic["id"]}, {"user_id": uid})
+    assert "bao lâu" in hoi["text"].lower()
+
+    out = caps._h_theo_doi_chu_de(
+        {"op": "alert", "id": topic["id"], "interval_min": 60}, {"user_id": uid}
+    )
+    assert "trong nhóm" in out["text"].lower()
+    stored = tt.liet_ke(uid)[0]
+    assert stored["delivery"]["channel"] == "zalo"
+    assert stored["delivery"]["chat_id"] == "123"
+
+
+def test_api_start_tracked_topic_scheduler():
+    source = (Path(__file__).resolve().parents[1] / "api" / "app.py").read_text("utf-8")
+    assert "from services.agent.tracked_topic import start as start_tracked_topic" in source
+    assert "start_tracked_topic()" in source

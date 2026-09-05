@@ -157,6 +157,13 @@ def create_app() -> FastAPI:
             start_agent_reminders()
         except Exception as exc:
             _record_startup_failure("agent_reminders", str(exc))
+        # Chủ đề theo dõi: chỉ quét các mục người dùng đã chủ động bật báo;
+        # danh sách chỉ-lưu không tạo bất kỳ request web nền nào.
+        try:
+            from services.agent.tracked_topic import start as start_tracked_topic
+            start_tracked_topic()
+        except Exception as exc:
+            _record_startup_failure("tracked_topic", str(exc))
         # Agent heartbeat (wiki daily digest, goal nudges, HEARTBEAT.md tasks)
         try:
             from services.agent.heartbeat import start as start_agent_heartbeat

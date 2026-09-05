@@ -3502,14 +3502,39 @@ def _h_tim_da_luu(args: dict, ctx: dict) -> dict:
     return {"text": "\n".join(dong), "deliver_now": True}
 
 
-def _h_theo_doi_chu_de(args: dict, ctx: dict) -> dict:
-    """Ghi nhớ CHỦ ĐỀ để người dùng quay lại hỏi 'có gì mới' — không tự lấy tin.
+def _delivery_theo_doi_chu_de(user_id: str) -> tuple[dict | None, bool]:
+    """Đích gửi của alert, chốt lúc người dùng BẬT báo.
 
-    Lấy tin mới là việc của web_search; tool này chỉ quản danh sách theo dõi."""
+    ``zalo_<chat>:u<member>`` là khoá dữ liệu riêng trong nhóm, nhưng alert nếu
+    người dùng đã đồng ý phải gửi vào CHAT thật chứ không phải chuỗi khoá đó.
+    """
+    uid = str(user_id or "").strip()
+    if not uid:
+        return None, False
+    try:
+        from services.agent import reminders as rem
+        channel, chat_id = rem.channel_of(uid)
+        if uid.startswith("zalo_"):
+            channel = "zalo"
+            chat_id = uid[5:].split(":u", 1)[0]
+        elif uid.startswith("tg_"):
+            channel, chat_id = "tg", uid[3:]
+        meta = rem._capture_delivery_ctx(channel)
+        if not chat_id:
+            return None, False
+        return {"channel": channel, "chat_id": chat_id, "meta": meta}, ":u" in uid
+    except Exception:
+        return None, False
+
+
+def _h_theo_doi_chu_de(args: dict, ctx: dict) -> dict:
+    """Quản lý chủ đề và alert tự nguyện; lấy tin ngay vẫn qua web_search."""
     from services.agent import tracked_topic as tt
     uid = str((ctx or {}).get("user_id") or "").strip()
     op = str(args.get("op") or "add").strip().lower()
     chu_de = str(args.get("chu_de") or "").strip()
+    topic_id = str(args.get("id") or args.get("topic_id") or "").strip()
+    key = topic_id or chu_de
     if not uid:
         return {"text": "Em chưa xác định được anh/chị để lưu theo dõi ạ."}
     if op in ("list", "liet_ke", "xem", "ds"):
@@ -3518,21 +3543,54 @@ def _h_theo_doi_chu_de(args: dict, ctx: dict) -> dict:
             return {"text": "Hiện anh/chị chưa theo dõi chủ đề nào ạ. Nói «theo dõi "
                             "<chủ đề>» để em bắt đầu nhé."}
         dong = ["📌 Chủ đề anh/chị đang theo dõi:"]
-        dong += [f"• {str(m.get('chu_de'))[:80]}" for m in ds]
-        dong.append("Hỏi «có gì mới về …» là em đi lấy tin mới nhất ạ.")
+        for m in ds:
+            interval = m.get("alert_interval_min")
+            state = (f"🔔 báo mỗi {int(interval)} phút" if interval else "chỉ lưu")
+            dong.append(f"• {str(m.get('chu_de'))[:80]} — {state}")
+        dong.append("Hỏi «có gì mới về …» để xem ngay; muốn xoá, nói đủ tên chủ đề ạ.")
         return {"text": "\n".join(dong)}
     if op in ("remove", "xoa", "bo", "huy", "delete"):
-        if not chu_de:
+        if not key:
             return {"text": "Anh/chị muốn bỏ theo dõi chủ đề nào ạ?"}
-        ok = tt.xoa(uid, chu_de)
+        ok = tt.xoa(uid, key)
+        if not ok:
+            matches = tt.tim_muc(uid, key)
+            if matches:
+                lines = ["Có các chủ đề khớp; anh/chị nói đủ TÊN để em bỏ đúng mục:"]
+                lines += [f"• {str(m.get('chu_de'))[:80]}" for m in matches]
+                return {"text": "\n".join(lines)}
         return {"text": (f"Em đã bỏ theo dõi «{chu_de}» ạ." if ok else
                          f"Em không thấy «{chu_de}» trong danh sách theo dõi ạ.")}
+    if op in ("alert", "bao", "notify", "schedule"):
+        if not key or tt.lay_muc(uid, key) is None:
+            return {"text": "Anh/chị muốn bật báo cho chủ đề nào ạ?"}
+        interval = args.get("interval_min") or args.get("so_phut")
+        if interval in (None, ""):
+            return {"text": "Anh/chị muốn em báo bao lâu một lần: mỗi giờ hay mỗi ngày ạ?"}
+        delivery, is_group = _delivery_theo_doi_chu_de(uid)
+        if not tt.bat_bao(uid, key, interval, delivery=delivery):
+            return {"text": "Em chưa bật được báo tin; anh/chị thử lại giúp em nhé."}
+        topic = tt.lay_muc(uid, key) or {}
+        try:
+            every = int(topic.get("alert_interval_min") or interval)
+        except (TypeError, ValueError):
+            every = interval
+        where = " trong nhóm này" if is_group else " tại đây"
+        return {"text": (f"Đã bật báo «{topic.get('chu_de') or key}» mỗi {every} phút{where} ạ. "
+                         "Em chỉ gửi khi kết quả có nguồn mới; nói «tạm dừng báo …» để dừng.")}
+    if op in ("pause", "tam_dung", "stop", "off"):
+        if not key:
+            return {"text": "Anh/chị muốn tạm dừng báo cho chủ đề nào ạ?"}
+        ok = tt.tam_dung_bao(uid, key)
+        return {"text": "Đã tạm dừng báo; chủ đề vẫn được lưu ạ." if ok else
+                "Em không thấy chủ đề đó để tạm dừng ạ."}
     if not chu_de:
         return {"text": "Anh/chị muốn em theo dõi chủ đề gì ạ?"}
-    tt.them(uid, chu_de)
+    if not tt.them(uid, chu_de):
+        return {"text": "Em chưa lưu được chủ đề này; anh/chị thử lại giúp em nhé."}
     return {"text": f"Vâng, em sẽ theo dõi «{chu_de}» 📌 Khi nào anh/chị hỏi «có gì "
                     f"mới về {chu_de}» (hay «có gì mới không»), em đi lấy tin mới "
-                    "nhất giúp. Anh/chị muốn em xem luôn bây giờ không ạ?"}
+                    "nhất giúp. Em chỉ lưu thôi; anh/chị có thể chọn bật báo mỗi giờ/mỗi ngày ạ."}
 
 
 def _h_library_media(args: dict, ctx: dict) -> dict:
@@ -5614,18 +5672,21 @@ CAPABILITIES: dict[str, Capability] = {
         name="theo_doi_chu_de", risk=READ, handler=_h_theo_doi_chu_de,
         emoji="📌", label="Theo dõi chủ đề tin tức",
         description=("Ghi nhớ một CHỦ ĐỀ để người dùng quay lại hỏi 'có gì mới' về "
-                     "sau (vụ việc/sự kiện đang diễn tiến). op: 'add' (theo dõi chủ "
-                     "đề mới — 'theo dõi vụ cháy Hải Dương', 'cập nhật giúp tôi tình "
-                     "hình bão số 3'), 'list' (xem đang theo dõi gì), 'remove' (bỏ "
-                     "theo dõi). TOOL NÀY CHỈ GHI NHỚ chủ đề — muốn LẤY TIN mới thì "
-                     "gọi web_search với chính chủ đề đó."),
+                     "sau (vụ việc/sự kiện đang diễn tiến). op: 'add', 'list', "
+                     "'remove' (chỉ xóa đúng tên/id; nếu mơ hồ phải hiện lựa chọn), "
+                     "'alert' (BẬT báo sau khi người dùng nói rõ tần suất), 'pause'. "
+                     "TOOL NÀY quản lý sổ/báo; muốn LẤY TIN mới ngay thì gọi "
+                     "web_search với chính chủ đề."),
         parameters={"type": "object", "properties": {
-            "op": {"type": "string", "enum": ["add", "list", "remove"],
-                   "description": "add=theo dõi mới; list=xem; remove=bỏ (mặc định add)"},
+            "op": {"type": "string", "enum": ["add", "list", "remove", "alert", "pause"],
+                   "description": "add=theo dõi mới; list=xem; remove=bỏ; alert=bật báo; pause=tạm dừng báo"},
             "chu_de": {"type": "string",
-                       "description": "Chủ đề (bắt buộc với add/remove)"}}},
-        workflow=("Ghi nhớ chủ đề xong thì gợi ý người dùng hỏi 'có gì mới về …'. "
-                  "Lấy tin mới là việc của web_search, không phải tool này.")),
+                       "description": "Chủ đề (bắt buộc với add; tên đầy đủ khi remove)"},
+            "id": {"type": "string", "description": "ID chủ đề nếu đã có trong danh sách"},
+            "interval_min": {"type": "integer", "description": "Bắt buộc với alert: số phút giữa hai lần kiểm tra/báo"}}},
+        workflow=("Ghi nhớ xong chỉ là lưu. Chỉ gọi alert khi người dùng ĐỒNG Ý rõ "
+                  "tần suất; ở nhóm phải nói tin báo sẽ hiện trong nhóm. Lấy tin mới "
+                  "ngay là web_search, không phải tool này.")),
     "tim_da_luu": Capability(
         name="tim_da_luu", risk=READ, handler=_h_tim_da_luu,
         emoji="🗂️", label="Tìm lại thứ đã lưu (theo mô tả)",
