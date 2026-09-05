@@ -2896,7 +2896,12 @@ def _do_photo_request(
         it = intent or (
             _phi.GENERATE if _phi.classify(request_text) == _phi.GENERATE else _phi.ANALYZE
         )
-        allowed = _phi.them_dang_facebook(_phi.allowed_intents(allow), allow)
+        # Gồm cả LUU_ONLINE để mục «☁️ Lưu kho» không bị chặn ở thread có lọc
+        # (dispatch đã cho qua bằng them_luu_online; guard này phải khớp, kẻo bấm
+        # "6" bị block IM LẶNG — đúng lỗi "chọn lưu đám mây bị block" 05/09).
+        allowed = _phi.them_luu_online(
+            _phi.them_dang_facebook(_phi.allowed_intents(allow), allow),
+            "zalop", str(thread_id), user=str(user_id or ""))
         if it not in allowed and allow is not None:
             status = "blocked"
             err = f"intent {it} not allowed"
