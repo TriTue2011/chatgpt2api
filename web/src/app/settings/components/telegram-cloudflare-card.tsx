@@ -1831,6 +1831,7 @@ export function TelegramCloudflareCard() {
                 <code>@toi</code> · chuyển tiếp <b>bật</b>, «chỉ khi có TAG», tag riêng{" "}
                 <code>@n8n</code>. Khi đó:
               </p>
+              <div className="overflow-x-auto">
               <table className="w-full">
                 <tbody>
                   {[
@@ -1850,6 +1851,7 @@ export function TelegramCloudflareCard() {
                   ))}
                 </tbody>
               </table>
+            </div>
               <p>
                 Luật chung: <b>đúng một</b> trong hai (ChatGPT / webhook) được nhận tin
                 KHÔNG tag, cái còn lại phải có tag. Tin mang tag nào thì về đúng nơi của
@@ -2163,6 +2165,7 @@ export function TelegramCloudflareCard() {
                   hiểu, khỏi phải tự dựng lại trong đầu từ bốn ô rời rạc. */}
               <div className="rounded border border-dashed border-emerald-500/50 p-2">
                 <p className="mb-1 text-[11px] font-medium">📬 Với cài đặt hiện tại</p>
+                <div className="overflow-x-auto">
                 <table className="w-full">
                   <tbody>
                     {bangDinhTuyen(row, row.kind !== "user").map(([a, b]) => (
@@ -2175,6 +2178,7 @@ export function TelegramCloudflareCard() {
                     ))}
                   </tbody>
                 </table>
+              </div>
               </div>
 
               {/* ── TẦNG TOPIC (nhóm Telegram bật Topics) — cấp GIỮA nhóm và user ──

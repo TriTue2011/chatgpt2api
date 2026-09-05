@@ -449,7 +449,7 @@ export default function DashboardPage() {
           </div>
           <div className="flex-1 overflow-y-auto overflow-x-auto">
             {recentReqs.length === 0 ? (
-              <div className="h-32 flex items-center justify-center text-[var(--muted-foreground)] text-sm">No requests yet.</div>
+              <div className="h-32 flex items-center justify-center text-[var(--muted-foreground)] text-sm">Chưa có lượt gọi nào.</div>
             ) : (
               <table className="w-full text-[12px]">
                 <tbody>

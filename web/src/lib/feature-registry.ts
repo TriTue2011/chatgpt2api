@@ -208,7 +208,9 @@ export const SO_TRA: MucTinhNang[] = [
     canGi: "Bot server zca-js chạy sẵn, đăng nhập bằng quét mã QR.",
     mucDo: "tuy-chon",
     thuTu: 22,
-    duong: "/zalo",
+    // /zalo chỉ là stub redirect sang /settings (giữ cho link cũ không chết),
+    // nên trỏ thẳng đích để người dùng không đi hai chặng.
+    duong: "/settings",
     nhom: "Kênh trò chuyện",
     tuKhoa: ["zalo", "cá nhân", "zca", "qr", "chat"],
   },
