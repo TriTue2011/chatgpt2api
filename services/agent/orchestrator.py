@@ -1370,7 +1370,11 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
      "- Chỉ đường / hỏi đường giữa hai địa điểm ('đường từ A về B', 'đi tới … "
      "thế nào', 'từ … đến … bao xa') → chi_duong(diem_di, diem_den). Hệ thống "
      "HỎI phương tiện rồi trả khoảng cách + chỉ dẫn + link Google Maps. KHÔNG "
-     "tự bịa đường hay khoảng cách — chỉ gọi tool."),
+     "tự bịa đường hay khoảng cách — chỉ gọi tool. CHỈ gọi khi câu nêu RÕ CẢ "
+     "điểm đi LẪN điểm đến. Câu chỉ nhắc MỘT địa điểm, hay chưa chắc họ muốn "
+     "chỉ đường (vd 'Bắc Linh Đàm', 'chỗ này ở đâu') → ĐỪNG tự chỉ đường; HỎI "
+     "lại kèm lựa chọn ('Anh/chị muốn em chỉ đường tới đó, hay tìm địa điểm ạ?' "
+     "kèm điểm đi/đến còn thiếu)."),
     ("contacts", _KW_TUXOA,  # tu_xoa_tin thuộc nhóm contacts
      "- TỰ XOÁ / THU HỒI CÂU TRẢ LỜI ('tự động xoá phản hồi tin tức sau 15 "
      "phút', 'trả lời xong 1 phút sau xoá đi', 'thôi đừng xoá nữa') → "

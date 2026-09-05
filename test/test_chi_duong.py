@@ -1,10 +1,13 @@
 """Tool chỉ đường: hỏi phương tiện → link Google Maps + chỉ dẫn + khoảng cách.
 
 Chủ máy 04/09: bot trả lời "đường từ A về B" — HỎI phương tiện trước, rồi trả
-khoảng cách + chỉ dẫn chi tiết + link Google Maps. Hoàn toàn miễn phí, không API
-key: Nominatim (geocode) + OSRM (route) + Maps URL (deep-link).
+khoảng cách + chỉ dẫn chi tiết + link Google Maps. Miễn phí, không API key:
+geocode bóc TỪ WEB Google Maps (`_gmaps_pb`, đúng ghim như Google) → fallback
+Nominatim khi Google hỏng; OSRM (route) + Maps URL dựng từ TOẠ ĐỘ (deep-link).
 
-Test dùng mock cho requests.get — KHÔNG gọi mạng thật.
+Test KHÔNG gọi mạng: `GeocodeTests`/`ChiDuongTests` ép `_gmaps_pb`→None để kiểm
+đường FALLBACK Nominatim bằng mock `requests.get`; `GmapsPbTests` kiểm riêng
+đường Google bằng mock `curl_cffi`.
 """
 from __future__ import annotations
 
@@ -79,6 +82,12 @@ class ChuanPhuongTienTests(unittest.TestCase):
 
 
 class GeocodeTests(unittest.TestCase):
+    def setUp(self):
+        # Ép đường Google (pb) trả None → geocode rơi xuống FALLBACK Nominatim,
+        # đúng thứ các test dưới mock bằng requests.get. Không đụng mạng thật.
+        p = patch("services.chi_duong._gmaps_pb", return_value=None)
+        p.start(); self.addCleanup(p.stop)
+
     def test_doc_lat_lon_ten_tinh(self):
         with patch("services.chi_duong.requests.get", return_value=_resp(_GEO_DI)):
             self.assertEqual(cd.geocode("114 Mai Hắc Đế"),
@@ -156,6 +165,11 @@ class GeocodeTests(unittest.TestCase):
 
 
 class ChiDuongTests(unittest.TestCase):
+    def setUp(self):
+        # Như GeocodeTests: kiểm đường FALLBACK Nominatim (mock requests.get).
+        p = patch("services.chi_duong._gmaps_pb", return_value=None)
+        p.start(); self.addCleanup(p.stop)
+
     def test_full_ok(self):
         # Thứ tự geocode: ĐIỂM ĐẾN trước (lấy tỉnh gợi ý), rồi ĐIỂM ĐI.
         with patch("services.chi_duong.requests.get", side_effect=_fake_get([_GEO_DEN, _GEO_DI])):
@@ -196,13 +210,19 @@ class ChiDuongTests(unittest.TestCase):
         self.assertTrue(r["ok"])
         self.assertTrue(r["gan_dung"])
 
-    def test_xe_buyt_khong_goi_osrm(self):
-        # requests.get side_effect nổ nếu bị gọi → chứng minh xe buýt KHÔNG geocode/route.
-        with patch("services.chi_duong.requests.get", side_effect=AssertionError("không được gọi mạng")):
+    def test_xe_buyt_geocode_lam_link_nhung_khong_goi_osrm(self):
+        # Xe buýt KHÔNG định tuyến (OSRM), nhưng VẪN geocode để link mở đúng chỗ.
+        # pb trả toạ độ (không dùng requests); requests.get nổ nếu bị gọi → chứng
+        # minh không đụng OSRM/Nominatim.
+        with patch("services.chi_duong._gmaps_pb",
+                   side_effect=lambda q: (21.0, 105.85, q, "Hà Nội")), \
+             patch("services.chi_duong.requests.get",
+                   side_effect=AssertionError("không được gọi OSRM/Nominatim")):
             r = cd.chi_duong("A", "B", "xe buýt")
         self.assertFalse(r["ok"])
         self.assertEqual(r["ly_do"], "khong_dinh_tuyen")
         self.assertIn("travelmode=transit", r["link"])
+        self.assertIn("origin=21.0", r["link"])   # link dựng từ TOẠ ĐỘ
 
 
 class HandlerTests(unittest.TestCase):
@@ -273,6 +293,73 @@ class HandlerTests(unittest.TestCase):
             out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B", "phuong_tien": "xe buýt"}, {})
         self.assertIn("google.com/maps", out["text"])
         self.assertIn("transit", out["text"])
+
+
+def _pb_body(lat, lng, ten, full, tinh, *, rong_nhanh=False):
+    """Dựng body giả của endpoint Google Maps: ")]}'\\n" + JSON.
+
+    `data[0][1][0][14]` = kết quả đầu; `[9]`=[_,_,lat,lng], `[11]`=tên, `[18]`=địa
+    chỉ đầy đủ, `[2]`=[dòng, quận, tỉnh, "Việt Nam"]. `rong_nhanh`: [14] rỗng,
+    toạ độ nằm rải trong cây (kiểm nhánh duyệt cây)."""
+    import json as _json
+    if rong_nhanh:
+        data = [[None, [[None, [None, None, [None, None, lat, lng]]]]]]
+    else:
+        r14 = [None] * 19
+        r14[2] = [full.split(",")[0].strip(), "Hai Bà Trưng", tinh, "Việt Nam"]
+        r14[9] = [None, None, lat, lng]
+        r14[11] = ten
+        r14[18] = full
+        result0 = [None] * 15
+        result0[14] = r14
+        data = [[None, [result0]]]
+    return ")]}'\n" + _json.dumps(data, ensure_ascii=False)
+
+
+class GmapsPbTests(unittest.TestCase):
+    """Đường CHÍNH: bóc toạ độ + địa chỉ từ endpoint Google Maps nội bộ."""
+
+    def _mock_pb(self, body):
+        resp = MagicMock(); resp.text = body
+        return patch("curl_cffi.requests.get", return_value=resp)
+
+    def test_boc_ghim_ten_tinh_tu_ket_qua_dau(self):
+        body = _pb_body(21.0103763, 105.8507264, "114 P. Mai Hắc Đế",
+                        "114 P. Mai Hắc Đế, Hai Bà Trưng, Hà Nội, Việt Nam", "Hà Nội")
+        with self._mock_pb(body):
+            g = cd._gmaps_pb("114 Mai Hắc Đế, Hà Nội")
+        self.assertEqual(g, (21.0103763, 105.8507264,
+                             "114 P. Mai Hắc Đế, Hai Bà Trưng, Hà Nội, Việt Nam",
+                             "Hà Nội"))
+
+    def test_duyet_cay_khi_ket_qua_dau_rong_nhanh(self):
+        body = _pb_body(20.9651653, 105.8234007, "", "", "", rong_nhanh=True)
+        with self._mock_pb(body):
+            g = cd._gmaps_pb("CT4B X2 Bắc Linh Đàm")
+        self.assertIsNotNone(g)
+        self.assertAlmostEqual(g[0], 20.9651653, places=5)
+        self.assertAlmostEqual(g[1], 105.8234007, places=5)
+
+    def test_pb_hong_tra_none(self):
+        with patch("curl_cffi.requests.get", side_effect=RuntimeError("chặn")):
+            self.assertIsNone(cd._gmaps_pb("x"))
+
+    def test_geocode_uu_tien_google_khong_dung_nominatim(self):
+        # pb ra kết quả → geocode dùng ngay, KHÔNG đụng Nominatim (requests.get).
+        with patch("services.chi_duong._gmaps_pb",
+                   return_value=(21.01, 105.85, "114 P. Mai Hắc Đế, Hà Nội", "Hà Nội")), \
+             patch("services.chi_duong.requests.get",
+                   side_effect=AssertionError("không được gọi Nominatim")):
+            g = cd.geocode("114 Mai Hắc Đế")
+        self.assertEqual(g, (21.01, 105.85, "114 P. Mai Hắc Đế, Hà Nội", "Hà Nội", True))
+
+    def test_geocode_tut_xuong_nominatim_khi_google_rong(self):
+        # pb None → geocode dùng Nominatim (mock requests.get).
+        with patch("services.chi_duong._gmaps_pb", return_value=None), \
+             patch("services.chi_duong.requests.get", return_value=_resp(_GEO_DI)):
+            g = cd.geocode("114 Mai Hắc Đế")
+        self.assertEqual(g[0], 21.0114)
+        self.assertEqual(g[4], True)
 
 
 if __name__ == "__main__":

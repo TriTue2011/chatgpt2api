@@ -1,12 +1,16 @@
 """Chỉ đường A→B: link Google Maps + chỉ dẫn chi tiết + khoảng cách.
 
 Hoàn toàn MIỄN PHÍ, không API key:
-  * geocode địa chỉ  → Nominatim (OpenStreetMap)
+  * geocode địa chỉ  → BÓC TỪ WEB GOOGLE MAPS (endpoint tìm kiếm nội bộ, đúng
+    toạ độ như Google), fallback Nominatim (OpenStreetMap) nếu Google đổi format
   * định tuyến + bước rẽ → OSRM public (router.project-osrm.org)
-  * link mở được → Google Maps URL (deep-link, không cần key)
+  * link mở được → Google Maps URL dựng từ TOẠ ĐỘ (deep-link, không cần key)
 
-Đã đo thật 04/09: Nominatim ra đúng "114 Mai Hắc Đế" và "CT4B X2 Bắc Linh Đàm";
-OSRM cho 7,3 km / 10 phút / 16 bước rẽ có tên phố tiếng Việt.
+Vì sao bóc endpoint nội bộ chứ không bóc HTML: đo 05/09 thấy `/maps/search/` là
+trang SPA — HTML ban đầu chỉ có TÂM KHUNG NHÌN, lệch ~5 km so với ghim thật. Còn
+`GET google.com/search?tbm=map&pb=…` (qua curl_cffi giả lập Chrome, đúng kỹ thuật
+accuweather) trả JSON có ghim CHUẨN: "114 Mai Hắc Đế, Hà Nội" → 21.0103763,
+105.8507264. OSRM cho 7,x km / bước rẽ có tên phố tiếng Việt.
 
 GIỚI HẠN: OSRM public chỉ có đồ thị Ô TÔ (nhận mọi profile nhưng route như xe
 hơi). Nên chỉ dẫn text chỉ chính xác cho xe máy/ô tô; xe buýt không định tuyến
@@ -17,9 +21,10 @@ lo dựng câu cho người dùng.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import requests
 
@@ -29,6 +34,17 @@ _UA = "c2a-bot/1.0 (personal assistant; contact via Zalo)"
 _NOMINATIM = "https://nominatim.openstreetmap.org/search"
 _OSRM = "https://router.project-osrm.org/route/v1"
 _TIMEOUT = 15
+
+#: Endpoint TÌM KIẾM nội bộ của Google Maps (SPA gọi qua XHR). Trả text mở đầu
+#: ")]}'" rồi JSON. `pb` là tham số dạng protobuf-text; `!2d105.85!3d21.02` là
+#: tâm bản đồ (thiên về Hà Nội — câu khác tỉnh cần kèm tên tỉnh, đã lo ở
+#: `tinh_goi_y`). Đo 05/09: template này ra đúng ghim; nếu Google đổi, geocode tự
+#: tụt xuống Nominatim nên không mất tính năng.
+_GMAPS_SEARCH = "https://www.google.com/search"
+_PB_TMPL = (
+    "!4m12!1m3!1d10000!2d105.85!3d21.02!2m3!1f0!2f0!3f0!3m2!1i1024!2i768"
+    "!4f13.1!7i20!10b1!12m6!2m3!5m1!6e2!20e3!10b1!16b1!19m3!2m2!1i392!2i106!20m48"
+)
 
 #: Tên phương tiện tiếng Việt (đã hạ chữ thường, bỏ dấu để so linh hoạt ở
 #: `chuan_phuong_tien`) → (osrm_profile | "", gmaps_travelmode, có_route_text).
@@ -171,26 +187,111 @@ def _nominatim_1(q: str) -> tuple[float, float, str, str] | None:
         return None
 
 
+def _duyet_toa_do(x, out: list[tuple[float, float]]) -> None:
+    """Duyệt cây JSON tìm mọi [None, None, lat, lng] nằm trong khung VN.
+
+    Dự phòng khi cấu trúc kết quả đầu rỗng nhánh (đo 05/09: "CT4B X2 Bắc Linh
+    Đàm" ra body ngắn, `[0][1][0][14]` rỗng nhưng ghim vẫn nằm rải trong cây)."""
+    if isinstance(x, list):
+        if (len(x) >= 4 and x[0] is None and x[1] is None
+                and isinstance(x[2], (int, float)) and isinstance(x[3], (int, float))
+                and 8 < x[2] < 24 and 102 < x[3] < 110):
+            out.append((round(float(x[2]), 7), round(float(x[3]), 7)))
+        for it in x:
+            _duyet_toa_do(it, out)
+
+
+def _boc_pb(data) -> tuple[float, float, str, str] | None:
+    """JSON endpoint Google Maps → (lat, lon, địa_chỉ_đầy_đủ, tỉnh) hoặc None.
+
+    Kết quả đầu ở `data[0][1][0][14]`: `[9]`=[_,_,lat,lng] (ghim chuẩn), `[18]`=
+    địa chỉ đầy đủ, `[2]`=các dòng địa chỉ (tỉnh là phần trước "Việt Nam")."""
+    try:
+        r0 = data[0][1][0][14]
+    except (IndexError, TypeError, KeyError):
+        r0 = None
+    lat = lon = None
+    ten = tinh = ""
+    if isinstance(r0, list):
+        try:
+            g = r0[9]
+            if isinstance(g, list) and len(g) >= 4:
+                lat, lon = float(g[2]), float(g[3])
+        except (IndexError, TypeError, ValueError):
+            pass
+        try:
+            ten = str(r0[18] or "").strip()
+        except (IndexError, TypeError):
+            pass
+        try:
+            xs = [str(c).strip() for c in r0[2] if str(c).strip()]
+            if xs and _bo_dau(xs[-1]) in ("viet nam", "vietnam"):
+                xs = xs[:-1]
+            if xs:
+                tinh = xs[-1]
+        except (IndexError, TypeError):
+            pass
+    if lat is None:
+        found: list[tuple[float, float]] = []
+        _duyet_toa_do(data, found)
+        if found:
+            lat, lon = found[0]
+    if lat is None or lon is None:
+        return None
+    return lat, lon, ten, tinh
+
+
+def _gmaps_pb(q: str) -> tuple[float, float, str, str] | None:
+    """Địa chỉ → (lat, lon, địa_chỉ_đầy_đủ, tỉnh) BÓC TỪ WEB Google Maps.
+
+    Giống nếp accuweather: curl_cffi giả lập Chrome để qua chặn bot, đọc JSON
+    nhúng (mở đầu ")]}'"). None nếu không ra/hỏng/format lạ — bên gọi tụt xuống
+    Nominatim."""
+    try:
+        from curl_cffi import requests as creq
+        url = f"{_GMAPS_SEARCH}?tbm=map&hl=vi&gl=vn&q={quote(q)}&pb={_PB_TMPL}"
+        body = creq.get(url, impersonate="chrome", timeout=_TIMEOUT,
+                        headers={"Accept-Language": "vi,en;q=0.9"}).text
+        nl = body.find("\n")
+        data = json.loads(body[nl + 1:] if nl != -1 else body.lstrip(")]}'"))
+    except Exception as exc:
+        logger.warning("chi_duong.gmaps_pb(%.40s) lỗi: %s", q, exc)
+        return None
+    return _boc_pb(data)
+
+
 def geocode(dia_chi: str, tinh_goi_y: str = "") -> tuple[float, float, str, str, bool] | None:
-    """Địa chỉ → (lat, lon, tên, tỉnh, chính_xác) qua Nominatim; None nếu không thấy.
+    """Địa chỉ → (lat, lon, tên, tỉnh, chính_xác); None nếu không thấy.
+
+    Đường CHÍNH: bóc endpoint Google Maps (`_gmaps_pb`) — đúng ghim như Google.
+    Fallback: Nominatim (giữ logic bỏ mã toà + hậu tố tỉnh cũ) khi Google rỗng.
 
     ``tinh_goi_y``: tỉnh/thành của ĐẦU KIA để bù khi câu thiếu thành phố — "114
-    Mai Hắc Đế" một mình lạc sang Đà Nẵng, thêm ", Hà Nội" (tỉnh của điểm đến)
-    thì ra đúng. Chỉ thêm khi câu chưa nhắc tỉnh đó.
+    Mai Hắc Đế" một mình có thể lạc tỉnh, thêm ", Hà Nội" (tỉnh của điểm đến) thì
+    ra đúng. Chỉ thêm khi câu chưa nhắc tỉnh đó.
 
-    ``chính_xác`` = khớp NGUYÊN VĂN (True); phải BỎ MÃ TOÀ mới ra (False, vị trí
-    gần đúng ở mức khu đô thị/phố). Bên gọi dùng để nói rõ độ chính xác.
-    Tối đa 2 lượt gọi để tôn trọng giới hạn 1 req/giây của Nominatim."""
+    ``chính_xác`` = True khi ra ghim thẳng (Google, hoặc Nominatim khớp nguyên
+    văn); False khi phải BỎ MÃ TOÀ mới ra (Nominatim, gần đúng ở mức khu/phố)."""
     dc = str(dia_chi or "").strip()
     if not dc:
         return None
-    # Link Google Maps (ghim chia sẻ) → toạ độ chính xác, hoặc địa chỉ để tra.
+    # Link Google Maps (ghim chia sẻ) → toạ độ chính xác, hoặc TÊN để tra tiếp.
     giai = _giai_link_maps(dc)
     if isinstance(giai, tuple):
         return giai[0], giai[1], "Vị trí đã ghim trên Google Maps", "", True
     if isinstance(giai, str) and giai:
         dc = giai
     fdc = _bo_dau(dc)
+    # Kèm tỉnh gợi ý nếu câu chưa nhắc — cho cả Google lẫn Nominatim.
+    q_full = dc if (not tinh_goi_y or _bo_dau(tinh_goi_y) in fdc) else f"{dc}, {tinh_goi_y}"
+
+    # (1) Đường chính — Google Maps nội bộ.
+    pb = _gmaps_pb(q_full)
+    if pb:
+        lat, lon, ten, tinh = pb
+        return lat, lon, (ten or dc), tinh, True
+
+    # (2) Fallback — Nominatim, tối đa 2 lượt (tôn trọng 1 req/giây).
     hau_to = "" if ("viet nam" in fdc or "vietnam" in fdc) else ", Việt Nam"
     if tinh_goi_y and _bo_dau(tinh_goi_y) not in fdc:
         hau_to = f", {tinh_goi_y}" + hau_to
@@ -245,6 +346,17 @@ def _dinh_vi_hai_dau(diem_di: str, diem_den: str):
     return a, b, None
 
 
+def _link_tu(a, b, diem_di: str, diem_den: str, travelmode: str) -> str:
+    """Deep-link Google Maps ưu tiên TOẠ ĐỘ đã geocode (mở chỉ đường chắc chắn).
+
+    Người dùng dán short-link hoặc địa chỉ mơ hồ làm origin/destination dạng chữ
+    thì Google hay không dựng nổi tuyến (lỗi "bấm vào không ra chỉ đường"). Có
+    toạ độ thì `origin=lat,lng` luôn mở đúng; thiếu (geocode trượt) mới dùng chữ."""
+    origin = f"{a[0]},{a[1]}" if a else diem_di
+    dest = f"{b[0]},{b[1]}" if b else diem_den
+    return maps_link(origin, dest, travelmode)
+
+
 def dinh_vi(diem_di: str, diem_den: str, phuong_tien: str = "xe máy") -> dict:
     """Chỉ GEOCODE (không định tuyến) — cho bước XÁC NHẬN địa chỉ.
 
@@ -252,18 +364,21 @@ def dinh_vi(diem_di: str, diem_den: str, phuong_tien: str = "xe máy") -> dict:
     người dùng đúng chưa trước khi chỉ đường). ``ok=False`` → {ly_do, link,
     [tinh_di, tinh_den]} như `chi_duong`."""
     profile, travelmode, co_route = chuan_phuong_tien(phuong_tien)
-    link = maps_link(diem_di, diem_den, travelmode)
-    goc = {"link": link, "phuong_tien": phuong_tien}
-    # Xe buýt không định tuyến (chỉ link) → khỏi bước xác nhận địa chỉ.
+    goc = {"phuong_tien": phuong_tien}
+    # Xe buýt không định tuyến → vẫn geocode để link mở đúng, khỏi bước xác nhận.
     if not co_route or not profile:
-        return {"ok": False, "ly_do": "khong_dinh_tuyen", **goc}
+        a, b, _ = _dinh_vi_hai_dau(diem_di, diem_den)
+        return {"ok": False, "ly_do": "khong_dinh_tuyen",
+                "link": _link_tu(a, b, diem_di, diem_den, travelmode), **goc}
     a, b, ly = _dinh_vi_hai_dau(diem_di, diem_den)
+    link = _link_tu(a, b, diem_di, diem_den, travelmode)
     if ly == "tinh_khong_khop":
-        return {"ok": False, "ly_do": ly, "tinh_di": a[3], "tinh_den": b[3], **goc}
+        return {"ok": False, "ly_do": ly, "tinh_di": a[3], "tinh_den": b[3],
+                "link": link, **goc}
     if ly:
-        return {"ok": False, "ly_do": ly, **goc}
+        return {"ok": False, "ly_do": ly, "link": link, **goc}
     return {"ok": True, "tu": a[2], "den": b[2],
-            "gan_dung": not (a[4] and b[4]), **goc}
+            "gan_dung": not (a[4] and b[4]), "link": link, **goc}
 
 
 def chi_duong(diem_di: str, diem_den: str, phuong_tien: str = "xe máy") -> dict:
@@ -275,18 +390,22 @@ def chi_duong(diem_di: str, diem_den: str, phuong_tien: str = "xe máy") -> dict
                tinh_khong_khop (hai đầu ở tỉnh khác nhau — hỏi lại địa chỉ)
     """
     profile, travelmode, co_route = chuan_phuong_tien(phuong_tien)
-    link = maps_link(diem_di, diem_den, travelmode)
-    goc = {"link": link, "phuong_tien": phuong_tien}
+    goc = {"phuong_tien": phuong_tien}
 
-    # Xe buýt: OSRM không làm transit → chỉ trả link, Google Maps lo tuyến bus.
+    # Xe buýt: OSRM không làm transit → chỉ trả link (dựng từ toạ độ để mở đúng),
+    # Google Maps lo tuyến bus.
     if not co_route or not profile:
-        return {"ok": False, "ly_do": "khong_dinh_tuyen", **goc}
+        a, b, _ = _dinh_vi_hai_dau(diem_di, diem_den)
+        return {"ok": False, "ly_do": "khong_dinh_tuyen",
+                "link": _link_tu(a, b, diem_di, diem_den, travelmode), **goc}
 
     a, b, ly = _dinh_vi_hai_dau(diem_di, diem_den)
+    link = _link_tu(a, b, diem_di, diem_den, travelmode)
     if ly == "tinh_khong_khop":
-        return {"ok": False, "ly_do": ly, "tinh_di": a[3], "tinh_den": b[3], **goc}
+        return {"ok": False, "ly_do": ly, "tinh_di": a[3], "tinh_den": b[3],
+                "link": link, **goc}
     if ly:
-        return {"ok": False, "ly_do": ly, **goc}
+        return {"ok": False, "ly_do": ly, "link": link, **goc}
 
     # OSRM: kinh độ,vĩ độ;kinh độ,vĩ độ  (LƯU Ý thứ tự lon,lat).
     toa_do = f"{a[1]},{a[0]};{b[1]},{b[0]}"
@@ -299,10 +418,10 @@ def chi_duong(diem_di: str, diem_den: str, phuong_tien: str = "xe máy") -> dict
         data = r.json()
     except Exception as exc:
         logger.warning("chi_duong.osrm lỗi: %s", exc)
-        return {"ok": False, "ly_do": "khong_dinh_tuyen", **goc}
+        return {"ok": False, "ly_do": "khong_dinh_tuyen", "link": link, **goc}
 
     if data.get("code") != "Ok" or not data.get("routes"):
-        return {"ok": False, "ly_do": "khong_dinh_tuyen", **goc}
+        return {"ok": False, "ly_do": "khong_dinh_tuyen", "link": link, **goc}
 
     route = data["routes"][0]
     steps = (route.get("legs") or [{}])[0].get("steps") or []
