@@ -1221,6 +1221,11 @@ _KW_ADMIN = _re_mod.compile(
 _KW_THUVIEN = _re_mod.compile(
     r"thu vien|anh moi nhat|anh vua tao|video moi nhat|nhac moi nhat|"
     r"trong thu vien|(anh|media) da tao")
+_KW_MUCLUC = _re_mod.compile(
+    r"gui.{0,10}(lai )?(anh|hinh|tai lieu|tep|file)|"
+    r"tim.{0,10}(lai )?(anh|tai lieu|tep|file)|"
+    r"(anh|tai lieu|tep|hinh).{0,10}da luu|da luu.{0,10}(anh|tai lieu|tep)|"
+    r"cho (toi |minh )?xem.{0,8}(anh|tai lieu)")
 
 # Chín nhóm việc dưới đây TRƯỚC NAY KHÔNG HỀ có nhánh chỉ đường (kiểm kê
 # 28/08: bảng cũ chỉ phủ 10/23 nhóm). Thiếu chỉ đường thì model chỉ còn schema
@@ -1366,6 +1371,12 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
      "đó, CHỈ trả tin LIÊN QUAN chủ đề (5–8 tin mới nhất, gạch đầu dòng ngắn). "
      "TUYỆT ĐỐI KHÔNG chia 8 mục, KHÔNG chèn tin lạc đề, KHÔNG thay chủ đề "
      "người dùng hỏi bằng bản tin tổng hợp chung."),
+    ("image", _KW_MUCLUC,  # tim_da_luu thuộc nhóm image
+     "- GỬI LẠI thứ ĐÃ LƯU theo MÔ TẢ ('gửi ảnh thuốc', 'gửi lại ảnh con trai', "
+     "'tài liệu hợp đồng đã lưu') → tim_da_luu(mo_ta[, kind]). KHÁC library_media "
+     "(ảnh AI VỪA TẠO / 'ảnh mới nhất') và KHÁC generate_image (vẽ mới): "
+     "tim_da_luu tra thứ NGƯỜI DÙNG chủ động bấm «Lưu kho», tìm theo mô tả vật/"
+     "người trong ảnh. Câu tả cụ thể thứ đã lưu thì dùng tim_da_luu."),
     ("web", _KW_CHIDUONG,  # chi_duong thuộc nhóm web
      "- Chỉ đường / hỏi đường giữa hai địa điểm ('đường từ A về B', 'đi tới … "
      "thế nào', 'từ … đến … bao xa') → chi_duong(diem_di, diem_den). Hệ thống "

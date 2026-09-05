@@ -2630,6 +2630,13 @@ def _do_pdf_intent(
             reply = _ltd.luu_ngay("zalop", str(thread_id), tep=path, ten_tep=name,
                                   user=str(user_id or ""))
             send_message(thread_id, reply, thread_type)
+            # Ghi vào MỤC LỤC để sau "tìm tài liệu <tên>" thấy được (việc phụ).
+            try:
+                from services.agent import so_da_luu as _sdl
+                _sdl.ghi(str(user_id or ""), ref=name, kind=_sdl.KIND_TAILIEU,
+                         mo_ta=name, ten=name, tu_khoa=name)
+            except Exception:
+                pass
         elif intent == _pi.WORD:
             kind = "pdf_word"
             docx_tmp = (path[:-4] if path.endswith(".pdf") else path) + ".docx"
@@ -2924,6 +2931,9 @@ def _do_photo_request(
             reply = _ltd.luu_ngay("zalop", str(thread_id), tep=_tam, ten_tep=_ten,
                                   user=str(user_id or ""))
             send_message(thread_id, reply, thread_type)
+            # Ghi vào MỤC LỤC để sau "gửi ảnh thuốc" tìm lại được (việc phụ).
+            _phi.luu_vao_muc_luc(file_data, user_id=str(user_id or ""),
+                                 ten=_ten, channel="zalop")
             return
 
         if it == _phi.GENERATE:

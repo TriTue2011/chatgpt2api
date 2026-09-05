@@ -752,6 +752,50 @@ def ingest_teacher_from_photo(
         return {"ok": False, "error": str(exc), "text": ""}
 
 
+def luu_vao_muc_luc(image_bytes: bytes, *, user_id: str, ten: str = "",
+                    channel: str = "") -> bool:
+    """Ghi ảnh người dùng vừa LƯU vào MỤC LỤC để sau tìm lại theo mô tả.
+
+    Lưu một bản vào images_dir (gateway phục vụ → URL gửi lại được ở mọi kênh),
+    sinh MÔ TẢ ngắn bằng vision (để "gửi ảnh thuốc" tra ra dù tên tệp không có
+    chữ "thuốc"), rồi ghi `so_da_luu`. Việc PHỤ của luồng «Lưu kho» — mọi lỗi
+    nuốt, không chặn xác nhận đã lưu."""
+    try:
+        uid = str(user_id or "").strip()
+        if not uid:
+            return False
+        from services.agent import so_da_luu
+        from services.image_utils import normalize
+        from services.protocol.conversation import save_image_bytes
+        try:
+            data, _mime = normalize(image_bytes)
+        except Exception:
+            data = image_bytes
+        url = save_image_bytes(data)
+        if url and not str(url).startswith(("http://", "https://")):
+            from services.config import config as _cfg
+            c = _cfg.get()
+            base = (str(c.get("base_url") or "").strip()
+                    or str(c.get("telegram_webhook_url") or "").strip()).rstrip("/") \
+                or gateway_base_url()
+            url = base + (url if str(url).startswith("/") else "/" + str(url))
+        mo_ta = ""
+        try:
+            mo_ta = analyze_photo(
+                image_bytes,
+                "Mô tả NGẮN GỌN trong 1 câu để TÌM LẠI ảnh này sau: vật/người/chủ "
+                "đề chính và chữ nổi bật nếu có. Chỉ ghi mô tả, không mở đầu.",
+                channel=channel, neo_tieng_viet=True, max_tokens=120,
+            ).strip()[:300]
+        except Exception as exc:
+            logger.debug("luu_vao_muc_luc: bỏ caption: %s", exc)
+        return so_da_luu.ghi(uid, ref=str(url), kind=so_da_luu.KIND_ANH,
+                             mo_ta=mo_ta, ten=ten, tu_khoa=ten)
+    except Exception as exc:
+        logger.warning("luu_vao_muc_luc: %s", str(exc)[:150])
+        return False
+
+
 def them_luu_online(intents: set[str], kenh: str, chat: str, *,
                     topic: str = "", user: str = "") -> set[str]:
     """Thêm mục «Lưu lên kho đám mây» vào menu ẢNH nếu phạm vi đã khai kho.

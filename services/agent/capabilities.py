@@ -3422,6 +3422,49 @@ def _h_delete_media(args: dict, ctx: dict) -> dict:
             "text": f"Đã xoá {so} {nhan} khỏi thư viện ({mo_ta}) ạ.{canh_bao}"}
 
 
+def _h_tim_da_luu(args: dict, ctx: dict) -> dict:
+    """Tìm lại thứ NGƯỜI DÙNG đã lưu (mục «Lưu kho») theo MÔ TẢ và gửi lại.
+
+    Khác `library_media` (ảnh AI tự tạo, lấy theo thời gian): đây tra theo mô tả
+    thứ họ CHỦ ĐỘNG lưu — "gửi ảnh thuốc", "gửi tài liệu hợp đồng". Ảnh → gửi
+    lại ảnh; tài liệu/thông tin → nêu tên + nơi lưu."""
+    from services.agent import so_da_luu
+    uid = str((ctx or {}).get("user_id") or "").strip()
+    mo_ta = str(args.get("mo_ta") or "").strip()
+    kraw = str(args.get("kind") or "").strip().lower()
+    if kraw in ("ảnh", "anh", "hình", "hinh", "image", "photo"):
+        kind = so_da_luu.KIND_ANH
+    elif kraw in ("tài liệu", "tai lieu", "document", "file", "doc", "tệp", "tep"):
+        kind = so_da_luu.KIND_TAILIEU
+    else:
+        kind = ""
+    if not uid:
+        return {"text": "Em chưa xác định được anh/chị là ai để tra sổ đã lưu ạ."}
+    if not mo_ta:
+        return {"text": "Anh/chị muốn tìm lại thứ gì ạ? Cho em vài từ mô tả nhé "
+                        "(ví dụ «ảnh thuốc», «tài liệu hợp đồng»)."}
+    kq = so_da_luu.tim(uid, mo_ta, kind=kind, so=3)
+    if not kq:
+        return {"text": f"Em chưa thấy thứ nào đã lưu khớp «{mo_ta}» ạ. Em chỉ "
+                        "tìm được thứ anh/chị đã bấm «☁️ Lưu kho» trước đó thôi."}
+    anh = [m for m in kq if m.get("kind") == so_da_luu.KIND_ANH and m.get("ref")]
+    if anh:
+        urls = [str(m["ref"]) for m in anh]
+        cap = str(anh[0].get("mo_ta") or anh[0].get("ten") or "ảnh đã lưu")[:120]
+        if len(urls) == 1:
+            return {"text": f"Đây ạ — {cap} 🖼️", "image_url": urls[0]}
+        return {"text": f"{len(urls)} ảnh khớp «{mo_ta}» ạ.", "image_urls": urls}
+    dong = [f"Em tìm thấy {len(kq)} mục đã lưu khớp «{mo_ta}» ạ:"]
+    for m in kq:
+        nhan = str(m.get("ten") or m.get("mo_ta") or "tài liệu")[:80]
+        ref = str(m.get("ref") or "")
+        if ref.startswith(("http://", "https://")):
+            dong.append(f"• {nhan} — {ref}")
+        else:
+            dong.append(f"• {nhan} (đã lưu trên kho đám mây)")
+    return {"text": "\n".join(dong)}
+
+
 def _h_library_media(args: dict, ctx: dict) -> dict:
     """Lấy media ĐÃ TẠO (ảnh/video/nhạc) và gửi lại — có PHÂN QUYỀN.
 
@@ -5490,6 +5533,24 @@ CAPABILITIES: dict[str, Capability] = {
         workflow=("Xoá là việc không lấy lại được: lần gọi đầu LUÔN để xac_nhan "
                   "trống để người dùng thấy 'bao nhiêu tệp, bao nhiêu MB, từ "
                   "ngày nào', chờ họ gật rồi mới gọi lại với xac_nhan=true.")),
+    "tim_da_luu": Capability(
+        name="tim_da_luu", risk=READ, handler=_h_tim_da_luu,
+        emoji="🗂️", label="Tìm lại thứ đã lưu (theo mô tả)",
+        description=("Tìm và GỬI LẠI thứ NGƯỜI DÙNG đã CHỦ ĐỘNG lưu trước đó (bấm "
+                     "«☁️ Lưu kho») theo MÔ TẢ: 'gửi ảnh thuốc', 'gửi lại ảnh con "
+                     "trai', 'tài liệu hợp đồng đã lưu'. KHÁC library_media (ảnh AI "
+                     "VỪA TẠO, lấy theo thời gian): dùng tool NÀY khi câu có MÔ TẢ "
+                     "cụ thể về thứ đã lưu, KHÔNG phải 'ảnh mới nhất/vừa tạo', và "
+                     "cũng KHÔNG phải generate_image. mo_ta: vài từ mô tả; kind: "
+                     "'anh' | 'tailieu' (bỏ trống = mọi loại)."),
+        parameters={"type": "object", "properties": {
+            "mo_ta": {"type": "string",
+                      "description": "Vài từ mô tả thứ cần tìm (vd 'thuốc', 'hợp đồng', 'con trai')"},
+            "kind": {"type": "string", "enum": ["anh", "tailieu"],
+                     "description": "Lọc loại; bỏ trống = mọi loại"}},
+            "required": ["mo_ta"]},
+        workflow=("Chỉ tìm được thứ người dùng đã bấm «Lưu kho». Không thấy thì "
+                  "nói rõ chưa có, đừng bịa.")),
     "library_media": Capability(
         name="library_media", risk=READ, handler=_h_library_media,
         emoji="🗂️", label="Lấy ảnh/video/nhạc đã tạo (thư viện)",
@@ -6684,6 +6745,7 @@ _CAP_GROUP: dict[str, str] = {
     # nhạc: hai tool này là một cặp đọc/xoá trên CÙNG kho, tách nhóm thì có
     # thread xem được thư viện mà không dọn được, hoặc ngược lại.
     "generate_image": "image", "library_media": "image", "delete_media": "image",
+    "tim_da_luu": "image",
     "generate_music": "music",
     "generate_video": "video",
     "web_search": "web", "read_webpage": "web", "youtube_transcript": "web",
