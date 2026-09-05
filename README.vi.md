@@ -38,6 +38,7 @@ Dự án còn đi kèm **Captcha Solver** giúp giải quyết các rào cản t
 - **Phụ đề video**: link YouTube (dùng phụ đề có sẵn) hoặc **tự nghe** video/âm thanh tải lên bằng sherpa-onnx (Zipformer Việt · Parakeet Anh · Zipformer Trung/Nhật/Hàn) có mốc thời gian từng từ; khung phụ đề theo chuẩn Netflix/TED (42 ký tự/dòng, 2 dòng, 20 ký tự/giây) và có bộ soát tự kiểm. Dịch được cả tệp `.srt`/`.vtt` sẵn có.
 - **Tab Dịch** (Studio): chữ · link · ảnh (đọc chữ trong ảnh) · tài liệu · phụ đề · video, hai kiểu kết quả, cặp Việt↔Anh/Trung/Nhật/Hàn, upload cắt khúc cho tệp lớn.
 - **Đàm thoại trực tiếp**: hai ô mic bấm-nói-thả, dịch qua lại và đọc thành tiếng đủ 5 tiếng (NghiTTS · Kokoro · Kokoro đa ngữ · Supertonic).
+- **Silero VAD** (dò giọng nói bằng mạng nơ-ron): bỏ quãng không có tiếng trước khi nghe, dùng cho cả phụ đề video lẫn tin nhắn thoại. Thay cách đo độ to cũ — cách đó tưởng tiếng ồn đều và to (quạt, xe) là tiếng nói, đồng thời cắt mất giọng nhỏ trong bản thu ồn. Không thêm thư viện nào vì sherpa-onnx đã có sẵn; tải model 629 KB bằng `docker exec c2a /app/.venv/bin/python /app/scripts/download_silero_vad.py`. Chưa tải model thì mọi thứ chạy y như trước.
 - **Wyoming cho Home Assistant**: mỗi cổng một vai một tiếng — ĐỌC `10600-10604`, NGHE `10700-10704`.
 
 ### 🛡️ Captcha Solver

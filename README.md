@@ -39,6 +39,7 @@ The project also comes with a **Captcha Solver** to handle Cloudflare barriers a
 - **Video subtitles**: YouTube links (uses existing captions), or **local transcription** of uploaded video/audio via sherpa-onnx (Vietnamese Zipformer · English Parakeet · Chinese/Japanese/Korean Zipformer) with token-level timestamps; output follows Netflix/TED display rules (42 chars/line, 2 lines, 20 CPS) and is verified by a built-in linter. Also translates existing `.srt`/`.vtt` files.
 - **Translate tab** (Studio): text · links · images (OCR) · documents · subtitles · video, two output modes, Vietnamese↔English/Chinese/Japanese/Korean pairs, chunked upload for large files.
 - **Live interpreting**: two-pane push-to-talk mic translation with optional spoken output in all five languages (NghiTTS · Kokoro · Kokoro-multi · Supertonic).
+- **Silero VAD** (neural speech detection): trims non-speech before transcribing, for both video subtitles and voice notes. Replaces energy-thresholding, which mistook steady loud noise (fans, traffic) for speech and cut off quiet voices in noisy recordings. No extra dependency — sherpa-onnx ships it; fetch the 629 KB model with `docker exec c2a /app/.venv/bin/python /app/scripts/download_silero_vad.py`. Without the model everything falls back to the old behaviour.
 - **Wyoming for Home Assistant**: one port per role per language — TTS `10600-10604`, STT `10700-10704`.
 
 ### 🛡️ Captcha Solver
