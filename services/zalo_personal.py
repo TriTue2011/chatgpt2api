@@ -2627,16 +2627,22 @@ def _do_pdf_intent(
         if intent == _pi.LUU_ONLINE:
             kind = "pdf_luu_online"
             from services.agent import luu_tru_day as _ltd
-            reply = _ltd.luu_ngay("zalop", str(thread_id), tep=path, ten_tep=name,
-                                  user=str(user_id or ""))
-            send_message(thread_id, reply, thread_type)
-            # Ghi vào MỤC LỤC để sau "tìm tài liệu <tên>" thấy được (việc phụ).
-            try:
-                from services.agent import so_da_luu as _sdl
-                _sdl.ghi(_skey_zalop(thread_id, thread_type, user_id), ref=name, kind=_sdl.KIND_TAILIEU,
+            from services.agent import so_da_luu as _sdl
+            _ml_key = _skey_zalop(thread_id, thread_type, user_id)
+
+            def _ghi_tai_lieu_da_day(_ref_kho: str) -> None:
+                if not _ref_kho:
+                    return
+                _sdl.ghi(_ml_key, ref=_ref_kho, kind=_sdl.KIND_TAILIEU,
                          mo_ta=name, ten=name, tu_khoa=name)
-            except Exception:
-                pass
+                _sdl.dat_cho_mo_ta(_ml_key, ref=_ref_kho, ten=name,
+                                    kind=_sdl.KIND_TAILIEU)
+                send_message(thread_id, _sdl.cau_hoi_mo_ta(_sdl.KIND_TAILIEU),
+                             thread_type, account=account)
+
+            reply = _ltd.luu_ngay("zalop", str(thread_id), tep=path, ten_tep=name,
+                                  user=str(user_id or ""), khi_xong=_ghi_tai_lieu_da_day)
+            send_message(thread_id, reply, thread_type)
         elif intent == _pi.WORD:
             kind = "pdf_word"
             docx_tmp = (path[:-4] if path.endswith(".pdf") else path) + ".docx"
@@ -2933,13 +2939,20 @@ def _do_photo_request(
             from services.agent import luu_tru_day as _ltd
             _ten = _ltd.ten_anh(file_data)
             _tam = _ltd.luu_vao_thu_muc_lam_viec(_ten, file_data)
+            from services.agent import so_da_luu as _sdl
+            _ml_key = _skey_zalop(thread_id, thread_type, user_id)
+            _ml_ref: list[str] = []
+            _hoi_ml = _phi.luu_vao_muc_luc(
+                file_data, user_id=_skey_zalop(thread_id, thread_type, user_id), ten=_ten, channel="zalop",
+                khi_co_ref=_ml_ref.append)
+
+            def _gan_ban_sao_anh(_ref_kho: str) -> None:
+                if _ml_ref:
+                    _sdl.gan_ref_kho(_ml_key, ref=_ml_ref[0], ref_kho=_ref_kho)
+
             reply = _ltd.luu_ngay("zalop", str(thread_id), tep=_tam, ten_tep=_ten,
-                                  user=str(user_id or ""))
+                                  user=str(user_id or ""), khi_xong=_gan_ban_sao_anh)
             send_message(thread_id, reply, thread_type)
-            # Lưu bản gửi-lại-được rồi HỎI mô tả để ghi mục lục (chờ câu sau).
-            _hoi_ml = _phi.luu_vao_muc_luc(file_data,
-                                           user_id=_skey_zalop(thread_id, thread_type, user_id),
-                                           ten=_ten, channel="zalop")
             if _hoi_ml:
                 send_message(thread_id, _hoi_ml, thread_type)
             return
@@ -3333,6 +3346,31 @@ def _process_ai(ev: dict) -> None:
         from services.agent import so_da_luu as _sdl
         _ml = _sdl.xu_ly_tra_loi(_skey_zalop(thread_id, thread_type, ev.get("sender_id")), text)
         if _ml is not None:
+            _ml_docs = [str(p) for p in (_ml.get("doc_paths") or []) if p]
+            _ml_has_anh = bool(_ml.get("image_url") or _ml.get("image_urls"))
+            for _i, _doc in enumerate(_ml_docs):
+                try:
+                    _serve_path(thread_id, thread_type, _doc, Path(_doc).name,
+                                (_ml.get("text") or "")[:1000]
+                                if not _ml_has_anh and _i == 0 else "")
+                except Exception as _exc:
+                    logger.warning("zalop gửi lại tệp mục lục: %s", _exc)
+            if _ml_docs and not _ml_has_anh:
+                return
+            _mlus = _ml.get("image_urls")
+            if isinstance(_mlus, list) and _mlus:
+                _acc_ml = str(ev.get("account_id") or "")
+                if _gui_nhieu_anh(thread_id, [str(u) for u in _mlus],
+                                   (_ml.get("text") or "")[:1000], thread_type,
+                                   account=_acc_ml):
+                    return
+                da = sum(1 for _u in _mlus
+                         if _send_photo_robust(thread_id, str(_u), "", thread_type,
+                                               account=_acc_ml))
+                if da:
+                    if da < len(_mlus):
+                        send_message(thread_id, f"(gửi được {da}/{len(_mlus)} ảnh)", thread_type)
+                    return
             _mlu = _ml.get("image_url")
             if _mlu and _send_photo_robust(thread_id, str(_mlu),
                                            _ml.get("text") or "", thread_type,

@@ -5,25 +5,31 @@ người dùng CHỦ ĐỘNG lưu khi bấm «☁️ Lưu lên kho đám mây»,
 "gửi ảnh thuốc" / "gửi tài liệu hợp đồng" tìm ra đúng cái — như mục lục một cuốn
 sách: mỗi mục có nhãn để tra.
 
-Sổ JSON theo người: ``{user_id: [ {ref, kind, mo_ta, ten, tu_khoa, ts}, … ]}``
+Sổ JSON theo người: ``{user_id: [ {id, ref, ref_kho, kind, mo_ta, ten, tu_khoa, ts}, … ]}``
 (mới nhất trước, chặn `_MOI_NGUOI` mục mỗi người). ``kind`` = anh | tailieu |
 thongtin. ``ref`` là thứ GỬI LẠI được: URL ảnh (images_dir, gateway phục vụ) cho
-kind=anh; đường dẫn kho / link cho tài liệu. Mất sổ chỉ mất khả năng TRA, không
-mất tệp (tệp vẫn nằm trên kho) — nên không cần bền bằng DB, JSON phẳng là đủ.
+kind=anh; đường dẫn kho cho tài liệu. ``ref_kho`` giữ bản sao mây của ảnh (nếu
+có), để vẫn gửi lại bằng URL ảnh nhưng xóa được bản gốc. Mã ``id`` làm mỗi dòng của mục lục ổn định
+khi người dùng chọn nhiều dòng hoặc xóa. Mất sổ chỉ mất khả năng TRA, không mất
+tệp (tệp vẫn nằm trên kho) — nên không cần bền bằng DB, JSON phẳng là đủ.
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 import time
+import uuid
+from hashlib import sha1
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _MOI_NGUOI = 500          # mục lục lâu dài nên giữ nhiều hơn sổ ảnh AI
-_lock = threading.Lock()
+_lock = threading.RLock()
 
 KIND_ANH = "anh"
 KIND_TAILIEU = "tailieu"
@@ -57,8 +63,6 @@ def _khoa(s: str) -> list[str]:
 
 
 def _duong():
-    from pathlib import Path
-
     from services.config import DATA_DIR
     return Path(DATA_DIR) / "agent" / "so_da_luu.json"
 
@@ -74,17 +78,47 @@ def _doc() -> dict[str, list[dict[str, Any]]]:
     return {}
 
 
-def _ghi_file(d: dict) -> None:
+def _ghi_file(d: dict) -> bool:
+    """Ghi nguyên tử để một lần xóa không làm hỏng cả mục lục khi máy dừng."""
+    tmp: Path | None = None
     try:
         p = _duong()
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(d, ensure_ascii=False), "utf-8")
+        tmp = p.with_name(f".{p.name}.{uuid.uuid4().hex}.tmp")
+        tmp.write_text(json.dumps(d, ensure_ascii=False), "utf-8")
+        os.replace(tmp, p)
+        return True
     except Exception as exc:
         logger.warning("so_da_luu: ghi sổ lỗi: %s", exc)
+        return False
+    finally:
+        if tmp is not None:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _id_muc(muc: dict) -> str:
+    """Mã ổn định cả cho bản ghi cũ chưa có ``id``."""
+    co = str(muc.get("id") or "").strip()
+    if co:
+        return co
+    return sha1(str(muc.get("ref") or "").encode("utf-8")).hexdigest()[:12]
+
+
+def _ban_sao(muc: dict) -> dict:
+    out = dict(muc)
+    out["id"] = _id_muc(out)
+    return out
+
+
+def _danh_sach(uid: str) -> list[dict]:
+    return [_ban_sao(m) for m in (_doc().get(uid) or []) if isinstance(m, dict)]
 
 
 def ghi(user_id: str, *, ref: str, kind: str, mo_ta: str = "",
-        ten: str = "", tu_khoa: str = "") -> bool:
+        ten: str = "", tu_khoa: str = "", ref_kho: str = "") -> bool:
     """Ghi một mục vào sổ của người này. Trả True nếu ghi được.
 
     ``ref`` là thứ gửi lại được (URL ảnh / đường dẫn kho); rỗng thì bỏ qua vì
@@ -94,7 +128,9 @@ def ghi(user_id: str, *, ref: str, kind: str, mo_ta: str = "",
     if not uid or not r:
         return False
     muc = {
+        "id": uuid.uuid4().hex[:12],
         "ref": r,
+        "ref_kho": str(ref_kho or "").strip(),
         "kind": str(kind or KIND_ANH),
         "mo_ta": str(mo_ta or "").strip()[:500],
         "ten": str(ten or "").strip()[:200],
@@ -105,11 +141,15 @@ def ghi(user_id: str, *, ref: str, kind: str, mo_ta: str = "",
         d = _doc()
         ds = [m for m in (d.get(uid) or []) if isinstance(m, dict)]
         # Bỏ trùng theo ref (lưu lại đúng ảnh cũ thì cập nhật, không nhân đôi).
+        cu = next((m for m in ds if m.get("ref") == r), None)
+        if cu:
+            muc["id"] = _id_muc(cu)
+            if not muc["ref_kho"]:
+                muc["ref_kho"] = str(cu.get("ref_kho") or "")
         ds = [m for m in ds if m.get("ref") != r]
         ds.insert(0, muc)
         d[uid] = ds[:_MOI_NGUOI]
-        _ghi_file(d)
-    return True
+        return _ghi_file(d)
 
 
 def _diem(muc: dict, khoa: list[str]) -> int:
@@ -132,7 +172,7 @@ def tim(user_id: str, truy_van: str, *, kind: str = "", so: int = 3) -> list[dic
     khoa = _khoa(truy_van)
     if not uid or not khoa:
         return []
-    ds = [m for m in _doc().get(uid) or [] if isinstance(m, dict)]
+    ds = _danh_sach(uid)
     if kind:
         ds = [m for m in ds if str(m.get("kind")) == kind]
     ghi_diem = [(m, _diem(m, khoa)) for m in ds]
@@ -147,7 +187,7 @@ def liet_ke(user_id: str, *, kind: str = "", so: int = 20) -> list[dict]:
     uid = str(user_id or "").strip()
     if not uid:
         return []
-    ds = [m for m in _doc().get(uid) or [] if isinstance(m, dict)]
+    ds = _danh_sach(uid)
     if kind:
         ds = [m for m in ds if str(m.get("kind")) == kind]
     return ds[: max(1, so)]
@@ -160,6 +200,9 @@ def liet_ke(user_id: str, *, kind: str = "", so: int = 20) -> list[dict]:
 _CHO_TTL = 600.0
 _cho_mo_ta: dict[str, dict] = {}     # user → {ref, ten, kind, ts}
 _cho_chon: dict[str, dict] = {}      # user → {items:[{ref,mo_ta,kind,ten}], ts}
+_cho_xoa: dict[str, dict] = {}       # user → danh sách đang chọn để xóa
+_xac_nhan_xoa: dict[str, dict] = {}  # user → danh sách đã chọn, chờ gật đầu
+_TOI_DA_CHON = 100
 
 
 def _tuoi_ok(rec: dict | None) -> bool:
@@ -167,18 +210,65 @@ def _tuoi_ok(rec: dict | None) -> bool:
 
 
 def dat_cho_mo_ta(user_id: str, *, ref: str, ten: str = "",
-                  kind: str = KIND_ANH) -> None:
+                  kind: str = KIND_ANH, ref_kho: str = "") -> None:
     """Vừa lưu một thứ, đang CHỜ người dùng nhập mô tả để ghi mục lục."""
     uid = str(user_id or "").strip()
     if uid and ref:
-        _cho_mo_ta[uid] = {"ref": ref, "ten": ten, "kind": kind, "ts": time.time()}
+        _cho_mo_ta[uid] = {"ref": ref, "ref_kho": ref_kho, "ten": ten,
+                            "kind": kind, "ts": time.time()}
+
+
+def cau_hoi_mo_ta(kind: str = KIND_ANH) -> str:
+    """Câu hỏi dùng chung sau khi lưu — ảnh và tệp không bị gọi nhầm loại."""
+    if str(kind) == KIND_ANH:
+        return ("📝 Anh/chị đặt TÊN/MÔ TẢ cho ảnh này để sau tìm lại nhé "
+                "(ví dụ «thuốc Concor», «ảnh con trai») — gõ «thôi» nếu không cần ạ.")
+    return ("📝 Anh/chị đặt TÊN/MÔ TẢ cho tệp này để sau tìm theo mục lục nhé "
+            "(ví dụ «hợp đồng thuê nhà», «báo cáo tháng 9») — gõ «thôi» nếu không cần ạ.")
+
+
+def gan_ref_kho(user_id: str, *, ref: str, ref_kho: str) -> bool:
+    """Gắn đường dẫn kho thật vào mục ảnh đã có URL gửi lại được.
+
+    Upload ảnh chạy nền, nên mô tả có thể được người dùng trả lời trước khi
+    Drive trả kết quả. Hàm này chỉ bổ sung ``ref_kho`` và không đụng mô tả đó.
+    """
+    uid, r, kho = str(user_id or "").strip(), str(ref or "").strip(), str(ref_kho or "").strip()
+    if not uid or not r or not _la_ref_kho(kho):
+        return False
+    with _lock:
+        cho = _cho_mo_ta.get(uid)
+        if _tuoi_ok(cho) and str(cho.get("ref") or "") == r:
+            cho["ref_kho"] = kho
+            return True
+        d = _doc()
+        ds = [m for m in (d.get(uid) or []) if isinstance(m, dict)]
+        for muc in ds:
+            if str(muc.get("ref") or "") == r:
+                muc["ref_kho"] = kho
+                d[uid] = ds
+                return _ghi_file(d)
+    return False
 
 
 def dat_cho_chon(user_id: str, items: list[dict]) -> None:
-    """Tìm ra NHIỀU mục, đang CHỜ người dùng chọn số để gửi."""
+    """Tìm ra NHIỀU mục, đang CHỜ người dùng chọn một/nhiều số để gửi."""
     uid = str(user_id or "").strip()
     if uid and items:
-        _cho_chon[uid] = {"items": list(items)[:9], "ts": time.time()}
+        _cho_xoa.pop(uid, None)
+        _xac_nhan_xoa.pop(uid, None)
+        _cho_chon[uid] = {"items": [_ban_sao(m) for m in items][:_TOI_DA_CHON],
+                           "ts": time.time()}
+
+
+def dat_cho_xoa(user_id: str, items: list[dict]) -> None:
+    """Hiện danh sách đã lưu, chờ người dùng chọn một/nhiều mục để xóa."""
+    uid = str(user_id or "").strip()
+    if uid and items:
+        _cho_chon.pop(uid, None)
+        _xac_nhan_xoa.pop(uid, None)
+        _cho_xoa[uid] = {"items": [_ban_sao(m) for m in items][:_TOI_DA_CHON],
+                          "ts": time.time()}
 
 
 def _la_bo_qua(text: str) -> bool:
@@ -188,32 +278,239 @@ def _la_bo_qua(text: str) -> bool:
     }
 
 
+def _chon_nhieu(text: str, so_muc: int) -> list[int] | None:
+    """Đọc ``1,3-5`` hoặc ``tất cả``; None nghĩa là không phải câu chọn hợp lệ."""
+    t = _fold(text).strip()
+    if t in {"tat ca", "ca", "all"}:
+        return list(range(so_muc))
+    if not re.fullmatch(r"[\d\s,;\-]+", t):
+        return None
+    chon: list[int] = []
+    for phan in re.split(r"[,;]", t):
+        p = phan.strip()
+        if not p:
+            continue
+        if "-" in p:
+            a, sep, b = p.partition("-")
+            if not sep or not a.strip().isdigit() or not b.strip().isdigit():
+                return None
+            dau, cuoi = int(a), int(b)
+            if dau > cuoi:
+                return None
+            day = range(dau, cuoi + 1)
+        elif p.isdigit():
+            day = (int(p),)
+        else:
+            return None
+        for so in day:
+            i = so - 1
+            if i < 0 or i >= so_muc:
+                return None
+            if i not in chon:
+                chon.append(i)
+    return chon or None
+
+
+def _nhan(muc: dict, *, dai: int = 100) -> str:
+    return str(muc.get("mo_ta") or muc.get("ten") or "đã lưu")[:dai]
+
+
+def _la_ref_kho(ref: str) -> bool:
+    """Chỉ ref rclone hợp lệ mới được phép xóa file thật.
+
+    URL ảnh và các bản ghi cũ chỉ có tên tệp không đủ thông tin để xóa ở một
+    kho nào đó; với chúng, thao tác chỉ bỏ mục lục và phải nói rõ điều này.
+    """
+    return bool(re.match(r"^[A-Za-z0-9_.-]{1,64}:.+", str(ref or "").strip()))
+
+
+def _xoa_ref_kho(ref: str) -> dict:
+    from services import rclone_service
+    return rclone_service.xoa(ref)
+
+
+def xoa_muc(user_id: str, items: list[dict]) -> dict:
+    """Xóa các mục đã xác nhận; chỉ bỏ index khi không xác định được kho thật.
+
+    Ref có dạng rclone ``remote:path`` sẽ bị xóa thật trước, và *chỉ* bỏ khỏi
+    mục lục nếu xóa thành công. Bản ghi URL/legacy không có tọa độ kho: không
+    bịa là đã xóa file, chỉ xóa mục lục để người dùng còn biết chính xác kết quả.
+    """
+    uid = str(user_id or "").strip()
+    if not uid or not items:
+        return {"da_xoa": [], "bo_muc_luc": [], "that_bai": []}
+    chon_id = {_id_muc(m) for m in items if isinstance(m, dict)}
+    da_xoa: list[dict] = []
+    bo_muc_luc: list[dict] = []
+    that_bai: list[dict] = []
+    with _lock:
+        d = _doc()
+        ds = [m for m in (d.get(uid) or []) if isinstance(m, dict)]
+        giu: list[dict] = []
+        for muc in ds:
+            if _id_muc(muc) not in chon_id:
+                giu.append(muc)
+                continue
+            ban = _ban_sao(muc)
+            ref = str(ban.get("ref_kho") or ban.get("ref") or "")
+            if _la_ref_kho(ref):
+                try:
+                    kq = _xoa_ref_kho(ref)
+                except Exception as exc:
+                    kq = {"ok": False, "error": str(exc)}
+                if kq.get("ok"):
+                    da_xoa.append(ban)
+                else:
+                    ban["loi_xoa"] = str(kq.get("error") or "không rõ")[:120]
+                    that_bai.append(ban)
+                    giu.append(muc)
+            else:
+                bo_muc_luc.append(ban)
+        d[uid] = giu
+        if not _ghi_file(d):
+            # Không nói thành công nếu JSON không cập nhật được. File mây có thể
+            # đã xóa thật, nên ghi log để vận hành đối chiếu thay vì thử xóa lại.
+            logger.error("so_da_luu: file mây đã xóa nhưng không ghi được mục lục uid=%s", uid)
+            return {"da_xoa": [], "bo_muc_luc": [],
+                    "that_bai": [_ban_sao(m) for m in items]}
+    return {"da_xoa": da_xoa, "bo_muc_luc": bo_muc_luc, "that_bai": that_bai}
+
+
+def _noi_ket_qua_xoa(kq: dict) -> str:
+    da_xoa = kq.get("da_xoa") or []
+    bo = kq.get("bo_muc_luc") or []
+    loi = kq.get("that_bai") or []
+    dong: list[str] = []
+    if da_xoa:
+        dong.append(f"Đã xóa {len(da_xoa)} tệp khỏi kho đám mây và mục lục ✅")
+    if bo:
+        dong.append(f"Đã bỏ {len(bo)} mục khỏi mục lục. Các mục này không có đường dẫn kho "
+                    "đủ để xóa file gốc, nên em không nói là đã xóa tệp.")
+    if loi:
+        ten = ", ".join(_nhan(m, dai=40) for m in loi[:3])
+        dong.append(f"Chưa xóa được {len(loi)} mục ({ten}). Em giữ nguyên chúng trong mục lục.")
+    return "\n".join(dong) or "Không có mục nào được xóa ạ."
+
+
+def _ket_qua_gui(items: list[dict], *, tai_tep: bool = True) -> dict:
+    """Dựng kết quả gửi lại; nhiều ảnh dùng ``image_urls`` cho adapter gửi loạt."""
+    urls = [str(m.get("ref") or "") for m in items
+            if m.get("kind") == KIND_ANH
+            and str(m.get("ref") or "").startswith(("http://", "https://"))]
+    tep = [m for m in items if m.get("kind") != KIND_ANH]
+    if len(items) == 1 and len(urls) == 1:
+        return {"text": f"Đây ạ — {_nhan(items[0], dai=120)} 🖼️", "image_url": urls[0]}
+    dong: list[str] = []
+    if urls:
+        dong.append(f"Gửi {len(urls)} ảnh đã chọn ạ 🖼️")
+    duong_tep: list[str] = []
+    tep_loi: list[str] = []
+    if tep and not tai_tep:
+        dong.append("Tệp đã chọn vẫn ở kho. Zalo Bot chưa hỗ trợ gửi tệp; anh/chị "
+                    "nhận qua Telegram hoặc Zalo Cá nhân giúp em ạ.")
+    elif tep:
+        # Tài liệu lưu bằng đường dẫn rclone có thể gửi lại thành FILE thật ở
+        # Telegram/Zalo cá nhân. Không có đường dẫn kho (bản ghi cũ) thì chỉ
+        # nêu đúng giới hạn, không dựng một link giả.
+        try:
+            from services import rclone_service
+            for m in tep:
+                ref = str(m.get("ref_kho") or m.get("ref") or "")
+                if not _la_ref_kho(ref):
+                    tep_loi.append(_nhan(m, dai=50))
+                    continue
+                ten = Path(str(m.get("ten") or ref.rsplit("/", 1)[-1])).name
+                an_toan = re.sub(r"[^A-Za-z0-9._-]+", "_", ten)[:120] or "file.bin"
+                ten_luu = f"muc_luc/{_id_muc(m)}/{an_toan}"
+                kq = rclone_service.tai_ve(ref, ten_luu=ten_luu)
+                if kq.get("ok") and kq.get("duong_dan"):
+                    duong_tep.append(str(kq["duong_dan"]))
+                else:
+                    tep_loi.append(_nhan(m, dai=50))
+        except Exception as exc:
+            logger.warning("so_da_luu: tải lại tệp lỗi: %s", str(exc)[:150])
+            tep_loi.extend(_nhan(m, dai=50) for m in tep if _nhan(m, dai=50) not in tep_loi)
+        if duong_tep:
+            dong.append(f"Gửi {len(duong_tep)} tệp đã chọn ạ 📄")
+        if tep_loi:
+            dong.append("Chưa tải lại được: " + "; ".join(tep_loi))
+    out: dict[str, Any] = {"text": "\n".join(dong) or "Em chưa gửi lại được mục đã chọn ạ."}
+    if urls:
+        out["image_urls"] = urls
+    if duong_tep:
+        out["doc_paths"] = duong_tep
+        if len(duong_tep) == 1:
+            out["doc_path"] = duong_tep[0]
+    return out
+
+
+def gui_lai(items: list[dict], *, tai_tep: bool = True) -> dict:
+    """Chuẩn bị ảnh/tệp đã chọn để kênh gửi lại (API công khai cho capability)."""
+    return _ket_qua_gui(items, tai_tep=tai_tep)
+
+
 def xu_ly_tra_loi(user_id: str, text: str) -> dict | None:
     """Câu này có phải trả lời cho bước HỎI-mô-tả / CHỌN-số của mục lục không?
 
     Trả None nếu không liên quan (để kênh xử lý bình thường). Ngược lại trả
-    ``{"text": ..., ["image_url": ...]}`` để kênh gửi — và đã dọn trạng thái."""
+    ``{"text": ..., ["image_url(s)": ...]}`` để kênh gửi — và đã dọn trạng
+    thái. Xóa luôn cần hai lượt: chọn mục rồi gõ ``xóa`` xác nhận."""
     uid = str(user_id or "").strip()
     t = str(text or "").strip()
     if not uid or not t:
         return None
 
-    # (1) Đang chờ CHỌN số sau khi tìm ra nhiều mục.
+    # (0) Đang chờ XÁC NHẬN xóa. Không hiểu thành lệnh mới thì giữ nguyên bản
+    # chờ; gõ nhầm một câu không được biến thành xóa thật.
+    rec = _xac_nhan_xoa.get(uid)
+    if _tuoi_ok(rec):
+        ft = _fold(t)
+        if _la_bo_qua(t):
+            _xac_nhan_xoa.pop(uid, None)
+            return {"text": "Đã thôi xóa, các mục vẫn giữ nguyên ạ."}
+        if ft in {"xoa", "dong y xoa", "xac nhan xoa", "ok xoa", "yes xoa"}:
+            _xac_nhan_xoa.pop(uid, None)
+            return {"text": _noi_ket_qua_xoa(xoa_muc(uid, rec.get("items") or []))}
+        try:
+            from services.yeu_cau_moi import la_yeu_cau_moi
+            if la_yeu_cau_moi(t):
+                _xac_nhan_xoa.pop(uid, None)
+                return None
+        except Exception:
+            pass
+        return {"text": "Để xóa các mục đã chọn, anh/chị gõ đúng «xóa»; hoặc gõ «thôi» để hủy ạ."}
+    _xac_nhan_xoa.pop(uid, None)
+
+    # (1) Đang chờ CHỌN mục để xóa.
+    rec = _cho_xoa.get(uid)
+    if _tuoi_ok(rec):
+        if _la_bo_qua(t):
+            _cho_xoa.pop(uid, None)
+            return {"text": "Đã thôi chọn xóa ạ."}
+        items = rec.get("items") or []
+        chon = _chon_nhieu(t, len(items))
+        if chon is not None:
+            _cho_xoa.pop(uid, None)
+            ds = [items[i] for i in chon]
+            _xac_nhan_xoa[uid] = {"items": ds, "ts": time.time()}
+            ten = "; ".join(_nhan(m, dai=55) for m in ds[:5])
+            them = f"; … và {len(ds) - 5} mục khác" if len(ds) > 5 else ""
+            return {"text": (f"Anh/chị đã chọn {len(ds)} mục: {ten}{them}.\n"
+                            "Gõ «xóa» để xác nhận xóa không thể khôi phục, hoặc «thôi» để hủy ạ.")}
+        _cho_xoa.pop(uid, None)
+
+    # (2) Đang chờ CHỌN số sau khi tìm ra nhiều mục.
     rec = _cho_chon.get(uid)
     if _tuoi_ok(rec):
-        import re as _re
-        m = _re.match(r"^\s*(\d{1,2})\b", t)
-        if m:
-            i = int(m.group(1)) - 1
-            items = rec.get("items") or []
-            if 0 <= i < len(items):
-                _cho_chon.pop(uid, None)
-                muc = items[i]
-                nhan = str(muc.get("mo_ta") or muc.get("ten") or "đã lưu")[:120]
-                if muc.get("kind") == KIND_ANH:
-                    return {"text": f"Đây ạ — {nhan} 🖼️", "image_url": str(muc.get("ref"))}
-                return {"text": f"• {nhan} (đã lưu trên kho đám mây)"}
-        # Không phải một con số hợp lệ → thôi chờ chọn, để câu đi tiếp bình thường.
+        if _la_bo_qua(t):
+            _cho_chon.pop(uid, None)
+            return {"text": "Đã thôi chọn ạ."}
+        items = rec.get("items") or []
+        chon = _chon_nhieu(t, len(items))
+        if chon is not None:
+            _cho_chon.pop(uid, None)
+            return gui_lai([items[i] for i in chon], tai_tep=not uid.startswith("zalo_"))
+        # Không phải số/dải số hợp lệ → thôi chờ chọn, để câu đi tiếp bình thường.
         _cho_chon.pop(uid, None)
 
     # (2) Đang chờ MÔ TẢ sau khi vừa lưu.
@@ -224,18 +521,22 @@ def xu_ly_tra_loi(user_id: str, text: str) -> dict | None:
         # rồi để câu đi tiếp.
         if la_yeu_cau_moi(t):
             _cho_mo_ta.pop(uid, None)
-            ghi(uid, ref=str(rec.get("ref")), kind=str(rec.get("kind") or KIND_ANH),
-                mo_ta="", ten=str(rec.get("ten") or ""), tu_khoa=str(rec.get("ten") or ""))
+            ghi(uid, ref=str(rec.get("ref")), ref_kho=str(rec.get("ref_kho") or ""),
+                kind=str(rec.get("kind") or KIND_ANH), mo_ta="",
+                ten=str(rec.get("ten") or ""), tu_khoa=str(rec.get("ten") or ""))
             return None
         _cho_mo_ta.pop(uid, None)
         if _la_bo_qua(t):
-            ghi(uid, ref=str(rec.get("ref")), kind=str(rec.get("kind") or KIND_ANH),
-                mo_ta="", ten=str(rec.get("ten") or ""), tu_khoa=str(rec.get("ten") or ""))
+            ghi(uid, ref=str(rec.get("ref")), ref_kho=str(rec.get("ref_kho") or ""),
+                kind=str(rec.get("kind") or KIND_ANH), mo_ta="",
+                ten=str(rec.get("ten") or ""), tu_khoa=str(rec.get("ten") or ""))
             return {"text": "Vâng, em lưu rồi ạ (tìm lại theo tên tệp cũng được)."}
-        ghi(uid, ref=str(rec.get("ref")), kind=str(rec.get("kind") or KIND_ANH),
-            mo_ta=t, ten=str(rec.get("ten") or ""), tu_khoa=str(rec.get("ten") or ""))
+        ghi(uid, ref=str(rec.get("ref")), ref_kho=str(rec.get("ref_kho") or ""),
+            kind=str(rec.get("kind") or KIND_ANH), mo_ta=t,
+            ten=str(rec.get("ten") or ""), tu_khoa=str(rec.get("ten") or ""))
         goi = t.split()[0] if t.split() else "…"
+        loai = "ảnh" if str(rec.get("kind") or KIND_ANH) == KIND_ANH else "tệp"
         return {"text": f"Đã ghi vào mục lục: «{t[:80]}» ✅ Sau anh/chị nhắn "
-                        f"«gửi ảnh {goi}» là em tìm ra ạ."}
+                        f"«gửi {loai} {goi}» là em tìm ra ạ."}
 
     return None

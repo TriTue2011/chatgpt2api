@@ -3460,7 +3460,7 @@ def _h_delete_media(args: dict, ctx: dict) -> dict:
 
 
 def _h_tim_da_luu(args: dict, ctx: dict) -> dict:
-    """Tìm lại thứ NGƯỜI DÙNG đã lưu (mục «Lưu kho») theo MÔ TẢ và gửi lại.
+    """Tra, liệt kê hoặc mở bước xóa mục lục NGƯỜI DÙNG đã lưu.
 
     Khác `library_media` (ảnh AI tự tạo, lấy theo thời gian): đây tra theo mô tả
     thứ họ CHỦ ĐỘNG lưu — "gửi ảnh thuốc", "gửi tài liệu hợp đồng". Ảnh → gửi
@@ -3468,6 +3468,7 @@ def _h_tim_da_luu(args: dict, ctx: dict) -> dict:
     from services.agent import so_da_luu
     uid = str((ctx or {}).get("user_id") or "").strip()
     mo_ta = str(args.get("mo_ta") or "").strip()
+    op = str(args.get("op") or "find").strip().lower()
     kraw = str(args.get("kind") or "").strip().lower()
     if kraw in ("ảnh", "anh", "hình", "hinh", "image", "photo"):
         kind = so_da_luu.KIND_ANH
@@ -3477,6 +3478,38 @@ def _h_tim_da_luu(args: dict, ctx: dict) -> dict:
         kind = ""
     if not uid:
         return {"text": "Em chưa xác định được anh/chị là ai để tra sổ đã lưu ạ."}
+    try:
+        so_luong = max(1, min(100, int(args.get("so_luong") or 100)))
+    except (TypeError, ValueError):
+        so_luong = 100
+
+    def _dong_muc(ds: list[dict]) -> list[str]:
+        dong: list[str] = []
+        for i, m in enumerate(ds, 1):
+            nhan = str(m.get("mo_ta") or m.get("ten") or "chưa đặt mô tả")[:90]
+            ten = str(m.get("ten") or "").strip()
+            icon = "🖼️" if m.get("kind") == so_da_luu.KIND_ANH else "📄"
+            them_ten = f" — {ten[:50]}" if ten and ten != nhan else ""
+            dong.append(f"{i}. {icon} {nhan}{them_ten}")
+        return dong
+
+    if op in {"list", "liet_ke", "catalog", "muc_luc"}:
+        ds = so_da_luu.liet_ke(uid, kind=kind, so=so_luong)
+        if not ds:
+            return {"text": "Mục lục đã lưu của anh/chị đang trống ạ."}
+        loai = "ảnh" if kind == so_da_luu.KIND_ANH else "tệp" if kind else "ảnh và tệp"
+        dong = [f"🗂️ Mục lục {loai} đã lưu ({len(ds)} mục, mới nhất trước):", *_dong_muc(ds)]
+        dong.append("Nhắn «gửi lại <mô tả>» để tìm; nhắn «xóa mục đã lưu» để chọn mục xóa ạ.")
+        return {"text": "\n".join(dong), "deliver_now": True}
+
+    if op in {"delete", "remove", "xoa"}:
+        ds = so_da_luu.liet_ke(uid, kind=kind, so=so_luong)
+        if not ds:
+            return {"text": "Mục lục đã lưu của anh/chị đang trống, không có gì để xóa ạ."}
+        so_da_luu.dat_cho_xoa(uid, ds)
+        dong = ["🗑️ Chọn mục muốn xóa (có thể chọn một hoặc nhiều):", *_dong_muc(ds)]
+        dong.append("Trả lời «1», «1,3-5» hoặc «tất cả». Sau đó em sẽ hỏi xác nhận xóa thật ạ.")
+        return {"text": "\n".join(dong), "deliver_now": True}
     if not mo_ta:
         return {"text": "Anh/chị muốn tìm lại thứ gì ạ? Cho em vài từ mô tả nhé "
                         "(ví dụ «ảnh thuốc», «tài liệu hợp đồng»)."}
@@ -3486,19 +3519,15 @@ def _h_tim_da_luu(args: dict, ctx: dict) -> dict:
                         "tìm được thứ anh/chị đã bấm «☁️ Lưu kho» trước đó thôi."}
     # Đúng MỘT kết quả → gửi luôn.
     if len(kq) == 1:
-        m = kq[0]
-        nhan = str(m.get("mo_ta") or m.get("ten") or "đã lưu")[:120]
-        if m.get("kind") == so_da_luu.KIND_ANH and str(m.get("ref") or "").startswith(("http://", "https://")):
-            return {"text": f"Đây ạ — {nhan} 🖼️", "image_url": str(m["ref"])}
-        return {"text": f"• {nhan} (đã lưu trên kho đám mây)"}
+        # Zalo Bot API không thể gửi document; đừng tải một file lớn về chỉ để
+        # rồi báo không gửi được. (Zalo Cá nhân có prefix ``zalop_``, không khớp.)
+        return so_da_luu.gui_lai(kq, tai_tep=not uid.startswith("zalo_"))
     # NHIỀU kết quả → cho CHỌN số (chủ máy chốt: không gửi tất cả). Câu trả lời
     # số được kênh bắt qua so_da_luu.xu_ly_tra_loi → gửi đúng mục.
     so_da_luu.dat_cho_chon(uid, kq)
-    dong = [f"Có {len(kq)} mục khớp «{mo_ta}» — anh/chị trả lời SỐ để em gửi ạ:"]
-    for i, m in enumerate(kq, 1):
-        nhan = str(m.get("mo_ta") or m.get("ten") or "đã lưu")[:70]
-        icon = "🖼️" if m.get("kind") == so_da_luu.KIND_ANH else "📄"
-        dong.append(f"{i}. {icon} {nhan}")
+    dong = [f"Có {len(kq)} mục khớp «{mo_ta}» — anh/chị chọn SỐ mục để em gửi ạ:"]
+    dong.extend(_dong_muc(kq))
+    dong.append("Trả lời «1», «1,3-5» hoặc «tất cả» để gửi nhiều ảnh.")
     return {"text": "\n".join(dong), "deliver_now": True}
 
 
@@ -5689,22 +5718,30 @@ CAPABILITIES: dict[str, Capability] = {
                   "ngay là web_search, không phải tool này.")),
     "tim_da_luu": Capability(
         name="tim_da_luu", risk=READ, handler=_h_tim_da_luu,
-        emoji="🗂️", label="Tìm lại thứ đã lưu (theo mô tả)",
-        description=("Tìm và GỬI LẠI thứ NGƯỜI DÙNG đã CHỦ ĐỘNG lưu trước đó (bấm "
+        emoji="🗂️", label="Mục lục ảnh và tệp đã lưu",
+        description=("Tìm/GỬI LẠI, LIỆT KÊ, hoặc MỞ BƯỚC XÓA thứ NGƯỜI DÙNG đã "
+                     "CHỦ ĐỘNG lưu trước đó (bấm "
                      "«☁️ Lưu kho») theo MÔ TẢ: 'gửi ảnh thuốc', 'gửi lại ảnh con "
-                     "trai', 'tài liệu hợp đồng đã lưu'. KHÁC library_media (ảnh AI "
+                     "trai', 'tài liệu hợp đồng đã lưu'. op=list khi họ hỏi đã lưu "
+                     "gì/mục lục; op=delete khi họ muốn xóa — tool chỉ hiện danh "
+                     "sách rồi kênh sẽ bắt họ chọn số và xác nhận «xóa», không tự "
+                     "xóa. KHÁC library_media (ảnh AI "
                      "VỪA TẠO, lấy theo thời gian): dùng tool NÀY khi câu có MÔ TẢ "
                      "cụ thể về thứ đã lưu, KHÔNG phải 'ảnh mới nhất/vừa tạo', và "
                      "cũng KHÔNG phải generate_image. mo_ta: vài từ mô tả; kind: "
                      "'anh' | 'tailieu' (bỏ trống = mọi loại)."),
         parameters={"type": "object", "properties": {
+            "op": {"type": "string", "enum": ["find", "list", "delete"],
+                   "description": "find=tìm/gửi lại; list=liệt kê mục lục; delete=hiện danh sách để chọn xóa"},
             "mo_ta": {"type": "string",
                       "description": "Vài từ mô tả thứ cần tìm (vd 'thuốc', 'hợp đồng', 'con trai')"},
             "kind": {"type": "string", "enum": ["anh", "tailieu"],
-                     "description": "Lọc loại; bỏ trống = mọi loại"}},
-            "required": ["mo_ta"]},
+                     "description": "Lọc loại; bỏ trống = mọi loại"},
+            "so_luong": {"type": "integer",
+                          "description": "Số dòng cần hiện khi list/delete, 1–100 (mặc định 100)"}}},
         workflow=("Chỉ tìm được thứ người dùng đã bấm «Lưu kho». Không thấy thì "
-                  "nói rõ chưa có, đừng bịa.")),
+                  "nói rõ chưa có, đừng bịa. Lệnh xóa chỉ mở màn hình chọn; tuyệt "
+                  "đối không truyền một câu trả lời như thể đã xóa.")),
     "library_media": Capability(
         name="library_media", risk=READ, handler=_h_library_media,
         emoji="🗂️", label="Lấy ảnh/video/nhạc đã tạo (thư viện)",

@@ -1155,17 +1155,28 @@ def _do_pdf_intent(
         if intent == _pi.LUU_ONLINE:
             kind = "pdf_luu_online"
             from services.agent import luu_tru_day as _ltd
+            from services.agent import so_da_luu as _sdl
+            _ml_key = khoa_phien(chat_id, _cur_topic(), user_id)
+            _ml_bot = _active_bot()
+            _ml_topic = _cur_topic()
+
+            def _ghi_tai_lieu_da_day(_ref_kho: str) -> None:
+                if not _ref_kho:
+                    return
+                _sdl.ghi(_ml_key, ref=_ref_kho, kind=_sdl.KIND_TAILIEU,
+                         mo_ta=name, ten=name, tu_khoa=name)
+                _sdl.dat_cho_mo_ta(_ml_key, ref=_ref_kho, ten=name,
+                                    kind=_sdl.KIND_TAILIEU)
+                _current.bot, _current.topic = _ml_bot, _ml_topic
+                try:
+                    send_message(chat_id, _sdl.cau_hoi_mo_ta(_sdl.KIND_TAILIEU))
+                finally:
+                    _current.bot, _current.topic = None, None
+
             reply = _ltd.luu_ngay("tg", str(chat_id), tep=path, ten_tep=name,
                                   topic=str(_cur_topic() or ""),
-                                  user=str(user_id or ""))
+                                  user=str(user_id or ""), khi_xong=_ghi_tai_lieu_da_day)
             send_message(chat_id, reply)
-            # Ghi vào MỤC LỤC để sau "tìm tài liệu <tên>" thấy được (việc phụ).
-            try:
-                from services.agent import so_da_luu as _sdl
-                _sdl.ghi(khoa_phien(chat_id, _cur_topic(), user_id), ref=name, kind=_sdl.KIND_TAILIEU,
-                         mo_ta=name, ten=name, tu_khoa=name)
-            except Exception:
-                pass
         elif intent == _pi.WORD:
             kind = "pdf_word"
             from services.pdf_to_word import convert_pdf_to_docx
@@ -1375,12 +1386,21 @@ def _do_photo_request(
             from services.agent import luu_tru_day as _ltd
             _ten = _ltd.ten_anh(file_data)
             _tam = _ltd.luu_vao_thu_muc_lam_viec(_ten, file_data)
+            from services.agent import so_da_luu as _sdl
+            _ml_key = khoa_phien(chat_id, _cur_topic(), user_id)
+            _ml_ref: list[str] = []
+            _hoi_ml = _phi.luu_vao_muc_luc(
+                file_data, user_id=_ml_key, ten=_ten, channel="tg",
+                khi_co_ref=_ml_ref.append)
+
+            def _gan_ban_sao_anh(_ref_kho: str) -> None:
+                if _ml_ref:
+                    _sdl.gan_ref_kho(_ml_key, ref=_ml_ref[0], ref_kho=_ref_kho)
+
             reply = _ltd.luu_ngay("tg", str(chat_id), tep=_tam, ten_tep=_ten,
                                   topic=str(_cur_topic() or ""),
-                                  user=str(user_id or ""))
+                                  user=str(user_id or ""), khi_xong=_gan_ban_sao_anh)
             send_message(chat_id, reply)
-            _hoi_ml = _phi.luu_vao_muc_luc(file_data, user_id=khoa_phien(chat_id, _cur_topic(), user_id),
-                                           ten=_ten, channel="tg")
             if _hoi_ml:
                 send_message(chat_id, _hoi_ml)
             return
@@ -1895,6 +1915,35 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         from services.agent import so_da_luu as _sdl
         _ml = _sdl.xu_ly_tra_loi(khoa_phien(chat_id, _cur_topic(), user_id), text)
         if _ml is not None:
+            _ml_docs = [str(p) for p in (_ml.get("doc_paths") or []) if p]
+            _ml_has_anh = bool(_ml.get("image_url") or _ml.get("image_urls"))
+            for _i, _doc in enumerate(_ml_docs):
+                try:
+                    from pathlib import Path as _P
+                    _p = _P(_doc)
+                    send_document(chat_id,
+                                  _doc_media_co_tran("path", str(_p), MAX_UPLOAD_FILE_BYTES, "tài liệu"),
+                                  _p.name,
+                                  caption=(_ml.get("text") or "")[:1000]
+                                  if not _ml_has_anh and _i == 0 else "")
+                except Exception as _exc:
+                    logger.warning("tg gửi lại tệp mục lục: %s", _exc)
+            if _ml_docs and not _ml_has_anh:
+                return
+            _mlus = _ml.get("image_urls")
+            if isinstance(_mlus, list) and _mlus:
+                if _gui_album(chat_id, [str(u) for u in _mlus],
+                              caption=(_ml.get("text") or "")[:1000]):
+                    return
+                da = 0
+                for _u in _mlus:
+                    _img = _fetch_image_bytes(str(_u))
+                    if _img and send_photo(chat_id, _img, caption="").get("ok"):
+                        da += 1
+                if da:
+                    send_message(chat_id, (_ml.get("text") or "")[:900]
+                                 + (f"\n(gửi được {da}/{len(_mlus)} ảnh)" if da < len(_mlus) else ""))
+                    return
             _mlu = _ml.get("image_url")
             if _mlu and _api_call("sendPhoto", {
                     "chat_id": chat_id, "photo": str(_mlu),

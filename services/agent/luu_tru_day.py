@@ -21,6 +21,7 @@ import re
 import threading
 import time
 from pathlib import Path
+from typing import Callable
 
 from services.agent import luu_tru_online as lt
 from utils.log import logger
@@ -415,7 +416,8 @@ def _xoa_cuc_bo(tep: str) -> None:
 
 
 def day_nen(tep: str, cd: dict, *, nhat_ky: bool = False,
-            pham_vi: tuple[str, str, str, str] | None = None) -> bool:
+            pham_vi: tuple[str, str, str, str] | None = None,
+            khi_xong: Callable[[str], None] | None = None) -> bool:
     """Đẩy một tệp lên kho, chạy ở luồng riêng. Trả False nếu chưa bật.
 
     Không bao giờ ném lỗi ra ngoài: đây là việc phụ, hỏng thì chat vẫn phải chạy.
@@ -428,13 +430,14 @@ def day_nen(tep: str, cd: dict, *, nhat_ky: bool = False,
     if not dich:
         return False
     threading.Thread(target=_day, args=(tep, dich),
-                     kwargs={"pham_vi": pham_vi, "nhat_ky": nhat_ky},
+                     kwargs={"pham_vi": pham_vi, "nhat_ky": nhat_ky,
+                             "khi_xong": khi_xong},
                      daemon=True).start()
     return True
 
 
 def _day(tep: str, dich: str, *, pham_vi: tuple[str, str, str, str] | None = None,
-         nhat_ky: bool = False) -> None:
+         nhat_ky: bool = False, khi_xong: Callable[[str], None] | None = None) -> None:
     try:
         from services import rclone_service as rcl
         kq = rcl.gui_len(tep, dich)
@@ -442,6 +445,12 @@ def _day(tep: str, dich: str, *, pham_vi: tuple[str, str, str, str] | None = Non
             logger.info(f"luu_tru_online: đã đẩy {Path(tep).name} → {dich}")
             if pham_vi:
                 lt.ghi_so(str(kq.get("duong_dan") or ""), *pham_vi, nhat_ky=nhat_ky)
+            if khi_xong:
+                try:
+                    khi_xong(str(kq.get("duong_dan") or ""))
+                except Exception as exc:
+                    logger.warning("luu_tru_online: callback sau đẩy %s lỗi: %s",
+                                   Path(tep).name, str(exc)[:150])
         else:
             logger.warning(f"luu_tru_online: đẩy {Path(tep).name} hỏng: "
                            f"{str(kq.get('error'))[:150]}")
@@ -483,7 +492,8 @@ def khoa_cho_thread(kenh: str, dinh_danh: str, chat: str) -> str:
 
 
 def luu_ngay(kenh: str, chat: str, *, tep: str, ten_tep: str = "",
-             topic: str = "", user: str = "") -> str:
+             topic: str = "", user: str = "",
+             khi_xong: Callable[[str], None] | None = None) -> str:
     """Đẩy một tệp lên kho NGAY, không hỏi ai. Trả câu báo lại cho người dùng.
 
     Dùng cho hai lối: người dùng tự chọn mục «Lưu lên kho đám mây» trong menu ý
@@ -496,7 +506,8 @@ def luu_ngay(kenh: str, chat: str, *, tep: str, ten_tep: str = "",
             return "Phạm vi này chưa khai kho đám mây nào ạ."
         ten = str(ten_tep or "").strip() or Path(tep).name
         cuc_bo = luu_vao_thu_muc_lam_viec(ten, Path(tep).read_bytes())
-        if not day_nen(cuc_bo, cd, pham_vi=(kenh, chat, topic, user)):
+        if not day_nen(cuc_bo, cd, pham_vi=(kenh, chat, topic, user),
+                       khi_xong=khi_xong):
             return "Chưa đẩy được lên kho, em ghi log rồi ạ."
         dich = lt.duong_dan_dich(cd, Path(cuc_bo).name)
         return f"☁️ Đang lưu {Path(cuc_bo).name} vào {dich} ạ."

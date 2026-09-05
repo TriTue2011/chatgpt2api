@@ -19,7 +19,7 @@ import re
 import tempfile
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 
 from services.local_gateway import gateway_base_url
 
@@ -753,7 +753,8 @@ def ingest_teacher_from_photo(
 
 
 def luu_vao_muc_luc(image_bytes: bytes, *, user_id: str, ten: str = "",
-                    channel: str = "") -> str:
+                    channel: str = "",
+                    khi_co_ref: Callable[[str], None] | None = None) -> str:
     """Vừa LƯU ảnh → giữ một bản gửi-lại-được rồi HỎI mô tả để ghi mục lục.
 
     Chủ máy chốt: KHÔNG tự sinh caption nữa — HỎI người dùng đặt tên/mô tả (cho
@@ -783,8 +784,12 @@ def luu_vao_muc_luc(image_bytes: bytes, *, user_id: str, ten: str = "",
             return ""
         so_da_luu.dat_cho_mo_ta(uid, ref=str(url), ten=ten,
                                 kind=so_da_luu.KIND_ANH)
-        return ("📝 Anh/chị đặt TÊN/MÔ TẢ cho ảnh này để sau tìm lại nhé "
-                "(ví dụ «thuốc Concor», «ảnh con trai») — gõ «thôi» nếu không cần ạ.")
+        if khi_co_ref:
+            try:
+                khi_co_ref(str(url))
+            except Exception as exc:
+                logger.warning("luu_vao_muc_luc callback: %s", str(exc)[:150])
+        return so_da_luu.cau_hoi_mo_ta(so_da_luu.KIND_ANH)
     except Exception as exc:
         logger.warning("luu_vao_muc_luc: %s", str(exc)[:150])
         return ""

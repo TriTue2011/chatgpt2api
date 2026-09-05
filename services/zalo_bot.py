@@ -1637,11 +1637,20 @@ def _do_photo_request(
             from services.agent import luu_tru_day as _ltd
             _ten = _ltd.ten_anh(file_data)
             _tam = _ltd.luu_vao_thu_muc_lam_viec(_ten, file_data)
+            from services.agent import so_da_luu as _sdl
+            _ml_key = _skey_zalo(chat_id, user_id, is_group)
+            _ml_ref: list[str] = []
+            _hoi_ml = _phi.luu_vao_muc_luc(
+                file_data, user_id=_skey_zalo(chat_id, user_id, is_group), ten=_ten, channel="zalo",
+                khi_co_ref=_ml_ref.append)
+
+            def _gan_ban_sao_anh(_ref_kho: str) -> None:
+                if _ml_ref:
+                    _sdl.gan_ref_kho(_ml_key, ref=_ml_ref[0], ref_kho=_ref_kho)
+
             send_message(chat_id, _ltd.luu_ngay("zalo", str(chat_id), tep=_tam,
-                                                ten_tep=_ten, user=str(user_id or "")))
-            _hoi_ml = _phi.luu_vao_muc_luc(file_data,
-                                           user_id=_skey_zalo(chat_id, user_id, is_group),
-                                           ten=_ten, channel="zalo")
+                                                ten_tep=_ten, user=str(user_id or ""),
+                                                khi_xong=_gan_ban_sao_anh))
             if _hoi_ml:
                 send_message(chat_id, _hoi_ml)
             return
@@ -2245,6 +2254,21 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
         from services.agent import so_da_luu as _sdl
         _ml = _sdl.xu_ly_tra_loi(_skey_zalo(chat_id, user_id, is_group), text)
         if _ml is not None:
+            if _ml.get("doc_paths"):
+                _ml["text"] = ((_ml.get("text") or "")
+                               + "\nZalo Bot chưa hỗ trợ gửi tệp; em đã tải sẵn tệp "
+                                 "để gửi qua Telegram hoặc Zalo Cá nhân ạ.").strip()
+            _mlus = _ml.get("image_urls")
+            if isinstance(_mlus, list) and _mlus:
+                da = 0
+                for i, _u in enumerate(_mlus):
+                    if send_photo(chat_id, str(_u),
+                                  (_ml.get("text") or "")[:1000] if i == 0 else "").get("ok"):
+                        da += 1
+                if da:
+                    if da < len(_mlus):
+                        send_message(chat_id, f"(gửi được {da}/{len(_mlus)} ảnh)")
+                    return
             _mlu = _ml.get("image_url")
             if _mlu and send_photo(chat_id, str(_mlu),
                                    (_ml.get("text") or "")[:1000]).get("ok"):
@@ -2290,18 +2314,24 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
                 from services.agent import luu_tru_day as _ltd
                 _pend_lo = _pi.pop_pending(_pkey) or {}
                 _tl_ten = str(_pend_lo.get("name") or "")
+                from services.agent import so_da_luu as _sdl
+                _ml_key = _skey_zalo(chat_id, user_id, is_group)
+                _ml_bot = _active_bot()
+
+                def _ghi_tai_lieu_da_day(_ref_kho: str) -> None:
+                    if not _ref_kho or not _tl_ten:
+                        return
+                    _sdl.ghi(_ml_key, ref=_ref_kho, kind=_sdl.KIND_TAILIEU,
+                             mo_ta=_tl_ten, ten=_tl_ten, tu_khoa=_tl_ten)
+                    _sdl.dat_cho_mo_ta(_ml_key, ref=_ref_kho, ten=_tl_ten,
+                                        kind=_sdl.KIND_TAILIEU)
+                    send_message(chat_id, _sdl.cau_hoi_mo_ta(_sdl.KIND_TAILIEU),
+                                 bot=_ml_bot)
+
                 send_message(chat_id, _ltd.luu_ngay(
                     "zalo", str(chat_id), tep=str(_pend_lo.get("path") or ""),
-                    ten_tep=_tl_ten, user=str(user_id or "")))
-                # Ghi tài liệu vào MỤC LỤC (việc phụ).
-                try:
-                    from services.agent import so_da_luu as _sdl
-                    if _tl_ten:
-                        _sdl.ghi(_skey_zalo(chat_id, user_id, is_group), ref=_tl_ten,
-                                 kind=_sdl.KIND_TAILIEU, mo_ta=_tl_ten,
-                                 ten=_tl_ten, tu_khoa=_tl_ten)
-                except Exception:
-                    pass
+                    ten_tep=_tl_ten, user=str(user_id or ""),
+                    khi_xong=_ghi_tai_lieu_da_day))
                 return
             if _intent not in _full_allow:
                 return
