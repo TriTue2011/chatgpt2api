@@ -1159,6 +1159,13 @@ def _do_pdf_intent(
                                   topic=str(_cur_topic() or ""),
                                   user=str(user_id or ""))
             send_message(chat_id, reply)
+            # Ghi vào MỤC LỤC để sau "tìm tài liệu <tên>" thấy được (việc phụ).
+            try:
+                from services.agent import so_da_luu as _sdl
+                _sdl.ghi(str(user_id or ""), ref=name, kind=_sdl.KIND_TAILIEU,
+                         mo_ta=name, ten=name, tu_khoa=name)
+            except Exception:
+                pass
         elif intent == _pi.WORD:
             kind = "pdf_word"
             from services.pdf_to_word import convert_pdf_to_docx
@@ -1353,11 +1360,27 @@ def _do_photo_request(
         it = intent or (
             _phi.GENERATE if _phi.classify(request) == _phi.GENERATE else _phi.ANALYZE
         )
-        allowed = _phi.them_dang_facebook(_phi.allowed_intents(allow), allow)
+        allowed = _phi.them_luu_online(
+            _phi.them_dang_facebook(_phi.allowed_intents(allow), allow),
+            "tg", str(chat_id), topic=str(_cur_topic() or ""), user=str(user_id or ""))
         if it not in allowed and allow is not None:
             # generate blocked without image group
             status = "blocked"
             err = f"intent {it} not allowed"
+            return
+
+        if it == _phi.LUU_ONLINE:
+            # Ảnh đi thẳng lên kho + ghi MỤC LỤC để sau "gửi ảnh <mô tả>" tìm lại.
+            kind = "photo_luu_online"
+            from services.agent import luu_tru_day as _ltd
+            _ten = _ltd.ten_anh(file_data)
+            _tam = _ltd.luu_vao_thu_muc_lam_viec(_ten, file_data)
+            reply = _ltd.luu_ngay("tg", str(chat_id), tep=_tam, ten_tep=_ten,
+                                  topic=str(_cur_topic() or ""),
+                                  user=str(user_id or ""))
+            send_message(chat_id, reply)
+            _phi.luu_vao_muc_luc(file_data, user_id=str(user_id or ""),
+                                 ten=_ten, channel="tg")
             return
 
         if it == _phi.FACEBOOK:
@@ -1910,7 +1933,12 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         _phi.pop_pending_full(_phkey)   # yêu cầu mới → đóng bản chờ
     elif _ph_cho:
         _pend = _ph_cho
-        _allowed_ph = _phi.them_dang_facebook(_phi.allowed_intents(_allow), _allow)
+        _allowed_ph = _phi.them_luu_online(
+            _phi.them_dang_facebook(_phi.allowed_intents(_allow), _allow),
+            "tg", str(chat_id), topic=str(_cur_topic() or ""), user=str(user_id or ""))
+        # Giải số theo bộ ĐÃ HIỆN (xem photo_intent.y_dinh_da_moi) — cấu hình
+        # kho/Facebook đổi giữa lúc hiện và lúc bấm là số lệch.
+        _shown_ph = _phi.y_dinh_da_moi(_pend, _allowed_ph)
         stage = str(_pend.get("stage") or "choose")
         if stage == "teacher_meta":
             from services import pdf_intent as _pi
@@ -1936,9 +1964,9 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
                 )
             return
         # stage=choose
-        intent = _phi.parse_intent(text, _allowed_ph)
+        intent = _phi.parse_intent(text, _shown_ph)
         if intent:
-            if intent not in _allowed_ph:
+            if intent not in _shown_ph:
                 return
             if intent == _phi.RAG_TEACHER:
                 _phi.update_pending(_phkey, stage="teacher_meta", intent=intent)
@@ -1990,9 +2018,11 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         from services.agent.luu_tru_day import ten_anh as _ten_anh
         _moi_luu_online(chat_id, user_id, chat_name, _ten_anh(file_data), file_data)
         caption = (text or "").strip()
-        _allowed_ph = _phi.them_dang_facebook(_phi.allowed_intents(_allow), _allow)
+        _allowed_ph = _phi.them_luu_online(
+            _phi.them_dang_facebook(_phi.allowed_intents(_allow), _allow),
+            "tg", str(chat_id), topic=str(_cur_topic() or ""), user=str(user_id or ""))
         if not caption:
-            _phi.set_pending(_phkey, file_data)
+            _phi.set_pending(_phkey, file_data, intents=_allowed_ph)
             send_message(chat_id, _phi.ask_text(_allowed_ph))
             return
         # Caption có sẵn: nếu là prompt analyze/generate → làm luôn; else menu+prompt

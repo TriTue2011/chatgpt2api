@@ -1581,10 +1581,23 @@ def _do_photo_request(
         it = intent or (
             _phi.GENERATE if _phi.classify(request) == _phi.GENERATE else _phi.ANALYZE
         )
-        allowed = _phi.allowed_intents(allow)
+        allowed = _phi.them_luu_online(
+            _phi.allowed_intents(allow), "zalo", str(chat_id), user=str(user_id or ""))
         if it not in allowed and allow is not None:
             status = "blocked"
             err = f"intent {it} not allowed"
+            return
+
+        if it == _phi.LUU_ONLINE:
+            # Ảnh đi thẳng lên kho + ghi MỤC LỤC để sau "gửi ảnh <mô tả>" tìm lại.
+            kind = "photo_luu_online"
+            from services.agent import luu_tru_day as _ltd
+            _ten = _ltd.ten_anh(file_data)
+            _tam = _ltd.luu_vao_thu_muc_lam_viec(_ten, file_data)
+            send_message(chat_id, _ltd.luu_ngay("zalo", str(chat_id), tep=_tam,
+                                                ten_tep=_ten, user=str(user_id or "")))
+            _phi.luu_vao_muc_luc(file_data, user_id=str(user_id or ""),
+                                 ten=_ten, channel="zalo")
             return
 
         if it == _phi.GENERATE:
@@ -2214,10 +2227,19 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
             if _intent == _pi.LUU_ONLINE:
                 from services.agent import luu_tru_day as _ltd
                 _pend_lo = _pi.pop_pending(_pkey) or {}
+                _tl_ten = str(_pend_lo.get("name") or "")
                 send_message(chat_id, _ltd.luu_ngay(
                     "zalo", str(chat_id), tep=str(_pend_lo.get("path") or ""),
-                    ten_tep=str(_pend_lo.get("name") or ""),
-                    user=str(user_id or "")))
+                    ten_tep=_tl_ten, user=str(user_id or "")))
+                # Ghi tài liệu vào MỤC LỤC (việc phụ).
+                try:
+                    from services.agent import so_da_luu as _sdl
+                    if _tl_ten:
+                        _sdl.ghi(str(user_id or ""), ref=_tl_ten,
+                                 kind=_sdl.KIND_TAILIEU, mo_ta=_tl_ten,
+                                 ten=_tl_ten, tu_khoa=_tl_ten)
+                except Exception:
+                    pass
                 return
             if _intent not in _full_allow:
                 return
@@ -2236,7 +2258,10 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
         _phi.pop_pending_full(_phkey)   # yêu cầu mới → đóng bản chờ
     elif _ph_cho:
         _pend = _ph_cho
-        _allowed_ph = _phi.allowed_intents(_allow)
+        _allowed_ph = _phi.them_luu_online(
+            _phi.allowed_intents(_allow), "zalo", str(chat_id), user=str(user_id or ""))
+        # Giải số theo bộ ĐÃ HIỆN (xem photo_intent.y_dinh_da_moi).
+        _shown_ph = _phi.y_dinh_da_moi(_pend, _allowed_ph)
         stage = str(_pend.get("stage") or "choose")
         if stage == "teacher_meta":
             meta = _pi.parse_teacher_meta(text)
@@ -2261,9 +2286,9 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
                 )
             return
         # stage=choose
-        intent = _phi.parse_intent(text, _allowed_ph)
+        intent = _phi.parse_intent(text, _shown_ph)
         if intent:
-            if intent not in _allowed_ph:
+            if intent not in _shown_ph:
                 return
             if intent == _phi.RAG_TEACHER:
                 _phi.update_pending(_phkey, stage="teacher_meta", intent=intent)
@@ -2340,9 +2365,10 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
         from services.agent.luu_tru_day import ten_anh as _ten_anh
         _moi_luu_online(chat_id, user_id, _ten_anh(data), data)
         caption = (text or "").strip()
-        _allowed_ph = _phi.allowed_intents(_allow)
+        _allowed_ph = _phi.them_luu_online(
+            _phi.allowed_intents(_allow), "zalo", str(chat_id), user=str(user_id or ""))
         if not caption:
-            _phi.set_pending(_phkey, data)
+            _phi.set_pending(_phkey, data, intents=_allowed_ph)
             send_message(chat_id, _phi.ask_text(_allowed_ph))
             return
         intent = _phi.parse_intent(caption, _allowed_ph) or (
