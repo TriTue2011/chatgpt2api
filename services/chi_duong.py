@@ -82,6 +82,34 @@ def _bo_dau(s: str) -> str:
     return (s or "").lower().translate(str.maketrans(b, k))
 
 
+#: Tiền tố đơn vị TỈNH/THÀNH ở đoạn cuối địa chỉ.
+_TIEN_TO_TINH = ("thanh pho ", "tinh ", "tp ", "tp.", "t.p ", "t.p.")
+
+
+def _bo_tinh_tp(q: str) -> str:
+    """Bỏ đoạn TỈNH/THÀNH khỏi truy vấn Google (giữ quận/phường/landmark).
+
+    Đo 05/09: thêm ", thành phố Hà Nội" làm Google trả SAI ghim — "CT4B-X2 Bắc
+    Linh Đàm, …, thành phố Hà Nội" nhảy về ~Ba Đình (21.028) thay vì Linh Đàm
+    (20.965). `gl=vn` + tâm bản đồ đã ngầm là Hà Nội nên đoạn tỉnh/thành thừa mà
+    lại gây hại; bỏ đi thì landmark ra đúng."""
+    segs = [s.strip() for s in str(q or "").split(",")]
+    giu = [s for s in segs
+           if s and not any(_bo_dau(s).startswith(p) for p in _TIEN_TO_TINH)]
+    return ", ".join(giu) if giu else str(q or "")
+
+
+def _tinh_ngan(s: str) -> str:
+    """"Thành phố Hà Nội" → "Hà Nội" (giữ dấu, bỏ tiền tố đơn vị) — để bù tỉnh
+    liên đầu mà KHÔNG bị `_bo_tinh_tp` cắt mất."""
+    s = str(s or "").strip()
+    fl = _bo_dau(s)
+    for pre in ("thanh pho ", "tinh ", "tp ", "tp."):
+        if fl.startswith(pre):
+            return s[len(pre):].strip()
+    return s
+
+
 def chuan_phuong_tien(pt: str) -> tuple[str, str, bool]:
     """Tên phương tiện tự do → (osrm_profile, gmaps_travelmode, có_route_text).
 
@@ -249,7 +277,7 @@ def _gmaps_pb(q: str) -> tuple[float, float, str, str] | None:
     Nominatim."""
     try:
         from curl_cffi import requests as creq
-        url = f"{_GMAPS_SEARCH}?tbm=map&hl=vi&gl=vn&q={quote(q)}&pb={_PB_TMPL}"
+        url = f"{_GMAPS_SEARCH}?tbm=map&hl=vi&gl=vn&q={quote(_bo_tinh_tp(q))}&pb={_PB_TMPL}"
         body = creq.get(url, impersonate="chrome", timeout=_TIMEOUT,
                         headers={"Accept-Language": "vi,en;q=0.9"}).text
         nl = body.find("\n")
@@ -282,8 +310,10 @@ def geocode(dia_chi: str, tinh_goi_y: str = "") -> tuple[float, float, str, str,
     if isinstance(giai, str) and giai:
         dc = giai
     fdc = _bo_dau(dc)
-    # Kèm tỉnh gợi ý nếu câu chưa nhắc — cho cả Google lẫn Nominatim.
-    q_full = dc if (not tinh_goi_y or _bo_dau(tinh_goi_y) in fdc) else f"{dc}, {tinh_goi_y}"
+    # Kèm tỉnh gợi ý (dạng NGẮN, không tiền tố) nếu câu chưa nhắc — để bù tỉnh
+    # liên đầu mà không bị `_bo_tinh_tp` cắt mất ở đường Google.
+    _tg = _tinh_ngan(tinh_goi_y)
+    q_full = dc if (not _tg or _bo_dau(_tg) in fdc) else f"{dc}, {_tg}"
 
     # (1) Đường chính — Google Maps nội bộ.
     pb = _gmaps_pb(q_full)
@@ -327,6 +357,20 @@ def _mo_ta_buoc(step: dict) -> str:
     return phan
 
 
+def _chuan_tinh(s: str) -> str:
+    """Chuẩn hoá tên tỉnh/thành để so khớp: bỏ dấu + bỏ tiền tố loại đơn vị.
+
+    Google trả lúc "Hà Nội", lúc "Thành phố Hà Nội" cho CÙNG một nơi — so trần
+    là báo khác tỉnh oan (đo 05/09: Hoàng Thành ↔ CT4B Bắc Linh Đàm đều Hà Nội mà
+    bị chặn 'tinh_khong_khop')."""
+    f = _bo_dau(s).strip()
+    for pre in ("thanh pho ", "tinh ", "tp. ", "tp.", "tp ", "t.p ", "t."):
+        if f.startswith(pre):
+            f = f[len(pre):].strip()
+            break
+    return f
+
+
 def _dinh_vi_hai_dau(diem_di: str, diem_den: str):
     """Geocode hai đầu (bù tỉnh liên đầu) → (a, b, ly_do).
 
@@ -341,7 +385,7 @@ def _dinh_vi_hai_dau(diem_di: str, diem_den: str):
     a = geocode(diem_di, tinh_goi_y=b[3])
     if not a:
         return None, None, "khong_ra_diem_di"
-    if a[3] and b[3] and _bo_dau(a[3]) != _bo_dau(b[3]):
+    if a[3] and b[3] and _chuan_tinh(a[3]) != _chuan_tinh(b[3]):
         return a, b, "tinh_khong_khop"
     return a, b, None
 

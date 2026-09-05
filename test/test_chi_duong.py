@@ -362,5 +362,40 @@ class GmapsPbTests(unittest.TestCase):
         self.assertEqual(g[4], True)
 
 
+class TinhThanhTests(unittest.TestCase):
+    """Chuẩn hoá tỉnh + bỏ đuôi tỉnh/thành khỏi truy vấn Google (đo 05/09)."""
+
+    def test_chuan_tinh_bo_tien_to(self):
+        self.assertEqual(cd._chuan_tinh("Thành phố Hà Nội"), cd._chuan_tinh("Hà Nội"))
+        self.assertEqual(cd._chuan_tinh("Tỉnh Quảng Nam"), cd._chuan_tinh("Quảng Nam"))
+
+    def test_tinh_ngan_giu_dau(self):
+        self.assertEqual(cd._tinh_ngan("Thành phố Hà Nội"), "Hà Nội")
+        self.assertEqual(cd._tinh_ngan("Tỉnh Quảng Nam"), "Quảng Nam")
+        self.assertEqual(cd._tinh_ngan("Hà Nội"), "Hà Nội")
+
+    def test_bo_tinh_tp_giu_quan_phuong(self):
+        # Bỏ đoạn 'thành phố …' (gây sai ghim), GIỮ quận/phường/landmark.
+        self.assertEqual(
+            cd._bo_tinh_tp("CT4B-X2 Bắc Linh Đàm, phường Hoàng Liệt, quận Hoàng Mai, thành phố Hà Nội"),
+            "CT4B-X2 Bắc Linh Đàm, phường Hoàng Liệt, quận Hoàng Mai")
+        self.assertEqual(cd._bo_tinh_tp("114 Mai Hắc Đế, Tỉnh Nghệ An"), "114 Mai Hắc Đế")
+
+    def test_tinh_khac_tien_to_khong_bao_khac_tinh(self):
+        # "Hà Nội" vs "Thành phố Hà Nội" là CÙNG nơi → không được chặn định tuyến.
+        a = (21.01, 105.85, "A", "Hà Nội", True)
+        b = (20.96, 105.82, "B", "Thành phố Hà Nội", True)
+        with patch("services.chi_duong.geocode", side_effect=[b, a]):
+            _a, _b, ly = cd._dinh_vi_hai_dau("A", "B")
+        self.assertIsNone(ly, "cùng Hà Nội mà báo khác tỉnh là sai")
+
+    def test_that_su_khac_tinh_van_chan(self):
+        a = (16.05, 108.20, "A", "Đà Nẵng", True)
+        b = (20.96, 105.82, "B", "Thành phố Hà Nội", True)
+        with patch("services.chi_duong.geocode", side_effect=[b, a]):
+            _a, _b, ly = cd._dinh_vi_hai_dau("A", "B")
+        self.assertEqual(ly, "tinh_khong_khop")
+
+
 if __name__ == "__main__":
     unittest.main()
