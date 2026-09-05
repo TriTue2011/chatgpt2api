@@ -248,7 +248,7 @@ function SearchPageContent() {
                     <ArrowDown className="size-3.5" />
                   </button>
                   <button onClick={() => toggleBackend(backend)}
-                    className="text-xs text-red-400 hover:text-red-600 ml-1">X</button>
+                    className="text-xs text-red-700 dark:text-red-400 hover:text-red-600 ml-1">X</button>
                 </div>
               );
             })}

@@ -357,7 +357,7 @@ function ModelsPageContent() {
                         <button
                           type="button"
                           onClick={() => deselectAllProvider(provider)}
-                          className="text-[10px] text-red-400 hover:text-red-600 transition"
+                          className="text-[10px] text-red-700 dark:text-red-400 hover:text-red-600 transition"
                         >
                           Bỏ chọn tất cả
                         </button>
@@ -393,7 +393,7 @@ function ModelsPageContent() {
                                   : "border-[var(--border)] bg-[var(--secondary)]/50",
                               )}
                             >
-                              {enabled && <Check className="size-3 text-emerald-400" />}
+                              {enabled && <Check className="size-3 text-emerald-700 dark:text-emerald-400" />}
                             </button>
 
                             {/* Order badge (only when enabled) */}
@@ -423,7 +423,7 @@ function ModelsPageContent() {
                               className={cn(
                                 "text-[10px] px-2 py-0.5 rounded border transition opacity-0 group-hover:opacity-100",
                                 isDefault
-                                  ? "border-amber-500/50 text-amber-400 bg-amber-500/10 opacity-100"
+                                  ? "border-amber-500/50 text-amber-700 dark:text-amber-400 bg-amber-500/10 opacity-100"
                                   : "border-[var(--border)] text-[var(--muted-foreground)] hover:border-[var(--border)] hover:text-[var(--muted-foreground)]",
                               )}
                               title="Đặt làm mặc định"
@@ -462,7 +462,7 @@ function ModelsPageContent() {
                                   : "border-[var(--border)] bg-[var(--secondary)]/50",
                               )}
                             >
-                              {enabled && <Check className="size-3 text-violet-400" />}
+                              {enabled && <Check className="size-3 text-violet-700 dark:text-violet-400" />}
                             </button>
                             <span
                               className={cn(

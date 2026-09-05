@@ -24,7 +24,7 @@ const BTN =
   "inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition disabled:opacity-50";
 const BTN_PRIMARY = `${BTN} bg-[var(--neon-cyan)]/15 text-[var(--neon-cyan)] hover:bg-[var(--neon-cyan)]/25 border border-[var(--neon-cyan)]/30`;
 const BTN_GHOST = `${BTN} border border-[var(--border)] hover:bg-[var(--card)]`;
-const BTN_DANGER = `${BTN} border border-red-400/30 text-red-400 hover:bg-red-400/10`;
+const BTN_DANGER = `${BTN} border border-red-400/30 text-red-700 dark:text-red-400 hover:bg-red-400/10`;
 const CARD = "rounded-xl border border-[var(--border)] bg-[var(--card)]/60 p-4";
 
 type Toast = { msg: string; ok: boolean } | null;
@@ -132,7 +132,7 @@ export function ZaloPersonalPanel() {
       {/* Toast */}
       {toast && (
         <div className={`fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm shadow-lg backdrop-blur
-          ${toast.ok ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300" : "border-red-400/30 bg-red-400/10 text-red-300"}`}>
+          ${toast.ok ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-700 dark:text-emerald-300" : "border-red-400/30 bg-red-400/10 text-red-700 dark:text-red-300"}`}>
           {toast.ok ? <CheckCircle2 className="size-4" /> : <XCircle className="size-4" />}
           <span className="max-w-md">{toast.msg}</span>
         </div>
@@ -146,8 +146,8 @@ function StatusBadge({ status }: { status: Status | null }) {
   if (!status.enabled)
     return <span className="rounded-full border border-[var(--border)] px-3 py-1 text-xs text-[var(--muted-foreground)]">Đang tắt</span>;
   return status.reachable
-    ? <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-xs text-emerald-300">● Kết nối bot server OK</span>
-    : <span className="rounded-full border border-red-400/30 bg-red-400/10 px-3 py-1 text-xs text-red-300">● Không kết nối được bot server</span>;
+    ? <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-xs text-emerald-700 dark:text-emerald-300">● Kết nối bot server OK</span>
+    : <span className="rounded-full border border-red-400/30 bg-red-400/10 px-3 py-1 text-xs text-red-700 dark:text-red-300">● Không kết nối được bot server</span>;
 }
 
 // ── Tab: Tài khoản & QR ───────────────────────────────────────────────────────

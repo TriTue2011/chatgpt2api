@@ -10,7 +10,7 @@
  *   node scripts/kiem-tuong-phan.mjs          # đo, sai thì thoát mã 1
  *   node scripts/kiem-tuong-phan.mjs --tat-ca # in cả những cặp đã đạt
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -194,11 +194,51 @@ for (const [ten, boChon, keThua] of CHU_DE) {
   }
 }
 
+// ── Lớp màu Tailwind tông sáng dùng trần cho chữ ────────────────────────────
+//
+// Token CSS không phủ hết: lớp tiện ích như `text-amber-400` đi thẳng vào JSX,
+// bỏ qua toàn bộ hệ token. Các sắc 300/400 chỉnh cho nền TỐI — đo trên thẻ
+// trắng thì amber-400 chỉ 1,67:1 và amber-300 còn 1,44:1, tức gần như vô hình
+// ở chế độ sáng. Phải đi kèm `dark:` và một sắc đậm cho chế độ sáng.
+const HO_MAU = "emerald|amber|sky|violet|rose|red|blue|indigo|teal|orange|yellow|purple|pink|green";
+const MAU_TRAN = new RegExp(`(?<!dark:)\\btext-(${HO_MAU})-(300|400)\\b`);
+
+function quetTsx(thuMuc, ra = []) {
+  for (const ten of readdirSync(thuMuc)) {
+    const duong = join(thuMuc, ten);
+    if (statSync(duong).isDirectory()) quetTsx(duong, ra);
+    else if (ten.endsWith(".tsx")) ra.push(duong);
+  }
+  return ra;
+}
+
+let mauTran = 0;
+try {
+  for (const f of quetTsx(join(GOC, "src"))) {
+    const noiDung = readFileSync(f, "utf-8");
+    noiDung.split("\n").forEach((dong, i) => {
+      const m = dong.match(MAU_TRAN);
+      if (m) {
+        mauTran++;
+        const ngan = f.replace(GOC + "/", "");
+        console.log(`\nMÀU TRẦN  ${ngan}:${i + 1}  ${m[0]} — thêm sắc đậm cho chế độ sáng:`);
+        console.log(`          text-${m[1]}-700 dark:${m[0]}`);
+      }
+    });
+  }
+} catch {
+  // Không quét được thư mục src thì bỏ qua, phần đo token vẫn có giá trị.
+}
+
 console.log(`\n${"─".repeat(66)}`);
 console.log(`Đã đo ${daDo} cặp · hỏng ${hong} · nhắc ${chiBao} (viền trang trí, WCAG miễn) · bỏ qua ${boQua}`);
+console.log(`Lớp màu Tailwind dùng trần: ${mauTran}`);
 
-if (hong > 0) {
-  console.error(`\nKHÔNG ĐẠT: ${hong} cặp dưới ngưỡng WCAG AA. Sửa token trong src/app/globals.css.`);
+if (hong > 0 || mauTran > 0) {
+  if (hong > 0)
+    console.error(`\nKHÔNG ĐẠT: ${hong} cặp token dưới ngưỡng WCAG AA — sửa src/app/globals.css.`);
+  if (mauTran > 0)
+    console.error(`KHÔNG ĐẠT: ${mauTran} lớp màu Tailwind thiếu sắc cho chế độ sáng.`);
   process.exit(1);
 }
 console.log("ĐẠT: mọi cặp token đều đủ tương phản.");

@@ -250,7 +250,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen = false, onMobileClose
         <button
           onClick={handleLogout}
           className={cn(
-            "flex items-center rounded-md text-[var(--sidebar-foreground)]/60 hover:text-red-400 hover:bg-red-400/10 transition-colors w-full text-xs",
+            "flex items-center rounded-md text-[var(--sidebar-foreground)]/60 hover:text-red-700 dark:text-red-400 hover:bg-red-400/10 transition-colors w-full text-xs",
             collapsed ? "justify-center py-2" : "gap-2 px-2 py-1.5",
           )}
         >

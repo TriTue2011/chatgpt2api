@@ -909,7 +909,7 @@ function AccountsPageContent() {
             {inst.profile ? <code className="block text-[10px] text-[var(--muted-foreground)] truncate">profile: {inst.profile}</code> : null}
             <div className="flex items-center gap-4 text-[11px]">
               <span className="text-emerald-600">{inst.success ?? 0} thành công</span>
-              <span className="text-rose-400">{inst.fail ?? 0} thất bại</span>
+              <span className="text-rose-700 dark:text-rose-400">{inst.fail ?? 0} thất bại</span>
             </div>
             <div className="flex items-center justify-between text-[11px] text-[var(--muted-foreground)] pt-1 border-t border-[var(--border)]">
               <span>Dùng lần cuối</span>
@@ -1486,7 +1486,7 @@ function AccountsPageContent() {
                                     </div>
                                     <div className="hidden sm:flex items-center gap-2 text-[11px]">
                                       <span className="text-emerald-600">{account.success}✓</span>
-                                      <span className="text-rose-400">{account.fail}✗</span>
+                                      <span className="text-rose-700 dark:text-rose-400">{account.fail}✗</span>
                                     </div>
                                     <div className="text-[11px] font-bold">
                                       {isUnlimited ? <span className="text-violet-600">∞</span>
@@ -1636,7 +1636,7 @@ function AccountsPageContent() {
                               </div>
                             </div>
                             {keyInfo.error && (
-                              <span className="text-[10px] text-rose-400 max-w-[180px] truncate text-right">{keyInfo.error}</span>
+                              <span className="text-[10px] text-rose-700 dark:text-rose-400 max-w-[180px] truncate text-right">{keyInfo.error}</span>
                             )}
                           </div>
                         </div>
@@ -1810,7 +1810,7 @@ function AccountsPageContent() {
                             </div>
                             <div className="hidden sm:flex items-center gap-2 text-[11px]">
                               <span className="text-emerald-600">{inst.success ?? 0}✓</span>
-                              <span className="text-rose-400">{inst.fail ?? 0}✗</span>
+                              <span className="text-rose-700 dark:text-rose-400">{inst.fail ?? 0}✗</span>
                             </div>
                             <div className="flex items-center gap-1 text-[var(--muted-foreground)]" onClick={(e) => e.stopPropagation()}>
                               <button
@@ -1934,7 +1934,7 @@ function AccountsPageContent() {
                                 {/* Success / fail */}
                                 <div className="hidden sm:flex items-center gap-2 text-[11px]">
                                   <span className="text-emerald-600">{inst.success ?? 0}✓</span>
-                                  <span className="text-rose-400">{inst.fail ?? 0}✗</span>
+                                  <span className="text-rose-700 dark:text-rose-400">{inst.fail ?? 0}✗</span>
                                 </div>
                                 {/* Actions */}
                                 <div className="flex items-center gap-1 text-[var(--muted-foreground)]" onClick={(e) => e.stopPropagation()}>
@@ -2011,7 +2011,7 @@ function AccountsPageContent() {
                               {inst.clients > 0 && <span className="text-sky-600">{inst.clients} clients</span>}
                             </div>
                             <div className="flex items-center gap-1 text-[var(--muted-foreground)]" onClick={e => e.stopPropagation()}>
-                              {inst.error && <span className="text-[10px] text-rose-400 max-w-[120px] truncate">{inst.error}</span>}
+                              {inst.error && <span className="text-[10px] text-rose-700 dark:text-rose-400 max-w-[120px] truncate">{inst.error}</span>}
                             </div>
                           </div>
 
@@ -2266,7 +2266,7 @@ function AccountsPageContent() {
                                             {keyInfo.status}
                                           </span>
                                           {keyInfo.models > 0 && <span className="text-[10px] text-[var(--muted-foreground)]">{keyInfo.models} models</span>}
-                                          {keyInfo.error && <span className="text-[10px] text-rose-400 max-w-[140px] truncate">{keyInfo.error}</span>}
+                                          {keyInfo.error && <span className="text-[10px] text-rose-700 dark:text-rose-400 max-w-[140px] truncate">{keyInfo.error}</span>}
                                         </div>
                                       ))}
                                     </div>

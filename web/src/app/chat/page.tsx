@@ -25,12 +25,12 @@ type MdAccent = "none" | "orange" | "gold" | "red" | "yellow" | "green" | "blue"
 
 const MD_ACCENT_CLS: Record<MdAccent, string> = {
   none: "",
-  orange: "text-orange-400",
-  gold: "text-amber-400",
-  red: "text-red-400",
-  yellow: "text-yellow-300",
-  green: "text-emerald-400",
-  blue: "text-sky-400",
+  orange: "text-orange-700 dark:text-orange-400",
+  gold: "text-amber-700 dark:text-amber-400",
+  red: "text-red-700 dark:text-red-400",
+  yellow: "text-yellow-700 dark:text-yellow-300",
+  green: "text-emerald-700 dark:text-emerald-400",
+  blue: "text-sky-700 dark:text-sky-400",
 };
 
 const MD_ACCENT_BORDER: Record<MdAccent, string> = {

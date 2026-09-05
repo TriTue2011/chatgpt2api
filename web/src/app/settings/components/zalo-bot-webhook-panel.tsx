@@ -38,7 +38,7 @@ const BTN =
   "inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition disabled:opacity-50";
 const BTN_PRIMARY = `${BTN} bg-[var(--neon-cyan)]/15 text-[var(--neon-cyan)] hover:bg-[var(--neon-cyan)]/25 border border-[var(--neon-cyan)]/30`;
 const BTN_GHOST = `${BTN} border border-[var(--border)] hover:bg-[var(--card)]`;
-const BTN_DANGER = `${BTN} border border-red-400/30 text-red-400 hover:bg-red-400/10`;
+const BTN_DANGER = `${BTN} border border-red-400/30 text-red-700 dark:text-red-400 hover:bg-red-400/10`;
 const CARD = "rounded-xl border border-[var(--border)] bg-[var(--card)]/60 p-4";
 
 type Toast = { msg: string; ok: boolean } | null;
@@ -227,7 +227,7 @@ export function ZaloBotWebhookPanel() {
           <span className={`rounded px-2 py-0.5 text-xs font-bold ${
             status?.mode === "webhook"
               ? "bg-[var(--neon-cyan)]/15 text-[var(--neon-cyan)]"
-              : "bg-amber-400/15 text-amber-400"
+              : "bg-amber-400/15 text-amber-700 dark:text-amber-400"
           }`}>
             {status?.mode === "webhook" ? "🔗 Webhook"
               : status?.mode === "hỗn hợp" ? "🔀 Hỗn hợp" : "🔄 Long-polling"}
@@ -258,7 +258,7 @@ export function ZaloBotWebhookPanel() {
         </div>
 
         {expected && !laHttps && (
-          <div className="mt-2 flex gap-2 rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 text-xs text-amber-300">
+          <div className="mt-2 flex gap-2 rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 text-xs text-amber-700 dark:text-amber-300">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
             <div>
               <b>Chưa bật được webhook:</b> docs setWebhook đòi URL dạng <b>HTTPS</b>, mà
@@ -277,7 +277,7 @@ export function ZaloBotWebhookPanel() {
         )}
 
         {!status?.configured && (
-          <p className="mt-2 text-xs text-amber-400">
+          <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
             Chưa có bot nào được cấu hình token — thêm bot ở tab &quot;⚙️ Cài đặt kênh&quot; trước.
           </p>
         )}
@@ -293,9 +293,9 @@ export function ZaloBotWebhookPanel() {
               const lech = !!zaloUrl && !!mong && zaloUrl.replace(/\/$/, "") !== mong.replace(/\/$/, "");
               return (
                 <div key={b.bot_id} className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-xs">
-                  {b.ok ? <CheckCircle2 className="size-3.5 text-emerald-400" /> : <XCircle className="size-3.5 text-red-400" />}
+                  {b.ok ? <CheckCircle2 className="size-3.5 text-emerald-700 dark:text-emerald-400" /> : <XCircle className="size-3.5 text-red-700 dark:text-red-400" />}
                   <span className="min-w-0 break-words font-semibold">{b.label || b.bot_id}</span>
-                  {b.polling && <span className="rounded bg-amber-400/15 px-1.5 py-0.5 text-amber-400">đang poll</span>}
+                  {b.polling && <span className="rounded bg-amber-400/15 px-1.5 py-0.5 text-amber-700 dark:text-amber-400">đang poll</span>}
                   {/* w-full: trên màn hình hẹp, `flex-1` bị mấy nhãn bên cạnh bóp
                       còn vài chục pixel nên `break-all` xuống dòng MỖI CHỮ CÁI.
                       Cho nó hẳn một dòng riêng thì đọc được ở mọi bề ngang. */}
@@ -307,7 +307,7 @@ export function ZaloBotWebhookPanel() {
                       <span className="text-[var(--muted-foreground)]">{tsLabel(b.info.updated_at)}</span>
                     )}
                     {lech && (
-                      <span className="rounded bg-amber-400/15 px-1.5 py-0.5 text-amber-400" title="URL Zalo đang giữ khác URL ta sẽ đăng ký — bấm 'Áp lại chế độ'">
+                      <span className="rounded bg-amber-400/15 px-1.5 py-0.5 text-amber-700 dark:text-amber-400" title="URL Zalo đang giữ khác URL ta sẽ đăng ký — bấm 'Áp lại chế độ'">
                         lệch URL
                       </span>
                     )}
@@ -326,7 +326,7 @@ export function ZaloBotWebhookPanel() {
                     <div className="flex w-full flex-wrap items-center gap-2 border-t border-[var(--border)] pt-1.5">
                       <span className="text-[var(--muted-foreground)]">
                         Chế độ:{" "}
-                        <b className={b.webhook ? "text-[var(--neon-cyan)]" : "text-amber-400"}>
+                        <b className={b.webhook ? "text-[var(--neon-cyan)]" : "text-amber-700 dark:text-amber-400"}>
                           {b.webhook ? "webhook" : "long-polling"}
                         </b>
                         {b.khai_rieng ? " (đặt riêng)" : " (theo công tắc chung)"}
@@ -337,7 +337,7 @@ export function ZaloBotWebhookPanel() {
                         onClick={() => void doiCheDoBot(b.token!, !b.webhook)}
                         className={`${BTN} ml-auto border px-2.5 py-1 text-[11px] ${
                           b.webhook
-                            ? "border-amber-400/40 text-amber-400 hover:bg-amber-400/10"
+                            ? "border-amber-400/40 text-amber-700 dark:text-amber-400 hover:bg-amber-400/10"
                             : "border-[var(--neon-cyan)]/40 text-[var(--neon-cyan)] hover:bg-[var(--neon-cyan)]/10"}`}
                       >
                         {b.webhook ? "→ Chuyển bot này về polling"
@@ -365,7 +365,7 @@ export function ZaloBotWebhookPanel() {
 
       {toast && (
         <div className={`fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm shadow-lg backdrop-blur
-          ${toast.ok ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300" : "border-red-400/30 bg-red-400/10 text-red-300"}`}>
+          ${toast.ok ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-700 dark:text-emerald-300" : "border-red-400/30 bg-red-400/10 text-red-700 dark:text-red-300"}`}>
           {toast.ok ? <CheckCircle2 className="size-4" /> : <XCircle className="size-4" />}
           <span className="max-w-md">{toast.msg}</span>
         </div>

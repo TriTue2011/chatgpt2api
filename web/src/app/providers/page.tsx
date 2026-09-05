@@ -122,7 +122,7 @@ function ProvidersPageContent() {
                   className={cn(
                     "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
                     provider.enabled
-                      ? "bg-emerald-500/10 text-emerald-400"
+                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
                       : "bg-[var(--secondary)] text-[var(--muted-foreground)]",
                   )}
                 >
@@ -138,17 +138,17 @@ function ProvidersPageContent() {
               {/* Features */}
               <div className="mb-4 flex flex-wrap gap-1.5">
                 {provider.noAuth && (
-                  <span className="rounded-md bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-400">
+                  <span className="rounded-md bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
                     {t("noApiKeyNeeded")}
                   </span>
                 )}
                 {provider.has_api_key && (
-                  <span className="rounded-md bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-400">
+                  <span className="rounded-md bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:text-blue-400">
                     {t("apiKeyConfigured")}
                   </span>
                 )}
                 {provider.has_base_url && (
-                  <span className="rounded-md bg-purple-500/10 px-2 py-0.5 text-[10px] font-medium text-purple-400">
+                  <span className="rounded-md bg-purple-500/10 px-2 py-0.5 text-[10px] font-medium text-purple-700 dark:text-purple-400">
                     {t("baseUrlConfigured")}
                   </span>
                 )}
@@ -175,7 +175,7 @@ function ProvidersPageContent() {
                   <span
                     className={cn(
                       "text-xs font-medium",
-                      testResult ? "text-emerald-400" : "text-red-400",
+                      testResult ? "text-emerald-700 dark:text-emerald-400" : "text-red-700 dark:text-red-400",
                     )}
                   >
                     {testResult ? t("connectionOk") : t("connectionError")}

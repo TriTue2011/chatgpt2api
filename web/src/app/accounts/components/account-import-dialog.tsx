@@ -878,7 +878,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
                   <span className="text-xs font-medium text-amber-900 truncate">{multiDraft.email}</span>
                   {multiTotpCode && (
                     <>
-                      <span className="text-[10px] text-amber-400">|</span>
+                      <span className="text-[10px] text-amber-700 dark:text-amber-400">|</span>
                       <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 font-mono text-xs font-bold tracking-widest">{multiTotpCode}</span>
                       <span className="text-[10px] text-amber-500">({multiTotpRemaining}s)</span>
                     </>

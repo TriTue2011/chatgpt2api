@@ -110,10 +110,10 @@ type ComboModels = Record<string, string[]>;
 type PipelineModels = Record<string, { architects: string[]; editors: string[] }>;
 
 const CAP_COLORS: Record<string, string> = {
-  chat: "bg-blue-500/10 text-blue-400 border-blue-500/20",
-  vision: "bg-purple-500/10 text-purple-400 border-purple-500/20",
-  image: "bg-amber-500/10 text-amber-400 border-amber-500/20",
-  video: "bg-rose-500/10 text-rose-400 border-rose-500/20",
+  chat: "bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20",
+  vision: "bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20",
+  image: "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20",
+  video: "bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20",
 };
 
 const CAP_ICONS: Record<string, typeof MessageSquare> = {
@@ -132,9 +132,9 @@ function ModelChainView({ models, allModels, t }: { models: string[]; allModels:
           const CapIcon = CAP_ICONS[cap] || MessageSquare;
           return (
             <div key={idx} className="flex items-center gap-2">
-              <span className={cn("text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center shrink-0", idx === 0 ? "bg-emerald-500/20 text-emerald-400" : "bg-[var(--secondary)] text-[var(--muted-foreground)]")}>{idx + 1}</span>
+              <span className={cn("text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center shrink-0", idx === 0 ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-400" : "bg-[var(--secondary)] text-[var(--muted-foreground)]")}>{idx + 1}</span>
               <CapIcon className="size-3 shrink-0 text-[var(--muted-foreground)]" />
-              <span className={cn("rounded-lg px-3 py-1.5 text-xs font-mono", idx === 0 ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-[var(--secondary)] text-[var(--foreground)]")}>{modelId}</span>
+              <span className={cn("rounded-lg px-3 py-1.5 text-xs font-mono", idx === 0 ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20" : "bg-[var(--secondary)] text-[var(--foreground)]")}>{modelId}</span>
               {(info?.capability_labels || ["Chat"]).map((label: string) => {
                 const capKey = label === "Chat" ? "chat" : label === t("vision") ? "vision" : label === "Phân tích ảnh" ? "vision" : label === "Video" ? "video" : label === "Phân tích video" ? "video" : "image";
                 return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border", CAP_COLORS[capKey])}>{label}</span>;
@@ -169,7 +169,7 @@ function ComboEditView({ editModels, editName, setEditName, allModels, filteredM
             const CapIcon = CAP_ICONS[cap] || MessageSquare;
             return (
               <div key={idx} className="flex items-center gap-2">
-                <span className={cn("text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center shrink-0", idx === 0 ? "bg-emerald-500/20 text-emerald-400" : "bg-[var(--secondary)] text-[var(--muted-foreground)]")}>{idx + 1}</span>
+                <span className={cn("text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center shrink-0", idx === 0 ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-400" : "bg-[var(--secondary)] text-[var(--muted-foreground)]")}>{idx + 1}</span>
                 <CapIcon className="size-3 shrink-0 text-[var(--muted-foreground)]" />
                 <button type="button" onClick={() => setSwapIdx(idx)} className="rounded-lg px-3 py-1.5 text-xs font-mono bg-[var(--secondary)] text-[var(--foreground)] flex-1 text-left flex items-center justify-between hover:border-violet-400 border border-transparent transition group" title="Đổi model khác"><span>{modelId}</span><ChevronDown className="size-3 text-[var(--muted-foreground)] opacity-0 group-hover:opacity-100 transition" /></button>
                 <div className="flex flex-col gap-0.5">
@@ -493,9 +493,9 @@ function CombosPageContent() {
       </div>
 
       <div className="flex gap-3 flex-wrap">
-        <span className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-400"><MessageSquare className="size-3" /> {t("chat")}: {counts.chat}</span>
-        <span className="inline-flex items-center gap-1.5 rounded-lg border border-purple-500/20 bg-purple-500/10 px-3 py-1.5 text-xs text-purple-400"><Eye className="size-3" /> {t("vision")}: {counts.vision}</span>
-        <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-400"><ImageIcon className="size-3" /> {t("imageGen")}: {counts.image}</span>
+        <span className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-700 dark:text-blue-400"><MessageSquare className="size-3" /> {t("chat")}: {counts.chat}</span>
+        <span className="inline-flex items-center gap-1.5 rounded-lg border border-purple-500/20 bg-purple-500/10 px-3 py-1.5 text-xs text-purple-700 dark:text-purple-400"><Eye className="size-3" /> {t("vision")}: {counts.vision}</span>
+        <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-400"><ImageIcon className="size-3" /> {t("imageGen")}: {counts.image}</span>
       </div>
 
       {/* ── Combo Code (pipeline bố-con) — KHU RIÊNG, tách biệt combo thường ── */}
@@ -541,7 +541,7 @@ function CombosPageContent() {
               <Check className="size-4" /> {editingPipelineName ? "Lưu (cập nhật)" : "Lưu"}
             </button>
           </div>
-          {plError && <p className="text-xs text-red-400">{plError}</p>}
+          {plError && <p className="text-xs text-red-700 dark:text-red-400">{plError}</p>}
         </div>
         <ModelPickerModal open={plArchOpen} onClose={() => setPlArchOpen(false)} title="Chọn model BỐ (lập kế hoạch)" models={filteredModels} excludeIds={plEditors} selectedIds={plArchitect ? [plArchitect] : []} onPick={(id) => { setPlArchitect(id); setPlArchOpen(false); }} showSearch onSearchChange={setModelSearch} emptyMessage={t("allModelsSelected")} />
         <ModelPickerModal open={swapPlIdx !== null} onClose={() => setSwapPlIdx(null)} title="Đổi model CON" models={filteredModels} excludeIds={[...plEditors, ...(plArchitect ? [plArchitect] : [])]} onPick={(id) => { if (swapPlIdx !== null) { const updated = [...plEditors]; updated[swapPlIdx] = id; setPlEditors(updated); } setSwapPlIdx(null); }} showSearch onSearchChange={setModelSearch} emptyMessage={t("allModelsSelected")} />
@@ -597,14 +597,14 @@ function CombosPageContent() {
               const CapIcon = CAP_ICONS[cap] || MessageSquare;
               return (
                 <div key={idx} className="flex items-center gap-2 rounded-lg bg-[var(--secondary)]/50 px-3 py-2">
-                  <span className={cn("text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center shrink-0", idx === 0 ? "bg-emerald-500/20 text-emerald-400" : "bg-[var(--secondary)] text-[var(--muted-foreground)]")}>{idx + 1}</span>
+                  <span className={cn("text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center shrink-0", idx === 0 ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-400" : "bg-[var(--secondary)] text-[var(--muted-foreground)]")}>{idx + 1}</span>
                   <CapIcon className="size-3 shrink-0 text-[var(--muted-foreground)]" />
                   <span className="min-w-0 flex-1 text-xs font-mono text-[var(--foreground)] truncate">{modelId}</span>
                   {(info?.capability_labels || ["Chat"]).map((label: string) => {
                     const capKey = label === "Chat" ? "chat" : label === t("vision") ? "vision" : label === "Phân tích ảnh" ? "vision" : label === "Video" ? "video" : label === "Phân tích video" ? "video" : "image";
                     return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border", CAP_COLORS[capKey])}>{label}</span>;
                   })}
-                  <button type="button" onClick={() => removeModelFromSelection(idx)} className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-red-500/10 hover:text-red-400"><X className="size-3.5" /></button>
+                  <button type="button" onClick={() => removeModelFromSelection(idx)} className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-red-500/10 hover:text-red-700 dark:text-red-400"><X className="size-3.5" /></button>
                   {idx < selectedModels.length - 1 && <ArrowDown className="size-3 text-[var(--muted-foreground)] shrink-0" />}
                 </div>
               );
@@ -640,7 +640,7 @@ function CombosPageContent() {
             <Plus className="size-4" /> Thêm
           </button>
         </div>
-        {error && <p className="text-xs text-red-400">{error}</p>}
+        {error && <p className="text-xs text-red-700 dark:text-red-400">{error}</p>}
       </div>
 
       {/* Existing combos */}

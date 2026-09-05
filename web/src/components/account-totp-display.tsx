@@ -205,7 +205,7 @@ export function AccountTotpDisplay({ email, label }: { email: string; label?: st
             {code}
             <Copy className="size-2.5 text-amber-500" />
           </button>
-          <span className="text-[10px] text-amber-400 tabular-nums">{remaining}s</span>
+          <span className="text-[10px] text-amber-700 dark:text-amber-400 tabular-nums">{remaining}s</span>
         </div>
       )}
     </div>
