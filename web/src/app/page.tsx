@@ -12,6 +12,9 @@ import { cn } from "@/lib/utils";
 import { getValidatedAuthSession } from "@/lib/auth-session";
 import { request } from "@/lib/request";
 import { StatsCard } from "@/components/stats-card";
+import { BatDauODay, DaiTienDo } from "@/components/bat-dau-o-day";
+import { useTrangThaiHeThong } from "@/lib/use-trang-thai-he-thong";
+import { conThieuBatBuoc, mucConThieu } from "@/lib/feature-registry";
 import { EmptyState } from "@/components/empty-state";
 
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
@@ -98,6 +101,7 @@ const ACCOUNT_GROUP_LABELS: Record<string, string> = {
 };
 
 export default function DashboardPage() {
+  const trangThai = useTrangThaiHeThong();
   const router = useRouter();
   const [session, setSession] = useState<any>(null);
   const [health, setHealth] = useState<any>(null);
@@ -235,8 +239,15 @@ export default function DashboardPage() {
     </div>
   );
 
+  const chuaXongBatBuoc = conThieuBatBuoc(trangThai);
+  const mucConThieuCount = mucConThieu(trangThai).length;
+
   return (
     <div className="flex flex-col gap-5">
+      {/* Máy chưa cấu hình xong phần bắt buộc thì việc cần làm phải nằm TRÊN
+          bảng số — lúc đó mọi số đều bằng 0 và không nói lên điều gì. */}
+      {chuaXongBatBuoc && <BatDauODay tt={trangThai} />}
+
       {/* ── Page header — period + refresh ── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
@@ -300,6 +311,11 @@ export default function DashboardPage() {
           </button>
         </div>
       </div>
+
+      {/* Đã qua phần bắt buộc: không chắn đường nữa, chỉ còn một dòng nhắc
+          phần tuỳ chọn — hoặc checklist gọn nếu vẫn còn mục nên-có. */}
+      {!chuaXongBatBuoc &&
+        (mucConThieuCount > 0 ? <BatDauODay tt={trangThai} /> : <DaiTienDo tt={trangThai} />)}
 
       {/* ── KPI StatsCards — requests / tokens / cost / accounts ── */}
       {(() => {
