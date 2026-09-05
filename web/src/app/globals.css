@@ -735,6 +735,23 @@ table.data-table { width: 100%; border-collapse: collapse; }
 ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--border) 70%, transparent); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--primary); }
 
+/* ═══ Tông thẻ theo nhóm ═══
+   60 chỗ trong mã dùng `card-tint-*` mà TRƯỚC ĐÂY không có định nghĩa nào — lớp
+   chết hoàn toàn. Đọc code thì tưởng thẻ nhà cung cấp và thẻ model được phân
+   màu theo nhóm, chạy lên thì thẻ nào cũng như thẻ nào.
+
+   Chỉ tô VIỀN, cố ý không tô nền: viền không có chữ nằm trên nên không thể làm
+   hỏng tương phản, còn nền thì đổi mọi phép đo của chữ bên trong. Đủ để phân
+   biệt thẻ khi liếc qua mà không phải đo lại toàn bộ. */
+.card-tint-emerald { border-color: color-mix(in srgb, #059669 32%, var(--border)); }
+.card-tint-sky     { border-color: color-mix(in srgb, #0284c7 32%, var(--border)); }
+.card-tint-indigo  { border-color: color-mix(in srgb, #4f46e5 32%, var(--border)); }
+.card-tint-violet  { border-color: color-mix(in srgb, #7c3aed 32%, var(--border)); }
+.card-tint-amber   { border-color: color-mix(in srgb, #d97706 32%, var(--border)); }
+.card-tint-rose    { border-color: color-mix(in srgb, #e11d48 32%, var(--border)); }
+.card-tint-slate   { border-color: var(--border); }
+.card-tint-cyan    { border-color: color-mix(in srgb, #0891b2 32%, var(--border)); }
+
 /* ═══ Accessibility ═══ */
 *:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 2px; }
 @media (prefers-reduced-motion: reduce) {
