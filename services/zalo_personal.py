@@ -2983,26 +2983,12 @@ def _do_photo_request(
             return
 
         if it == _phi.DICH:
+            # Đọc chữ → dò tiếng → HỎI phần cần dịch + tiếng đích (xem
+            # dich_anh_hoi). Câu trả lời số/tên tiếng bắt ở đầu dispatch.
             kind = "photo_dich"
-            from services import translate_service as _ts
-            r = _ts.dich_anh(file_data, channel="zalop")
-            reply = _ts.bao_cao_dich(r, "chữ trong ảnh")
-            if r.get("ok") and r.get("kieu") == "tep":
-                # Bản dịch dài → .docx (xem translate_service._dong_goi_chu).
-                import uuid
-                out_dir = config.images_dir / "docs" / uuid.uuid4().hex[:12]
-                out_dir.mkdir(parents=True, exist_ok=True)
-                fn = _ten_tep_phuc_vu("chu-trong-anh", ".docx")
-                (out_dir / fn).write_bytes(r["data"])
-                if not _send_file_robust(
-                        thread_id, f"/images/docs/{out_dir.name}/{fn}", reply,
-                        thread_type, account=account):
-                    send_message(thread_id, r.get("text") or reply, thread_type)
-                return
-            if not r.get("ok"):
-                status = "error"
-                err = str(r.get("error") or "")[:200]
-            send_message(thread_id, reply, thread_type)
+            from services import dich_anh_hoi as _dah
+            _r = _dah.khoi_dong(str(user_id or thread_id), file_data, channel="zalop")
+            send_message(thread_id, _r.get("text") or "", thread_type)
             return
 
         kind = "photo_analyze"
@@ -3313,6 +3299,15 @@ def _process_ai(ev: dict) -> None:
     # lời của A — B cướp mất lượt mà không ai biết, và A trả lời sau thì bản chờ
     # đã bị lấy đi rồi. Chờ là chờ theo từng người (chủ máy chốt 05/08).
     # `pkey` đã tính ở trên, ngay trước cổng tag — cổng đó cần tra bản chờ.
+
+    # DỊCH ẢNH: câu này có phải trả lời bước chọn phần/tiếng đích của luồng dịch
+    # ảnh không? Xét TRƯỚC các bản chờ khác vì một con số ("1") dễ bị menu nuốt.
+    if text:
+        from services import dich_anh_hoi as _dah
+        _dr = _dah.tra_loi(str(ev.get("sender_id") or ""), text)
+        if _dr is not None:
+            send_message(thread_id, _dr.get("text") or "", thread_type)
+            return
 
     # MỤC LỤC: câu này có phải trả lời bước HỎI-mô-tả (vừa Lưu kho) hay CHỌN-số
     # (vừa tìm ra nhiều ảnh) không? Xét TRƯỚC các bản chờ khác vì một con số ("1")

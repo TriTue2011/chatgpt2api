@@ -1641,16 +1641,12 @@ def _do_photo_request(
             return
 
         if it == _phi.DICH:
-            # chi_chu=True: Zalo Bot không gửi được tệp, nên bản dịch dài phải
-            # đi bằng chữ (send_message tự cắt theo trần của nền tảng).
+            # Đọc chữ → dò tiếng → HỎI phần cần dịch + tiếng đích (dich_anh_hoi).
+            # Câu trả lời số/tên tiếng bắt ở đầu dispatch.
             kind = "photo_dich"
-            from services import translate_service as _ts
-            r = _ts.dich_anh(file_data, channel="zalo", chi_chu=True)
-            reply = _ts.bao_cao_dich(r, "chữ trong ảnh")
-            if not r.get("ok"):
-                status = "error"
-                err = str(r.get("error") or "")[:200]
-            send_message(chat_id, reply)
+            from services import dich_anh_hoi as _dah
+            _r = _dah.khoi_dong(str(user_id or chat_id), file_data, channel="zalo")
+            send_message(chat_id, _r.get("text") or "")
             return
 
         # analyze — nhánh vision
@@ -2192,6 +2188,14 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
     # muốn làm gì, B nói câu bất kỳ là câu đó bị nhận làm trả lời của A. Chờ là
     # chờ theo từng người (chủ máy chốt 05/08).
     _pkey = f"zalo:{_bot_id()}:{chat_id}:{user_id or ''}"
+    # DỊCH ẢNH: trả lời bước chọn phần/tiếng đích của luồng dịch ảnh?
+    if text and chat_id:
+        from services import dich_anh_hoi as _dah
+        _dr = _dah.tra_loi(str(user_id or ""), text)
+        if _dr is not None:
+            send_message(chat_id, _dr.get("text") or "")
+            return
+
     # MỤC LỤC: trả lời bước HỎI-mô-tả (vừa Lưu kho) hay CHỌN-số (vừa tìm nhiều)?
     if text and chat_id:
         from services.agent import so_da_luu as _sdl

@@ -303,7 +303,7 @@ def ask_text(intents: set[str] | None = None) -> str:
         RAG_TEACHER: "🎓 Nạp **RAG teacher / SGK** (hỏi lớp + môn)",
         ANALYZE: "🔍 **Phân tích ảnh** (hỏi thêm yêu cầu)",
         GENERATE: "🎨 **Tạo ảnh** từ ảnh này (hỏi thêm mô tả)",
-        DICH: "🌐 **Dịch chữ trong ảnh** (đọc chữ rồi dịch Việt ⇄ Anh)",
+        DICH: "🌐 **Dịch chữ trong ảnh** (đọc chữ → hỏi dịch sang tiếng gì)",
         LUU_ONLINE: "☁️ **Lưu lên kho đám mây** (không phân tích, không tạo)",
         FACEBOOK: "📘 **Đăng lên Facebook** (gửi thêm ảnh được, chốt caption sau)",
     }

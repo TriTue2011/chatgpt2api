@@ -1444,21 +1444,12 @@ def _do_photo_request(
             return
 
         if it == _phi.DICH:
-            # Đọc chữ trong ảnh (vision) rồi dịch bằng máy chủ dịch tự dựng.
-            # Ảnh chụp cả trang tài liệu ra bản dịch dài hơn trần 4096 ký tự của
-            # một tin Telegram → dich_anh tự đóng thành .docx (kieu="tep").
+            # Đọc chữ → dò tiếng → HỎI phần cần dịch + tiếng đích (dich_anh_hoi).
+            # Câu trả lời số/tên tiếng bắt ở đầu dispatch.
             kind = "photo_dich"
-            from services import translate_service as _ts
-            r = _ts.dich_anh(file_data, channel="tg")
-            reply = _ts.bao_cao_dich(r, "chữ trong ảnh")
-            if not r.get("ok"):
-                status = "error"
-                err = str(r.get("error") or "")[:200]
-                send_message(chat_id, reply)
-            elif r.get("kieu") == "tep":
-                send_document(chat_id, r["data"], r["ten"], caption=reply)
-            else:
-                send_message(chat_id, reply)
+            from services import dich_anh_hoi as _dah
+            _r = _dah.khoi_dong(str(user_id or chat_id), file_data, channel="tg")
+            send_message(chat_id, _r.get("text") or "")
             return
 
         # analyze
@@ -1891,6 +1882,14 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
     # chờ theo từng người (chủ máy chốt 05/08).
     _pkey = f"tg:{_bot_id()}:{chat_id}:{user_id or ''}"
     from services.yeu_cau_moi import nen_dong_ban_cho as _nen_dong
+    # DỊCH ẢNH: trả lời bước chọn phần/tiếng đích của luồng dịch ảnh?
+    if text and chat_id:
+        from services import dich_anh_hoi as _dah
+        _dr = _dah.tra_loi(str(user_id or ""), text)
+        if _dr is not None:
+            send_message(chat_id, _dr.get("text") or "")
+            return
+
     # MỤC LỤC: trả lời bước HỎI-mô-tả (vừa Lưu kho) hay CHỌN-số (vừa tìm nhiều)?
     if text and chat_id:
         from services.agent import so_da_luu as _sdl
