@@ -5,6 +5,7 @@ import { LoaderCircle, Settings, KeyRound, Cpu, Zap, Link, Archive, Plug, Messag
 
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { SettingsSection } from "@/components/settings-section";
+import { BoLocCaiDat } from "@/components/settings-filter";
 
 import { BackupSettingsCard } from "./components/backup-settings-card";
 import { RcloneCard } from "./components/rclone-card";
@@ -71,6 +72,7 @@ function SettingsPageContent() {
       <SettingsDataController />
       <SettingsHeader />
 
+      <BoLocCaiDat>
       <section className="space-y-3">
         <SettingsSection
           title="Cấu hình hệ thống"
@@ -219,6 +221,7 @@ function SettingsPageContent() {
           <BackupSettingsCard />
         </SettingsSection>
       </section>
+      </BoLocCaiDat>
 
       <ImportBrowserDialog />
     </>
