@@ -1,4 +1,6 @@
 import type { Metadata, Viewport } from "next";
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import { Toaster } from "sonner";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
@@ -22,14 +24,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="vi" suppressHydrationWarning>
-      <body
-        className="antialiased"
-        style={{
-          fontFamily:
-            '"Inter","SF Pro Display","SF Pro Text","Helvetica Neue",sans-serif',
-        }}
-      >
+    <html
+      lang="vi"
+      suppressHydrationWarning
+      className={`${GeistSans.variable} ${GeistMono.variable}`}
+    >
+      <body className="antialiased">
         {/* Theme-aware toast: dùng biến popover nên nền/chữ luôn tương phản ở cả
             light & dark (trước đây không set theme → sonner mặc định light → nền
             trắng chữ trắng khi app ở dark). */}

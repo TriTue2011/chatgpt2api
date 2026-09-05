@@ -4,10 +4,15 @@
 @custom-variant dark (&:is(.dark *));
 
 /* ═══════════════════════════════════════════════
-   chatgpt2api — Dashboard Design System
-   Bento Grid · Glass Surfaces · Calm Indigo · Display Type
-   One primary (indigo) + one accent (emerald) + neutral grays.
-   Variable names kept stable; only values were calmed down.
+   chatgpt2api — Hệ thiết kế dashboard
+   Nền tối obsidian + vàng kim (mặc định) · nền sáng trung tính + đồng đậm.
+   MỘT màu nhấn theo họ vàng, chạy qua cả hai chế độ: tối dùng vàng sáng
+   #d4af37, sáng dùng đồng đậm #7a5c12 — cùng họ, khác độ sáng, nên đổi chế
+   độ không đổi nhận diện.
+
+   MỌI thay đổi màu ở file này PHẢI chạy `node scripts/kiem-tuong-phan.mjs`.
+   Bộ đó chặn đúng lỗi đã xảy ra: nền kem + vàng sáng cho ra 1,86:1 — chữ vô
+   hình mà đọc diff không thể thấy, phải đo mới biết.
    ═══════════════════════════════════════════════ */
 
 @theme inline {
@@ -59,56 +64,64 @@
   --radius-2xl: calc(var(--radius) + 12px);
 }
 
-/* ═══ Light Theme — kem ấm + gold đậm (Obsidian Gold, bản sáng) ═══ */
+/* ═══ Nền sáng — trung tính lạnh + đồng đậm ═══
+   Bản cũ dùng kem #f4f1e8 + vàng #d4af37: đo được 1,86:1, gần như vô hình.
+   Nền trung tính lạnh làm màu đồng nổi lên mà không phải bôi đậm chữ. */
 :root {
   --radius: 0.875rem;
-  --background: #f4f1e8;
-  --surface-1: #fffcf5;
-  --surface-2: #efe9db;
+  --background: #f7f8f9;
+  --surface-1: #ffffff;
+  --surface-2: #eef0f3;
   --surface-3: #ffffff;
-  --foreground: #1a160e;
-  --card: #fffcf5;
-  --card-foreground: #1a160e;
-  --popover: #fffcf5;
-  --popover-foreground: #1a160e;
-  --primary: #b8860b;
+  --foreground: #111827;
+  --card: #ffffff;
+  --card-foreground: #111827;
+  --popover: #ffffff;
+  --popover-foreground: #111827;
+  --primary: #7a5c12;
   --primary-foreground: #ffffff;
-  --secondary: #efe9db;
-  --secondary-foreground: #2a2418;
-  --muted: #efe9db;
-  --muted-foreground: #6b6354;
-  --accent: #0284c7;
+  --secondary: #eef0f3;
+  --secondary-foreground: #2a2f3a;
+  --muted: #eef0f3;
+  --muted-foreground: #5b6472;
+  --accent: #0369a1;
   --accent-foreground: #ffffff;
-  --destructive: #dc2626;
-  --border: rgba(184, 134, 11, 0.22);
-  --input: rgba(184, 134, 11, 0.18);
-  --ring: #d4af37;
-  --gold-bright: #ffd700;
-  --gold-main: #d4af37;
-  --gold-dark: #b8860b;
-  --gold-glow: rgba(212, 175, 55, 0.22);
-  /* "neon-*" names kept for compat; gold accent + blue secondary */
-  --neon-cyan: #d4af37;
-  --neon-magenta: #38bdf8;
-  --neon-lime: #059669;
-  --neon-violet: #7c3aed;
-  --neon-amber: #f59e0b;
-  --chart-1: #d4af37;
-  --chart-2: #0284c7;
-  --chart-3: #059669;
-  --chart-4: #7c3aed;
-  --chart-5: #f59e0b;
-  --sidebar: rgba(255, 252, 245, 0.92);
-  --sidebar-foreground: #4a4336;
-  --sidebar-primary: #b8860b;
+  --destructive: #b91c1c;
+  --border: rgba(17, 24, 39, 0.12);
+  /* Viền Ô NHẬP, không phải viền trang trí: WCAG 1.4.11 bắt 3:1 vì không
+     thấy viền thì không biết gõ vào đâu. */
+  --input: #828a96;
+  --ring: #7a5c12;
+  --gold-bright: #a97c1a;
+  --gold-main: #8a6714;
+  --gold-dark: #7a5c12;
+  --gold-glow: rgba(122, 92, 18, 0.16);
+  /* Tên "neon-*" giữ lại cho 21 trang cũ; tên theo ngữ nghĩa ở dưới. */
+  --neon-cyan: #7a5c12;
+  --neon-magenta: #0369a1;
+  --neon-lime: #0f7a54;
+  --neon-violet: #5b21b6;
+  --neon-amber: #92400e;
+  --tone-accent: var(--neon-cyan);
+  --tone-info: var(--neon-magenta);
+  --tone-ok: var(--neon-lime);
+  --tone-warn: var(--neon-amber);
+  --chart-1: #7a5c12;
+  --chart-2: #0369a1;
+  --chart-3: #0f7a54;
+  --chart-4: #5b21b6;
+  --chart-5: #92400e;
+  --sidebar: rgba(255, 255, 255, 0.92);
+  --sidebar-foreground: #3f4756;
+  --sidebar-primary: #7a5c12;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: rgba(212, 175, 55, 0.12);
-  --sidebar-accent-foreground: #b8860b;
-  --sidebar-border: rgba(184, 134, 11, 0.16);
-  --sidebar-ring: #d4af37;
-  --bento-glow-1: rgba(212, 175, 55, 0.12);
-  --bento-glow-2: rgba(56, 189, 248, 0.08);
-  --bento-glow-3: rgba(5, 150, 105, 0.06);
+  --sidebar-accent: rgba(122, 92, 18, 0.10);
+  --sidebar-accent-foreground: #7a5c12;
+  --sidebar-border: rgba(17, 24, 39, 0.10);
+  --sidebar-ring: #7a5c12;
+  --bento-glow-1: rgba(122, 92, 18, 0.08);
+  --bento-glow-2: rgba(3, 105, 161, 0.06);
+  --bento-glow-3: rgba(15, 122, 84, 0.05);
 }
 
 /* ═══ Dark Theme — Obsidian Blue + Gold Metal (default) ═══ */
@@ -132,7 +145,7 @@
   --accent-foreground: #041018;
   --destructive: #f87171;
   --border: rgba(212, 175, 55, 0.14);
-  --input: rgba(212, 175, 55, 0.12);
+  --input: #5c6880;
   --ring: #d4af37;
   --gold-bright: #ffd700;
   --gold-main: #d4af37;
@@ -143,6 +156,10 @@
   --neon-lime: #34d399;
   --neon-violet: #a78bfa;
   --neon-amber: #ffd700;
+  --tone-accent: var(--neon-cyan);
+  --tone-info: var(--neon-magenta);
+  --tone-ok: var(--neon-lime);
+  --tone-warn: var(--neon-amber);
   --chart-1: #d4af37;
   --chart-2: #38bdf8;
   --chart-3: #34d399;
@@ -184,11 +201,11 @@ html[data-brand="linear"]:not(.dark) {
   --secondary-foreground: #2a2b30;
   --muted: #eef0f3;
   --muted-foreground: #62666d;
-  --accent: #5e6ad2;
+  --accent: #4c55c7;
   --accent-foreground: #ffffff;
   --destructive: #dc2626;
   --border: rgba(20, 22, 30, 0.12);
-  --input: rgba(20, 22, 30, 0.10);
+  --input: #83879a;
   --ring: #5e6ad2;
   --gold-bright: #828fff;
   --gold-main: #4c55c7;
@@ -227,8 +244,8 @@ html[data-brand="linear"].dark {
   --card-foreground: #f7f8f8;
   --popover: #141516;
   --popover-foreground: #f7f8f8;
-  --primary: #5e6ad2;
-  --primary-foreground: #ffffff;
+  --primary: #6f7ae0;
+  --primary-foreground: #0a0a14;
   --secondary: #141516;
   --secondary-foreground: #d0d6e0;
   --muted: #141516;
@@ -237,7 +254,7 @@ html[data-brand="linear"].dark {
   --accent-foreground: #0a0a14;
   --destructive: #f87171;
   --border: #23252a;
-  --input: #2a2c33;
+  --input: #5f6370;
   --ring: #5e6ad2;
   --gold-bright: #828fff;
   --gold-main: #5e6ad2;
@@ -283,18 +300,18 @@ html[data-brand="supabase"]:not(.dark) {
   --card-foreground: #171717;
   --popover: #ffffff;
   --popover-foreground: #171717;
-  --primary: #1d8f65;
+  --primary: #177a56;
   --primary-foreground: #ffffff;
   --secondary: #f0f0f0;
   --secondary-foreground: #212121;
   --muted: #f0f0f0;
-  --muted-foreground: #707070;
-  --accent: #24b47e;
+  --muted-foreground: #666666;
+  --accent: #0f7a54;
   --accent-foreground: #ffffff;
   --destructive: #dc2626;
   --border: rgba(23, 23, 23, 0.12);
-  --input: rgba(23, 23, 23, 0.10);
-  --ring: #3ecf8e;
+  --input: #838383;
+  --ring: #177a56;
   --gold-bright: #3ecf8e;
   --gold-main: #24b47e;
   --gold-dark: #1d8f65;
@@ -311,12 +328,12 @@ html[data-brand="supabase"]:not(.dark) {
   --chart-5: #dc2626;
   --sidebar: rgba(255, 255, 255, 0.92);
   --sidebar-foreground: #4b4b4b;
-  --sidebar-primary: #1d8f65;
+  --sidebar-primary: #177a56;
   --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: rgba(36, 180, 126, 0.10);
-  --sidebar-accent-foreground: #1d8f65;
+  --sidebar-accent-foreground: #177a56;
   --sidebar-border: rgba(23, 23, 23, 0.10);
-  --sidebar-ring: #3ecf8e;
+  --sidebar-ring: #177a56;
   --bento-glow-1: rgba(62, 207, 142, 0.10);
   --bento-glow-2: rgba(100, 79, 193, 0.06);
   --bento-glow-3: rgba(234, 179, 8, 0.04);
@@ -342,7 +359,7 @@ html[data-brand="supabase"].dark {
   --accent-foreground: #052e16;
   --destructive: #f87171;
   --border: #2e2e2e;
-  --input: #333333;
+  --input: #6b6b6b;
   --ring: #3ecf8e;
   --gold-bright: #4ade80;
   --gold-main: #3ecf8e;
@@ -375,7 +392,10 @@ html[data-brand="supabase"].dark {
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body {
-  font-family: "Inter", "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
+  /* Geist nạp qua next/font trong layout.tsx. Bản cũ ghi cứng "Inter"
+     nhưng KHÔNG nạp webfont nào, nên máy không cài sẵn Inter thì rơi về
+     font hệ thống — chữ mỗi máy một kiểu. */
+  font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
   background: var(--background);
   color: var(--foreground);
   font-size: 0.875rem;
