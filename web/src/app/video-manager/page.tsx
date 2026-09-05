@@ -105,7 +105,7 @@ export default function VideoManagerPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {videos.map((video) => (
             <Card key={video.path} className="group rounded-2xl card-3d card-tint-sky hover:shadow-md transition-all">
               <CardContent className="p-4 flex flex-col gap-3">

@@ -1062,7 +1062,7 @@ function DichPageContent() {
                 <div className="mb-1 text-xs text-[var(--muted-foreground)]">Bản máy dịch (tham khảo)</div>
               )}
               <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-[12px] bg-[var(--muted)] p-3 text-sm">{ketQua.text}</pre>
-              <button type="button" onClick={chepKetQua} title="Chép kết quả"
+              <button type="button" onClick={chepKetQua} title="Chép kết quả" aria-label="Chép kết quả"
                 className="absolute right-2 top-2 rounded-[8px] border border-[var(--border)] bg-[var(--background)] p-1.5 hover:border-slate-400">
                 {daChep ? <Check className="size-4 text-emerald-600" /> : <Copy className="size-4" />}
               </button>

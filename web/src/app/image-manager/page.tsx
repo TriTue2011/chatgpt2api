@@ -396,7 +396,7 @@ function ImageManagerContent() {
                   <button
                     type="button"
                     className="absolute top-2 right-2 z-10 inline-flex size-7 items-center justify-center rounded-full bg-black/50 text-white opacity-100 transition hover:bg-red-600 sm:opacity-0 sm:group-hover:opacity-100"
-                    title="Xóa ảnh"
+                    title="Xóa ảnh" aria-label="Xóa ảnh"
                     onClick={(e) => {
                       e.stopPropagation();
                       openDeleteDialog(item);
@@ -457,7 +457,7 @@ function ImageManagerContent() {
                         <button
                           type="button"
                           className="inline-flex size-5 items-center justify-center rounded-full border border-dashed border-[var(--border)] text-[var(--muted-foreground)] hover:border-[var(--border)] hover:text-[var(--muted-foreground)]"
-                          title="thêmnhãn"
+                          title="Thêm nhãn" aria-label="Thêm nhãn"
                         >
                           <Plus className="size-3" />
                         </button>

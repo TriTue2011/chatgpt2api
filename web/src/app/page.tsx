@@ -294,7 +294,7 @@ export default function DashboardPage() {
                 <button
                   onClick={startEditName}
                   className="size-7 inline-flex items-center justify-center rounded-[8px] glass-subtle text-[var(--muted-foreground)] opacity-0 group-hover:opacity-100 hover:text-[var(--neon-cyan)] transition-all"
-                  title="Đổi tên"
+                  title="Đổi tên" aria-label="Đổi tên"
                 >
                   <Pencil className="size-3.5" />
                 </button>

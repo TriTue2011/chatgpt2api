@@ -466,7 +466,7 @@ function SettingsTab({ showToast }: TabProps) {
           <select className={INPUT} value={String(s.ai_model || "cx/auto")} onChange={(e) => set("ai_model", e.target.value)}>
             {(models.length ? models : [String(s.ai_model || "cx/auto")]).map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
-          <button className="btn" onClick={fetchModels} title="Tải model"><RefreshCw className="size-4" /></button>
+          <button className="btn" onClick={fetchModels} title="Tải model" aria-label="Tải model"><RefreshCw className="size-4" /></button>
         </div>
       </Field>
       <button className="btn btn-primary" onClick={save}>Lưu cài đặt</button>
@@ -1336,7 +1336,7 @@ function DevicesTab({ showToast }: TabProps) {
         <div className="flex items-center gap-2 text-sm">
           <span className={`inline-block h-2.5 w-2.5 rounded-full ${online > 0 ? "bg-emerald-500" : "bg-[var(--muted-foreground)]"}`} />
           <span className="font-semibold">{online}/{rows.length} online</span>
-          <button className="btn" onClick={load} title="Làm mới"><RefreshCw size={15} /></button>
+          <button className="btn" onClick={load} title="Làm mới" aria-label="Làm mới"><RefreshCw size={15} /></button>
         </div>
       </div></div>
 

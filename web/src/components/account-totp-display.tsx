@@ -200,7 +200,7 @@ export function AccountTotpDisplay({ email, label }: { email: string; label?: st
           <button
             onClick={copyCode}
             className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-mono text-sm font-bold tracking-widest hover:bg-amber-200 transition-colors cursor-pointer"
-            title="Copy ma"
+            title="Chép mã" aria-label="Chép mã"
           >
             {code}
             <Copy className="size-2.5 text-amber-500" />

@@ -275,7 +275,7 @@ function LinksCard({ the }: { the: CauHinhThe }) {
                 </datalist>
                 {t.user && (
                   <button type="button" className="text-[10px] text-muted-foreground shrink-0"
-                    title="Bỏ trống = cả nhóm"
+                    title="Bỏ trống = cả nhóm" aria-label="Bỏ trống = cả nhóm"
                     onClick={() => datUser(r, o, ma, "")}>cả nhóm</button>
                 )}
               </div>

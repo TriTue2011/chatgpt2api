@@ -259,7 +259,7 @@ export function ChannelActivityPanel({ platform, title }: { platform: Platform; 
                     <>
                       <button
                         type="button"
-                        title="Chặn nhóm/chat trên bot/acc này"
+                        title="Chặn nhóm/chat trên bot/acc này" aria-label="Chặn nhóm/chat trên bot/acc này"
                         onClick={() =>
                           void addBlack(
                             r.chat_id,
@@ -275,7 +275,7 @@ export function ChannelActivityPanel({ platform, title }: { platform: Platform; 
                       {r.is_group && r.user_id && (
                         <button
                           type="button"
-                          title="Chặn riêng người gửi trên bot/acc này"
+                          title="Chặn riêng người gửi trên bot/acc này" aria-label="Chặn riêng người gửi trên bot/acc này"
                           onClick={() => void addBlack(r.user_id, "user", r.user_name, r.account)}
                           className="inline-flex items-center gap-1 rounded border border-amber-400/40 px-1.5 py-0.5 text-amber-600 hover:bg-amber-400/10"
                         >

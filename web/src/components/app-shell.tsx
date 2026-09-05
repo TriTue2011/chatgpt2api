@@ -198,7 +198,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <button
               onClick={toggleDarkMode}
               className="size-9 inline-flex items-center justify-center rounded-[10px] hover:bg-[var(--secondary)] transition-colors"
-              title="Toggle theme"
+              title="Đổi chế độ sáng/tối" aria-label="Đổi chế độ sáng/tối"
             >
               {darkMode ? (
                 <Sun className="size-4 text-[var(--neon-amber)]" />

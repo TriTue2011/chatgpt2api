@@ -807,7 +807,7 @@ export function VoiceSpeakersCard() {
                     </option>
                   ))}
                 </select>
-                <button type="button" title="Nghe thử đoạn trong ô"
+                <button type="button" title="Nghe thử đoạn trong ô" aria-label="Nghe thử đoạn trong ô"
                   className="shrink-0 text-emerald-500 disabled:opacity-40"
                   disabled={!ready || !tryText.trim() || previewing === pick}
                   onClick={() => void preview(pick, tryText)}>

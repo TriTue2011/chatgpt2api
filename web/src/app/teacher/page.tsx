@@ -224,7 +224,7 @@ function Fold({
         <button
           type="button"
           onClick={toggle}
-          title="Mở lại"
+          title="Mở lại" aria-label="Mở lại"
           className="w-full flex items-center justify-between px-4 py-2.5 text-xs font-semibold text-muted-foreground hover:text-foreground"
         >
           <span className="truncate">{title}</span>
