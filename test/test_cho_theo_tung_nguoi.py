@@ -80,9 +80,9 @@ class NhanhHienMenuTests(unittest.TestCase):
 
     def test_caption_boc_tag_truoc_khi_xet_rong(self):
         src = (GOC / "services" / "zalo_personal.py").read_text("utf-8")
-        # Neo vào đúng nhánh ẢNH VỪA TỚI (chỗ dựng bản chờ đầu tiên), không phải
-        # nhánh xử lý bản chờ đã có ở phía trên.
-        i = src.index("_phi.set_pending(pkey, data)")
+        # Neo vào nhánh 'ảnh chat.photo chưa nói gì → hiện menu': phải bóc tag
+        # TRƯỚC khi xét lời kèm rỗng (chuỗi '@TenBot' làm nó không bao giờ rỗng).
+        i = src.index("if not caption:")
         truoc = src[max(0, i - 700):i]
         self.assertIn("bo_tag", truoc,
                       "lời kèm ảnh chưa bóc tag — nhánh hiện menu sẽ không bao giờ chạy")
