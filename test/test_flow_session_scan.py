@@ -62,11 +62,16 @@ class TestQuetPhien(unittest.TestCase):
         self.da_kiem: list[str] = []
         self._ok_that = ar._flow_session_trang_thai
         self._recover_that = ar.flow_recover_and_notify
+        # Quét định kỳ nay TẮT mặc định (chỉ khôi phục phản ứng) — nhóm test này
+        # kiểm CHÍNH logic quét nên bật tường minh.
+        self._cfg_that = fss._cfg
+        fss._cfg = lambda: {"enabled": True}
         fss._last_check.clear()
 
     def tearDown(self):
         ar._flow_session_trang_thai = self._ok_that
         ar.flow_recover_and_notify = self._recover_that
+        fss._cfg = self._cfg_that
         sys.modules.pop("services.image_providers.flow_google", None)
         fss._last_check.clear()
 
@@ -146,6 +151,24 @@ class TestDuocNoiVaoAppStartup(unittest.TestCase):
         )
         self.assertIn("from services.flow_session_scheduler import start", code)
         self.assertIn("start_flow_session_scan()", code)
+
+
+class TestMacDinhTat(unittest.TestCase):
+    """Quét định kỳ TẮT mặc định (chủ máy 05/09) — chỉ khôi phục phản ứng."""
+
+    def setUp(self):
+        self._cfg_that = fss._cfg
+
+    def tearDown(self):
+        fss._cfg = self._cfg_that
+
+    def test_khong_khai_config_thi_tat(self):
+        fss._cfg = lambda: {}
+        self.assertFalse(fss.is_enabled())
+
+    def test_bat_tuong_minh_thi_chay(self):
+        fss._cfg = lambda: {"enabled": True}
+        self.assertTrue(fss.is_enabled())
 
 
 if __name__ == "__main__":

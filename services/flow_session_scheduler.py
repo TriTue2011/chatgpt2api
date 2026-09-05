@@ -64,7 +64,11 @@ def is_enabled() -> bool:
     cfg = _cfg()
     if "enabled" in cfg:
         return bool(cfg.get("enabled"))
-    return True  # bật mặc định
+    # TẮT mặc định (chủ máy chốt 05/09): chỉ khôi phục PHẢN ỨNG — khi token hết
+    # hạn / tạo ảnh lỗi thì adapter tự gọi flow_recover_and_notify — chứ KHÔNG
+    # quét định kỳ mở trình duyệt cho mọi tài khoản (vòng đó ngốn máy, mở Chromium
+    # liên tục cho cả tài khoản đã đăng xuất, làm phản hồi chat chậm/rớt).
+    return False
 
 
 def _max_per_cycle() -> int:
