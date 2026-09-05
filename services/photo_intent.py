@@ -52,6 +52,19 @@ INTENT_ORDER = (RAG_KNOWLEDGE, RAG_TEACHER, ANALYZE, GENERATE, DICH, LUU_ONLINE,
                 FACEBOOK)
 ALL_INTENTS = {RAG_KNOWLEDGE, RAG_TEACHER, ANALYZE, GENERATE}
 
+#: Đuôi tệp ẢNH. Zalo hay chuyển ảnh chụp màn hình / ảnh lưu sẵn dưới dạng
+#: `share.file` (không phải `chat.photo`), lúc đó kênh chỉ có TÊN tệp để nhận ra
+#: đây là ảnh. Gồm cả HEIC/HEIF/JXL (iPhone) và TIFF/BMP vì `prepare_incoming`
+#: (image_utils.normalize) chuyển được sang JPEG.
+_ANH_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp",
+             ".heic", ".heif", ".jxl", ".tif", ".tiff"}
+
+
+def la_anh(ten: str) -> bool:
+    """Tên tệp có đuôi ẢNH không (để nhận ảnh gửi dưới dạng `share.file`)."""
+    import os
+    return os.path.splitext(str(ten or "").strip().lower())[1] in _ANH_EXTS
+
 ASK_PROMPT_ANALYZE = (
     "🔍 Phân tích ảnh — em cần **câu hỏi / yêu cầu** cụ thể.\n"
     "Ví dụ: `mô tả ảnh` · `đọc chữ trong ảnh` · `ảnh có mấy người?`\n"
@@ -370,6 +383,18 @@ def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
         if 0 <= idx < len(opts):
             return opts[idx]
     return None
+
+
+def y_dinh_da_moi(pend: dict | None, mac_dinh: set[str]) -> set[str]:
+    """Bộ ý định ĐÃ HIỆN trong menu của bản chờ này.
+
+    Soi khuôn `pdf_intent.y_dinh_da_moi`: giải số người dùng gõ PHẢI dùng đúng
+    bộ đã hiện, không phải bộ tính lại. Menu ảnh có mục ☁️/📘/🌐 bật/tắt theo cấu
+    hình; nếu lúc hiện có 7 mục mà lúc giải số tính lại còn 5, gõ "6" (Lưu kho)
+    trỏ ra ngoài dải → `parse_intent` trả None → câu rơi xuống model, trả lời
+    lạc (đo Zalo cá nhân: bấm 6 xong hỏi "lưu chưa" bot nói "mới dịch …")."""
+    ds = (pend or {}).get("intents")
+    return set(ds) if ds else set(mac_dinh)
 
 
 _GEN_KWS = (

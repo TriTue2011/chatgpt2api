@@ -3449,6 +3449,11 @@ def _process_ai(ev: dict) -> None:
         _allowed_ph = _phi.them_dang_facebook(_phi.them_luu_online(
             _phi.allowed_intents(_allow), "zalop", str(thread_id),
             user=str(ev.get("sender_id") or "")), _allow)
+        # Giải số theo bộ ý định ĐÃ HIỆN trong menu (lưu ở bản chờ), không phải
+        # bộ tính lại: cấu hình kho/Facebook đổi giữa lúc hiện và lúc bấm là số
+        # lệch, "6" (Lưu kho) trỏ ra ngoài dải → rơi xuống model. Soi
+        # `pdf_intent` (đã vá lỗi này cho tệp Office).
+        _shown_ph = _phi.y_dinh_da_moi(_pend, _allowed_ph)
         stage = str(_pend.get("stage") or "choose")
         if stage == "teacher_meta":
             meta = _pi.parse_teacher_meta(text)
@@ -3475,9 +3480,9 @@ def _process_ai(ev: dict) -> None:
                 )
             return
         # stage=choose
-        intent = _phi.parse_intent(text, _allowed_ph)
+        intent = _phi.parse_intent(text, _shown_ph)
         if intent:
-            if intent not in _allowed_ph:
+            if intent not in _shown_ph:
                 return
             if intent == _phi.RAG_TEACHER:
                 _phi.update_pending(pkey, stage="teacher_meta", intent=intent)
@@ -3614,6 +3619,27 @@ def _process_ai(ev: dict) -> None:
             send_message(thread_id, _dc.menu_buoc(_pk_v),
                          thread_type, co_nut_chon=True)
             return
+        # Ảnh gửi dưới dạng TỆP (share.file — ảnh chụp màn hình / ảnh lưu sẵn):
+        # đi CÙNG đường với ảnh chat.photo — chuẩn hoá rồi mở menu ý định. Trước
+        # đây rơi xuống câu "chỉ nhận PDF/Word…" nên ảnh-tệp bị bỏ (chủ máy báo
+        # 05/09: gửi Concor-5mg-10.jpg thì bot đáp "Em nhận PDF, Word…").
+        if _phi.la_anh(name):
+            send_typing(thread_id, thread_type)
+            data = _download(ev["attachment_url"])
+            if not data:
+                send_message(thread_id, "📷 Không tải được ảnh.", thread_type)
+                return
+            data, _img_err = _phi.prepare_incoming(data)
+            if not data:
+                send_message(thread_id, _img_err, thread_type)
+                return
+            _allowed_ph = _phi.them_dang_facebook(_phi.them_luu_online(
+                _phi.allowed_intents(_allow), "zalop", str(thread_id),
+                user=str(ev.get("sender_id") or "")), _allow)
+            _phi.set_pending(pkey, data, intents=_allowed_ph)
+            send_message(thread_id, _phi.ask_text(_allowed_ph), thread_type)
+            _moi_luu_online(ev, thread_id, name, data, menu_dang_mo=True)
+            return
         send_message(thread_id,
                      f"📎 Em nhận PDF, Word, Excel, PowerPoint, video/âm thanh "
                      f"và tệp phụ đề (.srt/.vtt) ạ. File: {name or 'không rõ'}",
@@ -3648,7 +3674,8 @@ def _process_ai(ev: dict) -> None:
             _phi.allowed_intents(_allow), "zalop", str(thread_id),
             user=str(ev.get("sender_id") or "")), _allow)
         if not caption:
-            _phi.set_pending(pkey, data)
+            # Lưu bộ ý định ĐÃ HIỆN để giải số về sau khớp menu (xem y_dinh_da_moi).
+            _phi.set_pending(pkey, data, intents=_allowed_ph)
             send_message(thread_id, _phi.ask_text(_allowed_ph), thread_type)
             return
         intent = _phi.parse_intent(caption, _allowed_ph) or (

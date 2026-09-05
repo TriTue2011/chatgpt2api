@@ -38,6 +38,39 @@ def test_parse_intent_keywords():
     assert phi.parse_intent("vẽ lại anime") == phi.GENERATE
 
 
+def test_la_anh_nhan_dung_duoi():
+    for ok in ("Concor-5mg-10.jpg", "a.PNG", "x.jpeg", "s.webp",
+               "p.HEIC", "q.heif", "r.jxl", "t.tiff", "u.bmp", "g.gif"):
+        assert phi.la_anh(ok), ok
+    for no in ("doc.pdf", "s.docx", "v.mp4", "a.srt", "note.txt", "", "noext"):
+        assert not phi.la_anh(no), no
+
+
+def test_parse_intent_6_la_luu_online_7_facebook():
+    # Menu đầy đủ 7 mục (bật kho + facebook + dịch): "6"=Lưu kho, "7"=Facebook.
+    full = set(phi.INTENT_ORDER)
+    assert phi.parse_intent("6", full) == phi.LUU_ONLINE
+    assert phi.parse_intent("7", full) == phi.FACEBOOK
+
+
+def test_y_dinh_da_moi_giu_bo_da_hien():
+    shown = {phi.RAG_KNOWLEDGE, phi.ANALYZE, phi.LUU_ONLINE}
+    # Bản chờ có lưu bộ đã hiện → dùng đúng nó, không phải mặc định tính lại.
+    assert phi.y_dinh_da_moi({"intents": shown}, set(phi.INTENT_ORDER)) == shown
+    # Không lưu (bản chờ cũ) → về mặc định.
+    assert phi.y_dinh_da_moi({}, {phi.ANALYZE}) == {phi.ANALYZE}
+
+
+def test_giai_so_theo_bo_da_hien_khong_lech():
+    # Lỗi thật (Zalo cá nhân 05/09): menu hiện 6 mục có ☁️ Lưu kho ở số 6; bấm
+    # "6" phải ra LUU_ONLINE dù bộ mặc định tính lại có khác (mất kho → số lệch,
+    # "6" rơi xuống model). Giải số PHẢI theo bộ ĐÃ HIỆN lưu ở bản chờ.
+    shown = {phi.RAG_KNOWLEDGE, phi.RAG_TEACHER, phi.ANALYZE, phi.GENERATE,
+             phi.DICH, phi.LUU_ONLINE}
+    bo = phi.y_dinh_da_moi({"intents": shown}, {phi.ANALYZE})  # mặc định co lại
+    assert phi.parse_intent("6", bo) == phi.LUU_ONLINE
+
+
 def test_needs_prompt_analyze_generate():
     assert phi.needs_prompt(phi.GENERATE, "4") is True
     assert phi.needs_prompt(phi.GENERATE, "vẽ") is True
