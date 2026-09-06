@@ -189,8 +189,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <select
               value={brand}
               onChange={(e) => changeBrand(e.target.value)}
-              title="Chọn theme"
-              className="h-9 rounded-[10px] border border-[var(--border)] bg-transparent px-2 text-xs text-[var(--muted-foreground)] hover:bg-[var(--secondary)] transition-colors cursor-pointer outline-none"
+              title="Chọn tông màu thương hiệu"
+              aria-label="Chọn tông màu thương hiệu"
+              // Đo trên màn 390px: thanh trên rộng 494px, tức TRÀN ngang 104px, và
+              // tiêu đề trang bị bóp còn 39px ("Das…"). Riêng ô này chiếm 156px —
+              // 40% bề ngang màn hình cho một lựa chọn thẩm mỹ hiếm khi đổi. Trên
+              // điện thoại thu còn đúng bề rộng biểu tượng; máy tính giữ nguyên.
+              className="h-9 w-[46px] sm:w-auto rounded-[10px] border border-[var(--border)] bg-transparent px-2 text-xs text-[var(--muted-foreground)] hover:bg-[var(--secondary)] transition-colors cursor-pointer outline-none"
             >
               <option value="obsidian">🏆 Obsidian Gold</option>
               <option value="linear">🔮 Linear Violet</option>
@@ -225,9 +230,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
               <button
                 onClick={handleLogout}
-                className="text-[11px] text-[var(--muted-foreground)] hover:text-[var(--destructive)] ml-1 transition-colors"
+                className="hidden sm:block text-[11px] text-[var(--muted-foreground)] hover:text-[var(--destructive)] ml-1 transition-colors"
               >
-                Logout
+                Đăng xuất
               </button>
             </div>
           </div>

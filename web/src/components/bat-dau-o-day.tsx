@@ -51,17 +51,18 @@ function Dong({ muc, xong }: { muc: MucTinhNang; xong: boolean }) {
   return (
     <li
       className={cn(
-        "flex items-start gap-3 rounded-xl border border-[var(--border)] p-3",
+        "flex flex-col gap-2 rounded-xl border border-[var(--border)] p-3",
+        "sm:flex-row sm:items-start sm:gap-3",
         xong ? "bg-transparent" : "bg-[var(--surface-2)]",
       )}
     >
-      {xong ? (
-        <Check className="mt-0.5 size-4 shrink-0 text-[var(--tone-ok,var(--primary))]" aria-hidden />
-      ) : (
-        <CircleDashed className="mt-0.5 size-4 shrink-0 text-[var(--muted-foreground)]" aria-hidden />
-      )}
-
-      <div className="min-w-0 flex-1">
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        {xong ? (
+          <Check className="mt-0.5 size-4 shrink-0 text-[var(--tone-ok,var(--primary))]" aria-hidden />
+        ) : (
+          <CircleDashed className="mt-0.5 size-4 shrink-0 text-[var(--muted-foreground)]" aria-hidden />
+        )}
+        <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span
             className={cn(
@@ -86,13 +87,15 @@ function Dong({ muc, xong }: { muc: MucTinhNang; xong: boolean }) {
             ) : null}
           </p>
         )}
+        </div>
       </div>
 
       {!xong && (
         <Link
           href={muc.duong}
           className={cn(
-            "inline-flex shrink-0 items-center gap-1 self-center rounded-lg px-2.5 py-1.5",
+            "inline-flex shrink-0 items-center justify-center gap-1 rounded-lg px-2.5 py-2",
+            "w-full sm:w-auto sm:self-center sm:py-1.5",
             "bg-[var(--primary)] text-xs font-medium text-[var(--primary-foreground)]",
             "transition-[filter] hover:brightness-110 active:scale-[0.98]",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
