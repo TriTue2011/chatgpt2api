@@ -2,10 +2,12 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Check, ChevronDown, ChevronRight, CircleDashed, ArrowRight } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, CircleDashed, ArrowRight, BellOff, Undo2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { GiaiThich } from "@/components/giai-thich";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { MOC_NHAC, boTamAn, conLaiNgay, dangAn, datTamAn, docTamAn } from "@/lib/tam-an-muc";
 import {
   NHAN_MUC_DO,
   mucConThieu,
@@ -47,7 +49,52 @@ function HuyHieu({ mucDo }: { mucDo: MucDo }) {
   );
 }
 
-function Dong({ muc, xong }: { muc: MucTinhNang; xong: boolean }) {
+function NutBoQua({ ten, khiChon }: { ten: string; khiChon: (soNgay: number) => void }) {
+  const [mo, datMo] = React.useState(false);
+  return (
+    <Popover open={mo} onOpenChange={datMo}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Tạm ẩn mục ${ten} và hẹn nhắc lại`}
+          className={cn(
+            // Đo trên màn 390px: nút cao 28px, dưới ngưỡng chạm 44px nên khó
+            // bấm bằng ngón cái. Nới trên điện thoại, giữ gọn ở màn lớn.
+            "inline-flex min-h-[44px] shrink-0 items-center gap-1 rounded-lg px-3 text-xs",
+            "sm:min-h-0 sm:px-2 sm:py-1.5",
+            "text-[var(--muted-foreground)] transition-colors",
+            "hover:bg-[var(--secondary)] hover:text-[var(--foreground)]",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+          )}
+        >
+          <BellOff className="size-3.5" aria-hidden />
+          Bỏ qua
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-56 p-1.5">
+        <p className="px-2 py-1.5 text-[11px] leading-snug text-[var(--muted-foreground)]">
+          Ẩn mục này và nhắc lại sau:
+        </p>
+        {MOC_NHAC.map((m) => (
+          <button
+            key={m.ngay}
+            type="button"
+            onClick={() => { khiChon(m.ngay); datMo(false); }}
+            className={cn(
+              "flex w-full items-center rounded-md px-2 py-1.5 text-left text-[13px]",
+              "text-[var(--foreground)] transition-colors hover:bg-[var(--secondary)]",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+            )}
+          >
+            {m.nhan}
+          </button>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function Dong({ muc, xong, khiBoQua }: { muc: MucTinhNang; xong: boolean; khiBoQua?: (soNgay: number) => void }) {
   return (
     <li
       className={cn(
@@ -90,6 +137,12 @@ function Dong({ muc, xong }: { muc: MucTinhNang; xong: boolean }) {
         </div>
       </div>
 
+      {!xong && khiBoQua && (
+        <div className="flex w-full items-center justify-end sm:w-auto sm:self-center">
+          <NutBoQua ten={muc.ten} khiChon={khiBoQua} />
+        </div>
+      )}
+
       {!xong && (
         <Link
           href={muc.duong}
@@ -111,9 +164,17 @@ function Dong({ muc, xong }: { muc: MucTinhNang; xong: boolean }) {
 
 export function BatDauODay({ tt }: { tt: TrangThaiHeThong }) {
   const [moRong, datMoRong] = React.useState(false);
+  // localStorage không tồn tại lúc dựng tĩnh, nên đọc SAU khi gắn vào DOM —
+  // đọc ngay trong lượt render đầu sẽ lệch giữa HTML dựng sẵn và lần render
+  // đầu ở trình duyệt.
+  const [tamAn, datTamAnState] = React.useState<Record<string, number>>({});
+  React.useEffect(() => { datTamAnState(docTamAn()); }, []);
 
-  const thieu = mucConThieu(tt);
+  const conThieuTatCa = mucConThieu(tt);
   const { xong, tong } = tienDo(tt);
+  // Hết hạn ẩn thì `dangAn` trả false, mục tự hiện lại — không cần dọn gì.
+  const thieu = conThieuTatCa.filter((m) => !dangAn(tamAn, m.id));
+  const dangAnDs = conThieuTatCa.filter((m) => dangAn(tamAn, m.id));
   const batBuocThieu = thieu.filter((m) => m.mucDo === "bat-buoc");
   const daXong = mucDaXong(tt);
 
@@ -121,7 +182,8 @@ export function BatDauODay({ tt }: { tt: TrangThaiHeThong }) {
   // "thiếu mọi thứ" — đúng cái nhịp làm người mới cài hoảng.
   if (tong === 0) return null;
 
-  const donXong = thieu.length === 0;
+  // Ẩn KHÔNG phải là xong: còn mục đang ẩn thì chưa được nói "đã sẵn sàng".
+  const donXong = conThieuTatCa.length === 0;
 
   return (
     <section
@@ -156,9 +218,39 @@ export function BatDauODay({ tt }: { tt: TrangThaiHeThong }) {
       {thieu.length > 0 && (
         <ul className="mt-4 space-y-2">
           {thieu.map((m) => (
-            <Dong key={m.id} muc={m} xong={false} />
+            <Dong
+              key={m.id}
+              muc={m}
+              xong={false}
+              khiBoQua={(soNgay) => datTamAnState(datTamAn(m.id, soNgay))}
+            />
           ))}
         </ul>
+      )}
+
+      {/* Mục đang tạm ẩn luôn được đếm ra ở đây, kèm nút hiện lại — bỏ qua là
+          HOÃN chứ không phải xoá, nên không thứ gì biến mất lặng lẽ. */}
+      {dangAnDs.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-[var(--muted-foreground)]">
+          <span>
+            {dangAnDs.length} mục đang tạm ẩn
+            {dangAnDs.length <= 3 && (
+              <> ({dangAnDs.map((m) => `${m.ten} — còn ${conLaiNgay(tamAn, m.id)} ngày`).join("; ")})</>
+            )}
+          </span>
+          <button
+            type="button"
+            onClick={() => datTamAnState(boTamAn())}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-lg px-2 py-1",
+              "text-[var(--foreground)] transition-colors hover:bg-[var(--secondary)]",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+            )}
+          >
+            <Undo2 className="size-3.5" aria-hidden />
+            Hiện lại
+          </button>
+        </div>
       )}
 
       {xong > 0 && (
