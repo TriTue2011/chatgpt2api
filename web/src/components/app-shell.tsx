@@ -13,6 +13,7 @@ import { request } from "@/lib/request";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TimNhanh } from "@/components/tim-nhanh";
 import { cn } from "@/lib/utils";
+import { chuanHoaDuong, cungDuong } from "@/lib/duong-dan";
 
 const pageTitles: Record<string, string> = {
   "/": "Dashboard",
@@ -90,7 +91,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   // Health pill (admin): nạp 1 lần + refresh 60s; lỗi fetch → ẩn pill.
   useEffect(() => {
-    if (!session || session.role !== "admin" || pathname === "/login") return;
+    if (!session || session.role !== "admin" || cungDuong(pathname, "/login")) return;
     let active = true;
     const load = () =>
       request.get("/api/v1/health")
@@ -122,11 +123,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     router.replace("/login");
   };
 
-  const pageTitle = pageTitles[pathname] || "chatgpt2api";
+  const pageTitle = pageTitles[chuanHoaDuong(pathname)] || "chatgpt2api";
   const displayName = session?.name?.trim() || "Admin";
   const pill = healthToPill(health);
 
-  if (pathname === "/login") return <>{children}</>;
+  if (cungDuong(pathname, "/login")) return <>{children}</>;
 
   const isAdmin = session?.role === "admin";
   const mobileItems = navGroups
@@ -250,7 +251,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           style={{ borderTop: "1px solid color-mix(in srgb, var(--primary) 18%, transparent)" }}
         >
           {mobileItems.map((item) => {
-            const active = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
+            const active = cungDuong(pathname, item.href) || (item.href !== "/" && chuanHoaDuong(pathname).startsWith(item.href));
             const Icon = item.icon;
             return (
               <Link

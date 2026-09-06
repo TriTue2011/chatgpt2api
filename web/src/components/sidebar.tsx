@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { useLangStore } from "@/store/lang";
 import { translations, TranslationKey } from "@/lib/i18n";
 import { clearStoredAuthSession, type StoredAuthSession } from "@/store/auth";
+import { chuanHoaDuong, cungDuong } from "@/lib/duong-dan";
 
 type NavItem = { href: string; labelKey: TranslationKey; icon: typeof LayoutDashboard };
 type NavGroup = { id: string; label: string; items: NavItem[] };
@@ -113,7 +114,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen = false, onMobileClose
   useEffect(() => {
     let active = true;
     (async () => {
-      if (pathname === "/login") { setSession(null); return; }
+      if (cungDuong(pathname, "/login")) { setSession(null); return; }
       const s = await getValidatedAuthSession();
       if (active) setSession(s);
     })();
@@ -125,7 +126,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen = false, onMobileClose
     router.replace("/login");
   }, [router]);
 
-  if (pathname === "/login" || session === undefined || !session) return null;
+  if (cungDuong(pathname, "/login") || session === undefined || !session) return null;
 
   const isAdmin = session.role === "admin";
   // User thường: chỉ nhóm Studio (đủ tab studioPaths)
@@ -196,7 +197,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen = false, onMobileClose
               </p>
             )}
             {group.items.map((item) => {
-              const active = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
+              const active = cungDuong(pathname, item.href) || (item.href !== "/" && chuanHoaDuong(pathname).startsWith(item.href));
               const Icon = item.icon;
               return (
                 <Link

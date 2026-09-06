@@ -9,6 +9,7 @@ import webConfig from "@/constants/common-env";
 import { getValidatedAuthSession } from "@/lib/auth-session";
 import { cn } from "@/lib/utils";
 import { clearStoredAuthSession, type StoredAuthSession } from "@/store/auth";
+import { chuanHoaDuong, cungDuong } from "@/lib/duong-dan";
 
 const adminNavItems = [
   { href: "/image", label: "Vẽ ảnh" },
@@ -38,7 +39,7 @@ export function TopNav() {
     let active = true;
 
     const load = async () => {
-      if (pathname === "/login") {
+      if (cungDuong(pathname, "/login")) {
         if (!active) {
           return;
         }
@@ -64,7 +65,7 @@ export function TopNav() {
     router.replace("/login");
   };
 
-  if (pathname === "/login" || session === undefined || !session) {
+  if (cungDuong(pathname, "/login") || session === undefined || !session) {
     return null;
   }
 
@@ -102,7 +103,7 @@ export function TopNav() {
         </div>
         <nav className="hide-scrollbar -mx-1 flex min-w-0 flex-1 gap-1 overflow-x-auto px-1 sm:mx-0 sm:justify-center sm:gap-8 sm:overflow-visible sm:px-0">
           {navItems.map((item) => {
-            const active = pathname === item.href;
+            const active = cungDuong(pathname, item.href);
             return (
               <Link
                 key={item.href}
