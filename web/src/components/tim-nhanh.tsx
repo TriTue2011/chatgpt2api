@@ -14,6 +14,7 @@ import {
   type MucTinhNang,
 } from "@/lib/feature-registry";
 import { useTrangThaiHeThong } from "@/lib/use-trang-thai-he-thong";
+import { boDau } from "@/components/settings-filter";
 
 /**
  * Ô tìm nhanh Cmd+K — tra xuyên 18 trang và toàn bộ tính năng trong sổ tra.
@@ -89,6 +90,20 @@ export function TimNhanh() {
         onOpenChange={datMo}
         label="Tìm nhanh"
         shouldFilter
+        // cmdk chấm điểm trên chuỗi THÔ nên nó không biết bỏ dấu: gõ "nhat ky"
+        // không ra "Nhật ký" (đo trên server: chỉ ra nhầm "Zalo Cá Nhân"), trong
+        // khi gõ "nhật ký" thì ra. Người Việt gõ nhanh hiếm khi bỏ dấu, nên đây
+        // là đường tra chính bị hỏng. Dùng lại đúng hàm bỏ dấu của ô lọc trang
+        // Cài đặt để hai chỗ cư xử giống nhau.
+        filter={(giaTri, tim) => {
+          const q = boDau(tim).trim();
+          if (!q) return 1;
+          const kho = boDau(giaTri);
+          const tu = q.split(/\s+/).filter(Boolean);
+          if (!tu.every((t) => kho.includes(t))) return 0;
+          // khớp từ đầu chuỗi xếp trên khớp ở giữa
+          return kho.startsWith(tu[0]) ? 1 : 0.5;
+        }}
         className={cn(
           "fixed left-1/2 top-[12vh] z-[80] w-[min(94vw,36rem)] -translate-x-1/2",
           "overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--popover)]",
