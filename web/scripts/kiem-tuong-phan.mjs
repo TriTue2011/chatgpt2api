@@ -194,6 +194,36 @@ for (const [ten, boChon, keThua] of CHU_DE) {
   }
 }
 
+// ── Chữ tô bằng nền chuyển sắc ──────────────────────────────────────────────
+//
+// `background-clip: text` + mã màu CỨNG trong file CSS: phần đo token ở trên
+// không với tới, vì nó chỉ so các biến --*. Lỗi thật 06/09: .gradient-text tô
+// logo, tiêu đề trang và tên người đăng nhập bằng dải vàng sáng, đo trên nền
+// TỐI được 9,4–18,5:1 nhưng trên nền SÁNG chỉ 1,03–2,03:1 — chữ biến mất.
+let chuyenSac = 0;
+{
+  const khoiChuyenSac = [...nguon.matchAll(/(^|\n)([^{}\n]*)\{([^}]*background-clip:\s*text[^}]*)\}/g)];
+  for (const [, , boChon, than] of khoiChuyenSac) {
+    const ten = boChon.trim();
+    if (!ten.includes("gradient") && !than.includes("linear-gradient")) continue;
+    const dam = ten.startsWith(".dark") || ten.includes(".dark ");
+    // tyLe() nhận MẢNG RGB. Truyền chuỗi hex vào thì sang() trả NaN, và
+    // `NaN < 4.5` là false — phép kiểm im lặng không bao giờ báo gì.
+    const hexRgb = (h) => [
+      parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16), 1,
+    ];
+    const nenRgb = dam ? hexRgb("0a0a0f") : hexRgb("fbfbfa");
+    for (const [, mau] of than.matchAll(/#([0-9a-fA-F]{6})\b/g)) {
+      const ti = tyLe(hexRgb(mau), nenRgb);
+      if (ti < AA_CHU) {
+        chuyenSac++;
+        console.log(`\nCHUYỂN SẮC  ${ten}  #${mau} trên nền ${dam ? "tối" : "sáng"}`);
+        console.log(`            ${ti.toFixed(2)}:1 — cần ${AA_CHU}:1. Tách quy tắc theo chế độ.`);
+      }
+    }
+  }
+}
+
 // ── Lớp màu Tailwind tông sáng dùng trần cho chữ ────────────────────────────
 //
 // Token CSS không phủ hết: lớp tiện ích như `text-amber-400` đi thẳng vào JSX,
@@ -233,12 +263,15 @@ try {
 console.log(`\n${"─".repeat(66)}`);
 console.log(`Đã đo ${daDo} cặp · hỏng ${hong} · nhắc ${chiBao} (viền trang trí, WCAG miễn) · bỏ qua ${boQua}`);
 console.log(`Lớp màu Tailwind dùng trần: ${mauTran}`);
+console.log(`Chặng chuyển sắc dưới ngưỡng: ${chuyenSac}`);
 
-if (hong > 0 || mauTran > 0) {
+if (hong > 0 || mauTran > 0 || chuyenSac > 0) {
   if (hong > 0)
     console.error(`\nKHÔNG ĐẠT: ${hong} cặp token dưới ngưỡng WCAG AA — sửa src/app/globals.css.`);
   if (mauTran > 0)
     console.error(`KHÔNG ĐẠT: ${mauTran} lớp màu Tailwind thiếu sắc cho chế độ sáng.`);
+  if (chuyenSac > 0)
+    console.error(`KHÔNG ĐẠT: ${chuyenSac} chặng chuyển sắc không đọc được trên nền của nó.`);
   process.exit(1);
 }
 console.log("ĐẠT: mọi cặp token đều đủ tương phản.");

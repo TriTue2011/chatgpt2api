@@ -539,11 +539,28 @@ body > * { position: relative; z-index: 1; }
 .neon-violet-text  { color: var(--neon-violet); }
 .dot-glow { box-shadow: 0 0 5px color-mix(in srgb, currentColor 55%, transparent); }
 .ring-glow-cyan { box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 45%, transparent); }
+/* Chữ tô bằng nền chuyển sắc — dùng cho logo, tiêu đề trang, tên người dùng và
+   các con số lớn. Bộ đo tương phản KHÔNG với tới đây vì nó chỉ so các cặp token,
+   còn đây là mã màu cứng nằm trong một lớp CSS.
+
+   Dải cũ (#ffd700 → #d4af37 → #fff8dc) đo trên nền tối được 9,4–18,5:1 nên chế
+   độ tối vẫn đẹp; nhưng trên nền sáng chỉ còn 1,03–2,03:1 — riêng chặng #fff8dc
+   ở 1,03:1 là gần như vô hình. Logo, chữ "Dashboard" và tên người đăng nhập đều
+   biến mất khi đổi sang chế độ sáng.
+
+   Nên tách hai dải: nền tối giữ nguyên vàng sáng, nền sáng dùng họ vàng đậm mà
+   MỌI chặng đều ≥4,5:1 (đo trên #fbfbfa: 5,03 · 6,02 · 7,30). */
 .gradient-text {
-  background: linear-gradient(135deg, #ffd700 0%, #d4af37 40%, #fff8dc 70%, #d4af37 100%);
+  background: linear-gradient(135deg, #8a6714 0%, #6b500f 40%, #7a5c12 70%, #6b500f 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+}
+
+.dark .gradient-text {
+  background: linear-gradient(135deg, #ffd700 0%, #d4af37 40%, #fff8dc 70%, #d4af37 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
 }
 
 /* Nút CTA vàng kim — shimmer nhẹ, chữ đen trên nền gold */

@@ -76,7 +76,7 @@ function Dong({ muc, xong }: { muc: MucTinhNang; xong: boolean }) {
         </div>
 
         {!xong && (
-          <p className="mt-1 text-xs leading-relaxed text-[var(--muted-foreground)]">
+          <p className="mt-1 max-w-[78ch] text-[13px] leading-relaxed text-[var(--muted-foreground)]">
             {muc.mucDich}
             {muc.canGi ? (
               <>
@@ -144,7 +144,7 @@ export function BatDauODay({ tt }: { tt: TrangThaiHeThong }) {
         )}
       </div>
 
-      <p className="mt-1.5 text-xs leading-relaxed text-[var(--muted-foreground)]">
+      <p className="mt-1.5 max-w-[78ch] text-[13px] leading-relaxed text-[var(--muted-foreground)]">
         {donXong
           ? "Mọi mục kiểm được đều đã cấu hình. Phần còn lại trong Cài đặt là tuỳ chọn, bật khi cần."
           : "Làm từ trên xuống. Mục bắt buộc chưa xong thì hệ thống chưa trả lời được lời gọi nào."}
