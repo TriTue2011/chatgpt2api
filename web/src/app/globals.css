@@ -464,15 +464,24 @@ body > * { position: relative; z-index: 1; }
 .bento-wide  { grid-column: span 12; grid-row: span 1; }
 .bento-half  { grid-column: span 6; grid-row: span 1; }
 @media (max-width: 1024px) {
-  .bento-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  /* CỐ Ý giữ 12 cột: các ô ở trang chủ khai span bằng style NỘI TUYẾN theo hệ
+     12 cột. Hạ xuống 6 cột thì `span 8`/`span 12` vượt quá, lưới đẻ cột ngầm
+     (không theo minmax(0,1fr)) và ô phình ra ngoài mép. */
+  .bento-grid { grid-template-columns: repeat(12, minmax(0, 1fr)); }
   .bento-hero, .bento-tall, .bento-wide { grid-column: span 6; grid-row: auto; }
   .bento-md, .bento-half { grid-column: span 6; }
   .bento-sm { grid-column: span 3; }
 }
 @media (max-width: 640px) {
   .bento-grid { grid-template-columns: 1fr; gap: 0.75rem; }
-  .bento-hero, .bento-tall, .bento-md, .bento-sm, .bento-wide, .bento-half {
-    grid-column: span 1; grid-row: auto;
+  /* Đo trên máy 390px: quy tắc 1 cột này CÓ khớp, nhưng ô mang style nội tuyến
+     `gridColumn: span 12` nên lưới vẫn đẻ 11 cột ngầm và ô rộng 404px, thò 30px
+     ra ngoài rồi bị overflow-x-hidden cắt mất. Danh sách lớp bên dưới không phủ
+     tới vì trang chủ khai span nội tuyến chứ không dùng lớp. Nhắm vào MỌI con
+     trực tiếp, và phải !important mới đè được style nội tuyến. */
+  .bento-grid > * {
+    grid-column: span 1 !important;
+    grid-row: auto !important;
   }
 }
 

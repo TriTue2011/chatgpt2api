@@ -349,7 +349,7 @@ export default function DashboardPage() {
       <div className="bento-grid">
         {/* KPI bar — Total Requests + token/cost summary (span full width, slim) */}
         <div className="bento-cell animate-in flex items-center gap-5 flex-wrap" style={{ gridColumn: "span 12" }}>
-          <div className="flex items-center gap-3.5 pr-5 sm:border-r border-[var(--border)]/50">
+          <div className="flex items-center gap-3.5 sm:pr-5 sm:border-r border-[var(--border)]/50">
             <div className="size-12 rounded-[14px] flex items-center justify-center shrink-0"
               style={{
                 background: "linear-gradient(135deg, color-mix(in srgb, var(--neon-cyan) 20%, transparent), color-mix(in srgb, var(--neon-magenta) 20%, transparent))",
@@ -363,7 +363,7 @@ export default function DashboardPage() {
               <p className="display-text display-3 gradient-text animate-gradient leading-none mt-1">{fmt(usage?.totalRequests ?? 0)}</p>
             </div>
           </div>
-          <div className="flex items-center gap-7 sm:gap-10 flex-wrap flex-1">
+          <div className="flex items-center gap-6 sm:gap-10 flex-wrap basis-full sm:basis-0 sm:flex-1 min-w-0">
             {[
               { label: "Input", value: fmt(usage?.totalPromptTokens ?? 0), cls: "neon-cyan-text" },
               { label: "Output", value: fmt(usage?.totalCompletionTokens ?? 0), cls: "neon-lime-text" },

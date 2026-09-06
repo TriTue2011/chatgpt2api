@@ -1716,7 +1716,7 @@ export default function TeacherPage() {
         <button type="button"
           onClick={() => { setPickedKey(""); setTab("roster"); }}
           className={`px-3 py-1.5 rounded-md text-xs transition ${!picked
-            ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-medium"
+            ? "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 font-medium"
             : "text-muted-foreground hover:bg-secondary"}`}>
           Tổng
         </button>
