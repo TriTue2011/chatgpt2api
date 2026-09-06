@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Cpu, CheckCircle2, XCircle, Wrench, RefreshCw, ExternalLink, LoaderCircle } from "lucide-react";
+import { Cpu, CheckCircle2, XCircle, Wrench, RefreshCw, ExternalLink, LoaderCircle, ArrowRight } from "lucide-react";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { request } from "@/lib/request";
 import { cn } from "@/lib/utils";
@@ -198,10 +199,24 @@ function ProvidersPageContent() {
       </div>
 
       {providers.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-20 text-[var(--muted-foreground)]">
+        <div className="flex flex-col items-center justify-center py-20 text-center text-[var(--muted-foreground)]">
           <Cpu className="size-12 mb-3 opacity-50" />
-          <p>{t("noProviders")}</p>
-          <p className="text-xs mt-1">{t("addProviderInConfig")}</p>
+          <p className="text-[15px] text-[var(--foreground)]">{t("noProviders")}</p>
+          {/* Bản cũ bảo người dùng "thêm provider vào config.json" — tức bảo họ
+              tự sửa một file JSON, đúng việc mà giao diện này sinh ra để khỏi
+              phải làm. Nơi khai provider THẬT là trang Cài đặt (Gemini AI Studio,
+              NVIDIA NIM, TokenRouter, Custom Providers…), nên chỉ thẳng tới đó. */}
+          <p className="mt-1 max-w-[52ch] text-[13px]">
+            Khai nhà cung cấp ngay trong Cài đặt — mỗi loại có thẻ riêng, dán API key là xong.
+            Có nhiều nguồn thì một nguồn chết vẫn còn đường khác.
+          </p>
+          <Link
+            href="/settings"
+            className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3.5 py-2 text-[13px] font-medium text-[var(--primary-foreground)] transition-[filter] hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+          >
+            Mở Cài đặt để khai nhà cung cấp
+            <ArrowRight className="size-3.5" aria-hidden />
+          </Link>
         </div>
       )}
     </div>
