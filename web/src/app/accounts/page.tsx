@@ -1107,7 +1107,7 @@ function AccountsPageContent() {
             />
           </div>
           <Select value={typeFilter} onValueChange={(value) => { setTypeFilter(value); setPage(1); }}>
-            <SelectTrigger className="h-9 rounded-lg border-[var(--border)] bg-[var(--card)] w-[110px] text-sm">
+            <SelectTrigger className="h-9 rounded-lg border-[var(--border)] bg-[var(--card)] w-auto min-w-[110px] text-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1119,7 +1119,7 @@ function AccountsPageContent() {
             </SelectContent>
           </Select>
           <Select value={statusFilter} onValueChange={(value) => { setStatusFilter(value as AccountStatus | "all"); setPage(1); }}>
-            <SelectTrigger className="h-9 rounded-lg border-[var(--border)] bg-[var(--card)] w-[120px] text-sm">
+            <SelectTrigger className="h-9 rounded-lg border-[var(--border)] bg-[var(--card)] w-auto min-w-[120px] text-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

@@ -222,8 +222,22 @@ export function ConfigCard() {
             </select>
             <p className="text-xs text-[var(--muted-foreground)]">Áp dụng cho tất cả model: GPT, Gemini, NVIDIA, SD, FLUX...</p>
           </div>
+          {/* Hai nhãn này TRƯỚC ĐÂY nằm chồng nhau trong cùng một khối và chỉ có
+              MỘT ô nhập, nên giao diện hiện ra là "…hình ảnhSố luồng…" dính liền,
+              còn trường image_poll_timeout_secs thì không có chỗ nào để sửa —
+              dù backend đọc nó (services/config.py) và kho dữ liệu đã có sẵn hàm
+              đặt (setImagePollTimeoutSecs được nhập vào mà không ai gọi). */}
           <div className="space-y-2">
             <label className="text-sm text-[var(--foreground)]">Thời gian chờ thăm dò hình ảnh</label>
+            <Input
+              value={String(config?.image_poll_timeout_secs ?? "")}
+              onChange={(event) => setImagePollTimeoutSecs(event.target.value)}
+              placeholder="120"
+              className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)]"
+            />
+            <p className="text-xs text-[var(--muted-foreground)]">Tính bằng giây. Chờ quá lâu mà ảnh chưa xong thì bỏ lượt đó, mặc định 120.</p>
+          </div>
+          <div className="space-y-2">
             <label className="text-sm text-[var(--foreground)]">Số luồng hình ảnh trên mỗi tài khoản</label>
             <Input
               value={String(config?.image_account_concurrency || "")}
