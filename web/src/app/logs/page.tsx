@@ -183,7 +183,7 @@ function LogsContent() {
               <button type="button" className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)] disabled:text-[var(--foreground)]" onClick={() => setSelectedIds([])} disabled={selectedIds.length === 0 || isDeleting}>
                 Bỏ chọn
               </button>
-              <Button variant="outline" className="h-8 rounded-lg border-rose-200 bg-[var(--card)] px-3 text-rose-600 hover:bg-rose-50" onClick={() => setDeletingItems(items.filter((item) => selectedSet.has(item.id)))} disabled={selectedIds.length === 0 || isDeleting}>
+              <Button variant="outline" className="h-8 rounded-lg border-rose-300 dark:border-rose-500/40 bg-[var(--card)] px-3 text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10" onClick={() => setDeletingItems(items.filter((item) => selectedSet.has(item.id)))} disabled={selectedIds.length === 0 || isDeleting}>
                 <Trash2 className="size-4" />
                 Xóa mục đã chọn
               </Button>
@@ -254,7 +254,7 @@ function LogsContent() {
                           <Button variant="ghost" className="h-8 rounded-lg px-3 text-[var(--muted-foreground)]" onClick={() => openDetail(item)}>
                             Xem chi tiết
                           </Button>
-                          <Button variant="ghost" className="h-8 rounded-lg px-3 text-rose-600 hover:bg-rose-50 hover:text-rose-700" onClick={() => setDeletingItems([item])}>
+                          <Button variant="ghost" className="h-8 rounded-lg px-3 text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10 hover:text-rose-800 dark:hover:text-rose-300" onClick={() => setDeletingItems([item])}>
                             Xóa
                           </Button>
                         </div>

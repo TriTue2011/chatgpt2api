@@ -1847,7 +1847,7 @@ export default function TeacherPage() {
                         {r.display_name || r.student_key}
                       </button>
                       {r.grade ? (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 font-medium">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 font-medium">
                           Lớp {r.grade}
                         </span>
                       ) : (

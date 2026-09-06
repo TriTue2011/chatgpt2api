@@ -95,22 +95,22 @@ const metricCards = [
   {
     key: "total", labelKey: "totalAccounts" as TranslationKey, icon: UserRound,
     gradient: "from-[#D4AF37] to-[#B8860B]", shadow: "shadow-amber-200",
-    bg: "from-amber-50/80 to-blue-50/80", textColor: "text-amber-900", labelColor: "text-amber-600",
+    bg: "from-amber-50/80 to-blue-50/80", textColor: "text-amber-900 dark:text-amber-200", labelColor: "text-amber-700 dark:text-amber-400",
   },
   {
     key: "active", labelKey: "active" as TranslationKey, icon: CheckCircle2,
     gradient: "from-emerald-500 to-teal-600", shadow: "shadow-emerald-200",
-    bg: "from-emerald-50/80 to-teal-50/80", textColor: "text-emerald-900", labelColor: "text-emerald-600",
+    bg: "from-emerald-50/80 to-teal-50/80", textColor: "text-emerald-900 dark:text-emerald-200", labelColor: "text-emerald-700 dark:text-emerald-400",
   },
   {
     key: "limited", labelKey: "limited" as TranslationKey, icon: CircleAlert,
     gradient: "from-amber-500 to-orange-500", shadow: "shadow-amber-200",
-    bg: "from-amber-50/80 to-orange-50/80", textColor: "text-amber-900", labelColor: "text-amber-600",
+    bg: "from-amber-50/80 to-orange-50/80", textColor: "text-amber-900 dark:text-amber-200", labelColor: "text-amber-700 dark:text-amber-400",
   },
   {
     key: "abnormal", labelKey: "abnormal" as TranslationKey, icon: CircleOff,
     gradient: "from-rose-500 to-red-600", shadow: "shadow-rose-200",
-    bg: "from-rose-50/80 to-red-50/80", textColor: "text-rose-900", labelColor: "text-rose-600",
+    bg: "from-rose-50/80 to-red-50/80", textColor: "text-rose-900 dark:text-rose-200", labelColor: "text-rose-700 dark:text-rose-400",
   },
   {
     key: "disabled", labelKey: "disabled" as TranslationKey, icon: Ban,
@@ -120,7 +120,7 @@ const metricCards = [
   {
     key: "quota", labelKey: "quotaRemaining" as TranslationKey, icon: RefreshCw,
     gradient: "from-sky-500 to-cyan-600", shadow: "shadow-sky-200",
-    bg: "from-sky-50/80 to-cyan-50/80", textColor: "text-sky-900", labelColor: "text-sky-600",
+    bg: "from-sky-50/80 to-cyan-50/80", textColor: "text-sky-900 dark:text-sky-200", labelColor: "text-sky-700 dark:text-sky-400",
   },
 ] as const;
 

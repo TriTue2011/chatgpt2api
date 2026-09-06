@@ -7,6 +7,7 @@ import {
   LayoutDashboard, Users, Cpu, Combine, ImageIcon, Search, Archive, Settings,
   LogOut, ChevronRight, Sparkles, PanelLeftClose, Languages,
   Video, Film, Plug, MessageSquare, MessageCircle, Activity, GraduationCap,
+  ScrollText,
 } from "lucide-react";
 import webConfig from "@/constants/common-env";
 import { getValidatedAuthSession } from "@/lib/auth-session";
@@ -63,6 +64,10 @@ export const navGroups: NavGroup[] = [
     label: "Hệ thống",
     items: [
       { href: "/agent-runs", labelKey: "nav_agentRuns" as TranslationKey, icon: Activity },
+      // /logs có trang thật (357 dòng) nhưng TRƯỚC ĐÂY không link nào dẫn tới:
+      // nó chỉ nằm trong adminOnlyPaths — một danh sách PHÂN QUYỀN, không phải menu.
+      // Muốn vào phải tự gõ URL.
+      { href: "/logs", labelKey: "nav_logs" as TranslationKey, icon: ScrollText },
       { href: "/backup", labelKey: "nav_backup" as TranslationKey, icon: Archive },
       { href: "/settings", labelKey: "nav_settings" as TranslationKey, icon: Settings },
     ],
@@ -177,7 +182,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen = false, onMobileClose
         <button
           onClick={onToggle}
           className={cn(
-            "rounded-md p-1 text-[var(--sidebar-foreground)]/50 hover:text-[var(--neon-cyan)] hover:bg-[var(--sidebar-accent)] transition",
+            "rounded-md p-1 text-[var(--sidebar-foreground)]/70 hover:text-[var(--neon-cyan)] hover:bg-[var(--sidebar-accent)] transition",
             collapsed
               ? "absolute -right-2.5 top-3.5 bg-[var(--card)] border border-[var(--border)] rounded-full size-5 flex items-center justify-center"
               : "ml-auto",
@@ -192,7 +197,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen = false, onMobileClose
         {visibleGroups.map((group) => (
           <div key={group.id} className="space-y-0.5">
             {!collapsed && (
-              <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sidebar-foreground)]/40">
+              <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sidebar-foreground)]/80">
                 {group.label}
               </p>
             )}
@@ -208,7 +213,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen = false, onMobileClose
                     collapsed ? "justify-center py-2.5" : "gap-2.5 px-3 py-2",
                     active
                       ? "text-[var(--primary)] font-semibold"
-                      : "text-[var(--sidebar-foreground)]/75 hover:text-[var(--sidebar-foreground)] font-normal hover:bg-[var(--sidebar-accent)]",
+                      : "text-[var(--sidebar-foreground)]/90 hover:text-[var(--sidebar-foreground)] font-normal hover:bg-[var(--sidebar-accent)]",
                   )}
                   style={
                     active
@@ -244,14 +249,14 @@ export function Sidebar({ collapsed, onToggle, mobileOpen = false, onMobileClose
       {/* Footer — user info lives in the top header; keep only version + logout */}
       <div className="border-t border-[var(--sidebar-border)] p-3 shrink-0">
         {!collapsed && (
-          <div className="mb-2 px-1 text-[10px] text-[var(--sidebar-foreground)]/45">
+          <div className="mb-2 px-1 text-[10px] text-[var(--sidebar-foreground)]/80">
             {isAdmin ? "Admin" : "User"} · v{webConfig.appVersion}
           </div>
         )}
         <button
           onClick={handleLogout}
           className={cn(
-            "flex items-center rounded-md text-[var(--sidebar-foreground)]/60 hover:text-red-700 dark:text-red-400 hover:bg-red-400/10 transition-colors w-full text-xs",
+            "flex items-center rounded-md text-[var(--sidebar-foreground)]/80 hover:text-red-700 dark:text-red-400 hover:bg-red-400/10 transition-colors w-full text-xs",
             collapsed ? "justify-center py-2" : "gap-2 px-2 py-1.5",
           )}
         >

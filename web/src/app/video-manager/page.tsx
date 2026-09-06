@@ -81,7 +81,7 @@ export default function VideoManagerPage() {
             <Film className="size-5 text-white" />
           </div>
           <div>
-            <p className="text-[11px] font-bold tracking-widest text-violet-500 uppercase mb-1">Thư viện</p>
+            <p className="text-[11px] font-bold tracking-widest text-violet-700 dark:text-violet-400 uppercase mb-1">Thư viện</p>
             <h1 className="text-[26px] font-bold tracking-tight text-[var(--foreground)]">Quản lý video</h1>
             <p className="text-[14px] text-[var(--muted-foreground)] mt-0.5">Video đã tạo từ Veo và các model khác</p>
           </div>

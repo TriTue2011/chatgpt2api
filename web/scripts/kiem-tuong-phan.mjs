@@ -231,7 +231,10 @@ let chuyenSac = 0;
 // trắng thì amber-400 chỉ 1,67:1 và amber-300 còn 1,44:1, tức gần như vô hình
 // ở chế độ sáng. Phải đi kèm `dark:` và một sắc đậm cho chế độ sáng.
 const HO_MAU = "emerald|amber|sky|violet|rose|red|blue|indigo|teal|orange|yellow|purple|pink|green";
-const MAU_TRAN = new RegExp(`(?<!dark:)\\btext-(${HO_MAU})-(300|400)\\b`);
+// Bắt CẢ CHUỖI biến thể đứng trước để biết lớp có thuộc chế độ tối không.
+// Phép nhìn-lui `(?<!dark:)` chỉ xét đúng một tiền tố sát bên, nên nó báo
+// nhầm `dark:hover:text-rose-300` — có dark: nhưng cách một nấc `hover:`.
+const MAU_TRAN = new RegExp(`((?:[a-z][a-z0-9-]*:)*)text-(${HO_MAU})-(300|400)\\b`, "g");
 
 function quetTsx(thuMuc, ra = []) {
   for (const ten of readdirSync(thuMuc)) {
@@ -247,12 +250,13 @@ try {
   for (const f of quetTsx(join(GOC, "src"))) {
     const noiDung = readFileSync(f, "utf-8");
     noiDung.split("\n").forEach((dong, i) => {
-      const m = dong.match(MAU_TRAN);
-      if (m) {
+      for (const m of dong.matchAll(MAU_TRAN)) {
+        const bienThe = m[1] || "";
+        if (bienThe.split(":").includes("dark")) continue;   // đã có bản cho chế độ tối
         mauTran++;
         const ngan = f.replace(GOC + "/", "");
         console.log(`\nMÀU TRẦN  ${ngan}:${i + 1}  ${m[0]} — thêm sắc đậm cho chế độ sáng:`);
-        console.log(`          text-${m[1]}-700 dark:${m[0]}`);
+        console.log(`          ${bienThe}text-${m[2]}-700 dark:${m[0]}`);
       }
     });
   }

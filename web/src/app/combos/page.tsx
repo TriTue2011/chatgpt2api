@@ -499,21 +499,21 @@ function CombosPageContent() {
       </div>
 
       {/* ── Combo Code (pipeline bố-con) — KHU RIÊNG, tách biệt combo thường ── */}
-      <div className="rounded-[16px] p-6 border-2 border-violet-300/60 bg-violet-50/40">
+      <div className="rounded-[16px] p-6 border-2 border-violet-300/60 dark:border-violet-500/40 bg-violet-50/40 dark:bg-violet-950/30">
         <div className="mb-1 flex items-center gap-2.5">
           <div className="flex size-9 items-center justify-center rounded-[10px] bg-violet-100"><Combine className="size-[18px] text-violet-500" /></div>
           <h3 className="text-[15px] font-bold text-[var(--foreground)]">Combo Code — Pipeline bố-con</h3>
           <span className="rounded-md bg-violet-100 px-2 py-0.5 text-[11px] font-medium text-violet-600">dành cho viết code</span>
         </div>
         <p className="mb-4 text-xs text-[var(--muted-foreground)]">
-          <span className="font-semibold text-amber-600">BỐ</span> (model mạnh) lập kế hoạch ngắn → <span className="font-semibold text-emerald-600">CON</span> (model rẻ/free) viết code theo kế hoạch; CON sau là fallback của CON trước. Khu này tách biệt hoàn toàn với combo thường bên dưới.
+          <span className="font-semibold text-amber-700 dark:text-amber-400">BỐ</span> (model mạnh) lập kế hoạch ngắn → <span className="font-semibold text-emerald-700 dark:text-emerald-400">CON</span> (model rẻ/free) viết code theo kế hoạch; CON sau là fallback của CON trước. Khu này tách biệt hoàn toàn với combo thường bên dưới.
         </p>
 
         {/* Form tạo/sửa */}
         <div className="mb-4 space-y-2">
           <input type="text" value={plName} onChange={(e) => setPlName(e.target.value)} placeholder="Tên combo code (vd: code)" className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:border-violet-400 focus:outline-none" />
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-amber-500/10 text-amber-600 border-amber-500/20 shrink-0 w-24 text-center">BỐ · kế hoạch</span>
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-amber-500/10 text-amber-800 dark:text-amber-300 border-amber-500/20 shrink-0 w-24 text-center">BỐ · kế hoạch</span>
             <button type="button" onClick={() => setPlArchOpen(true)} className="flex flex-1 items-center justify-between rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm hover:border-violet-400 transition">
               <span className={plArchitect ? "font-mono text-xs text-[var(--foreground)]" : "text-[var(--muted-foreground)]"}>{plArchitect || "Chọn model BỐ (mạnh, để lập kế hoạch)"}</span>
               <ChevronDown className="size-4 text-[var(--muted-foreground)]" />
@@ -522,7 +522,7 @@ function CombosPageContent() {
           </div>
           {plEditors.map((id, idx) => (
             <div key={idx} className="flex items-center gap-2">
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-emerald-500/10 text-emerald-600 border-emerald-500/20 shrink-0 w-24 text-center">CON #{idx + 1} · code</span>
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20 shrink-0 w-24 text-center">CON #{idx + 1} · code</span>
               <button type="button" onClick={() => setSwapPlIdx(idx)} className="flex-1 rounded-lg bg-[var(--card)] border border-[var(--border)] px-3 py-2 text-xs font-mono text-[var(--foreground)] text-left hover:border-violet-400 transition flex items-center justify-between group" title="Đổi model khác"><span>{id}</span><ChevronDown className="size-3 text-[var(--muted-foreground)] opacity-0 group-hover:opacity-100 transition" /></button>
               <div className="flex flex-col gap-0.5">
                 <button type="button" onClick={() => movePlEditor(idx, -1)} disabled={idx === 0} className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] disabled:opacity-30"><ArrowUp className="size-3" /></button>
@@ -565,13 +565,13 @@ function CombosPageContent() {
                 <div className="space-y-1">
                   {(p.architects || []).map((m, i) => (
                     <div key={`a${i}`} className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-amber-500/10 text-amber-600 border-amber-500/20 w-24 text-center shrink-0">BỐ · kế hoạch</span>
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-amber-500/10 text-amber-800 dark:text-amber-300 border-amber-500/20 w-24 text-center shrink-0">BỐ · kế hoạch</span>
                       <span className="text-xs font-mono text-[var(--foreground)]">{m}</span>
                     </div>
                   ))}
                   {(p.editors || []).map((m, i) => (
                     <div key={`e${i}`} className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-emerald-500/10 text-emerald-600 border-emerald-500/20 w-24 text-center shrink-0">CON #{i + 1} · code</span>
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20 w-24 text-center shrink-0">CON #{i + 1} · code</span>
                       <span className="text-xs font-mono text-[var(--foreground)]">{m}</span>
                     </div>
                   ))}

@@ -205,7 +205,7 @@ function ModelsPageContent() {
           <button
             type="button"
             onClick={deselectAll}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-[var(--card)] px-3 py-2 text-xs text-red-500 hover:bg-red-50 transition"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 dark:border-red-500/40 bg-[var(--card)] px-3 py-2 text-xs text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition"
           >
             Bỏ chọn tất cả
           </button>

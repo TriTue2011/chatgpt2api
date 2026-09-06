@@ -261,7 +261,7 @@ export default function VideoPage() {
         </div>
         <div>
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-bold tracking-widest text-violet-500 uppercase">Tạo Video AI Multi-modal</span>
+            <span className="text-[11px] font-bold tracking-widest text-violet-700 dark:text-violet-400 uppercase">Tạo Video AI Multi-modal</span>
             <span className="inline-flex items-center rounded-full bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold text-violet-600 dark:text-violet-400 border border-violet-500/20">
               Agnes AI & Veo 3.1
             </span>
@@ -295,7 +295,7 @@ export default function VideoPage() {
                   <LoaderCircle className="size-4 animate-spin" /> Đang tải danh sách model...
                 </div>
               ) : videoModels.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-amber-500/40 bg-amber-500/10 px-3 py-3 text-xs font-medium text-amber-600 dark:text-amber-400">
+                <div className="rounded-xl border border-dashed border-amber-500/40 bg-amber-500/10 px-3 py-3 text-xs font-medium text-amber-800 dark:text-amber-300 dark:text-amber-400">
                   {NO_VIDEO_PROVIDER_HINT}
                 </div>
               ) : (
