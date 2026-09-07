@@ -1,4 +1,9 @@
-"""Gọi thẳng REST API của Flow — trình duyệt chỉ còn làm máy phát token.
+"""Các hợp đồng Flow REST và điểm vào tạo ảnh/video.
+
+CẬP NHẬT 07/09/2026: `tao_anh` dùng RPC cookie của flow.google.com qua
+`flow_rpc.py`. Endpoint labs.google/fx/api/auth/session cũ trả OAuth hết hạn
+sau khi Flow chuyển ứng dụng. Ghi chú bên dưới mô tả đường REST cũ; video
+và các hàm dựng/đọc hợp đồng REST vẫn giữ nguyên.
 
 VÌ SAO CÓ FILE NÀY. Đường đang chạy (`flow_google.py`) điều khiển GIAO DIỆN Flow
 bằng Chrome: gõ prompt vào Slate editor, bấm dropdown model, bấm nút Tạo, rình
@@ -885,45 +890,14 @@ async def tao_anh(*, profile: str, project_id: str, prompt: str,
                   model: str = "NARWHAL", aspect_ratio: str = "16:9",
                   count: int = 1, anh_tham_chieu: list[bytes] | None = None,
                   headless: bool = True, timeout: float = 180) -> dict[str, Any]:
-    """Tạo ảnh. Đồng bộ — đáp trả luôn media và link xem trước."""
-    bat_dau = time.time()
-    ten_model = kiem_model_anh(model)  # ném sớm, trước khi tốn một lượt mở trình duyệt
-    bearer = await lay_bearer(profile, headless)
+    """Tạo ảnh qua Flow mới; giữ hợp đồng của endpoint REST hiện có."""
+    from .flow_rpc import generate_image
 
-    media_ids = [
-        await upload_anh_tham_chieu(bearer=bearer, project_id=project_id, du_lieu=b)
-        for b in (anh_tham_chieu or [])
-    ]
-    # Đúc reCAPTCHA SAU khi đẩy ảnh xong — xem `_lay_recaptcha`.
-    recaptcha = await _lay_recaptcha(profile, headless, "IMAGE_GENERATION")
-    dap = await _post(
-        f"{API_HOST}/v1/projects/{project_id}/flowMedia:batchGenerateImages",
-        bearer,
-        than_tao_anh(project_id=project_id, prompt=prompt, model=model,
-                     aspect_ratio=aspect_ratio, count=count, media_ids=media_ids,
-                     recaptcha=recaptcha),
-        timeout,
+    return await generate_image(
+        profile=profile, project_id=project_id, prompt=prompt, model=model,
+        aspect_ratio=aspect_ratio, count=count, anh_tham_chieu=anh_tham_chieu,
+        headless=headless, timeout=timeout,
     )
-    ten = [m["name"] for m in (dap.get("media") or []) if m.get("name")]
-    if not ten:
-        raise LoiFlowRest(502, f"đáp không có media: {str(dap)[:300]}")
-
-    # Đáp của lệnh tạo KHÔNG kèm link (đo trên lượt tạo thật đầu tiên
-    # 09/08/2026). Vẫn thử moi từ thân phòng khi Flow đổi ý, rồi mới đi đổi id
-    # lấy link — một `mediaId` không có link thì bên gọi chẳng làm gì được.
-    link = doc_link_anh(dap)
-    if not link:
-        # Đáp thiếu link thì mới phải mở trình duyệt đổi id — tốn thêm vài giây
-        # nên chỉ dùng làm đường lui.
-        bang = await lay_link_media(profile, ten, headless)
-        link = [bang[t] for t in ten if bang.get(t)]
-    return {
-        "media_ids": ten,
-        "urls": link,
-        "model": ten_model,
-        "project_id": project_id,
-        "elapsed_ms": int((time.time() - bat_dau) * 1000),
-    }
 
 
 async def tao_video(*, profile: str, project_id: str, prompt: str,
