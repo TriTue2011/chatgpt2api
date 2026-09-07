@@ -117,5 +117,30 @@ class KhongBaoDongKhiBanTests(unittest.TestCase):
         self.assertTrue(any("còn sống" in str(c) for c in notify.call_args_list))
 
 
+class TaoAnhKhongKhoaTaiKhoanDangBanTests(unittest.TestCase):
+    def test_busy_khong_cooldown_hay_doi_thu_tu_tai_khoan(self):
+        from services.image_providers import flow_google as flow
+        account = {"profile": "google-test", "project_id": "project-test"}
+        with mock.patch.object(flow, "_accounts", return_value=[account]), \
+             mock.patch.object(flow, "_account_state", {}), \
+             mock.patch.object(flow, "_reorder_flow_account") as reorder:
+            flow.FlowImageAdapter().on_key_failed(
+                {"_flow_account": account}, 429, '{"detail":"Account Busy"}')
+            self.assertEqual(flow._next_account(), account,
+                             "hết bận thì request sau phải dùng được, không bị khóa một giờ")
+            reorder.assert_not_called()
+
+    def test_quota_429_that_van_phai_cooldown(self):
+        from services.image_providers import flow_google as flow
+        account = {"profile": "google-test", "project_id": "project-test"}
+        with mock.patch.object(flow, "_accounts", return_value=[account]), \
+             mock.patch.object(flow, "_account_state", {}), \
+             mock.patch.object(flow, "_reorder_flow_account") as reorder:
+            flow.FlowImageAdapter().on_key_failed(
+                {"_flow_account": account}, 429, "RESOURCE_EXHAUSTED: quota exceeded")
+            self.assertIsNone(flow._next_account())
+            reorder.assert_called_once_with(account, to_front=False)
+
+
 if __name__ == "__main__":
     unittest.main()

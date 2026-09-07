@@ -645,6 +645,11 @@ class FlowImageAdapter(BaseImageAdapter):
         if not account:
             return
         low = str(text or "").lower()
+        # Solver trả 429 khi profile đang đăng nhập/tạo ảnh ở lượt khác.
+        # Đây là khóa tạm của browser, không phải hết ngạch Google: lượt sau
+        # vẫn phải dùng được tài khoản ngay khi browser rảnh.
+        if status == 429 and "account busy" in low:
+            return
         # Cùng tín hiệu quota/rate mà parse_response() dùng — nhưng dispatcher
         # (openai_v1_image_generations) chặn resp.status_code>=400 TRƯỚC khi
         # gọi parse_response, nên nhánh _mark_quota_exhausted() trong đó
