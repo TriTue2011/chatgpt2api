@@ -22,6 +22,7 @@ os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
 
 from services import chi_duong as cd  # noqa: E402
 from services.agent import capabilities as caps  # noqa: E402
+from services.agent import ask_choices as ac  # noqa: E402
 
 
 def _resp(json_data):
@@ -254,6 +255,47 @@ class ChiDuongTests(unittest.TestCase):
 
 
 class HandlerTests(unittest.TestCase):
+    def test_menu_giu_day_du_dia_chi_va_chon_dung_ghim(self):
+        ten = ("Hoàng Thành Tower, tầng trệt, khu thương mại và dịch vụ, "
+               "114, Phố Mai Hắc Đế, Vân Hồ, Phường Hai Bà Trưng, "
+               "Thành phố Hà Nội, Đồng bằng sông Hồng, 100000, Việt Nam")
+        self.assertGreater(len(ten), 150)
+        ghim = cd.maps_search_link(21.0104, 105.8507)
+        khac = cd.maps_search_link(20.9653, 105.8232)
+        candidates = [{"ten": ten, "link": ghim}]
+        for ben in ("ĐIỂM ĐI", "ĐIỂM ĐẾN"):
+            with self.subTest(ben=ben), \
+                 patch.object(cd, "tim_dia_diem", return_value=candidates), \
+                 patch.object(cd, "dinh_vi", side_effect=AssertionError("chưa chọn ghim")), \
+                 patch.object(ac, "_db", return_value=None):
+                di, den = ("114 Mai Hắc Đế", khac) if ben == "ĐIỂM ĐI" else (khac, "114 Mai Hắc Đế")
+                out = caps._h_chi_duong({"diem_di": di, "diem_den": den,
+                                         "phuong_tien": "xe máy", "da_chon_pt": True}, {})
+                uid = "test_map_day_du"
+                try:
+                    out = ac.apply_to_result(out, uid)
+                    text = ac.format_numbered(out["text"], out["choices"])
+                    self.assertIn(f"Chọn {ben}", text)
+                    self.assertIn(f"1. 📍 {ten}", text)
+                    self.assertNotIn("…", text)
+                    self.assertNotIn("<<<ASK>>>", text)
+                    self.assertNotIn("chỉ đường từ", text)
+                    chon_di, chon_den = (ghim, khac) if ben == "ĐIỂM ĐI" else (khac, ghim)
+                    self.assertEqual(ac.resolve_reply(uid, "1"),
+                                     f"chỉ đường từ {chon_di} đến {chon_den} bằng xe máy (đã chọn phương tiện)")
+                    from services.telegram.emphasis import emphasize_text
+                    from services.zalo_markdown import markdown_to_zalo_message
+                    zalo = markdown_to_zalo_message(emphasize_text(text), danh_sach=False)
+                    self.assertEqual(zalo["msg"], text)
+                    # Mọi vùng định dạng phải nằm trên ranh giới UTF-16 hợp lệ.
+                    u16 = zalo["msg"].encode("utf-16-le")
+                    for style in zalo["styles"]:
+                        start = style["start"] * 2
+                        end = start + style["len"] * 2
+                        u16[start:end].decode("utf-16-le")
+                finally:
+                    ac.clear_pending(uid)
+
     def test_thieu_phuong_tien_thi_hoi(self):
         out = caps._h_chi_duong({"diem_di": "A", "diem_den": "B"}, {})
         self.assertTrue(out.get("deliver_now"))

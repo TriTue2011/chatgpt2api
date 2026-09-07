@@ -194,7 +194,9 @@ def _restore_quarantine(quarantine: Path, original: Path) -> None:
 
 def delete_images(paths: list[str] | None = None, start_date: str = "",
                   end_date: str = "", all_matching: bool = False,
-                  *, expected: dict[str, dict[str, int]] | None = None) -> dict[str, int]:
+                  *, expected: dict[str, dict[str, int]] | None = None,
+                  dong_bo_cloud: bool = True) -> dict[str, int]:
+    from services.agent.so_da_luu import xoa_cloud_cua_anh
     root = config.images_dir.resolve()
     targets = [str(item["path"]) for item in _image_items(start_date, end_date)] if all_matching else (paths or [])
     removed = 0
@@ -221,12 +223,17 @@ def delete_images(paths: list[str] | None = None, start_date: str = "",
                 if not _same_after_move(before, quarantine.stat()):
                     _restore_quarantine(quarantine, path)
                     continue
+                if dong_bo_cloud and not xoa_cloud_cua_anh(str(item)):
+                    _restore_quarantine(quarantine, path)
+                    continue
                 quarantine.unlink()
             except Exception:
                 if quarantine.exists():
                     _restore_quarantine(quarantine, path)
                 raise
         else:
+            if dong_bo_cloud and not xoa_cloud_cua_anh(str(item)):
+                continue
             path.unlink()
         # Nếu writer đã tạo tệp mới cùng tên sau atomic rename thì thumbnail/tag
         # có thể thuộc bản mới; giữ nguyên metadata của nó.

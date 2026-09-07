@@ -426,25 +426,29 @@ def day_nen(tep: str, cd: dict, *, nhat_ky: bool = False,
     """
     if not (cd or {}).get("enabled"):
         return False
-    dich = lt.duong_dan_dich(cd, Path(tep).name, nhat_ky=nhat_ky)
+    dich = lt.duong_dan_dich(cd, Path(tep).name, nhat_ky=nhat_ky,
+                            kenh=pham_vi[0] if pham_vi else "")
     if not dich:
         return False
     threading.Thread(target=_day, args=(tep, dich),
                      kwargs={"pham_vi": pham_vi, "nhat_ky": nhat_ky,
-                             "khi_xong": khi_xong},
+                             "khi_xong": khi_xong,
+                             "thu_muc_goc": str(cd.get("thu_muc") or "c2a")},
                      daemon=True).start()
     return True
 
 
 def _day(tep: str, dich: str, *, pham_vi: tuple[str, str, str, str] | None = None,
-         nhat_ky: bool = False, khi_xong: Callable[[str], None] | None = None) -> None:
+         nhat_ky: bool = False, khi_xong: Callable[[str], None] | None = None,
+         thu_muc_goc: str = "") -> None:
     try:
         from services import rclone_service as rcl
         kq = rcl.gui_len(tep, dich)
         if kq.get("ok"):
             logger.info(f"luu_tru_online: đã đẩy {Path(tep).name} → {dich}")
             if pham_vi:
-                lt.ghi_so(str(kq.get("duong_dan") or ""), *pham_vi, nhat_ky=nhat_ky)
+                lt.ghi_so(str(kq.get("duong_dan") or ""), *pham_vi, nhat_ky=nhat_ky,
+                          tep_cuc_bo=str(Path(tep).resolve()), thu_muc_goc=thu_muc_goc)
             if khi_xong:
                 try:
                     khi_xong(str(kq.get("duong_dan") or ""))
@@ -507,7 +511,13 @@ def luu_ngay(kenh: str, chat: str, *, tep: str, ten_tep: str = "",
         if not cd.get("enabled"):
             return "Phạm vi này chưa khai kho đám mây nào ạ."
         ten = str(ten_tep or "").strip() or Path(tep).name
-        cuc_bo = luu_vao_thu_muc_lam_viec(ten, Path(tep).read_bytes())
+        from services import rclone_service as rcl
+        nguon = Path(tep).resolve()
+        # Ảnh đã nằm trong workspace: không tạo thêm bản '-1' làm lệch tên sổ.
+        if rcl.workspace_dir() in nguon.parents and nguon.name == ten:
+            cuc_bo = str(nguon)
+        else:
+            cuc_bo = luu_vao_thu_muc_lam_viec(ten, nguon.read_bytes())
         if not day_nen(cuc_bo, cd, pham_vi=(kenh, chat, topic, user),
                        khi_xong=khi_xong):
             return "Chưa đẩy được lên kho, em ghi log rồi ạ."

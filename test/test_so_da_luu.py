@@ -11,7 +11,9 @@ os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
 
 def _patch_dir(tmp_path, monkeypatch):
     import services.config as cfg
+    from services.agent import luu_tru_online as lt
     monkeypatch.setattr(cfg, "DATA_DIR", str(tmp_path), raising=False)
+    monkeypatch.setattr(lt, "_SO_PATH", tmp_path / "uploaded.json")
 
 
 def test_ghi_va_tim_theo_mo_ta(tmp_path, monkeypatch):

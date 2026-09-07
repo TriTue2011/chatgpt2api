@@ -57,10 +57,22 @@ class KhongCatPromptTests(unittest.TestCase):
         # Câu cuối — thứ bị mất trong ca thật — phải còn.
         self.assertIn("Người nam đang dùng gáo té nước vào cô gái.", send)
 
-    def test_nhan_van_bi_cat_ngan_cho_de_doc(self):
-        """Chỉ `label` ra tới người dùng nên vẫn cắt ngắn — đó là hiển thị."""
-        _, choices = ac.extract(_menu(PROMPT_DAI))
-        self.assertLessEqual(len(choices[0]["label"]), 40)
+    def test_danh_sach_day_du_chi_nut_bam_rut_gon(self):
+        import json
+
+        label = "📍 114 Phố Mai Hắc Đế, Phường Hai Bà Trưng, Hà Nội, Việt Nam"
+        menus = [f"<<<ASK>>>\n{label} | chọn ghim\n<<<END>>>",
+                 "JAVIS_ASK " + json.dumps([label]),
+                 "JAVIS_ASK " + json.dumps([{"label": label, "send": "chọn ghim"}])]
+        for menu in menus:
+            with self.subTest(menu=menu):
+                text, choices = ac.extract(menu)
+                self.assertIn(label, ac.format_numbered(text, choices))
+                keyboard = ac.telegram_inline_keyboard(choices)
+                button = keyboard["inline_keyboard"][0][0]
+                self.assertLessEqual(len(button["text"]), 40)
+                self.assertTrue(button["text"].endswith("…"))
+                self.assertEqual(button["callback_data"], "ask:0")
 
     def test_prompt_cuc_dai_van_co_tran(self):
         """Vẫn phải có chặn để không phình vô hạn."""

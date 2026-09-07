@@ -120,16 +120,16 @@ class DuongDanDichTests(unittest.TestCase):
 
     def test_ghep_du_kho_thu_muc_goc_va_loai(self):
         cd = {"enabled": True, "kho": "drive", "thu_muc": "Gia đình"}
-        self.assertEqual(lt.duong_dan_dich(cd, "bao-cao.docx"), "drive:Gia đình/Word")
+        self.assertEqual(lt.duong_dan_dich(cd, "bao-cao.docx"), "drive:Gia đình/word/bao cao")
 
-    def test_khong_co_thu_muc_goc_thi_chi_co_loai(self):
+    def test_khong_co_thu_muc_goc_thi_dung_c2a(self):
         cd = {"enabled": True, "kho": "drive", "thu_muc": ""}
-        self.assertEqual(lt.duong_dan_dich(cd, "a.pdf"), "drive:PDF")
+        self.assertEqual(lt.duong_dan_dich(cd, "a.pdf"), "drive:c2a/pdf/a")
 
     def test_nhat_ky_di_thu_muc_rieng(self):
         cd = {"enabled": True, "kho": "drive", "thu_muc": "Nhóm A"}
-        self.assertEqual(lt.duong_dan_dich(cd, "2026-08.jsonl", nhat_ky=True),
-                         "drive:Nhóm A/Nhật ký")
+        self.assertEqual(lt.duong_dan_dich(cd, "2026-08.jsonl", nhat_ky=True, kenh="zalop"),
+                         "drive:Nhóm A/nhật ký/zalo")
 
     def test_chua_bat_thi_khong_co_dich(self):
         self.assertEqual(lt.duong_dan_dich({"enabled": False, "kho": "drive"}, "a.pdf"), "")

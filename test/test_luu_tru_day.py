@@ -82,7 +82,7 @@ class ChonLuuTests(_Base):
     def test_luu_thi_day_dung_thu_muc_theo_loai(self):
         ld.tra_loi("admin1", 1)
         self.assertEqual(len(self.nen.da_day), 1)
-        self.assertEqual(self.nen.da_day[0][1], "drive:Gia đình/PDF")
+        self.assertEqual(self.nen.da_day[0][1], "drive:Gia đình/pdf/bao cao")
 
     def test_luu_thi_khong_xoa_ban_cuc_bo(self):
         ld.tra_loi("admin1", 1)
@@ -253,14 +253,14 @@ class SauChuyenDoiTests(unittest.TestCase):
         ld.tra_loi(self.KHOA, 1)
         self.assertEqual([Path(t).name for t, _ in self.nen.da_day],
                          ["bao-cao.docx"])
-        self.assertEqual(self.nen.da_day[0][1], "drive:GD/Word")
+        self.assertEqual(self.nen.da_day[0][1], "drive:GD/word/bao cao")
 
     def test_chon_2_day_ca_hai_vao_dung_thu_muc_loai(self):
         self._hoi()
         ld.tra_loi(self.KHOA, 2)
         dich = {Path(t).name: d for t, d in self.nen.da_day}
-        self.assertEqual(dich["bao-cao.docx"], "drive:GD/Word")
-        self.assertEqual(dich["bao-cao.pdf"], "drive:GD/PDF")
+        self.assertEqual(dich["bao-cao.docx"], "drive:GD/word/bao cao")
+        self.assertEqual(dich["bao-cao.pdf"], "drive:GD/pdf/bao cao")
 
     def test_chon_4_khong_day_gi_va_don_sach(self):
         """"Không lưu" nay là số 4 — mục «Bản gốc» chen vào vị trí 3 (07/08)."""
@@ -375,7 +375,7 @@ class SauTomTatTests(unittest.TestCase):
         tep, dich = self.nen.da_day[0]
         self.assertTrue(Path(tep).name.endswith("-tom-tat.md"))
         self.assertIn("bao-cao", Path(tep).name)
-        self.assertEqual(dich, "drive:GD/Khác")
+        self.assertEqual(dich, "drive:GD/khác/bao cao tom tat")
 
     def test_noi_dung_tom_tat_duoc_ghi_ra_tep(self):
         self._hoi("Họp lúc 9 giờ thứ ba.")
@@ -514,7 +514,7 @@ class MoiLuuTests(unittest.TestCase):
         self._goi()
         self.assertEqual(self.da_gui, [])
         self.assertEqual(len(self.nen.da_day), 1)
-        self.assertEqual(self.nen.da_day[0][1], "drive:GD/PDF")
+        self.assertEqual(self.nen.da_day[0][1], "drive:GD/pdf/bao cao")
 
     def test_chua_chon_admin_thi_khong_hoi_va_khong_luu(self):
         self._cau_hinh(thread_admin="")

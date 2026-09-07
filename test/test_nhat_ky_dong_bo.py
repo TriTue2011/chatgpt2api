@@ -214,7 +214,7 @@ class DongBoMotNgayTests(_Nen):
         cd = lt.cai_dat("zalop", "nhom1")
         kq = nk.dong_bo_mot_ngay("v1|zalop|nhom1||", "2026-08-05", cd)
         self.assertTrue(kq["ok"], kq)
-        self.assertTrue(kq["dich"].startswith("drive:GD/Nhật ký/"))
+        self.assertTrue(kq["dich"].startswith("drive:GD/nhật ký/zalo/"))
         self.assertEqual(kq["so_tin"], 2)
 
     def test_noi_dung_len_may_du_tin(self):

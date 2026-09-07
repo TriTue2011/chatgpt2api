@@ -171,7 +171,7 @@ def dong_bo_mot_ngay(scope_key: str, day: str, cd: dict) -> dict:
     tin = chatlog.doc_scope_ngay(scope_key, day)
     if not tin:
         return {"ok": False, "error": "ngày này không có tin"}
-    dich_thu_muc = lt.duong_dan_dich(cd, "x.jsonl", nhat_ky=True)
+    dich_thu_muc = lt.duong_dan_dich(cd, "x.jsonl", nhat_ky=True, kenh=kenh)
     if not dich_thu_muc:
         return {"ok": False, "error": "phạm vi chưa bật lưu trữ online"}
 
@@ -221,10 +221,9 @@ def don_qua_han(*, now: float | None = None) -> dict:
             logger.info(f"nhat_ky_dong_bo: hết hạn giữ {han} ngày, đã xoá {dd}")
             da_xoa.append(str(dd))
         else:
-            # Tệp có thể đã bị xoá bằng tay trên đám mây — bỏ khỏi sổ để vòng
-            # sau không thử lại mãi.
+            # Timeout/quyền truy cập không có nghĩa là tệp đã biến mất.
+            # Giữ sổ để vòng sau thử lại, không báo đã xóa khi chưa thành công.
             logger.warning(f"nhat_ky_dong_bo: xoá {dd} hỏng: {str(kq.get('error'))[:120]}")
-            da_xoa.append(str(dd))
     lt.xoa_khoi_so(da_xoa)
     return {"xoa": len(da_xoa), "xet": len(so)}
 

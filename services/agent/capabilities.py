@@ -374,7 +374,7 @@ def _h_chi_duong(args: dict, ctx: dict) -> dict:
                  f"Chọn {ben} đúng nhé (em chưa chỉ đường hay tự chọn địa chỉ):",
                  "<<<ASK>>>"]
         for i, item in enumerate(ds, 1):
-            ten = _mot_dong(str(item.get("ten") or truy_van))[:150]
+            ten = _mot_dong(str(item.get("ten") or truy_van))
             ghim = str(item.get("link") or "")
             if not ghim:
                 continue
@@ -3453,7 +3453,7 @@ def _h_delete_media(args: dict, ctx: dict) -> dict:
 
     so = _md.xoa(chon)
     bo_qua = len(chon) - so
-    canh_bao = (f" Bỏ qua {bo_qua} tệp đã mất hoặc thay đổi sau lúc xem trước."
+    canh_bao = (f" Bỏ qua {bo_qua} tệp đã mất, thay đổi hoặc chưa xoá được bản đám mây."
                 if bo_qua else "")
     return {"deliver_now": True,
             "text": f"Đã xoá {so} {nhan} khỏi thư viện ({mo_ta}) ạ.{canh_bao}"}
@@ -5387,17 +5387,45 @@ def _h_kho_dam_may_gui(args: dict, ctx: dict) -> dict:
     if not cua_minh:
         return {"text": "Chỗ này chưa được cài kho đám mây nào để lưu ạ. Vào "
                         "Cài đặt → Lưu trữ online để chọn kho cho thread này."}
-    _dich = str(args.get("duong_dan") if op == "xoa" else args.get("thu_muc") or "")
+    _dich = str((args.get("duong_dan") if op == "xoa" else args.get("thu_muc")) or "")
+    goc = cua_minh["kho"] + ":" + (cua_minh["thu_muc"] or "")
+    tu_phan_loai = op == "gui_len" and (not _dich or _dich.rstrip("/") == goc.rstrip("/"))
+    if tu_phan_loai:
+        _dich = lt.duong_dan_dich({**cua_minh, "enabled": True}, str(args.get("tep") or ""),
+                                 mo_ta=str(args.get("mo_ta") or ""))
     if not lt.duoc_ghi(uid, _dich):
         duong = cua_minh["kho"] + ":" + (cua_minh["thu_muc"] or "")
         return {"text": f"Chỗ này chỉ ghi được vào {duong} ạ."}
     if op == "xoa":
-        kq = rcl.xoa(str(args.get("duong_dan") or ""))
+        from services.agent import so_da_luu as sdl
+        muc = [m for m in sdl.liet_ke(uid, so=500)
+               if _dich in (m.get("ref"), m.get("ref_kho"))]
+        if muc:
+            return {"text": sdl._noi_ket_qua_xoa(sdl.xoa_muc(uid, muc))}
+        kq = rcl.xoa(_dich)
+        if kq.get("ok"):
+            ban = lt.so_da_day().get(_dich) or {}
+            try:
+                sdl._don_cuc_bo({}, ban)
+            except OSError:
+                return {"text": "Đã xoá bản đám mây nhưng chưa dọn được bản cục bộ."}
+            lt.xoa_khoi_so([_dich])
         return {"text": "Đã xoá ạ." if kq.get("ok")
                 else f"Không xoá được: {kq.get('error')}"}
-    kq = rcl.gui_len(str(args.get("tep") or ""), str(args.get("thu_muc") or ""))
+    kq = rcl.gui_len(str(args.get("tep") or ""), _dich)
     if not kq.get("ok"):
         return {"text": f"Không gửi được: {kq.get('error')}"}
+    from services.agent import so_da_luu as sdl
+    from services.agent.scope import tach_khoa_phien
+    from pathlib import Path
+    sc = tach_khoa_phien(uid)
+    tep = rcl._duong_dan_cuc_bo(str(args.get("tep") or ""))
+    lt.ghi_so(kq["duong_dan"], sc.kenh, sc.chat, sc.topic, sc.actor,
+              tep_cuc_bo=str(tep),
+              thu_muc_goc=(cua_minh["thu_muc"] or "c2a") if tu_phan_loai else "")
+    loai = sdl.KIND_ANH if lt.thu_muc_loai(tep.name) == "Ảnh" else sdl.KIND_TAILIEU
+    sdl.ghi(uid, ref=kq["duong_dan"], kind=loai,
+            ten=Path(tep).name, mo_ta=str(args.get("mo_ta") or ""))
     return {"text": f"Đã gửi lên {kq['duong_dan']} ({_co_file(kq.get('co') or 0)}) ạ."}
 
 
@@ -6888,12 +6916,14 @@ CAPABILITIES: dict[str, Capability] = {
         emoji="⬆️", label="Kho đám mây (gửi lên / xoá)",
         description=(
             "GỬI file trong workspace lên kho đám mây, hoặc XOÁ file trên đó. "
-            "op=gui_len cần tep (tên file trong workspace) + thu_muc "
-            "('ten_kho:thu/muc'). op=xoa cần duong_dan."),
+            "op=gui_len cần tep (tên file trong workspace); mo_ta là chủ đề "
+            "để phân thư mục. Bỏ thu_muc để tự lưu vào gốc/loại/chủ đề. "
+            "op=xoa cần duong_dan, xóa cả bản cloud và bản local đã ghi nhận."),
         parameters={"type": "object", "properties": {
             "op": {"type": "string", "description": "gui_len | xoa"},
             "tep": {"type": "string", "description": "Tên file trong workspace (op=gui_len)"},
             "thu_muc": {"type": "string", "description": "'ten_kho:thu/muc' (op=gui_len)"},
+            "mo_ta": {"type": "string", "description": "Chủ đề/mô tả tệp, ví dụ thuốc, pccc"},
             "duong_dan": {"type": "string", "description": "'ten_kho:file' (op=xoa)"}},
             "required": ["op"]},
         workflow=("Đưa dữ liệu RA NGOÀI máy chủ nên luôn qua bước duyệt. Chỉ gửi "

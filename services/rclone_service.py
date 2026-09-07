@@ -125,7 +125,7 @@ def _chay(args: list[str], *, timeout: int = TIMEOUT_NHANH) -> tuple[bool, str, 
         # stderr của rclone có thể kèm URL có token — cắt ngắn và ghi log ở mức
         # cảnh báo chứ không đưa nguyên văn ra ngoài.
         loi = (r.stderr or "").strip()[:400]
-        logger.warning("rclone %s lỗi: %s", args[0] if args else "?", loi[:200])
+        logger.warning(f"rclone {args[0] if args else '?'} lỗi: {loi[:200]}")
         return False, r.stdout or "", loi
     return True, r.stdout or "", ""
 
@@ -463,3 +463,18 @@ def xoa(duong_dan: str) -> dict:
         return {"ok": False, "error": str(exc)}
     ok, _, err = _chay(["deletefile", dd], timeout=TIMEOUT_TRUYEN)
     return {"ok": ok, "error": err[:200]}
+
+
+def chuyen_tep(nguon: str, dich: str) -> dict:
+    """Chuyển tệp đã lưu sang chủ đề; không ghi đè tệp khác ở đích.
+
+    https://rclone.org/commands/rclone_moveto/ — --immutable từ chối thay nội dung.
+    """
+    try:
+        src, dst = _kiem_remote(nguon), _kiem_remote(dich)
+        if src.split(":", 1)[0] != dst.split(":", 1)[0]:
+            return {"ok": False, "error": "chỉ chuyển trong cùng kho"}
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    ok, _, err = _chay(["moveto", src, dst, "--immutable"], timeout=TIMEOUT_TRUYEN)
+    return {"ok": ok, "duong_dan": dst if ok else src, "error": err[:200]}

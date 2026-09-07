@@ -28,6 +28,7 @@ import json
 import re
 import threading
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -163,8 +164,25 @@ def han_giu(cd: dict, ten_tep: str = "", *, nhat_ky: bool = False) -> int:
     return _so_ngay(giu, MAC_DINH_GIU_NGAY)
 
 
-def duong_dan_dich(cd: dict, ten_tep: str, *, nhat_ky: bool = False) -> str:
-    """Đường dẫn đầy đủ trên kho: 'kho:thư/mục/gốc/Loại/tên-tệp'.
+def chu_de_tep(ten_tep: str, mo_ta: str = "") -> str:
+    """Chủ đề từ mô tả/tên; tên ảnh tự sinh thì chờ người dùng mô tả."""
+    raw = unicodedata.normalize("NFC", str(mo_ta or "").strip() or Path(ten_tep).stem).lower()
+    words = re.findall(r"[^\W_]+", raw, re.UNICODE)
+    fold = unicodedata.normalize("NFD", " ".join(words)).replace("đ", "d")
+    fold = "".join(c for c in fold if not unicodedata.combining(c))
+    for pattern, topic in ((r"\bthuoc\b", "thuốc"),
+                           (r"\bpccc\b|\bphong chay\b", "pccc")):
+        if re.search(pattern, fold):
+            return topic
+    if not mo_ta and (re.fullmatch(r"(?:anh|img|image|photo|tep|file)[\d\s_-]*", raw)
+                      or re.fullmatch(r"[a-f0-9-]{16,}", raw)):
+        return "chưa phân loại"
+    return " ".join(words)[:80].strip() or "chưa phân loại"
+
+
+def duong_dan_dich(cd: dict, ten_tep: str, *, nhat_ky: bool = False,
+                   mo_ta: str = "", kenh: str = "") -> str:
+    """Thư mục trên kho: 'kho:gốc/loại/chủ đề' hoặc 'gốc/nhật ký/kênh'.
 
     Trả chuỗi rỗng nếu phạm vi chưa bật — caller kiểm cái đó trước khi gọi.
     """
@@ -173,8 +191,10 @@ def duong_dan_dich(cd: dict, ten_tep: str, *, nhat_ky: bool = False) -> str:
     kho = str(cd.get("kho") or "").strip()
     if not kho:
         return ""
-    loai = THU_MUC_NHAT_KY if nhat_ky else thu_muc_loai(ten_tep)
-    phan = [p for p in (str(cd.get("thu_muc") or "").strip("/"), loai) if p]
+    loai = (THU_MUC_NHAT_KY if nhat_ky else thu_muc_loai(ten_tep)).lower()
+    chu_de = ({"zalop": "zalo", "zalo": "zalo", "tg": "telegram"}.get(kenh, "khác")
+              if nhat_ky else chu_de_tep(ten_tep, mo_ta))
+    phan = [str(cd.get("thu_muc") or "c2a").strip("/"), loai, chu_de]
     return f"{kho}:{'/'.join(phan)}"
 
 
@@ -382,7 +402,8 @@ def _ghi_so_file(so: dict[str, dict]) -> None:
 
 
 def ghi_so(duong_dan: str, kenh: str, chat: str, topic: str = "", user: str = "",
-           *, nhat_ky: bool = False) -> None:
+           *, nhat_ky: bool = False, tep_cuc_bo: str = "",
+           thu_muc_goc: str = "") -> None:
     """Ghi nhận một tệp đã đẩy lên, kèm phạm vi để sau tra đúng hạn giữ của nó."""
     dd = str(duong_dan or "").strip()
     if not dd:
@@ -390,7 +411,14 @@ def ghi_so(duong_dan: str, kenh: str, chat: str, topic: str = "", user: str = ""
     with _khoa_so:
         so = _doc_so()
         so[dd] = {"luc": time.time(), "pham_vi": [kenh, chat, topic, user],
-                  "nhat_ky": bool(nhat_ky)}
+                  "nhat_ky": bool(nhat_ky), "tep_cuc_bo": tep_cuc_bo,
+                  "thu_muc_goc": thu_muc_goc}
+        if tep_cuc_bo:
+            try:
+                st = Path(tep_cuc_bo).stat()
+                so[dd]["cuc_bo_identity"] = [st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns]
+            except OSError:
+                pass
         if len(so) > _TRAN_SO:
             cu = sorted(so.items(), key=lambda kv: float(kv[1].get("luc") or 0))
             so = dict(cu[-_TRAN_SO:])
@@ -411,6 +439,15 @@ def xoa_khoi_so(cac_duong_dan: list[str]) -> None:
         for dd in cac_duong_dan:
             so.pop(str(dd), None)
         _ghi_so_file(so)
+
+
+def doi_duong_dan(cu: str, moi: str) -> None:
+    """Giữ metadata/hạn lưu khi tệp chuyển vào thư mục chủ đề."""
+    with _khoa_so:
+        so = _doc_so()
+        if cu in so:
+            so[moi] = so.pop(cu)
+            _ghi_so_file(so)
 
 
 def canh_bao_ma_hoa(kho: str) -> str:

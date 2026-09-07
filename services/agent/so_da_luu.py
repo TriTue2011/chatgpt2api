@@ -146,6 +146,7 @@ def ghi(user_id: str, *, ref: str, kind: str, mo_ta: str = "",
             muc["id"] = _id_muc(cu)
             if not muc["ref_kho"]:
                 muc["ref_kho"] = str(cu.get("ref_kho") or "")
+        _sap_xep_muc(muc)
         ds = [m for m in ds if m.get("ref") != r]
         ds.insert(0, muc)
         d[uid] = ds[:_MOI_NGUOI]
@@ -215,8 +216,10 @@ def dat_cho_mo_ta(user_id: str, *, ref: str, ten: str = "",
     """Vừa lưu một thứ, đang CHỜ người dùng nhập mô tả để ghi mục lục."""
     uid = str(user_id or "").strip()
     if uid and ref:
-        _cho_mo_ta[uid] = {"ref": ref, "ref_kho": ref_kho, "ten": ten,
-                            "kind": kind, "ts": time.time()}
+        with _lock:
+            ghi(uid, ref=ref, ref_kho=ref_kho, ten=ten, kind=kind, tu_khoa=ten)
+            _cho_mo_ta[uid] = {"ref": ref, "ref_kho": ref_kho, "ten": ten,
+                                "kind": kind, "ts": time.time()}
 
 
 def cau_hoi_mo_ta(kind: str = KIND_ANH) -> str:
@@ -241,12 +244,14 @@ def gan_ref_kho(user_id: str, *, ref: str, ref_kho: str) -> bool:
         cho = _cho_mo_ta.get(uid)
         if _tuoi_ok(cho) and str(cho.get("ref") or "") == r:
             cho["ref_kho"] = kho
-            return True
         d = _doc()
         ds = [m for m in (d.get(uid) or []) if isinstance(m, dict)]
         for muc in ds:
             if str(muc.get("ref") or "") == r:
                 muc["ref_kho"] = kho
+                _sap_xep_muc(muc)
+                if _tuoi_ok(cho) and str(cho.get("ref") or "") == r:
+                    cho["ref_kho"] = muc["ref_kho"]
                 d[uid] = ds
                 return _ghi_file(d)
     return False
@@ -328,10 +333,100 @@ def _nhan(muc: dict, *, dai: int = 100) -> str:
 def _la_ref_kho(ref: str) -> bool:
     """Chỉ ref rclone hợp lệ mới được phép xóa file thật.
 
-    URL ảnh và các bản ghi cũ chỉ có tên tệp không đủ thông tin để xóa ở một
-    kho nào đó; với chúng, thao tác chỉ bỏ mục lục và phải nói rõ điều này.
+    URL ảnh và các bản ghi cũ chỉ có tên tệp cần đối chiếu sổ upload trước.
     """
-    return bool(re.match(r"^[A-Za-z0-9_.-]{1,64}:.+", str(ref or "").strip()))
+    r = str(ref or "").strip()
+    return "://" not in r and bool(re.match(r"^[A-Za-z0-9_.-]{1,64}:.+", r))
+
+
+def _sap_xep_muc(muc: dict) -> None:
+    """Mô tả đến trước hay sau upload đều đưa bản cloud vào đúng chủ đề."""
+    from services.agent import luu_tru_online as lt
+    from services import rclone_service as rc
+
+    ref = str(muc.get("ref_kho") or muc.get("ref") or "")
+    if not muc.get("mo_ta") or not _la_ref_kho(ref):
+        return
+    ban = lt.so_da_day().get(ref) or {}
+    # Chỉ sắp xếp những tệp bot đã ghi lại gốc lúc upload.
+    goc = str(ban.get("thu_muc_goc") or "")
+    if not goc:
+        return
+    cd = {"enabled": True, "kho": ref.split(":", 1)[0], "thu_muc": goc}
+    ten = ref.rsplit("/", 1)[-1]
+    dich = lt.duong_dan_dich(cd, ten, mo_ta=str(muc["mo_ta"])) + "/" + ten
+    if dich == ref:
+        return
+    try:
+        kq = rc.chuyen_tep(ref, dich)
+    except Exception as exc:
+        kq = {"ok": False, "error": str(exc)}
+    if not kq.get("ok"):
+        muc["loi_sap_xep"] = str(kq.get("error") or "không chuyển được thư mục")[:200]
+        return
+    lt.doi_duong_dan(ref, dich)
+    if muc.get("ref") == ref:
+        muc["ref"] = dich
+    muc["ref_kho"] = dich
+    muc.pop("loi_sap_xep", None)
+
+
+def _tim_ref_kho(uid: str, muc: dict) -> str:
+    """Bản ghi cũ: đối chiếu đúng tên và phạm vi trong sổ đã upload."""
+    from services.agent import luu_tru_online as lt
+    from services.agent.scope import tach_khoa_phien
+
+    ref = str(muc.get("ref_kho") or muc.get("ref") or "")
+    if _la_ref_kho(ref):
+        return ref
+    sc = tach_khoa_phien(uid)
+    ten = str(muc.get("ten") or "")
+    if not sc.chat or not ten:
+        return ""
+    khop = []
+    for dd, ban in lt.so_da_day().items():
+        pv = list(ban.get("pham_vi") or [])
+        if len(pv) != 4 or pv[:3] != [sc.kenh, sc.chat, sc.topic]:
+            continue
+        if sc.actor and pv[3] != sc.actor:
+            continue
+        if dd.rsplit("/", 1)[-1] == ten:
+            khop.append(dd)
+    return khop[0] if len(khop) == 1 else ""
+
+
+def _anh_cuc_bo(ref: str) -> str:
+    from urllib.parse import unquote, urlparse
+    from services.net_guard import is_self_images_url
+
+    if is_self_images_url(ref):
+        return unquote(urlparse(ref).path[len("/images/"):])
+    return ""
+
+
+def _don_cuc_bo(muc: dict, ban_cloud: dict, *, xoa_anh: bool = True) -> None:
+    from services import rclone_service as rc
+
+    tep = str(ban_cloud.get("tep_cuc_bo") or "")
+    if tep:
+        # Chỉ dọn bản upload đã ghi nhận bên trong workspace.
+        path = Path(tep).resolve()
+        if rc.workspace_dir().resolve() in path.parents and path.exists():
+            identity = ban_cloud.get("cuc_bo_identity")
+            st = path.stat()
+            if not identity or identity != [st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns]:
+                raise OSError("bản cục bộ đã thay đổi, giữ lại để tránh xóa nhầm tệp mới")
+            path.unlink(missing_ok=True)
+    ten = Path(str(muc.get("ten") or "")).name
+    if ten and muc.get("id"):
+        an_toan = re.sub(r"[^A-Za-z0-9._-]+", "_", ten)[:120] or "file.bin"
+        # Cùng đường dẫn cache mà gui_lai tạo khi tải tệp đã lưu về để gửi.
+        cache = rc._duong_dan_cuc_bo(f"muc_luc/{_id_muc(muc)}/{an_toan}")
+        cache.unlink(missing_ok=True)
+    anh = _anh_cuc_bo(str(muc.get("ref") or ""))
+    if anh and xoa_anh:
+        from services.image_service import delete_images
+        delete_images(paths=[anh], dong_bo_cloud=False)
 
 
 def _xoa_ref_kho(ref: str) -> dict:
@@ -339,13 +434,9 @@ def _xoa_ref_kho(ref: str) -> dict:
     return rclone_service.xoa(ref)
 
 
-def xoa_muc(user_id: str, items: list[dict]) -> dict:
-    """Xóa các mục đã xác nhận; chỉ bỏ index khi không xác định được kho thật.
-
-    Ref có dạng rclone ``remote:path`` sẽ bị xóa thật trước, và *chỉ* bỏ khỏi
-    mục lục nếu xóa thành công. Bản ghi URL/legacy không có tọa độ kho: không
-    bịa là đã xóa file, chỉ xóa mục lục để người dùng còn biết chính xác kết quả.
-    """
+def xoa_muc(user_id: str, items: list[dict], *, xoa_cuc_bo: bool = True) -> dict:
+    """Xóa cloud rồi bản local; chỉ bỏ mục lục khi mọi bước thành công."""
+    from services.agent import luu_tru_online as lt
     uid = str(user_id or "").strip()
     if not uid or not items:
         return {"da_xoa": [], "bo_muc_luc": [], "that_bai": []}
@@ -362,20 +453,27 @@ def xoa_muc(user_id: str, items: list[dict]) -> dict:
                 giu.append(muc)
                 continue
             ban = _ban_sao(muc)
-            ref = str(ban.get("ref_kho") or ban.get("ref") or "")
+            ref = _tim_ref_kho(uid, ban)
             if _la_ref_kho(ref):
+                ban_cloud = lt.so_da_day().get(ref) or {}
                 try:
-                    kq = _xoa_ref_kho(ref)
+                    kq = {"ok": True} if muc.get("da_xoa_cloud") else _xoa_ref_kho(ref)
+                    if kq.get("ok"):
+                        muc["da_xoa_cloud"] = True
+                        _don_cuc_bo(ban, ban_cloud, xoa_anh=xoa_cuc_bo)
                 except Exception as exc:
                     kq = {"ok": False, "error": str(exc)}
                 if kq.get("ok"):
+                    lt.xoa_khoi_so([ref])
                     da_xoa.append(ban)
                 else:
                     ban["loi_xoa"] = str(kq.get("error") or "không rõ")[:120]
                     that_bai.append(ban)
                     giu.append(muc)
             else:
-                bo_muc_luc.append(ban)
+                ban["loi_xoa"] = "chưa xác định được bản cloud; giữ mục để đối chiếu hoặc chờ upload xong"
+                that_bai.append(ban)
+                giu.append(muc)
         d[uid] = giu
         if not _ghi_file(d):
             # Không nói thành công nếu JSON không cập nhật được. File mây có thể
@@ -386,19 +484,31 @@ def xoa_muc(user_id: str, items: list[dict]) -> dict:
     return {"da_xoa": da_xoa, "bo_muc_luc": bo_muc_luc, "that_bai": that_bai}
 
 
+def xoa_cloud_cua_anh(relative_path: str) -> bool:
+    """Xóa thư viện local cũng phải xóa bản cloud của các mục đã lưu tương ứng."""
+    with _lock:
+        for uid, items in _doc().items():
+            chon = [m for m in items if isinstance(m, dict)
+                    and _anh_cuc_bo(str(m.get("ref") or "")) == relative_path]
+            if chon and xoa_muc(uid, chon, xoa_cuc_bo=False)["that_bai"]:
+                return False
+    return True
+
+
 def _noi_ket_qua_xoa(kq: dict) -> str:
     da_xoa = kq.get("da_xoa") or []
     bo = kq.get("bo_muc_luc") or []
     loi = kq.get("that_bai") or []
     dong: list[str] = []
     if da_xoa:
-        dong.append(f"Đã xóa {len(da_xoa)} tệp khỏi kho đám mây và mục lục ✅")
+        dong.append(f"Đã xóa {len(da_xoa)} tệp khỏi kho đám mây, bản cục bộ đã lưu và mục lục ✅")
     if bo:
         dong.append(f"Đã bỏ {len(bo)} mục khỏi mục lục. Các mục này không có đường dẫn kho "
                     "đủ để xóa file gốc, nên em không nói là đã xóa tệp.")
     if loi:
         ten = ", ".join(_nhan(m, dai=40) for m in loi[:3])
         dong.append(f"Chưa xóa được {len(loi)} mục ({ten}). Em giữ nguyên chúng trong mục lục.")
+        dong.extend(str(m["loi_xoa"]) for m in loi[:3] if m.get("loi_xoa"))
     return "\n".join(dong) or "Không có mục nào được xóa ạ."
 
 
@@ -567,9 +677,15 @@ def xu_ly_tra_loi(user_id: str, text: str) -> dict | None:
         ghi(uid, ref=str(rec.get("ref")), ref_kho=str(rec.get("ref_kho") or ""),
             kind=str(rec.get("kind") or KIND_ANH), mo_ta=t,
             ten=str(rec.get("ten") or ""), tu_khoa=str(rec.get("ten") or ""))
+        muc = next((m for m in liet_ke(uid, so=_MOI_NGUOI)
+                    if m.get("mo_ta") == t and m.get("ten") == rec.get("ten")), {})
+        them = (" Chưa chuyển được thư mục trên đám mây; bản đã lưu vẫn ở vị trí cũ."
+                if muc.get("loi_sap_xep") else "")
+        if not them and muc.get("ref_kho"):
+            them = f" Thư mục: {str(muc['ref_kho']).rsplit('/', 1)[0]}."
         goi = t.split()[0] if t.split() else "…"
         loai = "ảnh" if str(rec.get("kind") or KIND_ANH) == KIND_ANH else "tệp"
         return {"text": f"Đã ghi vào mục lục: «{t[:80]}» ✅ Sau anh/chị nhắn "
-                        f"«gửi {loai} {goi}» là em tìm ra ạ."}
+                        f"«gửi {loai} {goi}» là em tìm ra ạ.{them}"}
 
     return None

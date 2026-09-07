@@ -53,7 +53,8 @@ _lock = threading.RLock()
 # user_id -> {"choices": [...], "ts": float}
 _pending: dict[str, dict[str, Any]] = {}
 _TTL = 600.0
-_LABEL_MAX = 40
+# Chỉ rút gọn chữ trên nút; danh sách số cần đầy đủ địa chỉ/tên để chọn đúng.
+_BUTTON_LABEL_MAX = 40
 
 # Trần độ dài của `send` — chuỗi được TIÊM LÀM TIN NHẮN kế tiếp khi người dùng
 # chọn. Trước đây là 200, kèm chú thích "để người dùng không bao giờ gửi thứ họ
@@ -137,8 +138,6 @@ def extract(text: str) -> tuple[str, list[dict[str, str]]]:
                 label = send = line
             if not label:
                 continue
-            if len(label) > _LABEL_MAX:
-                label = label[: _LABEL_MAX - 1] + "…"
             send = _cat_send(send, label)
             choices.append({"label": label, "send": send or label})
 
@@ -158,15 +157,11 @@ def extract(text: str) -> tuple[str, list[dict[str, str]]]:
                     for item in arr:
                         if isinstance(item, str) and item.strip():
                             lab = item.strip()
-                            if len(lab) > _LABEL_MAX:
-                                lab = lab[: _LABEL_MAX - 1] + "…"
                             choices.append({"label": lab, "send": _cat_send(item.strip(), lab)})
                         elif isinstance(item, dict):
                             lab = str(item.get("label") or item.get("text") or "").strip()
                             send = str(item.get("send") or item.get("value") or lab).strip()
                             if lab:
-                                if len(lab) > _LABEL_MAX:
-                                    lab = lab[: _LABEL_MAX - 1] + "…"
                                 choices.append({"label": lab, "send": _cat_send(send or lab, lab)})
                 clean = _JAVIS_RE.sub("", clean)
             except Exception:
@@ -289,8 +284,11 @@ def telegram_inline_keyboard(choices: list[dict[str, str]]) -> dict[str, Any]:
     rows: list[list[dict[str, str]]] = []
     row: list[dict[str, str]] = []
     for i, c in enumerate(choices):
+        label = c["label"]
+        if len(label) > _BUTTON_LABEL_MAX:
+            label = label[:_BUTTON_LABEL_MAX - 1] + "…"
         row.append({
-            "text": c["label"][:64],
+            "text": label,
             "callback_data": f"ask:{i}",
         })
         # 2 buttons per row
