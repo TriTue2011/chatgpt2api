@@ -32,6 +32,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -40,6 +41,9 @@ from services import lich_lap
 from services.config import DATA_DIR, config
 
 logger = logging.getLogger(__name__)
+
+# Ingress thread locals must survive the orchestrator's worker boundary.
+delivery_context: ContextVar[dict | None] = ContextVar("reminder_delivery", default=None)
 
 # Bản đồ thứ tiếng Việt → số của Python (0 = Thứ Hai … 6 = Chủ Nhật).
 _THU_VN = {
@@ -638,6 +642,9 @@ def _capture_delivery_ctx(channel: str) -> dict[str, Any]:
     kênh): bot nào nhận tin thì đúng bot đó gửi nhắc (đa-bot); Zalo Cá Nhân
     thêm account nhận + loại thread (nhóm/cá nhân) — kẻo nhắc trong NHÓM bị
     gửi sai loại. Best-effort: ngoài ngữ cảnh kênh → {} (giữ hành vi cũ)."""
+    inherited = delivery_context.get()
+    if inherited is not None and inherited.get("channel") == channel:
+        return {k: v for k, v in inherited.items() if k != "channel"}
     ctx: dict[str, Any] = {}
     try:
         if channel == "tg":
@@ -924,16 +931,22 @@ def _run_task(user_id: str, prompt: str, *, channel: str = "",
     # ngày để lập báo cáo theo mẫu…" chạy ra đúng một câu chào — "Dạ em đây ạ 😊
     # Anh cần em giúp việc gì hôm nay nè?". Model bị cấm hỏi, lại bị bảo trả lời
     # ngắn gọn, nên nó chào rồi thôi. Việc đó chạy 5 lần, hỏng cả 5.
-    out = orchestrate(
-        "[Nhắc việc theo lịch — làm ngay. Đã được duyệt sẵn nên KHÔNG hỏi xin "
-        "phép lại; nhưng nếu việc này YÊU CẦU hỏi người dùng để lấy thông tin "
-        "thì cứ hỏi đúng như lời dặn bên dưới.]\n"
-        f"{prompt}",
-        user_id,
-        ha_fastpath=True,
-        auto_approve=True,
-        model=model or None,
-    )
+    token = delivery_context.set({"channel": channel, **(meta or {})})
+    try:
+        out = orchestrate(
+            "[Nhắc việc theo lịch — làm ngay. Đã được duyệt sẵn nên KHÔNG hỏi xin "
+            "phép lại; nhưng nếu việc này YÊU CẦU hỏi người dùng để lấy thông tin "
+            "thì cứ hỏi đúng như lời dặn bên dưới.]\n" +
+            ("Hãy tạo nội dung kết quả hoàn chỉnh. Dữ liệu hôm nay phải lấy bằng công cụ lúc chạy. "
+             "Hệ thống sẽ gửi kết quả đến nơi nhận đã lưu; không gọi send_to_contact hay đặt thêm lịch.\n"
+             if (meta or {}).get("delivery_targets") else "") + f"{prompt}",
+            user_id,
+            ha_fastpath=True,
+            auto_approve=True,
+            model=model or None,
+        )
+    finally:
+        delivery_context.reset(token)
     if out.get("silent"):
         return ""
     return str(out.get("text") or "").strip()
@@ -1125,7 +1138,15 @@ def _fire(row: dict[str, Any], now_ts: float) -> None:
         except Exception as exc:
             result = f"(lỗi khi chạy việc: {str(exc)[:120]})"
         body = result or f"Đã xử lý: {text}"
-        _send(channel, chat_id, f"⏰ Việc theo lịch:\n{body}", meta)
+        targets = meta.get("delivery_targets") or []
+        if targets:
+            from services.agent.capabilities import _send_one_contact
+            for target in targets:
+                ok, detail = _send_one_contact(target, f"⏰ Việc theo lịch:\n{body}")
+                if not ok:
+                    logger.warning("agent.reminders: delivery failed id=%s: %s", rid, detail)
+        else:
+            _send(channel, chat_id, f"⏰ Việc theo lịch:\n{body}", meta)
     elif mode == "loa":
         ok, chi_tiet = _phat_ra_loa(meta, text)
         _send(channel, chat_id,

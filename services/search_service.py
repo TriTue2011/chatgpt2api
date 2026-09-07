@@ -1475,7 +1475,8 @@ class SearchService:
                     job_type, name = futures[future]
                     if job_type == "mcp":
                         sid, text = future.result()
-                        if text and len(text) > 20:
+                        from services.mcp_client import la_loi_mcp
+                        if text and len(text) > 20 and not la_loi_mcp(text):
                             # _trim_mcp_result keeps the commodity the user asked
                             # about (gold-first reorder before the 4000-char cut)
                             # so "giá vàng" no longer gets only the silver rows

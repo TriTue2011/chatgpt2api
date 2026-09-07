@@ -14,7 +14,7 @@ Tools:
 from __future__ import annotations
 
 import logging
-import os
+import re
 from typing import Any
 
 import httpx
@@ -102,57 +102,47 @@ def _fetch_doji() -> list[dict[str, Any]]:
 
 
 def _fetch_btmc() -> list[dict[str, Any]]:
-    """BTMC (Bảo Tín Minh Châu) JSON API — most comprehensive single source.
+    """Read BTMC's current public gold table (the former API times out).
 
-    Returns rows for BTMC own gold (Vàng Rồng Thăng Long), SJC, and a
-    "cross-brand spot" row that covers DOJI / PNJ / Phú Quý at the daily
-    interbank price. PNJ itself blocks server-IP scraping with Cloudflare,
-    so this is the most reliable way to surface their headline price.
-    Format quirks: response uses indexed keys (@n_1, @pb_1, ...) per row.
-
-    Khoá dưới đây KHÔNG phải bí mật: chính BTMC đăng nó trong tài liệu API công
-    khai (btmc.vn/thong-tin/tai-lieu-api/api-gia-vang-17784.html) để ai cũng gọi
-    được, giống một endpoint công cộng hơn là một thông tin xác thực. Vẫn cho
-    ghi đè bằng BTMC_API_KEY phòng khi BTMC đổi khoá công bố.
+    Keep the site's displayed unit and product weight, including 0.1 coins;
+    never relabel these figures as dong/tael or another dealer's quote.
     """
-    url = "http://api.btmc.vn/api/BTMCAPI/getpricebtmc"
-    params = {"key": os.environ.get("BTMC_API_KEY", "").strip()
-                     or "3kd8ub1llcg9t45hnoh8hmn7t5kc2v"}
     try:
-        with httpx.Client(timeout=10.0) as client:
-            r = client.get(url, params=params)
-            r.raise_for_status()
-        data = r.json()
+        with httpx.Client(timeout=10.0, follow_redirects=True) as client:
+            response = client.get("https://btmc.vn/")
+            response.raise_for_status()
+        return _parse_btmc(response.text)
     except Exception as exc:
         logger.warning("BTMC fetch failed: %s", exc)
         return []
-    rows: list[dict[str, Any]] = []
-    for item in (data.get("DataList") or {}).get("Data") or []:
-        # Each row has keys like @n_1, @pb_1 with the same trailing number.
-        # Grab the first numbered suffix to read the row.
-        n_keys = [k for k in item if k.startswith("@n_")]
-        if not n_keys:
+
+
+def _parse_btmc(html: str) -> list[dict[str, Any]]:
+    soup = BeautifulSoup(html, "html.parser")
+    table = soup.select_one("table.bd_price_home")
+    if table is None or "Loại vàng" not in table.get_text(" ", strip=True):
+        return []
+    # Timestamp following the GOLD table, not the independently updated silver table.
+    # The timestamp is outside the immediate wrapper on the public page.
+    tail = str(soup)[str(soup).find(str(table)) + len(str(table)):]
+    tail = tail.split('<table', 1)[0]
+    context = BeautifulSoup(tail, "html.parser").get_text(" ", strip=True)
+    updated = re.search(r"Cập nhật lúc\s*(\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2})", context, re.I)
+    unit = re.search(r"ĐVT\s*1\s*=\s*1[.,]000\s*VNĐ", context, re.I)
+    if not updated or not unit:
+        return []  # Unknown unit/date must not become a fabricated current quote.
+    rows = []
+    for tr in table.find_all("tr"):
+        cells = [c.get_text(" ", strip=True) for c in tr.find_all("td", recursive=False)]
+        if len(cells) not in (4, 5):
             continue
-        idx = n_keys[0].split("_", 1)[1]
-        name  = str(item.get(f"@n_{idx}") or "").strip()
-        karat = str(item.get(f"@k_{idx}") or "").strip()
-        purity = str(item.get(f"@h_{idx}") or "").strip()
-        buy   = str(item.get(f"@pb_{idx}") or "").strip()
-        sell  = str(item.get(f"@ps_{idx}") or "").strip()
-        if not name:
+        name, purity, buy, sell = cells[-4:]
+        if not name or not re.fullmatch(r"[\d.,]+", buy):
             continue
-        def _fmt(v: str) -> str:
-            if not v or v == "0":
-                return "—"
-            try:
-                return f"{int(v):,}".replace(",", ".")
-            except (TypeError, ValueError):
-                return v
-        rows.append({
-            "type": f"{name} ({karat}, {purity})" if karat else name,
-            "buy": _fmt(buy),
-            "sell": _fmt(sell),
-        })
+        if not re.fullmatch(r"[\d.,]+", sell) and not sell.startswith("Liên hệ"):
+            continue
+        rows.append({"type": f"{name} ({purity})", "buy": buy, "sell": sell,
+                     "updated_at": updated.group(1), "unit": "1 = 1.000 VNĐ (theo sản phẩm niêm yết)"})
     return rows
 
 
@@ -218,65 +208,34 @@ def get_exchange_rate(base: str = "USD", quote: str = "VND") -> str:
 
 @mcp.tool()
 def get_gold_prices(brand: str = "all") -> str:
-    """Lấy giá vàng hôm nay tại Việt Nam từ SJC, DOJI và BTMC (gồm PNJ).
+    """Giá vàng từ SJC, DOJI, BTMC, kèm nguồn và thời điểm khi nguồn cung cấp.
 
-    Args:
-        brand: "sjc", "doji", "btmc", "pnj", hoặc "all" (mặc định).
-            "btmc" và "pnj" trả về cùng dữ liệu BTMC vì BTMC API có cả giá
-            spot DOJI/PNJ/Phú Quý cùng giá BTMC own (Vàng Rồng Thăng Long).
-
-    Returns:
-        Bảng giá vàng chi tiết kèm giá mua vào/bán ra.
+    brand: sjc | doji | btmc | all. Không suy giá PNJ từ bảng của hãng khác.
     """
     brand = brand.lower().strip()
-    if brand == "pnj":
-        brand = "btmc"
-    lines = []
-
-    if brand in ("sjc", "all"):
-        sjc_rows = _fetch_sjc()
-        if sjc_rows:
-            lines.append("**Giá vàng SJC hôm nay:**")
-            lines.append("")
-            lines.append("| Loại vàng | Mua vào | Bán ra |")
-            lines.append("|---|---:|---:|")
-            for r in sjc_rows:
-                lines.append(f"| {r['type']} | {r['buy']} | {r['sell']} |")
-            lines.append("\n_Đơn vị SJC: nghìn đồng/lượng. Nguồn: sjc.com.vn_")
-        elif brand == "sjc":
-            return "Không lấy được giá vàng SJC lúc này."
-
-    if brand in ("doji", "all"):
-        if lines:
-            lines.append("\n" + "─" * 40 + "\n")
-        doji_rows = _fetch_doji()
-        if doji_rows:
-            lines.append("**Giá vàng DOJI hôm nay:**")
-            lines.append("")
-            lines.append("| Loại vàng | Mua vào | Bán ra |")
-            lines.append("|---|---:|---:|")
-            for r in doji_rows:
-                lines.append(f"| {r['type']} | {r['buy']} | {r['sell']} |")
-            lines.append("\n_Đơn vị DOJI: nghìn đồng/chỉ (1 lượng = 10 chỉ). Nguồn: giavang.doji.vn_")
-        elif brand == "doji":
-            return "Không lấy được giá vàng DOJI lúc này."
-
-    if brand in ("btmc", "all"):
-        if lines:
-            lines.append("\n" + "─" * 40 + "\n")
-        btmc_rows = _fetch_btmc()
-        if btmc_rows:
-            lines.append("**Giá vàng BTMC + PNJ/DOJI/Phú Quý (interbank) hôm nay:**")
-            lines.append("")
-            lines.append("| Loại vàng | Mua vào | Bán ra |")
-            lines.append("|---|---:|---:|")
-            for r in btmc_rows:
-                lines.append(f"| {r['type']} | {r['buy']} | {r['sell']} |")
-            lines.append("\n_Đơn vị BTMC: đồng/lượng. Nguồn: api.btmc.vn (PNJ blocks direct scrape — BTMC has the same spot price)._")
-        elif brand == "btmc":
-            return "Không lấy được giá vàng BTMC lúc này."
-
+    sources = {
+        "sjc": (_fetch_sjc, SJC_URL, "nghìn đồng/lượng"),
+        "doji": (_fetch_doji, DOJI_URL, "nghìn đồng/chỉ"),
+        "btmc": (_fetch_btmc, "https://btmc.vn/", "theo sản phẩm niêm yết"),
+    }
+    if brand not in (*sources, "all"):
+        return f"Không lấy được giá vàng {brand.upper()}: chưa có nguồn trực tiếp được hỗ trợ."
+    lines, missing = [], []
+    for name, (fetch, url, unit) in sources.items():
+        if brand not in (name, "all"):
+            continue
+        rows = fetch()
+        if not rows:
+            missing.append(name.upper())
+            continue
+        date = rows[0].get("updated_at") or "nguồn chưa cung cấp thời điểm; cần kiểm tra độ mới"
+        lines += [f"**Giá vàng {name.upper()}**", f"Cập nhật: {date}",
+                  "| Loại vàng | Mua vào | Bán ra |", "|---|---:|---:|"]
+        for row in rows:
+            lines.append(f"| {row['type']} | {row['buy']} | {row['sell']} |")
+        lines.append(f"Đơn vị: {rows[0].get('unit') or unit}. Nguồn: {url}")
     if not lines:
-        return "Không lấy được thông tin giá vàng lúc này."
-
+        return "Không lấy được thông tin giá vàng lúc này (nguồn: " + ", ".join(missing) + ")."
+    if missing:
+        lines.append("Chưa lấy được bảng trực tiếp từ: " + ", ".join(missing) + ".")
     return "\n".join(lines)

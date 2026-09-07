@@ -1973,6 +1973,25 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None,
     _bcd = _bang_chi_duong(allow, user_text)
     if _bcd:
         parts.append(_bcd)
+    from services.agent import reminders as rem
+    channel, chat_id = rem.channel_of(user_id)
+    delivery = rem._capture_delivery_ctx(channel)
+    channel_label = {"zalop": "Zalo cá nhân", "zalo": "Zalo Bot", "tg": "Telegram"}.get(channel, channel)
+    parts.append(
+        "## Ngữ cảnh đang hoạt động (hệ thống xác định)\n"
+        f"Kênh: {channel} ({channel_label}); chat_id: {chat_id}; "
+        f"tài khoản: {delivery.get('account') or delivery.get('bot_id') or 'chưa xác định'}.\n"
+        "'Gửi/nhắc cho anh/tôi/mình' là chính chat này, không phải admin mặc định khác. "
+        "Dùng thông tin đã xác nhận trong hội thoại; không hỏi lại kênh/người nhận đã rõ. "
+        "Danh bạ và lịch hiện tại từ công cụ ưu tiên hơn tóm tắt cũ. "
+        "Thông tin ghi nhớ bị sửa thì dùng lời dặn mới nhất; chỉ nói đã ghi nhớ sau khi remember thành công.")
+    if re.search(r"lịch|nhắc|hàng ngày|hằng ngày|định kỳ", user_text, re.I) and caps.nhom_duoc_phep(caps.group_of("schedule"), allow):
+        try:
+            active = rem.list_for(user_id)
+            parts.append("Lịch đang hoạt động (đọc từ cơ sở dữ liệu lúc này):\n" +
+                         ("\n".join(rem.describe(r) for r in active[:12]) or "Không có lịch đang hoạt động."))
+        except Exception:
+            pass
     # Đồng hồ đặt CUỐI CÙNG — phần đổi nhanh nhất phải nằm sau cùng để không
     # cắt cụt tiền tố dùng lại được. Nằm cuối còn sát câu hỏi hơn, model đọc
     # giờ hiện tại rõ hơn chứ không kém đi.
@@ -2233,7 +2252,13 @@ def orchestrate(user_text: str, user_id: str,
         return {"text": "Em còn đang xử lý tin trước của anh/chị, "
                         "chờ em chút rồi nhắn lại giúp em ạ 🙏"}
 
+    from contextvars import copy_context
+    from services.agent import reminders as rem
+    channel, _ = rem.channel_of(user_id)
+    delivery = {"channel": channel, **rem._capture_delivery_ctx(channel)}
+
     def _run() -> dict[str, Any]:
+        token = rem.delivery_context.set(delivery)
         try:
             return _orchestrate_locked(
                 user_text, user_id, allow=allow, ha_fastpath=ha_fastpath,
@@ -2241,6 +2266,7 @@ def orchestrate(user_text: str, user_id: str,
                 trich_dan=trich_dan, message_id=message_id,
             )
         finally:
+            rem.delivery_context.reset(token)
             # Khoá do CHÍNH thread chạy thân hàm nhả. Nếu hết giờ mà bên ngoài
             # tự nhả thì thread này vẫn đang ghi lịch sử → hỏng đúng thứ FIX5
             # sinh ra để bảo vệ.
@@ -2249,7 +2275,7 @@ def orchestrate(user_text: str, user_id: str,
     import concurrent.futures
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
-        future = pool.submit(_run)
+        future = pool.submit(copy_context().run, _run)
         try:
             return future.result(timeout=_TURN_BUDGET_S)
         except concurrent.futures.TimeoutError:
@@ -2423,8 +2449,24 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # 0) Resolve a pending ask-choice (user tapped button or replied 1/2/…)
     if not _co_trich_dan:
         try:
+            pending_choices = ask_choices.get_pending(user_id) or []
             picked = ask_choices.resolve_reply(user_id, user_text)
             if picked:
+                selected = next((c for c in pending_choices if c.get("send") == picked), {})
+                if selected.get("schedule_args") and selected.get("schedule_targets"):
+                    if allow is not None and caps.group_of("schedule") not in allow:
+                        return {"text": "[BLOCKED]"}
+                    result = caps._h_schedule(selected["schedule_args"], {
+                        "user_id": user_id, "user_message": user_text,
+                        "schedule_targets": selected["schedule_targets"],
+                    })
+                    tools_used.append("schedule")
+                    _journal(str(result.get("text") or ""))
+                    hist_choice = sess.load_history(user_id) or []
+                    hist_choice.extend([{"role": "user", "content": user_text},
+                                        {"role": "assistant", "content": result.get("text") or ""}])
+                    _persist_history(user_id, hist_choice)
+                    return _finalize(user_id, result)
                 user_text = picked
         except Exception:
             pass
@@ -3369,6 +3411,15 @@ def _orchestrate_locked(user_text: str, user_id: str,
             else:
                 result = _execute(cap, args, user_id, user_text=user_text, is_admin=is_admin,
                                   auto_approve=auto_approve)
+
+            if name == "schedule" and result.get("choices"):
+                out_choice = _finalize(user_id, result)
+                hist.append({"role": "tool", "tool_call_id": tc.get("id") or "",
+                             "content": str(out_choice.get("text") or "")})
+                hist.append({"role": "assistant", "content": out_choice.get("text") or ""})
+                _persist_history(user_id, hist)
+                _journal(str(out_choice.get("text") or ""))
+                return out_choice
 
             # NHIỀU ảnh trong MỘT lượt.
             #

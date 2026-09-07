@@ -921,14 +921,24 @@ def _h_web_search(args: dict, ctx: dict) -> dict:
     query = str(args.get("query") or "").strip()
     if not query:
         return {"text": "Anh/chị muốn em tra cứu gì ạ?"}
-    # Đi qua nhánh "default" để có DỰ PHÒNG: trước đây dòng này ghim cứng
-    # "cx/auto", nên Codex hết lượt là phần tra cứu chết hẳn dù còn 16 model
-    # khác trong combo. Nhánh chưa đặt thì vẫn rơi về cx/auto như cũ.
-    model = branch_model("default", _channel_of(ctx)) or "cx/auto"
-    resp = call_model(model, [{"role": "user", "content": query}], timeout=120)
-    if resp.get("error"):
-        return {"text": f"Em tra cứu bị lỗi 😥 ({resp['error']})."}
-    return {"text": content_of(resp) or "Em chưa tìm được thông tin."}
+    from services import mcp_client
+    live = mcp_client.prefetch_realtime_context(query)
+    if live:
+        return {"text": live}
+    # Return evidence from the configured MCP/search backends. A second plain
+    # model call can invent a search failure or answer without fetching data.
+    from services.search_service import search_service
+    try:
+        results = search_service.search_all(query)
+    except Exception:
+        logger.exception("agent web_search failed")
+        results = []
+    if not results:
+        return {"text": "Công cụ tra cứu chưa trả được dữ liệu cho yêu cầu này. "
+                        "Không có số liệu đã xác minh để kết luận; không tự suy giá hoặc thời điểm cập nhật."}
+    return {"text": "\n\n".join(
+        f"{r.get('title') or ''}\n{r.get('snippet') or ''}\nNguồn: {r.get('url') or 'MCP đã cấu hình'}"
+        for r in results)[:18000]}
 
 
 def _h_write_code(args: dict, ctx: dict) -> dict:
@@ -1370,23 +1380,37 @@ def _h_schedule(args: dict, ctx: dict) -> dict:
     # NGAY lúc tạo (user còn đó) để hỏi lại khi thiếu/mập mờ — KHÔNG đoán lúc bắn.
     # Khớp rõ → nhúng chat_id đã resolve vào `text` để lúc bắn gửi trúng đích.
     send_to = str(args.get("send_to") or "").strip()
+    targets = list(ctx.get("schedule_targets") or [])
+    # Self means this conversation, not the first administrator in Settings.
+    if re.fullmatch(r"(?:anh|chị|tôi|toi|mình|minh|em|chính tôi)", send_to, re.I):
+        pf, cid = rem.channel_of(user_id)
+        requested = _kenh_nguoi_dung_neu(str(ctx.get("user_message") or "").lower())
+        if not requested or requested == pf:
+            send_to = ""
     if mode == "task" and send_to:
-        _pre = _h_send_to_contact(
+        _pre = {"resolved": targets} if targets else _h_send_to_contact(
             {"to": send_to, "message": text,
              "platform": str(args.get("send_platform") or "").strip(),
-             "_resolve_only": True}, ctx)
+             "bot_id": str(args.get("send_bot_id") or ""),
+             "_resolve_only": True}, {**ctx, "schedule_resolve": True})
         if _pre.get("need_clarify"):
+            candidates = _pre.get("candidates") or []
+            if candidates:
+                import uuid
+                choices = []
+                for rec in candidates[:7]:
+                    label = (f"{rec.get('alias') or rec.get('chat_name') or rec['chat_id']} — "
+                             f"{rec['platform']} · {rec.get('bot_label') or rec['bot_id']} · {rec['chat_id']}")
+                    choices.append({"label": label, "send": f"schedule:{uuid.uuid4().hex}",
+                                    "schedule_args": dict(args), "schedule_targets": [rec]})
+                choices.append({"label": "Thôi, không đặt lịch", "send": "thôi không đặt lịch nữa"})
+                return {"text": "Chọn nơi nhận để em hoàn tất lịch này:", "choices": choices}
             return {"text": _pre.get("text")
                     or "Cho em xin rõ người/nhóm nhận (kênh nào, tên gì) ạ, "
                        "em chưa đặt lịch để tránh gửi nhầm."}
         _rs = _pre.get("resolved") or []
         if _rs:
-            _ids = ", ".join(str(x.get("chat_id")) for x in _rs)
-            _nm = ", ".join(str(x.get("chat_name") or x.get("alias") or x.get("chat_id"))
-                            for x in _rs)
-            _pf = _rs[0].get("platform") or ""
-            text = (f"Dùng send_to_contact gửi tới chat_id [{_ids}] "
-                    f"trên kênh {_pf} (tên: {_nm}) nội dung: {text}")
+            targets = _rs
     # structured time args
     in_minutes = args.get("in_minutes")
     every_minutes = args.get("every_minutes")
@@ -1433,7 +1457,8 @@ def _h_schedule(args: dict, ctx: dict) -> dict:
             )
         }
     try:
-        row = rem.create(user_id, text, sched, mode=mode)
+        extra = {"delivery_targets": targets} if targets else None
+        row = rem.create(user_id, text, sched, mode=mode, meta_extra=extra)
     except Exception as exc:
         return {"text": f"Không đặt được nhắc 😥: {str(exc)[:150]}"}
     kind_s = "việc (em sẽ tự làm rồi báo)" if mode == "task" else "nhắc"
@@ -2422,6 +2447,10 @@ def _h_contacts(args: dict, ctx: dict) -> dict:
     platform = str(args.get("platform") or "").strip().lower()
     if platform in ("telegram", "tele"):
         platform = "tg"
+    platform = (_kenh_nguoi_dung_neu(str(ctx.get("user_message") or "").lower())
+                or platform or _channel_of(ctx))
+    if platform in ("zalo_personal", "zalo cá nhân"):
+        platform = "zalop"
     bot_id = str(args.get("bot_id") or "").strip()
     q = str(args.get("query") or args.get("q") or "").strip()
 
@@ -2459,14 +2488,11 @@ def _h_contacts(args: dict, ctx: dict) -> dict:
             return {"text": "Cần tên / alias / chat_id."}
         hits = cc.resolve_alias(ref, platform=platform, bot_id=bot_id)
         if not hits:
-            one = cc.find_by_ref(ref)
-            hits = [one] if one else []
-        if not hits:
             return {"text": f"Không khớp `{ref}`."}
         return {"text": "Khớp danh bạ:\n" + "\n".join(cc.describe(h) for h in hits)}
 
     # list
-    rows = cc.list_contacts(platform, bot_id, q=q, limit=20)
+    rows = cc.directory_contacts(platform, bot_id, q=q)[:40]
     if not rows:
         return {"text": "Danh bạ trống (hoặc không khớp). Người lạ nhắn bot sẽ tự ghi."}
     lines = [f"📒 Danh bạ ({len(rows)}):"] + [cc.describe(r) for r in rows]
@@ -2837,6 +2863,9 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
     else:
         explicit_platform = _ap
 
+    if ctx.get("schedule_resolve"):
+        explicit_platform = _kenh_noi or _ap or _channel_of(ctx)
+
     search_platforms = [explicit_platform] if explicit_platform else ["tg", "zalo", "zalop"]
     _CH_LABEL = {"tg": "Telegram", "zalo": "Zalo", "zalop": "Zalo cá nhân"}
 
@@ -2988,6 +3017,8 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
             "ambiguous": ambiguous,
             "failed": failed,
             "need_clarify": bool(_bits),
+            "candidates": [_rec_of(c) for _, rows in mo_ho for c in rows]
+                          if len(mo_ho) == 1 and not resolved and not failed else [],
             "text": ("❓ " + "; ".join(_bits)) if _bits else "",
         }
 
@@ -3011,7 +3042,7 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
         _noi_dung_1_dong = _mot_dong(message)
         for c in _rows:
             _dong.append(f"{_label_nut(c)} | gửi tin cho chat_id {c['chat_id']} "
-                         f"qua kênh {c['platform']} nội dung: {_noi_dung_1_dong}")
+                         f"qua kênh {c['platform']} bot_id {c['bot_id']} nội dung: {_noi_dung_1_dong}")
         _dong.append("Thôi, không gửi nữa | thôi không gửi tin đó nữa")
         _dong.append("<<<END>>>")
         return {"text": "\n".join(_dong)}
@@ -6120,7 +6151,11 @@ CAPABILITIES: dict[str, Capability] = {
             "Khi đặt nhắc/báo cáo định kỳ: BẮT BUỘC kiểm tra đủ 4 thông tin: "
             "(1) Khi nào (giờ/ngày) - (2) Bằng kênh gì (Zalo cá nhân/Zalo bot/Telegram) - "
             "(3) Nhóm/Người nhận nào - (4) Nội dung/Số liệu báo cáo gì. "
-            "Nếu THIẾU bất kỳ thông tin nào, HỎI LẠI NGAY người dùng để làm rõ trước khi gọi schedule. "
+            "Dùng cả thông tin đã xác nhận ở lượt trước và ngữ cảnh kênh hiện tại. "
+            "'Gửi cho anh/tôi/mình' mặc định chính chat hiện tại: bỏ send_to, không hỏi kênh hay danh bạ. "
+            "Chỉ hỏi thông tin thực sự còn thiếu. Đã đủ thì gọi schedule ngay, không tự xin xác nhận. "
+            "Tin tức/thời tiết: text phải là nhiệm vụ lấy dữ liệu mới lúc chạy và tổng hợp kết quả, "
+            "không chỉ là tiêu đề bản tin; hệ thống gửi kết quả đúng nơi nhận đã lưu. "
             "Sau khi đặt: đọc lại id + thời điểm cho người dùng. "
             "mode=task chỉ khi họ muốn em TỰ LÀM việc (báo cáo nhà, tóm tắt…) "
             "— còn 'nhắc anh gọi khách' thì mode=notify."
@@ -6172,6 +6207,7 @@ CAPABILITIES: dict[str, Capability] = {
                                        "(text = nội dung gửi). Em resolve danh bạ ngay lúc tạo."},
             "send_platform": {"type": "string", "enum": ["tg", "zalo", "zalop"],
                               "description": "Kênh gửi nếu người dùng nêu rõ; bỏ trống = kênh hiện tại"},
+            "send_bot_id": {"type": "string", "description": "Tài khoản/bot gửi đã chọn khi có nhiều tài khoản"},
             "id": {"type": "string",
                    "description": "Mã nhắc khi huỷ, hoặc 'all' để huỷ hết. "
                                   "Không biết mã thì BỎ TRỐNG và dùng text=tên lịch"}},
@@ -6360,12 +6396,13 @@ CAPABILITIES: dict[str, Capability] = {
         description=(
             "Sổ danh bạ multi-bot: op=list|recent|rename|resolve. "
             "Dùng khi admin hỏi 'ai vừa nhắn', 'danh bạ', 'đặt tên X = Anh A', "
-            "hoặc tìm chat_id theo alias. platform=tg|zalo (optional)."
+            "hoặc tìm chat_id theo alias. platform=tg|zalo|zalop; "
+            "zalop là Zalo cá nhân, zalo là Zalo Bot. Mặc định kênh hiện tại."
         ),
         parameters={"type": "object", "properties": {
             "op": {"type": "string",
                    "description": "list | recent | rename | resolve"},
-            "platform": {"type": "string", "description": "tg | zalo"},
+            "platform": {"type": "string", "description": "tg=Telegram | zalo=Zalo Bot | zalop=Zalo cá nhân"},
             "bot_id": {"type": "string"},
             "query": {"type": "string"},
             "ref": {"type": "string", "description": "key/chat_id/alias khi rename|resolve"},

@@ -683,7 +683,34 @@ def resolve_alias(name: str, *, platform: str = "", bot_id: str = "") -> list[di
     name = (name or "").strip()
     if not name:
         return []
-    return list_contacts(platform, bot_id, q=name, limit=10)
+    return directory_contacts(platform, bot_id, q=name)[:10]
+
+
+def directory_contacts(platform: str = "", bot_id: str = "", *, q: str = "") -> list[dict[str, Any]]:
+    """Join configured names with observed contacts, retaining both names.
+
+    The configured directory is the address book; recent unapproved senders
+    remain available through list_contacts/recent, not as saved recipients.
+    """
+    out = []
+    for pf in ([platform] if platform else ["tg", "zalo", "zalop"]):
+        observed = {(str(r.get("bot_id")), str(r.get("chat_id"))): r
+                    for r in list_contacts(pf, limit=100) if not r.get("user_id")}
+        for d in list_directory(pf):
+            bid, cid = str(d.get("bot_id") or ""), str(d.get("thread_id") or "")
+            if bot_id and bot_id not in (bid, str(d.get("bot_label") or "")):
+                continue
+            r = dict(observed.get((bid, cid)) or {})
+            r.update(platform=pf, bot_id=bid, chat_id=cid,
+                     key=contact_key(pf, bid, cid), kind=d.get("kind") or "user",
+                     bot_label=d.get("bot_label") or bid, known=True)
+            if d.get("name"):
+                r["alias"] = d["name"]
+            blob = " ".join(str(r.get(k) or "") for k in
+                            ("alias", "display_name", "chat_name", "chat_id", "key")).casefold()
+            if not q or all(w in blob for w in q.casefold().split()):
+                out.append(r)
+    return out
 
 
 def describe(rec: dict[str, Any]) -> str:

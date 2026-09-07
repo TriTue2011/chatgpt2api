@@ -63,7 +63,15 @@ CAN_THEM_TT = "[MCP cần thêm thông tin]"
 
 def la_loi_mcp(text: Any) -> bool:
     """Chuỗi này là thông báo lỗi của gateway chứ không phải dữ liệu tool trả về."""
-    return isinstance(text, str) and text.startswith((LOI_MCP, CAN_THEM_TT))
+    if not isinstance(text, str):
+        return False
+    value = text.strip()
+    if value.startswith((LOI_MCP, CAN_THEM_TT)):
+        return True
+    # Builtin tools also report upstream failures as short Vietnamese text.
+    return len(value) < 600 and value.casefold().startswith((
+        "không lấy được", "không thể lấy", "chưa có dữ liệu", "chưa sẵn sàng",
+    ))
 _CLIENT_INFO = {"name": "chatgpt2api", "version": "1.5.0"}
 _RESERVED_HEADERS = {
     "host", "content-length", "transfer-encoding", "connection",
