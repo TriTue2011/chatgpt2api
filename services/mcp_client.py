@@ -1054,6 +1054,13 @@ class MCPSession:
         content = content if isinstance(content, list) else []
         texts = [str(c.get("text") or "") for c in content
                  if isinstance(c, dict) and c.get("type") == "text"]
+        if payload.get("isError") is True:
+            # Tool-level errors still arrive in a successful JSON-RPC result.
+            # Preserve the error marker so search/prefetch won't ingest them.
+            detail = "\n".join(texts).strip()
+            if not detail and "structuredContent" in payload:
+                detail = json.dumps(payload["structuredContent"], ensure_ascii=False)
+            return f"{LOI_MCP} {name}: {detail or 'server báo lỗi nhưng không có chi tiết'}"[:2000]
         if texts:
             return "\n".join(texts)
         if "structuredContent" in payload:
@@ -1455,9 +1462,9 @@ _MCP_GENERIC_NAMES = {
 # (giá vàng, thời tiết, cổ phiếu…) → bỏ web search, gọi thẳng tool. False → kho
 # kiến thức RAG (y tế, giáo dục…) → vẫn chạy search để bổ sung.
 _MCP_INTENT_MAP: tuple[tuple[tuple[str, ...], tuple[str, ...], bool], ...] = (
-    # NB: weather (get_current_weather/wttr.in) geocode SAI tên tiếng Việt có dấu
-    # ("Vũng Tàu" → ra Brazil) → để câu thời tiết dùng auto-search (đúng + 5.5s),
-    # KHÔNG đưa vào đây. Sửa tận gốc thuộc MCP server weather, không phải gateway.
+    # The weather server now resolves Vietnamese locations before fetching data.
+    (("thoi tiet", "nhiet do", "du bao", "weather", "mua hom nay", "bao do bo"),
+     ("weather", "forecast", "minutecast", "storm"), True),
     (("am lich", "duong lich", "ngay am", "can chi", "hoang dao", "gio tot", "ngay tot", "ram", "mong mot", "giap ty"), ("lunar", "can_chi", "hoang_dao"), True),
     (("luat", "nghi dinh", "thong tu", "phap luat", "bo luat", "dieu khoan", "quy dinh phap"), ("law",), True),
     # NB: bỏ get_market_overview ("market") — trả VN-Index=0 (endpoint hỏng);

@@ -907,12 +907,17 @@ def _extract_city(query: str) -> str | None:
     qlow = q.lower()
     # Strip common Vietnamese weather prefixes
     for prefix in (
+        "dự báo thời tiết tại ", "dự báo thời tiết ở ", "dự báo thời tiết ",
         "thời tiết tại ", "thời tiết ở ", "thời tiết ",
-        "dự báo thời tiết ", "dự báo ",
+        "dự báo ",
         "weather in ", "weather at ", "weather ",
     ):
         if qlow.startswith(prefix):
-            return q[len(prefix):].strip().rstrip("?.,!")
+            city = q[len(prefix):].strip().rstrip("?.,!")
+            city = re.sub(r"\s+(?:hôm nay|hôm qua|ngày mai|hôm mai|hiện tại|lúc này|"
+                          r"bây giờ|tuần này|(?:trong\s+)?\d+\s+ngày(?:\s+tới)?)$",
+                          "", city, flags=re.I).strip()
+            return city or None
     # Otherwise try matching a known city anywhere in the (folded) query
     import unicodedata
     folded = "".join(
@@ -1335,7 +1340,7 @@ class SearchService:
                     "vn_search":       "search_web",
                     "federated_search": "search_all",
                     "vn_weather":      "get_current_weather",
-                    "vn_news":         "get_news",
+                    "vn_news":         "search_news",
                     "vn_petrol":       "get_petrol_prices",
                     "vn_stock":        "get_stock_price",
                     "vn_law":          "search_law",
@@ -1379,10 +1384,27 @@ class SearchService:
                     # dữ liệu luật nào, trong khi log chỉ là WARNING nên im ru.
                     tool_name = _TOOL_MAP[server_id]
                     args = {"keyword": query, "limit": max(2, self.max_results)}
+                elif server_id == "vn_news":
+                    keyword = re.sub(r"^(?:tổng hợp\s+)?(?:tin tức|tin mới|thời sự|điểm tin)\s*", "", query, flags=re.I)
+                    keyword = re.sub(r"(?:\s*\b(?:hôm nay|mới nhất|hiện tại))?[?.!]*$", "", keyword, flags=re.I).strip()
+                    tool_name = _TOOL_MAP[server_id] if keyword else "get_news"
+                    args = {"limit": max(2, self.max_results)}
+                    if keyword:
+                        args["keyword"] = keyword
+                elif server_id == "vn_stock":
+                    symbol = re.search(r"\b(?:cổ phiếu|co phieu|mã|ma)\s+([a-z]{3})\b", query, re.I)
+                    if not symbol:
+                        symbol = re.search(r"\b([A-Z]{3})\b", query)
+                    if not symbol:
+                        return server_id, None  # No ticker provided: don't guess a company.
+                    if symbol.group(1).lower() in {"hom", "nao", "tot", "gia", "moi", "cua", "cho", "thi", "san"}:
+                        return server_id, None
+                    tool_name = _TOOL_MAP[server_id]
+                    args = {"symbol": symbol.group(1).upper()}
                 else:
                     tool_name = _TOOL_MAP.get(server_id, "search_web")
                     args = {"query": query}
-                    if server_id in ("vn_search", "vn_news", "vn_stock"):
+                    if server_id == "vn_search":
                         args["limit"] = max(2, self.max_results)
 
                 text = call_mcp_tool(
@@ -1392,7 +1414,8 @@ class SearchService:
                 )
                 return server_id, text
             except Exception as exc:
-                logger.debug("search_all: mcp %s skipped: %s", server_id, exc)
+                logger.warning({"event": "search_mcp_failed", "server": server_id,
+                                "error_type": type(exc).__name__})
                 return server_id, None
 
         # --- Luong 2: Combo backends (Gemini Grounding, custom provider...) ---
@@ -1414,7 +1437,8 @@ class SearchService:
                 results = backend.search(query, max(2, self.max_results))
                 return name, results
             except Exception as exc:
-                logger.debug("search_all: backend %s skipped: %s", name, exc)
+                logger.warning({"event": "search_backend_failed", "backend": name,
+                                "error_type": type(exc).__name__})
                 return name, []
 
         # ChatGPT backend returns [] so it won't add duplicates, but we keep it in the list
@@ -1438,7 +1462,8 @@ class SearchService:
                     return "rag", []
                 return "rag", [{"title": f"[KB {suffix}]", "snippet": text[:3000], "url": ""}]
             except Exception as exc:
-                logger.debug("search_all: KB %s skipped: %s", collection, exc)
+                logger.warning({"event": "search_kb_failed", "collection": collection,
+                                "error_type": type(exc).__name__})
                 return "rag", []
 
         # --- Thuc thi song song ca MCP, Backend va RAG cung luc ---
@@ -1469,8 +1494,10 @@ class SearchService:
                     if jt == "mcp" and nm != "federated_search"}
         done_priority: set = set()
         try:
-            # Giam timeout xuong 8 giay de can bang giua toc do va do chinh xac
-            for future in concurrent.futures.as_completed(futures, timeout=8):
+            # Domain APIs may legitimately need more than the generic crawler's
+            # 8s budget (live stock lookup measured 8.2s). Keep early completion.
+            timeout = 30 if priority else 8
+            for future in concurrent.futures.as_completed(futures, timeout=timeout):
                 try:
                     job_type, name = futures[future]
                     if job_type == "mcp":
