@@ -6632,7 +6632,7 @@ def _inject_mcp_tools(
             logger.info({"event": "mcp_inject_proceeding", "reason": "search_injected_but_tools_requested"})
             # Do NOT return early, let the tools be injected so the LLM can explicitly call them if needed.
 
-        from services.mcp_client import get_relevant_mcp_tools
+        from services.mcp_client import get_relevant_mcp_tools, has_external_mcp_intent
         from services.ha_client import get_ha_tools
 
         # Skip the MCP discovery + injection when the prompt already carries the
@@ -6646,6 +6646,10 @@ def _inject_mcp_tools(
             mcp_tools = get_relevant_mcp_tools(user_text, messages)
             logger.info({"event": "mcp_inject_got_tools",
                          "reason": "device" if _is_device else "server_admin",
+                         "count": len(mcp_tools)})
+        elif has_external_mcp_intent(user_text, messages):
+            mcp_tools = get_relevant_mcp_tools(user_text, messages)
+            logger.info({"event": "mcp_inject_got_tools", "reason": "custom_integration",
                          "count": len(mcp_tools)})
         elif skip_ha_search:
             mcp_tools = []

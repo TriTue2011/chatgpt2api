@@ -521,6 +521,9 @@ class CustomProviderSearch(SearchBackend):
         # synthesis. Prefer flash/lite/mini if the provider exposes one —
         # they're 3-4× faster for grounding queries with no real quality loss.
         models = provider.list_models()
+        from utils.helper import classify_model_capability
+        models = [m for m in models
+                  if 'chat' in classify_model_capability(str(m.get('id') or ''))]
         if not models:
             return []
 
@@ -1276,6 +1279,7 @@ class SearchService:
         """
         import concurrent.futures
         all_results: list[dict[str, str]] = []
+        primary_results: list[dict[str, str]] = []
         seen: set[str] = set()
 
         def _add(results: list[dict], source: str) -> None:
@@ -1284,6 +1288,8 @@ class SearchService:
                 if key and key not in seen:
                     seen.add(key)
                     all_results.append(r)
+                    if source in mcp_server_ids and source not in ('vn_search', 'federated_search'):
+                        primary_results.append(r)
 
         def _trim_mcp_result(server_id: str, text: str, limit: int = 4000) -> str:
             """Head-truncating a huge MCP table can drop the rows the user asked
@@ -1543,7 +1549,10 @@ class SearchService:
                 except Exception:
                     continue
 
-        return all_results[:self.max_results * 4]
+        # Keep authoritative results ahead of snippets that happened to finish
+        # faster, and before the output cap can discard their data entirely.
+        ordered = primary_results + [r for r in all_results if r not in primary_results]
+        return ordered[:self.max_results * 4]
 
     def curate_response(self, query: str, response: str, collection: str = "") -> bool:
         """Store a Q&A pair to vn-mcp-hub RAG. Best-effort, non-blocking."""

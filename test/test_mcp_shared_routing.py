@@ -103,3 +103,72 @@ def test_successful_tool_text_is_preserved():
     assert session._ket_qua_tool('test_tool', {}, {'result': {
         'isError': False, 'content': [{'type': 'text', 'text': 'valid data'}],
     }}) == 'valid data'
+
+
+def test_custom_search_does_not_choose_fast_image_model():
+    from services.search_service import CustomProviderSearch
+    from services.providers import custom_openai
+    with patch.object(custom_openai, 'get_custom_providers', return_value={'agnes': {'prefix': 'agnes'}}), \
+            patch.object(custom_openai, 'CustomOpenAIProvider') as provider:
+        provider.return_value.list_models.return_value = [
+            {'id': 'agnes/agnes-image-2.5-flash'}, {'id': 'agnes/chat-pro'},
+        ]
+        provider.return_value.chat_completions.return_value = {}
+        CustomProviderSearch('agnes').search('Tin tức')
+        assert provider.return_value.chat_completions.call_args.kwargs['model'] == 'chat-pro'
+
+
+def test_authoritative_data_survives_faster_web_results_and_output_cap():
+    with patch.object(_intent_router, 'detect', return_value={
+        'mcp_tools': ['vn_stock'], 'kb_collections': [], 'needs_live': True,
+    }), patch.object(SearchService, 'search_combo', new_callable=PropertyMock, return_value=['test']), \
+            patch.object(SearchService, 'max_results', new_callable=PropertyMock, return_value=1), \
+            patch.object(SearchService, '_get_backend') as backend, \
+            patch.object(mc, 'call_mcp_tool', return_value='FPT: bảng giá chính thức vừa lấy.'), \
+            patch('concurrent.futures.as_completed', side_effect=lambda fs, timeout: iter(sorted(fs, key=lambda f: fs[f][0] == 'mcp'))):
+        backend.return_value.search.return_value = [{'title': f'web {i}', 'url': f'https://example.com/{i}'} for i in range(15)]
+        rows = SearchService().search_all('Giá cổ phiếu FPT')
+    assert rows[0]['title'] == '[vn_stock]'
+    assert len(rows) == 4
+
+
+@pytest.fixture
+def custom_server():
+    server = {'id': 'acme', 'name': 'Acme integration', 'url': 'https://acme.example/mcp', 'enabled': True}
+    tool = {'type': 'function', 'function': {'name': 'create_workflow', 'parameters': {}}}
+    route = mc._session_key(*mc._connection_options(server))
+    with patch.object(mc, '_configured_servers', return_value=[server]), \
+            patch.object(mc, 'get_enabled_mcp_tools', return_value=[tool]), \
+            patch.dict(mc._tool_routes, {'create_workflow': (route, 'create_workflow')}, clear=True):
+        yield server, tool
+
+
+@pytest.mark.parametrize('query', ['Tạo workflow Acme', 'Tích hợp dữ liệu', 'Giá vàng qua Acme'])
+def test_user_added_mcp_survives_builtin_keyword_filter(custom_server, query):
+    with patch.object(mc, 'is_device_query', return_value=False), \
+            patch.object(mc, 'is_server_admin_query', return_value=False):
+        assert mc.get_relevant_mcp_tools(query) == [custom_server[1]]
+
+
+def test_disabled_external_server_does_not_expose_tools(custom_server):
+    custom_server[0]['enabled'] = False
+    with patch.object(mc, 'is_device_query', return_value=False), \
+            patch.object(mc, 'is_server_admin_query', return_value=False):
+        assert mc.get_relevant_mcp_tools('Tạo workflow Acme') == []
+
+
+def test_explicit_external_mcp_is_not_replaced_by_builtin_prefetch(custom_server):
+    with patch.object(mc, 'call_mcp_tool') as call:
+        assert mc.prefetch_realtime_context('Giá vàng qua Acme') is None
+        assert mc.prefetch_kb_context('Tra cứu điện nước qua Acme') is None
+    call.assert_not_called()
+
+
+def test_external_integration_command_is_not_filtered_as_smart_home(custom_server):
+    import services.protocol.openai_v1_chat_complete as gateway
+    with patch.object(mc, 'is_device_query', return_value=False), \
+            patch.object(mc, 'is_server_admin_query', return_value=False), \
+            patch.object(gateway, '_is_smarthome_query', return_value=True), \
+            patch.object(gateway, '_is_trivial_chat', return_value=False):
+        tools = gateway._inject_mcp_tools(None, user_text='Tạo workflow Acme', no_smart_home=True)
+    assert custom_server[1] in tools

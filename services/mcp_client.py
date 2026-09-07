@@ -1829,6 +1829,32 @@ def is_server_admin_query(text: str, messages: list | None = None) -> bool:
     return False
 
 
+def _external_mcp_servers() -> list[dict[str, Any]]:
+    """Enabled user-added servers outside the bundled hub, without connecting."""
+    from services.config import hub_base_url
+    hub_origin = _origin(hub_base_url())
+    return [s for s in _configured_servers()
+            if s.get('enabled', True) and s.get('url')
+            and _origin(str(s['url'])) != hub_origin]
+
+
+def has_external_mcp_intent(query: str, messages: list | None = None) -> bool:
+    """A named custom integration must not be mistaken for a home command."""
+    text = ' '.join([query or ''] + [_msg_text(m) for m in (messages or [])[-6:]
+                                  if isinstance(m, dict) and m.get('role') == 'user']).casefold()
+    words = set(re.findall(r'\w+', text))
+    for server in _external_mcp_servers():
+        from urllib.parse import urlsplit
+        identity = ' '.join(str(server.get(k) or '') for k in ('id', 'name'))
+        identity += ' ' + str(urlsplit(str(server['url'])).hostname or '')
+        hints = set(re.findall(r'\w+', identity.casefold())) - {
+            'mcp', 'api', 'http', 'https', 'com', 'net', 'org', 'server', 'custom', 'www',
+        }
+        if any(len(h) >= 3 and h in words for h in hints):
+            return True
+    return False
+
+
 def get_relevant_mcp_tools(query: str, _relevant_messages: list | None = None) -> list[dict[str, Any]]:
     """Return only the MCP tools relevant to `query` (+ the generic search/
     encyclopedia catch-all), instead of all ~43 schemas. Specialized servers are
@@ -1839,6 +1865,12 @@ def get_relevant_mcp_tools(query: str, _relevant_messages: list | None = None) -
     all_tools = get_enabled_mcp_tools()
     if not all_tools:
         return all_tools
+
+    # Only bundled servers have hand-written intent mappings. Tools from a
+    # user-added server remain available without adding its names to Python.
+    external_keys = {_session_key(*_connection_options(s)) for s in _external_mcp_servers()}
+    external_names = {name for name, route in _tool_routes.items() if route[0] in external_keys}
+    external = [t for t in all_tools if (t.get('function') or {}).get('name') in external_names]
 
     # Thiết bị của người dùng (c2a-agent) → chỉ tool device_*, không web search.
     # PHẢI xét TRƯỚC server-admin: "ổ đĩa", "dung luong", "cpu load", "ram con"
@@ -1855,7 +1887,7 @@ def get_relevant_mcp_tools(query: str, _relevant_messages: list | None = None) -
                     if (t.get("function", {}) or {}).get("name", "").startswith(("ssh_", "fs_"))]
         if sel:
             logger.info({"event": "mcp_device_tools", "count": len(sel)})
-            return sel
+            return sel + [t for t in external if t not in sel]
         # Không có tool device_* nào = MCP "Thiết bị của tôi" chưa bật. Nói rõ ở
         # log, vì biểu hiện bên ngoài y như model không chịu gọi tool.
         logger.warning({"event": "mcp_device_intent_no_tools",
@@ -1867,7 +1899,7 @@ def get_relevant_mcp_tools(query: str, _relevant_messages: list | None = None) -
                if (t.get("function", {}) or {}).get("name", "").startswith(("ssh_", "fs_"))]
         if sel:
             logger.info({"event": "mcp_server_admin_tools", "count": len(sel)})
-            return sel
+            return sel + [t for t in external if t not in sel]
 
     try:
         from services.ha_client import _fold_diacritics
@@ -1885,23 +1917,26 @@ def get_relevant_mcp_tools(query: str, _relevant_messages: list | None = None) -
 
     def _generic() -> list[dict[str, Any]]:
         return [t for t in all_tools
-                if (t.get("function", {}) or {}).get("name", "") in _MCP_GENERIC_NAMES]
+                if (t.get("function", {}) or {}).get("name", "") in _MCP_GENERIC_NAMES | external_names]
 
-    # Realtime/authoritative intent (giá vàng/thời tiết/cổ phiếu…) → ship ONLY
-    # that tool, NOT the generic web-search set. Otherwise the model calls the
+    # Realtime/authoritative intent → omit the bundled generic web-search set.
+    # User-added integrations remain available alongside the dedicated tools.
+    # Otherwise the model calls the
     # dedicated tool AND then loops web_search to "verify" — each extra agentic
     # round is a slow codex round-trip. One tool → one call → answer.
     if realtime:
         sel = [t for t in all_tools
                if any(sub in (t.get("function", {}) or {}).get("name", "").lower() for sub in wanted)]
-        return sel or _generic()
+        if sel:
+            return sel + [t for t in external if t not in sel]
+        return _generic()
 
     # Knowledge store (y tế/giáo dục…) or no match → dedicated (if any) + generic
     # catch-all, so web search stays available to complement the RAG answer.
     selected: list[dict[str, Any]] = []
     for t in all_tools:
         nl = (t.get("function", {}) or {}).get("name", "").lower()
-        if (t.get("function", {}) or {}).get("name", "") in _MCP_GENERIC_NAMES or (wanted and any(sub in nl for sub in wanted)):
+        if (t.get("function", {}) or {}).get("name", "") in _MCP_GENERIC_NAMES | external_names or (wanted and any(sub in nl for sub in wanted)):
             selected.append(t)
     return selected or _generic()
 
@@ -2013,6 +2048,8 @@ def prefetch_realtime_context(query: str) -> str | None:
     """If `query` matches a no-arg realtime intent, call the tool(s) NOW and
     return the combined result text (or None). Caller injects it as context so
     the model answers in one round-trip instead of two."""
+    if has_external_mcp_intent(query):
+        return None  # The user explicitly chose another integration.
     try:
         from services.ha_client import _fold_diacritics
         qf = _fold_diacritics(query or "")
@@ -2053,6 +2090,8 @@ def prefetch_kb_context(query: str) -> str | None:
     Tái dùng _MCP_INTENT_MAP (keyword đã tinh chỉnh) — entry nào có substring là
     tên kho thì prefetch kho đó. First match wins.
     """
+    if has_external_mcp_intent(query):
+        return None
     try:
         from services.ha_client import _fold_diacritics
         qf = _fold_diacritics(query or "")
