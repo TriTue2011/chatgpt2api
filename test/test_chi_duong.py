@@ -346,7 +346,9 @@ class HandlerTests(unittest.TestCase):
 
     def test_hai_diem_da_chon_moi_hoi_xac_nhan(self):
         """Chỉ sau khi mỗi đầu là một ghim do người dùng chọn mới hiện xác nhận."""
-        dv = {"ok": True, "tu": "Vị trí đã ghim", "den": "Vị trí đã ghim",
+        dv = {"ok": True,
+              "tu": "Hoàng Thành Tower, 114, Phố Mai Hắc Đế, Vân Hồ, Phường Hai Bà Trưng, Thành phố Hà Nội, Việt Nam",
+              "den": "CT4B-X2 Bắc Linh Đàm, Phường Hoàng Liệt, Quận Hoàng Mai, Thành phố Hà Nội, Việt Nam",
               "gan_dung": False, "link": "https://www.google.com/maps/dir/?api=1"}
         di = "https://www.google.com/maps/search/?api=1&query=21.0114%2C105.8506"
         den = "https://www.google.com/maps/search/?api=1&query=20.9653%2C105.8232"
@@ -354,6 +356,8 @@ class HandlerTests(unittest.TestCase):
             out = caps._h_chi_duong({"diem_di": di, "diem_den": den,
                                      "phuong_tien": "xe máy", "da_chon_pt": True}, {})
         self.assertIn("xác nhận lại địa chỉ", out["text"])
+        self.assertIn(dv["tu"], out["text"])
+        self.assertIn(dv["den"], out["text"])
         self.assertIn("<<<ASK>>>", out["text"])
         self.assertNotIn("km", out["text"].lower(), "chưa được đưa km ở bước xác nhận")
 

@@ -402,8 +402,8 @@ def _h_chi_duong(args: dict, ctx: dict) -> dict:
             note = (" (gần đúng ở mức khu đô thị/phố)" if dv.get("gan_dung") else "")
             return {"deliver_now": True, "text":
                     "🗺️ Em xác nhận lại địa chỉ cho đúng nhé:\n"
-                    f"📍 Điểm đi: {str(dv['tu'])[:70]}\n"
-                    f"📍 Điểm đến: {str(dv['den'])[:70]}{note}\n\n"
+                    f"📍 Điểm đi: {_mot_dong(str(dv['tu']))}\n"
+                    f"📍 Điểm đến: {_mot_dong(str(dv['den']))}{note}\n\n"
                     "Đúng chưa ạ? Đúng thì bấm dưới, sai thì anh/chị nhắn lại địa "
                     "chỉ đầy đủ (kèm số nhà/tòa, phường, thành phố).\n"
                     "<<<ASK>>>\n"
