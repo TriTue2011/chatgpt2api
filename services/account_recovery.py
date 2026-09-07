@@ -64,6 +64,11 @@ _GRELOGIN_COOLDOWN_S = 1800.0  # browser login đắt → 1 lần / account / 30
 _glogin_serial = threading.Lock()
 _glogin_last_done = 0.0            # mốc kết thúc phiên Google gần nhất (giữ dưới _glogin_serial)
 _GLOGIN_GAP_S = 25.0              # cách nhau tối thiểu giữa 2 phiên đăng nhập Google
+# A CAPTCHA is an IP/browser challenge, not a per-account transient failure.
+# Retrying all profiles after the first challenge only creates more challenges.
+_glogin_captcha_until = 0.0
+_glogin_captcha_profile = ""
+_GLOGIN_CAPTCHA_HOLD_S = 6 * 3600.0
 # Trần thời gian 1 lượt khôi phục. Phải CHỨA ĐỦ cả thang, nếu không tầng cuối bị
 # cắt giữa đường (đo thật 30/07: trần 300s < riêng một lượt đăng nhập Google, nên
 # tầng 2-sau-đăng-nhập không bao giờ chạy):
@@ -320,10 +325,18 @@ def _freshen_google(profile: str, *,
     # thời điểm. 6 tài khoản chết cùng lúc → 6 thread xếp hàng ở đây, không bắn
     # login đồng thời (thứ làm Google bung captcha). Lock giữ suốt cả lượt poll
     # nên tài khoản sau chỉ bắt đầu khi tài khoản trước đã xong.
-    global _glogin_last_done
+    global _glogin_last_done, _glogin_captcha_until, _glogin_captcha_profile
     vao_hang = time.time()
     _glogin_serial.acquire()
     try:
+        if time.time() < _glogin_captcha_until:
+            remain = max(1, int((_glogin_captcha_until - time.time()) / 60))
+            _ghi_ket_qua(
+                profile, "blocked_captcha_window",
+                f"Google đang chờ CAPTCHA ở {_glogin_captcha_profile or 'một hồ sơ khác'}; "
+                f"tạm dừng tự đăng nhập thêm khoảng {remain} phút.",
+            )
+            return False
         cho = _GLOGIN_GAP_S - (time.time() - _glogin_last_done)
         if cho > 0:
             time.sleep(cho)  # giãn cách như bấm tay lần lượt
@@ -337,6 +350,10 @@ def _freshen_google(profile: str, *,
         d = r.json() or {}
         st = d.get("state", "")
         _ghi_ket_qua(profile, st, str(d.get("error") or d.get("message") or ""))
+        if st == "need_captcha":
+            _glogin_captcha_until = time.time() + _GLOGIN_CAPTCHA_HOLD_S
+            _glogin_captcha_profile = profile
+            return False
         if st in ("failed", "blocked", "error"):
             return False
         # Poll tối đa ~700s — KHỚP ngân sách thật của auto_login: 420s cho giai
@@ -353,7 +370,13 @@ def _freshen_google(profile: str, *,
                 continue
             state = str(s.get("state") or "")
             _ghi_ket_qua(profile, state, str(s.get("error") or s.get("message") or ""))
+            if state == "need_captcha":
+                _glogin_captcha_until = time.time() + _GLOGIN_CAPTCHA_HOLD_S
+                _glogin_captcha_profile = profile
+                return False
             if state in ("success", "done", "logged_in"):
+                _glogin_captcha_until = 0.0
+                _glogin_captcha_profile = ""
                 return True
             if state in ("failed", "blocked", "error") or state in _CAN_NGUOI:
                 # Cần người → bỏ NGAY, đừng chờ hết ngân sách. Chờ thêm không
@@ -837,17 +860,40 @@ def _flow_session_trang_thai(profile: str) -> str:
     hoạt khôi phục.
     """
     import requests
+    project_id = _flow_project_id(profile)
+    if not project_id:
+        logger.warning({"event": "flow_session_missing_project", "profile": profile})
+        return "mat"
     url, api_key = _solver_cfg()
     H = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     try:
-        r = requests.post(f"{url.rstrip('/')}/v1/google/flow/get-or-create-project",
-                          headers=H, json={"profile": profile, "headless": True,
-                                           "timeout": 150}, timeout=170)
+        r = requests.post(f"{url.rstrip('/')}/v1/google/flow/check-project",
+                          headers=H, json={"profile": profile, "project_id": project_id,
+                                           "headless": True, "timeout": 150}, timeout=170)
         if r.status_code == 429:
             return "ban"
-        return "ok" if (r.json() or {}).get("project_id") else "mat"
+        if bool((r.json() or {}).get("ready")):
+            # A manual CAPTCHA solve makes the recovery circuit usable again.
+            global _glogin_captcha_until, _glogin_captcha_profile
+            with _glogin_serial:
+                _glogin_captcha_until = 0.0
+                _glogin_captcha_profile = ""
+            return "ok"
+        return "mat"
     except Exception:
         return "mat"
+
+
+def _flow_project_id(profile: str) -> str:
+    """Configured project is part of the account identity, not optional proof."""
+    try:
+        from services.image_providers.flow_google import _accounts
+        for account in _accounts():
+            if str(account.get("profile") or "") == profile:
+                return str(account.get("project_id") or "").strip()
+    except Exception:
+        logger.debug("flow configured project lookup failed", exc_info=True)
+    return ""
 
 
 def _flow_session_ok(profile: str) -> bool:
@@ -995,6 +1041,10 @@ def flow_recover_and_notify(profile: str, reason: str = "mất phiên") -> None:
     elif tt_login == "need_captcha":
         vi_sao = ("Google đang bắt CAPTCHA — vào noVNC cổng 6080 gõ captcha, hệ thống "
                   "TỰ tiếp tục mật khẩu + 2FA. Mật khẩu/TOTP không liên quan.")
+    elif tt_login == "blocked_captcha_window":
+        vi_sao = ("đã có một hồ sơ gặp CAPTCHA nên hệ thống tạm dừng tự đăng nhập "
+                  "các hồ sơ khác, tránh Google tăng mức chặn. "
+                  + (ly_do_dang_nhap_cuoi(profile) or ""))
     elif tt_login in ("need_code", "need_tap"):
         vi_sao = ("Google đòi mã 2FA phải người bấm (hồ sơ này chưa có TOTP) — "
                   "xử lý trên noVNC cổng 6080, hoặc thêm TOTP cho hồ sơ.")

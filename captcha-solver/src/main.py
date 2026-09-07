@@ -79,6 +79,7 @@ from .solvers.flow_google import (
     generate_image as flow_generate_image,
     get_or_create_project as flow_get_or_create_project,
 )
+from .solvers.flow_rpc import READY as FLOW_READY, open_project as flow_open_project
 from .solvers.chatgpt_web import (
     analyze_image as chatgpt_web_analyze_image,
     chat as chatgpt_web_chat,
@@ -698,6 +699,14 @@ class FlowRestStatusReq(BaseModel):
     timeout: int = Field(default=60, ge=10, le=300)
 
 
+class FlowProjectCheckReq(BaseModel):
+    """Non-billing Flow session check for the exact configured project."""
+    project_id: str
+    profile: str = "google-fx"
+    headless: bool = True
+    timeout: int = Field(default=120, ge=15, le=300)
+
+
 def _loi_flow_rest(exc: Exception) -> HTTPException:
     """Giữ nguyên mã HTTP của Google để bên gọi phân biệt được loại hỏng.
 
@@ -711,6 +720,21 @@ def _loi_flow_rest(exc: Exception) -> HTTPException:
     if isinstance(exc, ValueError):
         return HTTPException(status_code=400, detail=str(exc))
     return HTTPException(status_code=502, detail=str(exc))
+
+
+@app.post("/v1/google/flow/check-project", dependencies=[Depends(require_api_key)])
+async def api_flow_check_project(req: FlowProjectCheckReq) -> dict[str, Any]:
+    """Verify that the saved Google session can open this Flow project and RPC."""
+    try:
+        async with pool.page(profile=req.profile, headless=req.headless) as page:
+            await flow_open_project(page, req.project_id, req.profile)
+            ready = bool(await page.evaluate(FLOW_READY))
+            return {"ready": ready, "project_id": req.project_id if ready else ""}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.info("flow project check failed profile=%s: %s", req.profile, str(exc)[:160])
+        raise _loi_flow_rest(exc) from exc
 
 
 @app.post("/v1/google/flow/rest/generate-image", dependencies=[Depends(require_api_key)])

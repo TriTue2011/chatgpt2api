@@ -37,6 +37,14 @@ class TestNhanRaCanNguoi(unittest.TestCase):
 class TestBoSomKhiCaptcha(unittest.TestCase):
     """Gặp captcha là trả về NGAY, không chờ hết ngân sách 310 giây."""
 
+    def setUp(self):
+        ar._glogin_captcha_until = 0.0
+        ar._glogin_captcha_profile = ""
+
+    def tearDown(self):
+        ar._glogin_captcha_until = 0.0
+        ar._glogin_captcha_profile = ""
+
     def _chay(self, states: list[str]) -> tuple[bool, int]:
         goi = {"n": 0}
 
@@ -75,6 +83,14 @@ class TestBoSomKhiCaptcha(unittest.TestCase):
     def test_ghi_lai_trang_thai_cuoi_de_bao_dung_nguyen_nhan(self):
         self._chay(["need_captcha"])
         self.assertEqual(ar.trang_thai_dang_nhap_cuoi("google-test"), "need_captcha")
+
+    def test_captcha_mot_ho_so_chan_tu_dang_nhap_cac_ho_so_khac(self):
+        self._chay(["need_captcha"])
+        with mock.patch.dict("sys.modules", {"requests": mock.Mock()}), \
+                mock.patch.object(ar, "_solver_cfg", lambda: ("http://x", "k")):
+            self.assertFalse(ar._freshen_google("google-khac"))
+        self.assertEqual(ar.trang_thai_dang_nhap_cuoi("google-khac"),
+                         "blocked_captcha_window")
 
     def test_profile_chua_thu_thi_tra_chuoi_rong(self):
         self.assertEqual(ar.trang_thai_dang_nhap_cuoi("google-chua-bao-gio"), "")

@@ -48,7 +48,8 @@ class _PhanHoi:
 def _trang_thai(phan_hoi) -> str:
     """Gọi hàm thật với `requests.post` giả."""
     from services import account_recovery as ar
-    with mock.patch.object(ar, "_solver_cfg", return_value=("http://solver", "k")):
+    with mock.patch.object(ar, "_solver_cfg", return_value=("http://solver", "k")), \
+            mock.patch.object(ar, "_flow_project_id", return_value="project-da-cau-hinh"):
         with mock.patch("requests.post", return_value=phan_hoi):
             return ar._flow_session_trang_thai("google-benbap2011")
 
@@ -59,7 +60,7 @@ class BaTrangThaiTests(unittest.TestCase):
         self.assertEqual(_trang_thai(_PhanHoi(429, {"detail": "Account Busy"})), "ban")
 
     def test_co_project_id_la_ok(self):
-        self.assertEqual(_trang_thai(_PhanHoi(200, {"project_id": "abc-123"})), "ok")
+        self.assertEqual(_trang_thai(_PhanHoi(200, {"ready": True})), "ok")
 
     def test_200_nhung_rong_la_mat(self):
         self.assertEqual(_trang_thai(_PhanHoi(200, {})), "mat")
