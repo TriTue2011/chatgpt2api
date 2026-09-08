@@ -33,6 +33,7 @@ class DropClientTests(unittest.TestCase):
         ns["threading"] = threading
         ns["_client_lock"] = threading.Lock()
         ns["_clients"] = {"A" * 32: "client-a"}
+        ns["_init_locks"] = {}
         ns["_cookie_cache"] = {
             "google-a": (time.time(), {"__Secure-1PSID": "A" * 40}),
             "google-b": (time.time(), {"__Secure-1PSID": "B" * 40}),

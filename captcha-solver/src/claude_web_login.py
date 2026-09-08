@@ -65,6 +65,23 @@ def get_session(profile: str) -> Optional[ClaudeWebLoginSession]:
     return _sessions.get(profile)
 
 
+async def get_saved_session(profile: str) -> Optional[ClaudeWebLoginSession]:
+    """Recover a stored cookie after restart; validity is checked by Claude HTTP."""
+    session = get_session(profile)
+    if session and session.session_key and not pool.is_loaded(profile):
+        return session
+    cookies = await pool.read_cookies(profile, _CLAUDE_HOME)
+    key = next((str(c["value"]) for c in cookies if c.get("name") == _SESSION_COOKIE and c.get("value")), "")
+    if not key:
+        return None
+    if session is None:
+        session = ClaudeWebLoginSession(profile=profile, email="", state="stored",
+                                        message="Đã đọc phiên lưu trên đĩa", completed_at=time.time())
+        _sessions[profile] = session
+    session.session_key = key
+    return session
+
+
 def submit_2fa_code(profile: str, code: str) -> bool:
     session = _sessions.get(profile)
     if not session or session.state != "need_code":

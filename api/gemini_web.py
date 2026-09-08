@@ -332,6 +332,14 @@ def _fetch_cookies_from_solver(profile: str) -> dict[str, str]:
     hit = _cookie_cache.get(profile)
     if hit and (now - hit[0]) < _COOKIE_TTL:
         return hit[1]
+    if hit:
+        # Cookie rotation belongs to the HTTP client. Reopening Chromium every
+        # five minutes just to obtain its original seed wastes RAM and CPU.
+        key = str(hit[1].get("__Secure-1PSID") or "")[:32]
+        with _client_lock:
+            client = _clients.get(key)
+        if client is not None and getattr(client, "_running", False):
+            return hit[1]
     sc = _solver_cfg()
     if not sc["url"]:
         return {}
@@ -588,7 +596,14 @@ def _get_client(psid: str, psidts: str):
         # 60 < trong 180 nên future bị bỏ sau 60s nhưng coroutine init vẫn chạy
         # tiếp trên loop nền với auto_refresh — client "mồ côi" xoay 1PSIDTS
         # song song với lần init sau của chính profile đó (race hỏng cookie).
-        _run(cli.init(timeout=180, auto_close=False, auto_refresh=True), timeout=200)
+        try:
+            _run(cli.init(timeout=180, auto_close=False, auto_refresh=True, refresh_interval=600), timeout=200)
+        except Exception:
+            try:
+                _run(cli.close(), timeout=10)
+            except Exception:
+                pass
+            raise
         with _client_lock:
             _clients[key] = cli
         _record_auth_status(key, cli)
@@ -604,8 +619,19 @@ def _drop_client(psid: str, profile: str | None = None) -> None:
     mọi profile khoẻ phải gọi lại captcha-solver để lấy cookie (mỗi lần solver
     mở một browser context — tốn CPU và giành lock với đăng nhập tay).
     """
+    key = psid[:32]
     with _client_lock:
-        _clients.pop(psid[:32], None)
+        init_lock = _init_locks.setdefault(key, threading.Lock())
+    # Finish closing the old refresh task before a replacement can initialize.
+    # Other accounts keep using their own independent locks and clients.
+    with init_lock:
+        with _client_lock:
+            old = _clients.pop(key, None)
+        if old is not None and callable(getattr(old, "close", None)):
+            try:
+                _run(old.close(), timeout=10)
+            except Exception:
+                _logger().warning({"event": "gma_client_close_failed"})
     if profile:
         _cookie_cache.pop(profile, None)
         return
@@ -1897,4 +1923,3 @@ def handle_gemini_web_api_image_gen(prompt: str, n: int = 1, response_format: st
     if last_exc:
         raise last_exc
     raise RuntimeError("No available accounts to fulfill image request")
-

@@ -17,7 +17,7 @@ import httpx
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import Response
 
-from api.support import extract_bearer_token
+from api.support import extract_bearer_token, require_admin
 from services.config import config
 from services.ingress_guard import BodyTooLarge, read_body_limited, read_upstream_limited
 
@@ -30,7 +30,7 @@ _MAX_PROXY_BODY = 32 * 1024 * 1024
 # Onboarding can take a while; status polls are quick.
 # Codex batch login: MS OTC + IMAP poll (150s) + consent + OAuth callback → up to ~420s worst case.
 _TIMEOUT = httpx.Timeout(connect=5.0, read=450.0, write=180.0, pool=5.0)
-_DROP_REQ = {"host", "content-length", "connection", "accept-encoding", "authorization"}
+_DROP_REQ = {"host", "content-length", "connection", "accept-encoding", "authorization", "cookie", "x-csrf-token"}
 _DROP_RESP = {"content-encoding", "transfer-encoding", "content-length", "connection"}
 
 
@@ -53,7 +53,11 @@ def _authorized(authorization: str | None) -> bool:
     """Allow the dashboard auth key OR the captcha key (cards may send either)."""
     token = extract_bearer_token(authorization)
     if not token:
-        return False
+        try:
+            require_admin(authorization)
+            return True
+        except HTTPException:
+            return False
     auth_key = str(config.auth_key or "").strip()
     if _const_eq(token, auth_key):
         return True

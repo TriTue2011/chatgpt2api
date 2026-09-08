@@ -246,6 +246,7 @@ class BrowserPool:
     def __init__(self) -> None:
         self._playwright = None
         self._contexts: dict[str, _PoolEntry] = {}
+        self._manual_profiles: set[str] = set()
         self._locks: dict[str, asyncio.Lock] = {}
         self._global_lock = asyncio.Lock()
         self._evict_task: asyncio.Task | None = None
@@ -271,6 +272,9 @@ class BrowserPool:
         # muộn thì chỉ tốn RAM tới lượt quét nhàn rỗi; đóng nhầm thì giết lượt
         # đăng nhập của việc khác.
         self._dang_dang_nhap: set[str] = set()
+
+    def is_manual(self, profile: str) -> bool:
+        return profile in self._manual_profiles
 
     def dau_dang_nhap(self, profile: str) -> None:
         """Đánh dấu hồ sơ đang đăng nhập — việc khác đừng đóng trình duyệt."""
@@ -305,6 +309,7 @@ class BrowserPool:
             except Exception:
                 pass
         self._contexts.clear()
+        self._manual_profiles.clear()
         if self._playwright is not None:
             await self._playwright.stop()
             self._playwright = None
@@ -331,11 +336,10 @@ class BrowserPool:
                         #
                         # Đây đúng cái bẫy `close_profile` đã có cờ
                         # `bo_qua_khi_dang_nhap` để tránh — vòng quét này thì chưa.
-                        if self.dang_dang_nhap(profile):
+                        if self.dang_dang_nhap(profile) or self.is_manual(profile):
                             continue
-                        # Warm-pool: keep tabs alive 5 min idle (was 30 min).
-                        # The prewarmer re-warms every 25 min so a healthy
-                        # warmed profile never sees this branch.
+                        # Fallback cleanup for automation that did not close
+                        # its context explicitly. HTTP warmup holds no tabs.
                         if now - entry.last_used > 300:
                             lock = self._locks.get(profile)
                             if lock and not lock.locked():
@@ -348,7 +352,7 @@ class BrowserPool:
                             # Kiểm lại cờ: lượt đăng nhập có thể vừa bắt đầu trong
                             # lúc đang xếp hàng chờ khoá.
                             if (entry and now - entry.last_used > 300
-                                    and not self.dang_dang_nhap(profile)):
+                                    and not self.dang_dang_nhap(profile) and not self.is_manual(profile)):
                                 logger.info("auto-evicting idle profile=%s", profile)
                                 await self._evict(profile)
             except asyncio.CancelledError:
@@ -451,6 +455,7 @@ class BrowserPool:
             entry = self._contexts.get(profile)
             if entry is not None and entry.ctx is ctx:
                 self._contexts.pop(profile, None)
+                self._manual_profiles.discard(profile)
                 logger.info("context closed (auto-drop) profile=%s", profile)
         try:
             ctx.on("close", _on_close)
@@ -630,6 +635,7 @@ class BrowserPool:
         headless: bool = True,
         force_recreate: bool = False,
         cho_toi_da: float | None = None,
+        manual: bool = False,
     ) -> BrowserContext:
         """Return a context for the given profile, creating one if needed.
 
@@ -663,11 +669,15 @@ class BrowserPool:
                 logger.info("get: hồ sơ %s bận quá %.0fs — bỏ lượt", profile, cho_toi_da)
                 raise HoSoDangBan(profile, cho_toi_da) from None
         try:
+            if (self.is_manual(profile) and not manual) or (manual and self.dang_dang_nhap(profile)):
+                raise HoSoDangBan(profile, 0)
             entry = self._contexts.get(profile)
             if entry is not None and not force_recreate:
                 # Reuse only when the mode matches AND the context is still alive.
                 if entry.headless == headless and await self._is_alive(entry.ctx):
                     entry.last_used = time.time()
+                    if manual:
+                        self._manual_profiles.add(profile)
                     return entry.ctx
                 logger.info(
                     "evicting stale context profile=%s reason=%s",
@@ -681,12 +691,43 @@ class BrowserPool:
 
             ctx, page = await self._open_context(profile, headless=headless)
             self._contexts[profile] = _PoolEntry(ctx=ctx, page=page, headless=headless, last_used=time.time())
+            if manual:
+                self._manual_profiles.add(profile)
             return ctx
         finally:
             lock.release()
 
+    async def read_cookies(self, profile: str, url: str) -> list[dict]:
+        """Read saved cookies without retaining a new browser or navigating.
+
+        Existing windows (including manual login) stay open. A cold reader owns
+        its temporary context under the profile lock and always closes it.
+        """
+        if not _PROFILE_SLUG.fullmatch(profile):
+            raise ValueError("Tên hồ sơ không hợp lệ")
+        directory = settings.data_dir / "profiles" / profile
+        if directory.is_symlink() or not directory.is_dir():
+            return []
+        await self.start()
+        lock = await self._lock_for(profile)
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=5)
+        except asyncio.TimeoutError:
+            raise HoSoDangBan(profile, 5) from None
+        try:
+            entry = self._contexts.get(profile)
+            if entry is not None:
+                return await entry.ctx.cookies(url)
+            ctx, _ = await self._open_context(profile, headless=True)
+            try:
+                return await ctx.cookies(url)
+            finally:
+                await ctx.close()
+        finally:
+            lock.release()
+
     async def close_profile(self, profile: str, *, bo_qua_khi_dang_nhap: bool = False,
-                            cho_toi_da: float | None = None) -> bool:
+                            cho_toi_da: float | None = None, user_requested: bool = False) -> bool:
         """Đóng trình duyệt của hồ sơ.
 
         `bo_qua_khi_dang_nhap=True`: KHÔNG đóng nếu hồ sơ đang có luồng đăng nhập
@@ -705,6 +746,8 @@ class BrowserPool:
         yêu cầu đó. Bên gọi hết hạn 30 giây rồi báo "Google chặn", trong khi trình
         duyệt còn chưa mở.
         """
+        if self.is_manual(profile) and not user_requested:
+            return False
         if bo_qua_khi_dang_nhap and self.dang_dang_nhap(profile):
             logger.info("close_profile BỎ QUA profile=%s — đang có luồng đăng nhập", profile)
             return False
@@ -719,6 +762,12 @@ class BrowserPool:
                             profile, cho_toi_da)
                 raise HoSoDangBan(profile, cho_toi_da) from None
         try:
+            # Recheck after waiting: the user may have opened this workspace.
+            if self.is_manual(profile) and not user_requested:
+                return False
+            if bo_qua_khi_dang_nhap and self.dang_dang_nhap(profile):
+                return False
+            self._manual_profiles.discard(profile)
             entry = self._contexts.pop(profile, None)
             if entry is None:
                 return False
@@ -761,13 +810,16 @@ class BrowserPool:
         # 429 là câu trả lời ĐÚNG chứ không phải lỗi: `_flow_session_trang_thai`
         # đọc 429 thành 'ban' (bận) chứ không phải 'mất phiên', nên không kéo
         # theo một lượt khôi phục oan.
-        if lock.locked() or self.dang_dang_nhap(profile):
+        if lock.locked() or self.dang_dang_nhap(profile) or self.is_manual(profile):
             from fastapi import HTTPException
             ly_do = "đang có luồng đăng nhập" if self.dang_dang_nhap(profile) else "already busy"
             logger.info("fast-failover profile=%s %s → 429", profile, ly_do)
             raise HTTPException(status_code=429, detail="Account Busy")
         await lock.acquire()
         try:
+            if self.dang_dang_nhap(profile) or self.is_manual(profile):
+                from fastapi import HTTPException
+                raise HTTPException(status_code=429, detail="Account Busy")
             entry = self._contexts.get(profile)
             if entry is not None:
                 if entry.headless != headless or not await self._is_alive(entry.ctx):

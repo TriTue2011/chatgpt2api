@@ -453,7 +453,7 @@ class DangNhapLaiKhongDuocChoVoHan(unittest.TestCase):
         self.assertEqual(len(khong_han), 2, f"còn lời gọi không hạn lạ: {khong_han}")
         for moc in ('async def api_session_close', 'if not profile or "/" in profile'):
             i = self.nguon.index(moc)
-            self.assertIn("pool.close_profile(profile)", self.nguon[i:i + 700])
+            self.assertIn("pool.close_profile(profile, user_requested=True)", self.nguon[i:i + 700])
 
 
 if __name__ == "__main__":

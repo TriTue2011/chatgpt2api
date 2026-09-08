@@ -26,6 +26,7 @@ import { CustomProvidersCard } from "./components/custom-providers-card";
 import { FlowCard } from "./components/flow-card";
 import { ChatGPTOnboardCard } from "./components/chatgpt-onboard-card";
 import { CodexOnboardCard } from "./components/codex-onboard-card";
+import { BrowserWorkspacesCard } from "./components/browser-workspaces-card";
 import { GoogleProvidersCard } from "./components/google-providers-card";
 import { OpenAINativeCard } from "./components/openai-native-card";
 import { ImportBrowserDialog } from "./components/import-browser-dialog";
@@ -112,6 +113,14 @@ function SettingsPageContent() {
           icon={<Link className="size-5" />}
         >
           <CustomProvidersCard />
+        </SettingsSection>
+
+        <SettingsSection
+          title="Workspace trình duyệt"
+          description="Hồ sơ đăng nhập riêng, mở khi cần và đóng để tiết kiệm tài nguyên."
+          icon={<KeyRound className="size-5" />}
+        >
+          <BrowserWorkspacesCard />
         </SettingsSection>
 
         <SettingsSection

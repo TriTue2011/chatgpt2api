@@ -90,6 +90,7 @@ from .solvers.recaptcha import solve_recaptcha_v2, solve_recaptcha_v3
 from .solvers.turnstile import solve_turnstile
 from .codex_google_onboard import run_codex_google_onboard, CodexGoogleOnboardReq
 from .github_codex_onboard import run_codex_onboard, CodexOnboardReq
+from .workspaces import create_router as workspace_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -121,7 +122,11 @@ async def _don_ho_so_truoc_khi_dang_nhap(profile: str) -> str:
     đang dùng.
     """
     try:
+        if pool.is_manual(profile):
+            return "Workspace đang mở thủ công — đóng workspace trước khi đăng nhập lại."
         await pool.close_profile(profile, cho_toi_da=_HAN_DON_TRUOC_DANG_NHAP_S)
+        if pool.is_manual(profile):
+            return "Workspace vừa được mở thủ công — bỏ lượt đăng nhập lại."
         return ""
     except HoSoDangBan as exc:
         logger.warning("relogin: bỏ lượt vì hồ sơ %s đang bận", profile)
@@ -147,6 +152,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="captcha-solver", version="0.1.0", lifespan=lifespan)
+app.include_router(workspace_router(pool, require_api_key))
 
 # Allow cross-origin POST from chatgpt2api's Settings UI (Flow tab) so the
 # "Open noVNC + start Google login" button can call /v1/session/manual-login
@@ -735,6 +741,11 @@ async def api_flow_check_project(req: FlowProjectCheckReq) -> dict[str, Any]:
     except Exception as exc:
         logger.info("flow project check failed profile=%s: %s", req.profile, str(exc)[:160])
         raise _loi_flow_rest(exc) from exc
+    finally:
+        try:
+            await pool.close_profile(req.profile, bo_qua_khi_dang_nhap=True, cho_toi_da=0.2)
+        except HoSoDangBan:
+            pass
 
 
 @app.post("/v1/google/flow/rest/generate-image", dependencies=[Depends(require_api_key)])
@@ -1557,7 +1568,15 @@ async def api_claude_web_session(profile: str) -> dict[str, Any]:
     chatgpt2api's api/claude.py calls this to obtain the cookie instead of
     storing a static session_key in config.
     """
-    session = get_claude_web_session(profile)
+    from .claude_web_login import get_saved_session
+    try:
+        session = await get_saved_session(profile)
+    except HoSoDangBan:
+        raise HTTPException(429, "Account Busy") from None
+    except ValueError:
+        raise HTTPException(400, "Tên hồ sơ không hợp lệ") from None
+    except Exception:
+        raise HTTPException(503, "Không đọc được phiên Claude đã lưu") from None
     if session is None or not session.session_key:
         raise HTTPException(status_code=404, detail="Chưa có sessionKey (onboard Claude Web trước)")
     return {"profile": profile, "session_key": session.session_key, "email": session.email}
@@ -1712,7 +1731,7 @@ async def api_session_status(profile: str) -> dict[str, Any]:
 
 @app.post("/v1/session/{profile}/close", dependencies=[Depends(require_api_key)])
 async def api_session_close(profile: str) -> dict[str, Any]:
-    closed = await pool.close_profile(profile)
+    closed = await pool.close_profile(profile, user_requested=True)
     return {"profile": profile, "closed": closed}
 
 
@@ -1724,16 +1743,14 @@ async def api_gemini_web_cookies(profile: str) -> dict[str, Any]:
     lib gemini_webapi) gọi thẳng HTTP API gemini.google.com — không cần DOM.
     Pattern y hệt /v1/claude-web/{profile}/session của Claude.
     """
-    ctx = pool.get_cached(profile)
-    if ctx is None:
-        try:
-            ctx = await pool.get(profile)
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail=f"cannot load profile: {exc}") from exc
     try:
-        cookies = await ctx.cookies("https://gemini.google.com")
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"profile context dead: {exc}") from exc
+        cookies = await pool.read_cookies(profile, "https://gemini.google.com")
+    except HoSoDangBan:
+        raise HTTPException(429, "Account Busy") from None
+    except ValueError:
+        raise HTTPException(400, "Tên hồ sơ không hợp lệ") from None
+    except Exception:
+        raise HTTPException(503, "Không đọc được cookie của hồ sơ") from None
     wanted = {"__Secure-1PSID", "__Secure-1PSIDTS"}
     out = {c["name"]: c["value"] for c in cookies
            if c.get("name") in wanted and c.get("value")}
@@ -1871,8 +1888,16 @@ async def api_chatgpt_refresh_jwt(profile: str) -> dict[str, Any]:
                         "access_token_preview": preview,
                         "captured_email": email,
                     }
+        except HTTPException as exc:
+            if exc.status_code == 429:
+                raise
         except Exception:
-            continue
+            pass
+        finally:
+            try:
+                await pool.close_profile(ten, bo_qua_khi_dang_nhap=True, cho_toi_da=0.2)
+            except HoSoDangBan:
+                pass
 
     # Step 2: Quick scrape failed — try full re-login with saved credentials.
     # Đăng nhập lại vào ứng viên CUỐI: `_ho_so_ung_vien` chỉ thêm profile
@@ -2337,7 +2362,7 @@ async def api_delete_profile(profile: str) -> dict[str, Any]:
     if not profile or "/" in profile or "\\" in profile or profile in (".", ".."):
         raise HTTPException(status_code=400, detail="invalid profile name")
     try:
-        await pool.close_profile(profile)
+        await pool.close_profile(profile, user_requested=True)
     except Exception:
         logger.warning("close before delete failed for profile=%s", profile)
     profile_dir = settings.data_dir / "profiles" / profile

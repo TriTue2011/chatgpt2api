@@ -119,7 +119,7 @@ _solver_key_cache: dict[str, tuple[float, str]] = {}
 _profile_by_session: dict[str, str] = {}
 
 # Per-profile cooldown for the self-heal re-login (relogin-via-google). After a
-# restart the solver's in-RAM sessionKey is gone; we re-login via the profile's
+# restart the solver reads its saved cookie first; if absent we re-login via
 # persisted Google session (SSO), but only retry a given profile every 5 min so
 # a profile that genuinely can't onboard doesn't relaunch Chrome each request.
 _RELOGIN_COOLDOWN = 300.0
@@ -204,6 +204,7 @@ def _fetch_session_key_from_solver(cfg: dict[str, Any], excluded_keys: set[str] 
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
     # PASS 1 — REUSE: cached or freshly-scraped sessionKey for any profile.
+    deferred_profiles: set[str] = set()
     for profile in profiles:
         cached = _solver_key_cache.get(profile)
         if cached and (time.time() - cached[0]) < _SOLVER_KEY_TTL and cached[1] and cached[1] not in excluded:
@@ -213,6 +214,9 @@ def _fetch_session_key_from_solver(cfg: dict[str, Any], excluded_keys: set[str] 
                 f"{base}/v1/claude-web/{profile}/session",
                 headers=headers, timeout=15, impersonate="chrome110",
             )
+            if resp.status_code in (409, 429) or resp.status_code >= 500:
+                deferred_profiles.add(profile)
+                continue
             if resp.status_code == 200:
                 key = str((resp.json() or {}).get("session_key") or "")
                 if key:
@@ -221,11 +225,11 @@ def _fetch_session_key_from_solver(cfg: dict[str, Any], excluded_keys: set[str] 
                     if key not in excluded:
                         return key
         except Exception as exc:
+            deferred_profiles.add(profile)
             _logger().warning({"event": "claude_solver_key_fetch_failed", "profile": profile, "error": str(exc)[:120]})
 
-    # PASS 2 — SELF-HEAL: không có session sống (điển hình: sau khi restart,
-    # sessionKey trong RAM của solver mất) → ĐĂNG NHẬP LẠI qua phiên Google đã lưu
-    # của profile (SSO, không cần mật khẩu) rồi lấy lại key. Bounded + cooldown.
+    # PASS 2 — SELF-HEAL: không có cookie đã lưu dùng được → đăng nhập qua
+    # phiên Google của profile (SSO), có hạn chờ và thời gian nghỉ.
     now = time.time()
 
     def _claude_relogin_once(base: str, headers: dict, profile: str, excluded: set) -> str:
@@ -268,6 +272,8 @@ def _fetch_session_key_from_solver(cfg: dict[str, Any], excluded_keys: set[str] 
     da_thu = ""        # profile THỰC SỰ được thử lượt này (chỉ một — xem break dưới)
     so_nghi = 0        # số profile bị bỏ qua vì đang trong thời gian nghỉ
     for profile in profiles:
+        if profile in deferred_profiles:
+            continue
         if now - _relogin_cooldown.get(profile, 0) < _RELOGIN_COOLDOWN:
             so_nghi += 1
             continue
@@ -300,7 +306,7 @@ def _fetch_session_key_from_solver(cfg: dict[str, Any], excluded_keys: set[str] 
     # Khoá gộp cũng tách theo profile — bản cũ dùng chung khoá "fail:all" nên
     # tài khoản thứ hai hỏng trong 30 phút sau đó bị im lặng hoàn toàn.
     if da_thu:
-        con_lai = len(profiles) - so_nghi - 1
+        con_lai = len(profiles) - len(deferred_profiles) - so_nghi - 1
         them = ""
         if so_nghi:
             them += f"\n{so_nghi} tài khoản khác đang trong thời gian nghỉ, chưa thử."
@@ -310,10 +316,10 @@ def _fetch_session_key_from_solver(cfg: dict[str, Any], excluded_keys: set[str] 
             f"❌ Claude — {da_thu}\nKhông lấy được session (đăng nhập lại Google "
             f"cũng không xong). Có thể hết phiên/bị chặn — cần xử lý tay "
             f"(noVNC cổng 6080).{them}")
-    elif profiles:
-        # Không thử được ai vì TẤT CẢ đang nghỉ — đây không phải lỗi tài khoản.
+    elif so_nghi:
+        # Chưa thử được tài khoản đang nghỉ; tài khoản bận cũng không phải lỗi.
         _claude_notify("fail:dang_nghi",
-            f"⏳ Claude — cả {len(profiles)} tài khoản đang trong thời gian nghỉ "
+            f"⏳ Claude — {so_nghi} tài khoản đang trong thời gian nghỉ "
             f"({_RELOGIN_COOLDOWN:.0f}s sau mỗi lần thử). Chưa thử lại được, "
             "không phải tài khoản hỏng.")
     return ""
