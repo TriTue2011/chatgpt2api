@@ -207,11 +207,15 @@ class MCPSession:
         *,
         headers: dict[str, str] | None = None,
         transport: str = "auto",
+        oauth_id: str = "",
     ) -> None:
         self.url = url
         self.api_key = api_key
+        self.oauth_id = oauth_id
         self.headers = self._clean_headers(headers or {})
         self.transport = transport if transport in ("auto", "streamable_http", "sse") else "auto"
+        if oauth_id:
+            self.transport = "streamable_http"
         self.session_id: str | None = None
         self.server_name: str = ""
         self.server_version: str = ""
@@ -602,7 +606,46 @@ class MCPSession:
             )
         return response
 
+    def _open_request(self, request, timeout):
+        if not self.oauth_id:
+            return _open_url(request, timeout=timeout)
+        from services import net_guard
+        from services.mcp_oauth import _https_url
+        _https_url(self.url)
+        net_guard.check_url(self.url)
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), net_guard._NoRedirect(),
+                                            net_guard._PeerCheckedHTTPSHandler())
+        return opener.open(request, timeout=timeout)
+
     def _call(self, method: str, params: dict | None = None, timeout: float | None = None) -> dict | None:
+        if not self.oauth_id:
+            return self._call_once(method, params, timeout)
+        from services.mcp_oauth import get_manager, OAuthError
+        with self._lock:
+            try:
+                manager = get_manager()
+                token = manager.token(self.oauth_id, self.url)
+                self.api_key = token
+                result = self._call_once(method, params, timeout)
+                # Only an explicit auth rejection permits replay of a tool call.
+                if self._last_http_status == 401:
+                    self.api_key = manager.token(self.oauth_id, self.url, rejected_token=token)
+                    result = self._call_once(method, params, timeout)
+                    if self._last_http_status == 401:
+                        manager.reject(self.oauth_id, self.api_key)
+                        raise OAuthError("Token bị từ chối; hãy kết nối tài khoản lại.")
+                if result is None or result.get("error"):
+                    self._last_error = "MCP OAuth trả lỗi (HTTP %s)." % (self._last_http_status or "không rõ")
+                    return {"error": {"code": (result or {}).get("error", {}).get("code") if isinstance((result or {}).get("error"), dict) else None, "message": self._last_error}}
+                return result
+            except OAuthError as exc:
+                self._last_error = str(exc)
+                self._connected = False
+                return {"error": {"message": str(exc)}}
+            finally:
+                self.api_key = ""
+
+    def _call_once(self, method: str, params: dict | None = None, timeout: float | None = None) -> dict | None:
         # NOTIFICATION thì KHÔNG được có `id` — JSON-RPC phân biệt request và
         # notification bằng đúng chỗ đó. Gắn `id` vào `notifications/initialized`
         # là server phải đem nó đi so với cả 28 kiểu ClientRequest rồi trượt hết,
@@ -661,9 +704,7 @@ class MCPSession:
             # khi GC chạy. Dưới tải cao (autofill SGK bắn hàng nghìn lượt) fd
             # dồn lại tới mức cả tiến trình chết vì [Errno 24] Too many open
             # files — hỏng luôn mọi thứ khác chứ không riêng khâu gọi MCP.
-            with _open_url(
-                req, timeout=effective_timeout
-            ) as resp:
+            with self._open_request(req, effective_timeout) as resp:
                 sid = resp.getheader("mcp-session-id")
                 if sid:
                     self.session_id = sid
@@ -711,7 +752,7 @@ class MCPSession:
                 return d
             self._last_error = f"HTTP {e.code}: {raw[:300]}"
         except Exception as exc:
-            safe_error = str(exc).replace(self.url, _url_for_log(self.url))
+            safe_error = "OAuth MCP request failed" if self.oauth_id else str(exc).replace(self.url, _url_for_log(self.url))
             self._last_error = safe_error[:500]
             if self._chi_la_hub_chua_len(exc):
                 logger.info({"event": "mcp_hub_chua_len", "url": _url_for_log(self.url),
@@ -824,6 +865,14 @@ class MCPSession:
         return False immediately so a single dead MCP can't add 15s × N to
         every chat request. Repeated failures lengthen the cooldown.
         """
+        if self.oauth_id:
+            from services.mcp_oauth import get_manager, OAuthError
+            try:
+                get_manager().token(self.oauth_id, self.url)
+            except OAuthError as exc:
+                self._connected = False
+                self._last_error = str(exc)
+                return False
         now = time.time()
         # Fast path check for session validity (5 min TTL)
         if self._connected and (now - self._last_init) < 300:
@@ -1116,6 +1165,7 @@ def validate_mcp_server(
     *,
     headers: dict[str, str] | None = None,
     transport: str = "auto",
+    oauth_id: str = "",
 ) -> dict[str, Any]:
     """Negotiate with an MCP server and return a credential-safe report."""
     safe_headers = _clean_custom_headers(headers or {})
@@ -1123,7 +1173,7 @@ def validate_mcp_server(
         url,
         api_key,
         headers=safe_headers,
-        transport=transport,
+        transport=transport, oauth_id=oauth_id,
     )
     if not session.ensure_connected():
         error = (session._last_error or "MCP negotiation failed").replace(
@@ -1219,11 +1269,13 @@ def _session_key(
     api_key: str,
     headers: dict[str, str] | None = None,
     transport: str = "auto",
+    oauth_id: str = "",
 ) -> str:
     """Return a secret-safe identity for every connection-affecting option."""
     identity = json.dumps(
         {
             "api_key": api_key,
+            **({"oauth_id": oauth_id} if oauth_id else {}),
             "headers": headers or {},
             "transport": transport,
         },
@@ -1233,6 +1285,16 @@ def _session_key(
     )
     digest = hashlib.sha256(identity.encode()).hexdigest()[:20]
     return f"{url}::{digest}"
+
+
+def _oauth_connection_status(info):
+    if not info.get("oauth_id"):
+        return ""
+    from services.mcp_oauth import get_manager, OAuthError
+    try:
+        return get_manager().status(info["oauth_id"])["status"]
+    except OAuthError:
+        return "reauth_required"
 
 
 def _enabled_signature(installed: list[dict]) -> str:
@@ -1251,6 +1313,8 @@ def _enabled_signature(installed: list[dict]) -> str:
             "api_key": api_key,
             "headers": headers,
             "transport": transport,
+            "oauth_id": info.get("oauth_id", ""),
+            "oauth_status": _oauth_connection_status(info),
         })
     canonical = json.dumps(parts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
@@ -1267,11 +1331,11 @@ def _collect_tools_one(info: dict) -> tuple[str, str, list[dict[str, Any]], bool
     url, api_key, headers, transport = _connection_options(info)
     if not url:
         return name, "", [], True, None
-    key = _session_key(url, api_key, headers, transport)
+    key = _session_key(url, api_key, headers, transport, info.get("oauth_id", ""))
     with _sessions_lock:
         if key not in _sessions:
             _sessions[key] = MCPSession(
-                url, api_key, headers=headers, transport=transport,
+                url, api_key, headers=headers, transport=transport, oauth_id=info.get("oauth_id", ""),
             )
         session = _sessions[key]
     try:
@@ -1868,7 +1932,7 @@ def get_relevant_mcp_tools(query: str, _relevant_messages: list | None = None) -
 
     # Only bundled servers have hand-written intent mappings. Tools from a
     # user-added server remain available without adding its names to Python.
-    external_keys = {_session_key(*_connection_options(s)) for s in _external_mcp_servers()}
+    external_keys = {_session_key(*_connection_options(s), s.get("oauth_id", "")) for s in _external_mcp_servers()}
     external_names = {name for name, route in _tool_routes.items() if route[0] in external_keys}
     external = [t for t in all_tools if (t.get('function') or {}).get('name') in external_names]
 
@@ -1975,11 +2039,11 @@ def call_mcp_tool(tool_name: str, arguments: dict[str, Any], server_id: str = ""
         url, api_key, headers, transport = _connection_options(info)
         if not url:
             return None
-        key = _session_key(url, api_key, headers, transport)
+        key = _session_key(url, api_key, headers, transport, info.get("oauth_id", ""))
         with _sessions_lock:
             if key not in _sessions:
                 _sessions[key] = MCPSession(
-                    url, api_key, headers=headers, transport=transport,
+                    url, api_key, headers=headers, transport=transport, oauth_id=info.get("oauth_id", ""),
                 )
             session = _sessions[key]
         if not session.ensure_connected():
@@ -2018,7 +2082,8 @@ def call_mcp_tool(tool_name: str, arguments: dict[str, Any], server_id: str = ""
         key, native_name = route
         with _sessions_lock:
             session = _sessions.get(key)
-        if session and session.ensure_connected():
+        allowed = any(info.get("enabled", True) and _session_key(*_connection_options(info), info.get("oauth_id", "")) == key for info in installed)
+        if allowed and session and session.ensure_connected():
             return session.call_tool(native_name, arguments)
 
     # Compatibility fallback for old caches/callers using the native name.

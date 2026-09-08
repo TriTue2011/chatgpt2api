@@ -151,3 +151,4 @@ zalo-server/data/cookies/
 # repo không cần chúng, và không nên bị một máy chủ MCP cắm vào sau lưng.
 .mcp.json
 .serena/
+data/mcp_oauth/

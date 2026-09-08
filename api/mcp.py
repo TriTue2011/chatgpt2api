@@ -76,8 +76,27 @@ def _normalize_mcp(installed) -> dict:
     return installed if isinstance(installed, dict) else {}
 
 
+def _oauth_status(info: dict) -> dict:
+    if not info.get("oauth_id"):
+        return {"auth_type": "manual"}
+    from services.mcp_oauth import get_manager, OAuthError
+    try:
+        status = get_manager().status(info["oauth_id"])
+    except OAuthError as exc:
+        status = {"status": "reauth_required", "error": str(exc)}
+    return {"auth_type": "oauth", "oauth": status}
+
+
+async def _disconnect_oauth(oauth_id):
+    if oauth_id:
+        from services.mcp_oauth import get_manager
+        await run_in_threadpool(get_manager().disconnect, oauth_id, forget_client=True)
+
+
 def create_router() -> APIRouter:
     router = APIRouter()
+    from api.mcp_oauth import create_router as oauth_router
+    router.include_router(oauth_router())
 
     @router.post("/api/mcp/validate")
     async def validate_server(
@@ -117,6 +136,7 @@ def create_router() -> APIRouter:
                 "transport": info.get("transport", "auto"),
                 "enabled": bool(info.get("enabled", True)),
                 "has_api_key": bool(info.get("api_key")),
+                **_oauth_status(info),
                 "header_names": header_names,
             })
         return {"mcps": mcps}
@@ -141,6 +161,7 @@ def create_router() -> APIRouter:
                 "installed": p.id in installed,
                 "enabled": bool(info.get("enabled", True)),
                 "has_api_key": bool(info.get("api_key")),
+                **_oauth_status(info),
             })
 
         # Also include hub-discovered MCPs not in PRESETS
@@ -155,6 +176,7 @@ def create_router() -> APIRouter:
                     "installed": True,
                     "enabled": bool(info.get("enabled", True)),
                     "has_api_key": bool(info.get("api_key")),
+                    **_oauth_status(info),
                     "has_headers": bool(info.get("headers")),
                     "transport": info.get("transport", "auto"),
                 })
@@ -202,9 +224,12 @@ def create_router() -> APIRouter:
         # ATOMIC: đọc lại + merge trong khoá (tránh hai request ghi đè mất cấu hình).
         def _apply(d):
             inst = _normalize_mcp(d.get("mcp_servers") or {})
+            old_oauth_id = (inst.get(body.id) or {}).get("oauth_id")
             inst[body.id] = entry
             d["mcp_servers"] = inst
-        config.mutate(_apply)
+            return old_oauth_id
+        old_oauth_id = config.mutate(_apply)
+        await _disconnect_oauth(old_oauth_id)
         try:
             from services.mcp_client import invalidate_tools_cache
             invalidate_tools_cache()
@@ -224,12 +249,14 @@ def create_router() -> APIRouter:
 
         def _apply(d):
             inst = _normalize_mcp(d.get("mcp_servers") or {})
+            old_oauth_id = (inst.get(preset_id) or {}).get("oauth_id")
             existed = preset_id in inst
             if existed:
                 del inst[preset_id]
                 d["mcp_servers"] = inst
-            return existed
-        removed = config.mutate(_apply)
+            return existed, old_oauth_id
+        removed, old_oauth_id = config.mutate(_apply)
+        await _disconnect_oauth(old_oauth_id)
         if removed:
             try:
                 from services.mcp_client import invalidate_tools_cache
