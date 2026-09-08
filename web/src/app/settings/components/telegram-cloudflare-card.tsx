@@ -530,6 +530,9 @@ function ActivityCollapse({ title, children }: { title: string; children: React.
   );
 }
 
+const CH_TABS = ["tg", "zalo", "zalop", "memlinks", "kholinks", "nhatky"] as const;
+type ChTab = (typeof CH_TABS)[number];
+
 export function TelegramCloudflareCard() {
   const config = useSettingsStore((state) => state.config);
   const isSavingConfig = useSettingsStore((state) => state.isSavingConfig);
@@ -554,15 +557,13 @@ export function TelegramCloudflareCard() {
   // "memlinks" đứng CÙNG HÀNG với các kênh (không phải tab con): kết nối bộ nhớ
   // nối XUYÊN kênh, nên nó không thuộc riêng kênh nào — để trong từng kênh là
   // lặp lại vô lý và gợi ý sai rằng mỗi kênh có cấu hình riêng.
-  const [chTab, setChTab] = useState<"tg" | "zalo" | "zalop" | "memlinks" | "kholinks" | "nhatky">("tg");
+  const [chTab, setChTab] = useState<ChTab>("tg");
 
   // Link từ "Bắt đầu ở đây" chỉ thẳng tới một kênh: /settings?tim=…&tab=zalop
   // Không có tham số, hoặc giá trị lạ → giữ nguyên tab mặc định (Telegram).
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("tab");
-    if (t && ["tg", "zalo", "zalop", "memlinks", "kholinks", "nhatky"].includes(t))
-      setChTab(t as typeof chTab);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (t && (CH_TABS as readonly string[]).includes(t)) setChTab(t as ChTab);
   }, []);
   const [subTab, setSubTab] = useState<"settings" | "zaccounts" | "zwebhook" | "directory" | "filter" | "branches">("settings");
   // Danh bạ thread (setting ∪ auto bot) — tab riêng mỗi kênh
