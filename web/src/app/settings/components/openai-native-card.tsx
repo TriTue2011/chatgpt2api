@@ -245,7 +245,9 @@ export function OpenAINativeCard() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* flex-wrap: hai nút không đủ chỗ trên màn 390px, nút "Ngừng theo
+            dõi" bị cắt mất chữ (ảnh người dùng 09/09). */}
+        <div className="flex flex-wrap items-center gap-2">
           <Button onClick={batDau} disabled={dangChay} className="h-8 rounded-lg text-xs">
             {dangChay ? <LoaderCircle className="mr-2 size-3.5 animate-spin" /> : null}
             Đăng nhập và thêm vào pool

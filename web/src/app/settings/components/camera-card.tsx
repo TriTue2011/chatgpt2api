@@ -178,7 +178,7 @@ export function CameraCard() {
                     title="Có luồng phụ riêng cho AI đọc">+ luồng phụ</span>
                 : null}
               {c.note ? <span className="text-xs text-muted-foreground">— {c.note}</span> : null}
-              <div className="ml-auto flex gap-1">
+              <div className="ml-auto flex flex-wrap gap-1">
                 <Button size="sm" variant="outline" disabled={busy === t} onClick={() => thu(t)}>
                   {busy === t ? "…" : "Chụp thử"}
                 </Button>
@@ -291,7 +291,7 @@ export function CameraCard() {
 
           <Input value={moi.note || ""} onChange={(e) => setMoi({ ...moi, note: e.target.value })}
             placeholder="Ghi chú — cũng dùng để nhận tên, vd: cổng ngoài, chỗ để xe" />
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={luuCam}>
               {dangSua ? "Lưu thay đổi" : "Thêm camera"}
             </Button>

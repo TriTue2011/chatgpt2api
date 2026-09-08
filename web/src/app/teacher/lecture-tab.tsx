@@ -142,7 +142,7 @@ export function PageViewer({ book, printedPage, onPrinted }: {
           disabled={p >= total} onClick={() => onPrinted?.(p + 1)}>
           <ChevronRight className="size-3.5" />
         </Button>
-        <div className="ml-auto flex gap-1">
+        <div className="ml-auto flex flex-wrap gap-1">
           <Button size="sm" variant="outline" className="h-7 px-2"
             onClick={() => setZoom((z) => Math.max(1, +(z - 0.25).toFixed(2)))}>
             <ZoomOut className="size-3.5" />

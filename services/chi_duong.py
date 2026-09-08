@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 _UA = "c2a-bot/1.0 (personal assistant; contact via Zalo)"
 _NOMINATIM = "https://nominatim.openstreetmap.org/search"
+_NOMINATIM_REVERSE = "https://nominatim.openstreetmap.org/reverse"
 _OSRM = "https://router.project-osrm.org/route/v1"
 _TIMEOUT = 15
 
@@ -437,6 +438,36 @@ def tim_dia_diem(dia_chi: str, so: int = 8) -> list[dict[str, object]]:
     return out
 
 
+def _ten_tu_toa_do(lat: float, lon: float) -> str:
+    """Toạ độ → địa chỉ chữ. Rỗng khi tra không ra (bên gọi tự lo phương án khác).
+
+    Vì sao cần: người dùng gửi LINK GHIM Google Maps thì `_giai_link_maps` ra
+    toạ độ nhưng KHÔNG có tên, và bước xác nhận in ra "Vị trí đã ghim trên Google
+    Maps" ở CẢ HAI đầu — người dùng không thể biết bot hiểu đúng chỗ nào để mà
+    xác nhận (đo 08/09).
+
+    Dùng Nominatim `reverse` chứ không phải `_gmaps_pb`: endpoint tìm kiếm của
+    Google nhận "lat,lon" nhưng trả tên RỖNG (đo 08/09), nên không tra ngược được.
+    """
+    try:
+        r = requests.get(
+            _NOMINATIM_REVERSE,
+            params={"format": "jsonv2", "lat": f"{lat:.7f}", "lon": f"{lon:.7f}",
+                    "accept-language": "vi", "zoom": "18"},
+            headers={"User-Agent": _UA}, timeout=_TIMEOUT)
+        if r.status_code != 200:
+            return ""
+        ten = str((r.json() or {}).get("display_name") or "").strip()
+    except Exception:
+        # Mất mạng / Nominatim chặn: KHÔNG chặn luồng chỉ đường, chỉ mất phần tên.
+        return ""
+    # Bỏ đuôi mã bưu chính + "Việt Nam" cho gọn: người Việt đọc không cần.
+    phan = [x.strip() for x in ten.split(",") if x.strip()]
+    while phan and (phan[-1].lower() in {"việt nam", "vietnam"} or phan[-1].isdigit()):
+        phan.pop()
+    return ", ".join(phan)
+
+
 def geocode(dia_chi: str, tinh_goi_y: str = "") -> tuple[float, float, str, str, bool] | None:
     """Địa chỉ → (lat, lon, tên, tỉnh, chính_xác); None nếu không thấy.
 
@@ -455,7 +486,10 @@ def geocode(dia_chi: str, tinh_goi_y: str = "") -> tuple[float, float, str, str,
     # Link Google Maps (ghim chia sẻ) → toạ độ chính xác, hoặc TÊN để tra tiếp.
     giai = _giai_link_maps(dc)
     if isinstance(giai, tuple):
-        return giai[0], giai[1], "Vị trí đã ghim trên Google Maps", "", True
+        # Tra ngược ra địa chỉ chữ để người dùng XÁC NHẬN được. Tra hỏng thì
+        # vẫn chạy tiếp với nhãn cũ — mất phần đọc hiểu, không mất chỉ đường.
+        ten_ghim = _ten_tu_toa_do(giai[0], giai[1]) or "Vị trí đã ghim trên Google Maps"
+        return giai[0], giai[1], ten_ghim, "", True
     if isinstance(giai, str) and giai:
         dc = giai
     fdc = _bo_dau(dc)

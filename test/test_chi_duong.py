@@ -344,12 +344,30 @@ class HandlerTests(unittest.TestCase):
                                      "phuong_tien": "xe máy", "da_chon_pt": True}, {})
         self.assertIn("Chọn ĐIỂM ĐI", out["text"])
 
-    def test_hai_diem_da_chon_moi_hoi_xac_nhan(self):
-        """Chỉ sau khi mỗi đầu là một ghim do người dùng chọn mới hiện xác nhận."""
+    def test_dia_chi_khop_chinh_xac_thi_chi_duong_luon(self):
+        """Đã bấm chọn ghim từ menu (menu in ĐỦ địa chỉ) thì KHÔNG hỏi lại nữa.
+
+        Trước đây còn một bước "Đúng chưa ạ?" sau khi người dùng đã chọn — bắt
+        xác nhận hai lần cùng một việc, tốn thêm một lượt mà không thêm thông
+        tin nào (người dùng phản ánh 09/09)."""
+        r = {"ok": True, "km": 7.3, "phut": 10, "buoc": ["Rẽ phải Phố X (~235 m)"],
+             "link": "https://www.google.com/maps/dir/?api=1&x", "tu": "A", "den": "B"}
+        dv = {"ok": True, "tu": "A", "den": "B", "gan_dung": False}
+        di = "https://www.google.com/maps/search/?api=1&query=21.0114%2C105.8506"
+        den = "https://www.google.com/maps/search/?api=1&query=20.9653%2C105.8232"
+        with patch("services.chi_duong.dinh_vi", return_value=dv), \
+             patch("services.chi_duong.chi_duong", return_value=r):
+            out = caps._h_chi_duong({"diem_di": di, "diem_den": den,
+                                     "phuong_tien": "xe máy", "da_chon_pt": True}, {})
+        self.assertNotIn("xác nhận lại địa chỉ", out["text"])
+        self.assertIn("km", out["text"].lower())
+
+    def test_dia_chi_gan_dung_thi_VAN_hoi_xac_nhan(self):
+        """Chỉ khớp ở mức khu đô thị/phố (bỏ mã toà mới ra) thì hỏi là ĐÁNG."""
         dv = {"ok": True,
               "tu": "Hoàng Thành Tower, 114, Phố Mai Hắc Đế, Vân Hồ, Phường Hai Bà Trưng, Thành phố Hà Nội, Việt Nam",
               "den": "CT4B-X2 Bắc Linh Đàm, Phường Hoàng Liệt, Quận Hoàng Mai, Thành phố Hà Nội, Việt Nam",
-              "gan_dung": False, "link": "https://www.google.com/maps/dir/?api=1"}
+              "gan_dung": True, "link": "https://www.google.com/maps/dir/?api=1"}
         di = "https://www.google.com/maps/search/?api=1&query=21.0114%2C105.8506"
         den = "https://www.google.com/maps/search/?api=1&query=20.9653%2C105.8232"
         with patch("services.chi_duong.dinh_vi", return_value=dv):

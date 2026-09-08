@@ -42,6 +42,7 @@ function soi(duong) {
   const ten = relative(GOC, duong);
 
   loi.push(...soiTheoThe(noiDung, ten));
+  loi.push(...soiHangNut(noiDung, ten));
 
   for (const { chuoi, dong } of cacLopTrongTep(noiDung)) {
     const co = (r) => r.test(chuoi);
@@ -97,6 +98,31 @@ function soi(duong) {
  *  B. Vùng chạm < 24px   → WCAG 2.2 Target Size (mức AA). Lớp phủ trong suốt
  *     `before:size-6` là cách hợp lệ để đạt chuẩn mà không đổi nét vẽ.
  */
+/**
+ * Hàng chứa NHIỀU NÚT mà không cho xuống dòng.
+ *
+ * Quy tắc 1 chỉ bắt `justify-between` nên bỏ sót mẫu này: một `<div className=
+ * "flex items-center gap-2">` bọc 2-3 `<Button>` chữ dài. Trên màn 390px nút
+ * cuối bị cắt mất chữ — đo thật ở openai-native-card ("Ngừng theo dõi" cụt).
+ */
+function soiHangNut(noiDung, ten) {
+  const ra = [];
+  const re = /className="((?:[^"]*\bflex\b)[^"]*)"\s*>([\s\S]{0,600}?)<\/div>/g;
+  let m;
+  while ((m = re.exec(noiDung))) {
+    const lop = m[1], than = m[2];
+    if (/flex-col|flex-wrap|inline-flex/.test(lop)) continue;
+    if (/\b(sm|md|lg):flex-/.test(lop)) continue;
+    // đếm nút CON trực tiếp mang chữ (bỏ nút chỉ có icon — chúng nhỏ, không tràn)
+    const nut = than.match(/<Button\b[^>]*>[\s\S]{0,160}?[\p{L}]{3,}/gu) || [];
+    if (nut.length < 2) continue;
+    const dong = noiDung.slice(0, m.index).split("\n").length;
+    ra.push({ ten, dong, muc: "hang-nut-khong-xuong-dong",
+      chi: `${nut.length} nút chữ trên một hàng không flex-wrap → nút cuối bị cắt trên màn hẹp` });
+  }
+  return ra;
+}
+
 function soiTheoThe(noiDung, ten) {
   const ra = [];
   const reThe = /<(input|textarea|select|button|a)\b[^>]{0,900}?className=(?:"([^"]*)"|\{cn\(([\s\S]{0,500}?)\)\})/g;
@@ -154,6 +180,7 @@ const NHAN = {
   "luoi-nhieu-cot-co-dinh": "Lưới nhiều cột không đổ xuống trên điện thoại",
   "input-gay-zoom-ios": "Ô nhập chữ < 16px (iOS tự phóng to trang)",
   "vung-cham-qua-nho": "Vùng chạm < 24px (WCAG 2.2 Target Size)",
+  "hang-nut-khong-xuong-dong": "Hàng nhiều nút không xuống dòng (nút cuối bị cắt)",
 };
 
 for (const [muc, ds] of Object.entries(theoMuc)) {

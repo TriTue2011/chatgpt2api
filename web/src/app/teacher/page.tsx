@@ -1702,7 +1702,7 @@ export default function TeacherPage() {
             {picked.birth_year ? <span className="text-muted-foreground"> (sinh {picked.birth_year}, lớp theo {picked.grade_source})</span> : null}
             {picked.school_year ? <span className="text-muted-foreground"> · năm học {picked.school_year}</span> : null}
           </span>
-          <div className="ml-auto flex gap-1.5">
+          <div className="ml-auto flex flex-wrap gap-1.5">
             <Button size="sm" variant="ghost" className="h-6 text-[10px]"
               onClick={() => setTab("roster")}>Đổi học sinh</Button>
             <Button size="sm" variant="ghost" className="h-6 text-[10px]"

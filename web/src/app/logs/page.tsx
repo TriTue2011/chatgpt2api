@@ -250,7 +250,7 @@ function LogsContent() {
                       ) : null}
                       <TableCell className="max-w-[420px] truncate text-[var(--muted-foreground)]">{item.summary || "-"}</TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-1">
+                        <div className="flex flex-wrap items-center gap-1">
                           <Button variant="ghost" className="h-8 rounded-lg px-3 text-[var(--muted-foreground)]" onClick={() => openDetail(item)}>
                             Xem chi tiết
                           </Button>

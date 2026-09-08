@@ -177,7 +177,7 @@ export function SavedAccountsSelect({ csUrl, csApiKey, selected, onSelect, disab
     <div>
       <div className="flex items-end gap-1.5">
         <div className="flex-1">
-          <label className="text-[11px] text-[var(--muted-foreground)]">Tai khoan da luu</label>
+          <label className="text-[11px] text-[var(--muted-foreground)]">Tài khoản đã lưu</label>
           <select
             value={selected}
             onChange={(e) => loadAccount(e.target.value)}

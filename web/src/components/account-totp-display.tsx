@@ -159,7 +159,7 @@ export function AccountTotpDisplay({ email, label }: { email: string; label?: st
             <span className="text-[10px] text-amber-500">({displayLabel})</span>
           )}
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center gap-1">
           {secret ? (
             <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px] text-amber-600 hover:text-amber-800" onClick={() => setShowInput(!showInput)}>
               {showInput ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
@@ -181,7 +181,7 @@ export function AccountTotpDisplay({ email, label }: { email: string; label?: st
             className="h-7 rounded-lg border-amber-200 text-[11px] font-mono bg-[var(--card)]"
             autoComplete="off"
           />
-          <div className="flex gap-1.5">
+          <div className="flex flex-wrap gap-1.5">
             <Button size="sm" className="h-6 rounded-md bg-amber-600 px-2 text-[10px] text-white hover:bg-amber-700" onClick={handleSave}>
               Lưu
             </Button>

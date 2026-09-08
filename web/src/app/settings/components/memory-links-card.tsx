@@ -339,7 +339,7 @@ function LinksCard({ the }: { the: CauHinhThe }) {
         </p>
       )}
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button type="button" size="sm" variant="outline"
           onClick={() => them("binh_dang")}>➕ Bình đẳng</Button>
         <Button type="button" size="sm" variant="outline"

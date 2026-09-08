@@ -234,7 +234,7 @@ export function CustomProvidersCard() {
                 <p className="text-xs text-[var(--muted-foreground)] mt-1">Nhiều key → tự động round-robin khi rate limit (60s cooldown per key)</p>
               </div>
             </div>
-            <div className="flex gap-2 justify-end">
+            <div className="flex flex-wrap gap-2 justify-end">
               <Button className="h-8 rounded-lg border border-[var(--border)] bg-[var(--secondary)] text-xs text-[var(--muted-foreground)] hover:bg-[var(--secondary)]"
                 onClick={resetForm}>Hủy</Button>
               <Button className="h-8 rounded-lg bg-[var(--primary)] px-4 text-xs text-[var(--primary-foreground)] hover:brightness-110"

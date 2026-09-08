@@ -341,9 +341,23 @@ def _h_chi_duong(args: dict, ctx: dict) -> dict:
         return {"text": "Anh/chị cho em ĐIỂM ĐI và ĐIỂM ĐẾN ạ 🗺️ "
                         "(ví dụ: từ 114 Mai Hắc Đế đến CT4B X2 Bắc Linh Đàm)."}
 
-    xac_nhan = bool(args.get("xac_nhan"))
+    # Chốt CỨNG cho cả hai cờ: chỉ tin khi câu NGƯỜI DÙNG thật sự mang dấu do
+    # chính menu này sinh ra. Lời dặn trong schema là chưa đủ — 27465eb đã kết
+    # luận đúng điều đó với phuong_tien, và đo 08/09 cho thấy `xac_nhan` cũng bị
+    # model tự điền: bot in "Đúng chưa ạ?" rồi chỉ đường luôn ở cùng một lượt,
+    # người dùng không kịp bấm gì.
+    # `user_message` rỗng nghĩa là KHÔNG CÓ GÌ để đối chiếu (gọi nội bộ, chạy
+    # theo lịch, test) — lúc đó tin cờ như cũ. Chỉ siết khi thật sự có câu người
+    # dùng mà trong đó KHÔNG có dấu.
+    _cau = str(ctx.get("user_message") or "").lower()
+
+    def _co_dau(dau: str, co: bool) -> bool:
+        """Cờ chỉ được tính khi câu người dùng mang đúng dấu do menu sinh ra."""
+        return co and (not _cau or dau in _cau)
+
+    xac_nhan = _co_dau("(đã xác nhận địa chỉ)", bool(args.get("xac_nhan")))
     # xac_nhan (bước sau) hiển nhiên đã qua bước chọn phương tiện → coi như đã chọn.
-    da_chon_pt = bool(args.get("da_chon_pt")) or xac_nhan
+    da_chon_pt = _co_dau("(đã chọn phương tiện)", bool(args.get("da_chon_pt"))) or xac_nhan
 
     # LUÔN hỏi phương tiện ở lượt đầu — chốt CỨNG, KỆ phuong_tien model tự điền.
     # Model chỉ được đặt da_chon_pt=true khi câu chứa "(đã chọn phương tiện)" — dấu
@@ -394,12 +408,20 @@ def _h_chi_duong(args: dict, ctx: dict) -> dict:
     if not cd.la_ghim_maps(diem_den):
         return hoi_chon_diem("ĐIỂM ĐẾN", diem_den)
 
-    # BƯỚC XÁC NHẬN CUỐI: chỉ hiện SAU KHI người dùng đã chọn ghim cho từng đầu.
-    # Geocode hỏng/khác tỉnh thì rơi xuống nhánh lỗi bên dưới (hỏi lại địa chỉ).
+    # BƯỚC XÁC NHẬN — chỉ hỏi khi CÓ LÝ DO, không hỏi máy móc.
+    #
+    # Người dùng vừa BẤM CHỌN từ menu ghim, mà menu đó in ĐỦ địa chỉ ("CT4B-X2
+    # Bắc Linh Đàm, Phố Nguyễn Phan Chánh, … Hà Nội"). Hỏi lại "Đúng chưa ạ?"
+    # ngay sau đó là bắt xác nhận hai lần cùng một việc — tốn thêm một lượt mà
+    # không thêm thông tin nào (người dùng phản ánh 09/09).
+    #
+    # Còn hỏi khi geocode báo `gan_dung`: lúc đó hệ thống phải BỎ MÃ TOÀ mới ra
+    # kết quả, tức chỉ khớp ở mức khu đô thị/phố chứ không đúng số nhà — đó là
+    # lúc xác nhận thật sự có ích.
     if not xac_nhan and not ctx.get("auto_approve"):
         dv = cd.dinh_vi(diem_di, diem_den, pt)
-        if dv.get("ok"):
-            note = (" (gần đúng ở mức khu đô thị/phố)" if dv.get("gan_dung") else "")
+        if dv.get("ok") and dv.get("gan_dung"):
+            note = " (gần đúng ở mức khu đô thị/phố)"
             return {"deliver_now": True, "text":
                     "🗺️ Em xác nhận lại địa chỉ cho đúng nhé:\n"
                     f"📍 Điểm đi: {_mot_dong(str(dv['tu']))}\n"
@@ -410,9 +432,13 @@ def _h_chi_duong(args: dict, ctx: dict) -> dict:
                     f"✅ Đúng rồi, chỉ đường | chỉ đường từ {diem_di} đến {diem_den} "
                     f"bằng {pt} (đã xác nhận địa chỉ)\n"
                     "<<<END>>>"}
-        # dv không ok → dùng chung nhánh lỗi bên dưới qua kq.
-        kq = dv
-        kq.setdefault("phuong_tien", pt)
+        elif dv.get("ok"):
+            # Địa chỉ khớp CHÍNH XÁC (không gan_dung) → chỉ đường luôn, khỏi hỏi.
+            kq = cd.chi_duong(diem_di, diem_den, pt)
+        else:
+            # dv không ok → dùng chung nhánh lỗi bên dưới qua kq.
+            kq = dv
+            kq.setdefault("phuong_tien", pt)
     else:
         kq = cd.chi_duong(diem_di, diem_den, pt)
     link = kq.get("link") or ""
