@@ -144,7 +144,7 @@ function BackupPageContent() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between border-b border-black/[0.04] pb-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between border-b border-black/[0.04] pb-5">
         <div className="flex flex-col gap-1">
           <h1 className="text-[24px] font-bold tracking-tight text-[var(--foreground)]">Sao lưu &amp; Phục hồi</h1>
           <p className="text-[14px] text-[var(--muted-foreground)]">
@@ -236,7 +236,7 @@ function BackupPageContent() {
             <div
               key={backup.filename}
               className={cn(
-                "flex items-center justify-between rounded-[14px] px-5 py-4",
+                "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-[14px] px-5 py-4",
                 "card-3d card-tint-indigo",
                 "transition-all"
               )}

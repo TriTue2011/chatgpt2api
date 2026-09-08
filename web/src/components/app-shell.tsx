@@ -242,7 +242,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {/* Bề ngang có TRẦN: trên màn 27 inch mà để nội dung kéo hết chiều
             ngang thì mỗi dòng dài cả gang tay, đọc phải quét mắt ngang. Đệm
             tăng dần theo khổ màn thay vì nhảy một nấc ở sm. */}
-        <main className="flex-1 min-w-0 pb-20 lg:pb-6">
+        {/* Đệm dưới nằm ở lớp `vung-noi-dung` trong globals.css: phải cộng
+            `env(safe-area-inset-bottom)` (thanh gạt Home) mà style nội tuyến
+            thì `lg:pb-6` của Tailwind không đè lại được, nên desktop sẽ thừa
+            đệm. Viết bằng CSS có breakpoint mới đúng cả hai khổ. */}
+        <main className="flex-1 min-w-0 vung-noi-dung">
           <div className="mx-auto w-full max-w-[1600px] p-4 sm:p-5 lg:p-6 xl:p-8">
             {children}
           </div>
@@ -253,7 +257,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {session && (
         <nav
           className="fixed bottom-0 inset-x-0 z-40 flex items-stretch justify-around lg:hidden glass-strong !rounded-none"
-          style={{ borderTop: "1px solid color-mix(in srgb, var(--primary) 18%, transparent)" }}
+          style={{
+            borderTop: "1px solid color-mix(in srgb, var(--primary) 18%, transparent)",
+            // Không có dòng này thì nhãn "Dashboard/Chat…" nằm ngay dưới thanh
+            // gạt Home, bấm vào là máy nuốt thao tác.
+            paddingBottom: "env(safe-area-inset-bottom, 0px)",
+          }}
         >
           {mobileItems.map((item) => {
             const active = cungDuong(pathname, item.href) || (item.href !== "/" && chuanHoaDuong(pathname).startsWith(item.href));

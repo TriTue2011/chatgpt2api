@@ -1393,7 +1393,7 @@ export function TelegramCloudflareCard() {
     const scope = topic ? "topic" : "nhóm";
     return (
       <div className="rounded border border-dashed border-border/70 p-2 space-y-2">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <span className="text-xs font-medium">👥 Lọc theo User ID trong {scope}</span>
           <Button type="button" variant="ghost" size="sm" className="h-6 text-[11px]"
             onClick={() => addUserRow(row.id, tid)}>
@@ -2185,7 +2185,7 @@ export function TelegramCloudflareCard() {
                   Nhóm không có topic thì đừng thêm gì ở đây → vẫn đúng 2 cấp. */}
               {row.kind !== "user" && (row.botKey === "tg" || row.botKey.startsWith("tg:")) && (
               <div className="rounded border border-dashed border-sky-500/50 p-2 space-y-2">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <span className="text-xs font-medium">🧵 Lọc theo Topic (nhóm bật Topics)</span>
                   <Button type="button" variant="ghost" size="sm" className="h-6 text-[11px]"
                     onClick={() => addTopicRow(row.id)}>

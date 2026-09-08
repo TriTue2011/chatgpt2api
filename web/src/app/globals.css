@@ -845,3 +845,15 @@ select optgroup {
   background-color: var(--background);
   color: var(--foreground);
 }
+
+/* ═══ Đệm dưới cho vùng nội dung (bottom-nav mobile) ═══
+   Thanh điều hướng dưới cao ~55px và nằm `fixed`, nên nội dung phải tự chừa
+   chỗ. Bản cũ dùng `pb-20` = 80px CỐ ĐỊNH: máy có thanh gạt Home (34px) vẫn bị
+   che mất dòng cuối. Cộng thẳng vùng an toàn của máy vào. */
+.vung-noi-dung {
+  padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px));
+}
+@media (min-width: 1024px) {
+  /* Từ lg trở lên KHÔNG còn bottom-nav (nav để `lg:hidden`) → trả về đệm thường. */
+  .vung-noi-dung { padding-bottom: 1.5rem; }
+}

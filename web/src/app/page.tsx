@@ -443,7 +443,7 @@ export default function DashboardPage() {
 
         {/* Recent Requests */}
         <div className="bento-cell animate-in flex flex-col" style={{ gridColumn: "span 4", gridRow: "span 2", padding: 0, maxHeight: 472 }}>
-          <div className="px-5 py-3 border-b border-[var(--border)]/40 flex items-center justify-between shrink-0">
+          <div className="px-5 py-3 border-b border-[var(--border)]/40 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between shrink-0">
             <p className="text-[11px] uppercase tracking-wider font-semibold text-[var(--muted-foreground)]">Recent Requests</p>
             <span className="text-[10px] text-[var(--muted-foreground)]">{recentReqs.length}</span>
           </div>
@@ -588,7 +588,7 @@ export default function DashboardPage() {
             ].map((row) => {
               const color = row.status === "ok" ? "var(--neon-lime)" : row.status === "warning" ? "var(--neon-amber)" : row.status === "error" ? "var(--destructive)" : "var(--muted-foreground)";
               return (
-                <div key={row.label} className="px-5 py-2.5 flex items-center justify-between">
+                <div key={row.label} className="px-5 py-2.5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2.5">
                     <span className="size-1.5 rounded-full dot-glow shrink-0" style={{ backgroundColor: color, color }} />
                     <span className="text-[12px] font-medium text-[var(--foreground)]">{row.label}</span>
@@ -604,7 +604,7 @@ export default function DashboardPage() {
               const groupKeys = Object.keys(byGroup).sort((a, b) => byGroup[b].total - byGroup[a].total);
               return (
                 <div className="px-5 py-2.5">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex items-center gap-2.5">
                       <span className="size-1.5 rounded-full dot-glow shrink-0" style={{ backgroundColor: "var(--neon-lime)", color: "var(--neon-lime)" }} />
                       <span className="text-[12px] font-medium text-[var(--foreground)]">Accounts</span>
@@ -617,7 +617,7 @@ export default function DashboardPage() {
                         const b = byGroup[g];
                         const c = b.active === 0 ? "var(--muted-foreground)" : (b.active === b.total ? "var(--neon-lime)" : "var(--neon-amber)");
                         return (
-                          <div key={g} className="flex items-center justify-between">
+                          <div key={g} className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <span className="text-[11px] text-[var(--muted-foreground)]">{ACCOUNT_GROUP_LABELS[g] || g}</span>
                             <span className="text-[11px] font-mono" style={{ color: c }}>{b.active}/{b.total}</span>
                           </div>

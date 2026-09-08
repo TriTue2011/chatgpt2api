@@ -89,7 +89,7 @@ export function RegisterCard() {
   return (
     <div className="grid h-[calc(100vh-132px)] min-h-[640px] items-stretch gap-0 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)]/70 xl:grid-cols-2">
       <section className="space-y-4 overflow-y-auto border-b border-[var(--border)] p-4 xl:border-r xl:border-b-0">
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="flex size-9 items-center justify-center rounded-md bg-[var(--secondary)]">
                 <UserPlus className="size-5 text-[var(--muted-foreground)]" />
@@ -145,7 +145,7 @@ export function RegisterCard() {
           </div>
 
           <div className="space-y-3 border-t border-[var(--border)] pt-3">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold text-[var(--foreground)]">Cấu hình Email</h3>
                 <p className="mt-1 text-xs text-[var(--muted-foreground)]">Có thể cấu hình nhiều nhà cung cấp, xoay vòng theo thứ tự kích hoạt.</p>
@@ -177,7 +177,7 @@ export function RegisterCard() {
                 const domains = Array.isArray(provider.domain) ? provider.domain.map(String).join("\n") : "";
                 return (
                   <div key={providerIdsRef.current[index]} className="space-y-3 border-t border-[var(--border)] pt-3 first:border-t-0 first:pt-0">
-                    <div className="flex items-center justify-between gap-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                       <label className="flex items-center gap-3 text-sm text-[var(--foreground)]">
                         <Checkbox checked={Boolean(provider.enable)} onCheckedChange={(checked) => updateProvider(index, { enable: Boolean(checked) })} disabled={config.enabled} />
                         Kích hoạt
@@ -267,7 +267,7 @@ export function RegisterCard() {
 
       <section className="flex min-h-0 flex-col p-4">
         <div className="space-y-3">
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold tracking-tight">Kết quả chạy</h2>
                 <p className="mt-1 text-sm text-[var(--muted-foreground)]">Trạng thái hiện tại được đẩy qua SSE thời gian thực.</p>
@@ -314,7 +314,7 @@ export function RegisterCard() {
         </div>
 
         <div className="mt-4 flex min-h-0 flex-1 flex-col space-y-3 overflow-hidden border-t border-[var(--border)] pt-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h3 className="text-sm font-semibold text-[var(--foreground)]">Nhật ký trực tiếp</h3>
                 <p className="mt-1 text-xs text-amber-700">Nếu gặp lỗi như mã trạng thái HTTP 400, cơ bản là do email bị lạm dụng và bị chặn, bạn cần thay đổi tên miền email mới.</p>

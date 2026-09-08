@@ -1283,7 +1283,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         </Dialog>
 
         <div className="flex min-h-0 flex-col gap-2 sm:gap-4">
-          <div className="flex items-center justify-between gap-2 px-1 lg:hidden">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-1 lg:hidden">
             <Button
               variant="outline"
               className="h-10 flex-1 rounded-2xl border-[var(--border)] bg-[var(--card)]/90 text-[var(--foreground)] shadow-sm"
@@ -1394,7 +1394,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             onMouseDown={(e) => e.stopPropagation()}
             onPointerDown={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)]">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-5 py-4 border-b border-[var(--border)]">
               <h3 className="text-[15px] font-bold text-[var(--foreground)]">Chọn ảnh từ thư viện</h3>
               <button onClick={() => setLibraryOpen(false)} className="rounded-lg p-1.5 text-[var(--muted-foreground)] hover:bg-[var(--secondary)]"><X className="size-5" /></button>
             </div>

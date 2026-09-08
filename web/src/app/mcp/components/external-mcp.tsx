@@ -193,7 +193,7 @@ export default function ExternalTab({ showToast }: Props) {
       </div>}
     </div></div>
     <div className="card"><div className="card-body">
-      <div className="flex justify-between mb-3"><h3 className="font-semibold">External MCPs đã thêm</h3><button className="text-sm underline" onClick={() => void load()}>Làm mới</button></div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:justify-between mb-3"><h3 className="font-semibold">External MCPs đã thêm</h3><button className="text-sm underline" onClick={() => void load()}>Làm mới</button></div>
       {loadError && <p role="alert" className="text-sm text-red-500">{loadError}</p>}
       <div className="space-y-2">
         {!list.length && !loadError && <p className="text-sm text-[var(--muted-foreground)]">Chưa có.</p>}

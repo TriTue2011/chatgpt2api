@@ -279,7 +279,7 @@ export default function VideoPage() {
           <CardContent className="space-y-5 p-6">
             {/* Model Selector */}
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <label className="text-sm font-semibold text-[var(--foreground)] flex items-center gap-2">
                   <Sparkles className="size-4 text-violet-500" />
                   Mô hình (Model Video)
@@ -331,7 +331,7 @@ export default function VideoPage() {
               <>
                 {/* Negative Prompt */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-[var(--muted-foreground)] flex justify-between">
+                  <label className="text-xs font-medium text-[var(--muted-foreground)] flex flex-col gap-3 sm:flex-row sm:justify-between">
                     <span>Chi tiết muốn tránh (Negative Prompt)</span>
                     {!modelConfig.supportsNegativePrompt && (
                       <span className="text-[10px] text-amber-500 font-normal">Engine Flow tự động tối ưu</span>
@@ -413,7 +413,7 @@ export default function VideoPage() {
                 {/* Advanced Extra Configs */}
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-[var(--muted-foreground)] flex justify-between">
+                    <label className="text-xs font-medium text-[var(--muted-foreground)] flex flex-col gap-3 sm:flex-row sm:justify-between">
                       <span>Seed ngẫu nhiên (Tùy chọn)</span>
                       {!modelConfig.supportsSeed && (
                         <span className="text-[10px] text-amber-500 font-normal">Tự động (Flow)</span>
@@ -449,7 +449,7 @@ export default function VideoPage() {
 
                 {/* Keyframe & Start Image Upload */}
                 <div className="space-y-2 pt-2 border-t border-[var(--border)]">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <label className="text-xs font-semibold text-[var(--foreground)] flex items-center gap-1.5">
                       <ImageIcon className="size-3.5 text-violet-500" />
                       Đính kèm Ảnh (Image-to-Video & Keyframes)
@@ -465,7 +465,7 @@ export default function VideoPage() {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1.5">
-                      <div className="flex justify-between text-xs font-medium text-[var(--muted-foreground)]">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:justify-between text-xs font-medium text-[var(--muted-foreground)]">
                         <span>Ảnh đầu (Start frame)</span>
                         {startImage && (
                           <button type="button" onClick={() => setStartImage(null)} className="text-rose-500 hover:text-rose-600">
@@ -484,7 +484,7 @@ export default function VideoPage() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <div className="flex justify-between text-xs font-medium text-[var(--muted-foreground)]">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:justify-between text-xs font-medium text-[var(--muted-foreground)]">
                         <span>Ảnh cuối (End frame)</span>
                         {endImage && (
                           <button type="button" onClick={() => setEndImage(null)} className="text-rose-500 hover:text-rose-600">

@@ -288,7 +288,7 @@ export function EmailCalendarCard() {
         <p className="text-xs text-muted-foreground">{statusLine}</p>
 
         {/* ── Hộp mail ─────────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm font-medium">📬 Hộp mail ({accs.length})</p>
           <Button type="button" variant="outline" size="sm"
             onClick={() => {
@@ -458,7 +458,7 @@ export function EmailCalendarCard() {
         <hr className="border-border" />
 
         {/* ── Lịch ─────────────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm font-medium">📅 Lịch ({cals.length})</p>
           <Button type="button" variant="outline" size="sm"
             onClick={() => {

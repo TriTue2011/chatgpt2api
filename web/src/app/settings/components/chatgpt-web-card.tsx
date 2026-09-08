@@ -52,7 +52,7 @@ export function ChatGPTWebCard() {
   return (
     <Card className="rounded-3xl border-emerald-100/80 bg-emerald-50/30">
       <CardContent className="space-y-4 p-5">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="flex items-center gap-2">
               <MessageSquare className="size-4 text-emerald-600" />
@@ -95,7 +95,7 @@ export function ChatGPTWebCard() {
               />
             </div>
           </div>
-          <div className="flex items-center justify-between pt-1">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pt-1">
             <p className="text-[10px] text-[var(--muted-foreground)]">
               Vision tự nhận diện qua multimodal block <code className="font-mono">image_url</code>{" "}
               trong <code className="font-mono">/v1/chat/completions</code>.

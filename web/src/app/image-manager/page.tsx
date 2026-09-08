@@ -406,7 +406,7 @@ function ImageManagerContent() {
                   </button>
                 </div>
                 <div className="mt-3 space-y-2 text-xs text-[var(--muted-foreground)]">
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                     <div className="flex items-center gap-1 font-medium text-[var(--foreground)]">
                       <CalendarDays className="size-3.5" />
                       {item.created_at}
@@ -435,7 +435,7 @@ function ImageManagerContent() {
                       <Checkbox checked={selectedSet.has(imageKey(item))} onCheckedChange={(checked) => togglePaths([imageKey(item)], Boolean(checked))} />
                     </div>
                   </div>
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                     <span>{formatSize(item.size)}</span>
                     <span>{item.width && item.height ? `${item.width} x ${item.height}` : "-"}</span>
                   </div>

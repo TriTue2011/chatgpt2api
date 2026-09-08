@@ -533,16 +533,21 @@ function DichPageContent() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Languages className="size-6" />
-        <div>
-          <h1 className="text-xl font-semibold">Dịch</h1>
-          <p className="text-sm text-[var(--muted-foreground)]">
-            Chữ, link YouTube, ảnh, tài liệu, video — dịch bằng máy dịch trong stack, không tốn lượt AI.
-            Hơn 20 thứ tiếng (Pháp, Nga, Thái, Đức…) dịch tại chỗ; tiếng khác thì mở Google ở khối trên.
-          </p>
+      {/* Đo trên máy 390px: một hàng ngang gồm icon + đoạn mô tả + hai ô chọn
+          tiếng thì đoạn mô tả bị bóp còn ~1 từ mỗi dòng (đọc thành cột dọc).
+          Hai ô chọn xuống hàng riêng trên điện thoại, desktop giữ nguyên. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="flex items-start gap-3 min-w-0">
+          <Languages className="size-6 shrink-0" />
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold">Dịch</h1>
+            <p className="text-sm text-[var(--muted-foreground)]">
+              Chữ, link YouTube, ảnh, tài liệu, video — dịch bằng máy dịch trong stack, không tốn lượt AI.
+              Hơn 20 thứ tiếng (Pháp, Nga, Thái, Đức…) dịch tại chỗ; tiếng khác thì mở Google ở khối trên.
+            </p>
+          </div>
         </div>
-        <div className="ml-auto flex items-center gap-2 text-sm">
+        <div className="flex flex-wrap items-center gap-2 text-sm sm:ml-auto sm:shrink-0">
           <select value={nguon} onChange={(e) => doiNguon(e.target.value)} disabled={dangChay}
             className="rounded-[10px] border border-[var(--border)] bg-transparent px-3 py-2 text-sm">
             <option value="">Tự nhận tiếng</option>
@@ -845,7 +850,7 @@ function DichPageContent() {
                     </span>
                     <span className="flex-1"><b>{m.term}</b> → {m.vi}</span>
                     <button type="button" onClick={() => { setSuaTerm(m.term); setSuaVi(m.vi); }}
-                      className="shrink-0 rounded px-1.5 text-xs text-[var(--muted-foreground)] hover:text-slate-900"
+                      className="shrink-0 rounded px-1.5 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                       title="Đổ xuống ô sửa bên dưới">
                       sửa
                     </button>
@@ -1210,7 +1215,7 @@ function DamThoai() {
       <div className="grid gap-4 sm:grid-cols-2">
         {hai_ben.map((lang) => (
           <div key={lang} className="flex min-h-72 flex-col rounded-[16px] border border-[var(--border)] p-4">
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <span className="font-medium">{NGON_NGU[lang]}</span>
               <button type="button" onClick={() => nhanMic(lang)}
                 disabled={dangXuLy || !!dangMo || (!!dangGhi && dangGhi !== lang)}

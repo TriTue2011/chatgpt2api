@@ -157,7 +157,7 @@ export function CustomProvidersCard() {
   return (
     <Card className="rounded-2xl card-3d card-tint-amber">
       <CardContent className="space-y-4 p-6">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
             <ExternalLink className="size-5 text-[var(--foreground)]" />
             <h3 className="text-sm font-semibold text-[var(--foreground)]">Custom Providers</h3>

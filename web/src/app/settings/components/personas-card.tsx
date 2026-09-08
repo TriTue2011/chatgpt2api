@@ -317,7 +317,7 @@ export function PersonasCard() {
           <div className="space-y-1">
             {rows.map((r) => (
               <div key={r.key}
-                   className="flex items-start justify-between gap-2 rounded-md border p-2 text-xs">
+                   className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 rounded-md border p-2 text-xs">
                 <div className="min-w-0">
                   <div className="font-mono font-medium">{r.key}</div>
                   <div className="text-muted-foreground line-clamp-2">

@@ -185,7 +185,7 @@ function ModelsPageContent() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between border-b border-black/[0.04] pb-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between border-b border-black/[0.04] pb-5">
         <div className="flex flex-col gap-1">
           <h1 className="text-[24px] font-bold tracking-tight text-[var(--foreground)]">Quản lý Model</h1>
           <p className="text-[14px] text-[var(--muted-foreground)]">
@@ -342,7 +342,7 @@ function ModelsPageContent() {
                 {/* Regular models — toggleable */}
                 {regularModels.length > 0 && (
                   <div>
-                    <div className="mb-2 flex items-center justify-between">
+                    <div className="mb-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted-foreground)]">
                         {hasFilter ? "Chọn model để hiển thị" : "Tất cả model đang hiển thị (bấm để ẩn)"}
                       </p>

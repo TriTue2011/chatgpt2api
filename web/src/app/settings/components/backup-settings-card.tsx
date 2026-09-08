@@ -167,7 +167,7 @@ export function BackupSettingsCard() {
     <>
       <Card className="rounded-2xl card-3d card-tint-amber">
         <CardContent className="space-y-6 p-6">
-          <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="flex size-10 items-center justify-center rounded-xl bg-[var(--secondary)]">
                 <CloudUpload className="size-5 text-[var(--muted-foreground)]" />
@@ -330,7 +330,7 @@ export function BackupSettingsCard() {
           </div>
 
           <div className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
               <h3 className="text-sm font-medium text-[var(--foreground)]">Lịch sử sao lưu</h3>
               <p className="text-xs text-[var(--muted-foreground)]">Hỗ trợ xem thông tin đối tượng và xóa trực tiếp bản sao lưu từ xa.</p>

@@ -94,7 +94,7 @@ function Sec({
         onClick={toggle}
         aria-expanded={open}
         title={open ? "Thu gọn" : "Mở"}
-        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs font-semibold hover:bg-muted/40"
+        className="flex flex-col sm:flex-row w-full sm:items-center sm:justify-between gap-2 px-3 py-2 text-left text-xs font-semibold hover:bg-muted/40"
       >
         <span className="flex min-w-0 items-center gap-1.5">{title}</span>
         {open ? (

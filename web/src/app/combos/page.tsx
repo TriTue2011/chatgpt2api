@@ -171,7 +171,7 @@ function ComboEditView({ editModels, editName, setEditName, allModels, filteredM
               <div key={idx} className="flex items-center gap-2">
                 <span className={cn("text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center shrink-0", idx === 0 ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-400" : "bg-[var(--secondary)] text-[var(--muted-foreground)]")}>{idx + 1}</span>
                 <CapIcon className="size-3 shrink-0 text-[var(--muted-foreground)]" />
-                <button type="button" onClick={() => setSwapIdx(idx)} className="rounded-lg px-3 py-1.5 text-xs font-mono bg-[var(--secondary)] text-[var(--foreground)] flex-1 text-left flex items-center justify-between hover:border-violet-400 border border-transparent transition group" title="Đổi model khác"><span>{modelId}</span><ChevronDown className="size-3 text-[var(--muted-foreground)] opacity-0 group-hover:opacity-100 transition" /></button>
+                <button type="button" onClick={() => setSwapIdx(idx)} className="rounded-lg px-3 py-1.5 text-xs font-mono bg-[var(--secondary)] text-[var(--foreground)] flex-1 text-left flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between hover:border-violet-400 border border-transparent transition group" title="Đổi model khác"><span>{modelId}</span><ChevronDown className="size-3 text-[var(--muted-foreground)] opacity-0 group-hover:opacity-100 transition" /></button>
                 <div className="flex flex-col gap-0.5">
                   <button type="button" onClick={() => moveUpInEdit(idx)} disabled={idx === 0} className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] disabled:opacity-30"><ArrowUp className="size-3" /></button>
                   <button type="button" onClick={() => moveDownInEdit(idx)} disabled={idx === editModels.length - 1} className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] disabled:opacity-30"><ArrowDown className="size-3" /></button>
@@ -183,7 +183,7 @@ function ComboEditView({ editModels, editName, setEditName, allModels, filteredM
         </div>
       )}
       <div className="relative">
-        <button type="button" onClick={() => setDropdownOpen(true)} className="flex w-full items-center justify-between rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--foreground)] hover:border-[var(--border)] transition">
+        <button type="button" onClick={() => setDropdownOpen(true)} className="flex flex-col gap-3 sm:flex-row w-full sm:items-center sm:justify-between rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--foreground)] hover:border-[var(--border)] transition">
           <span className="text-[var(--muted-foreground)]">+ Thêm model vào chuỗi</span>
           <ChevronDown className="size-4 text-[var(--muted-foreground)]" />
         </button>
@@ -480,7 +480,7 @@ function CombosPageContent() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-1 border-b border-black/[0.04] pb-5">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <h1 className="text-[24px] font-bold tracking-tight text-[var(--foreground)]">{t("combosTitle")}</h1>
             {saved && <span className="text-[13px] text-emerald-600 font-medium">✓ {t("saved")}</span>}
@@ -514,7 +514,7 @@ function CombosPageContent() {
           <input type="text" value={plName} onChange={(e) => setPlName(e.target.value)} placeholder="Tên combo code (vd: code)" className="w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:border-violet-400 focus:outline-none" />
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-amber-500/10 text-amber-800 dark:text-amber-300 border-amber-500/20 shrink-0 w-24 text-center">BỐ · kế hoạch</span>
-            <button type="button" onClick={() => setPlArchOpen(true)} className="flex flex-1 items-center justify-between rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm hover:border-violet-400 transition">
+            <button type="button" onClick={() => setPlArchOpen(true)} className="flex flex-col gap-3 sm:flex-row flex-1 sm:items-center sm:justify-between rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm hover:border-violet-400 transition">
               <span className={plArchitect ? "font-mono text-xs text-[var(--foreground)]" : "text-[var(--muted-foreground)]"}>{plArchitect || "Chọn model BỐ (mạnh, để lập kế hoạch)"}</span>
               <ChevronDown className="size-4 text-[var(--muted-foreground)]" />
             </button>
@@ -523,7 +523,7 @@ function CombosPageContent() {
           {plEditors.map((id, idx) => (
             <div key={idx} className="flex items-center gap-2">
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20 shrink-0 w-24 text-center">CON #{idx + 1} · code</span>
-              <button type="button" onClick={() => setSwapPlIdx(idx)} className="flex-1 rounded-lg bg-[var(--card)] border border-[var(--border)] px-3 py-2 text-xs font-mono text-[var(--foreground)] text-left hover:border-violet-400 transition flex items-center justify-between group" title="Đổi model khác"><span>{id}</span><ChevronDown className="size-3 text-[var(--muted-foreground)] opacity-0 group-hover:opacity-100 transition" /></button>
+              <button type="button" onClick={() => setSwapPlIdx(idx)} className="flex-1 rounded-lg bg-[var(--card)] border border-[var(--border)] px-3 py-2 text-xs font-mono text-[var(--foreground)] text-left hover:border-violet-400 transition flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between group" title="Đổi model khác"><span>{id}</span><ChevronDown className="size-3 text-[var(--muted-foreground)] opacity-0 group-hover:opacity-100 transition" /></button>
               <div className="flex flex-col gap-0.5">
                 <button type="button" onClick={() => movePlEditor(idx, -1)} disabled={idx === 0} className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] disabled:opacity-30"><ArrowUp className="size-3" /></button>
                 <button type="button" onClick={() => movePlEditor(idx, 1)} disabled={idx === plEditors.length - 1} className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] disabled:opacity-30"><ArrowDown className="size-3" /></button>
@@ -532,7 +532,7 @@ function CombosPageContent() {
             </div>
           ))}
           <div className="flex gap-2">
-            <button type="button" onClick={() => setPlEdOpen(true)} className="flex flex-1 items-center justify-between rounded-lg border border-dashed border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--muted-foreground)] hover:border-violet-400 transition">
+            <button type="button" onClick={() => setPlEdOpen(true)} className="flex flex-col gap-3 sm:flex-row flex-1 sm:items-center sm:justify-between rounded-lg border border-dashed border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--muted-foreground)] hover:border-violet-400 transition">
               <span>+ Thêm model CON (rẻ/free, để viết code)</span>
               <ChevronDown className="size-4 text-[var(--muted-foreground)]" />
             </button>
@@ -552,7 +552,7 @@ function CombosPageContent() {
           <div className="space-y-2">
             {Object.entries(pipelines).map(([name, p]) => (
               <div key={name} className="rounded-[12px] border border-violet-200/60 bg-[var(--card)] p-4">
-                <div className="mb-2 flex items-center justify-between">
+                <div className="mb-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2">
                     <h4 className="text-[14px] font-bold text-[var(--foreground)]">{name}</h4>
                     <span className="rounded-md bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-600">pipeline bố-con</span>
@@ -620,7 +620,7 @@ function CombosPageContent() {
             ))}
           </div>
           <div className="relative flex-1">
-            <button type="button" onClick={() => setDropdownOpen(true)} className="flex w-full items-center justify-between rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--foreground)] hover:border-[var(--border)] transition">
+            <button type="button" onClick={() => setDropdownOpen(true)} className="flex flex-col gap-3 sm:flex-row w-full sm:items-center sm:justify-between rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-sm text-[var(--foreground)] hover:border-[var(--border)] transition">
               <span className="text-[var(--muted-foreground)]">{selectedModels.length > 0 ? `Đã chọn ${selectedModels.length} model` : t("selectModelPlaceholder")}</span><ChevronDown className="size-4 text-[var(--muted-foreground)]" />
             </button>
             <ModelPickerModal
@@ -655,7 +655,7 @@ function CombosPageContent() {
             return (
             <div key={name} className={cn("group relative overflow-hidden rounded-[16px] p-6 card-3d", TINT_CYCLE[idx % TINT_CYCLE.length], "transition-all duration-300 hover:-translate-y-1")}>
               <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-[#FFD700] to-[#D4AF37] opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-              <div className="mb-4 flex items-center justify-between">
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-2.5">
                   <div className="flex size-9 items-center justify-center rounded-[10px] bg-[var(--muted)]"><Combine className="size-[18px] text-[var(--muted-foreground)]" /></div>
                   <h3 className="text-[16px] font-bold tracking-tight text-[var(--foreground)]">{name}</h3>

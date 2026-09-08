@@ -429,7 +429,7 @@ export function ChatGPTOnboardCard() {
     <Card className="rounded-3xl border-blue-100/80 bg-blue-50/30">
       <CardContent className="space-y-4 p-5">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <Sparkles className="size-4 text-blue-600" />

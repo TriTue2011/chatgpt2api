@@ -249,7 +249,7 @@ function LinksCard({ the }: { the: CauHinhThe }) {
           const dlId = `nguoi-${r.uiId}-${o}-${idx}`;
           return (
             <div key={`${r.uiId}-${o}-${idx}`} className="rounded bg-muted/40 px-2 py-1">
-              <div className="flex items-center justify-between gap-2 text-[11px]">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-[11px]">
                 {/* Đã nối rồi mà sau đó bị xoá khỏi «Lọc thread» thì không còn
                     tên — vẫn hiện dòng đó để chủ máy thấy và tự gỡ, không im
                     lặng biến mất. */}

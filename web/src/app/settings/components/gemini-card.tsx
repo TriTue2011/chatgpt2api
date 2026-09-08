@@ -65,7 +65,7 @@ export function GeminiCard() {
       <CardContent className="space-y-5 p-6">
 
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
             <Cpu className="size-5 text-[var(--foreground)]" />
             <h3 className="text-sm font-semibold text-[var(--foreground)]">Gemini AI Studio</h3>

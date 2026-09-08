@@ -104,7 +104,7 @@ export function ProxySettingsCard() {
   return (
     <Card className="rounded-2xl card-3d card-tint-sky">
       <CardContent className="space-y-6 p-6">
-        <div className="flex items-start justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-center gap-3">
             <div className="flex size-10 items-center justify-center rounded-xl bg-[var(--secondary)]">
               <Wifi className="size-5 text-[var(--muted-foreground)]" />

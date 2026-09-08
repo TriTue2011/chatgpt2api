@@ -1028,7 +1028,7 @@ function AdminTab({ status, showToast }:
         return (
           <div key={ownId} className={CARD}>
             <button onClick={() => setOpenAcc(open ? "" : ownId)}
-              className="flex w-full items-center justify-between gap-2 text-left">
+              className="flex flex-col sm:flex-row w-full sm:items-center sm:justify-between gap-2 text-left">
               <span className="flex items-center gap-2 font-semibold text-sm">
                 {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
                 {label}

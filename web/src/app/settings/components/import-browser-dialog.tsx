@@ -104,7 +104,7 @@ export function ImportBrowserDialog() {
         </div>
 
         <div className="rounded-xl border border-[var(--border)]">
-          <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3 text-sm text-[var(--muted-foreground)]">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-[var(--border)] px-4 py-3 text-sm text-[var(--muted-foreground)]">
             <div className="flex items-center gap-3">
               <Checkbox checked={allFilteredSelected} onCheckedChange={(checked) => toggleSelectAllFiltered(Boolean(checked))} />
               <span>Kết quả lọc: {filteredFiles.length}</span>
@@ -133,7 +133,7 @@ export function ImportBrowserDialog() {
           </div>
         </div>
 
-        <div className="flex items-center justify-between text-sm text-[var(--muted-foreground)]">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-sm text-[var(--muted-foreground)]">
           <span>
             {filteredFiles.length === 0 ? 0 : (safeFilePage - 1) * currentPageSize + 1} -{" "}
             {Math.min(safeFilePage * currentPageSize, filteredFiles.length)} trong tổng số {filteredFiles.length}

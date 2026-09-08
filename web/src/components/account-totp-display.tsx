@@ -151,7 +151,7 @@ export function AccountTotpDisplay({ email, label }: { email: string; label?: st
 
   return (
     <div className="rounded-xl border border-amber-200/60 bg-amber-50/40 p-3 space-y-2">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-1.5">
           <Shield className="size-3.5 text-amber-600" />
           <span className="text-[11px] font-semibold text-amber-800">Authenticator</span>

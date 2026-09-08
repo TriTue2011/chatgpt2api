@@ -339,7 +339,7 @@ function ThanhCodex({ ten, cua_so }: { ten: string; cua_so: CuaSoHanMuc }) {
   const mau = conLai > 30 ? "bg-emerald-500" : conLai > 5 ? "bg-amber-400" : "bg-rose-500";
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <span className={`size-2 rounded-full shrink-0 ${mau}`} />
           <span className="text-[11px] font-medium text-[var(--muted-foreground)]">{ten}</span>
@@ -376,7 +376,7 @@ function KhoiHanMucCodex({ hm }: { hm?: CodexHanMuc }) {
   if (!hm.chinh && !hm.phu) return null;
   return (
     <div className="space-y-2 rounded-[8px] bg-[var(--secondary)]/40 px-2.5 py-2">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">
           Hạn mức Codex
         </span>
@@ -410,7 +410,7 @@ function QuotaBar({
   
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <span className={`size-2 rounded-full shrink-0 ${dotColor}`} />
           <span className="text-[11px] font-medium text-[var(--muted-foreground)]">{label}</span>
@@ -899,7 +899,7 @@ function AccountsPageContent() {
       <div className="pl-12 pr-5 pb-3 bg-[var(--muted)]/50 border-t border-[var(--border)]">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3">
           <div className="rounded-[12px] p-4 card-3d card-tint-emerald space-y-3">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <p className="text-[13px] font-bold text-[var(--foreground)] truncate">{inst.label || inst.email || inst.profile}</p>
               <Badge variant="secondary" className="inline-flex items-center gap-1 rounded text-[10px] px-1 py-0">
                 <span className={cn("size-1.5 rounded-full", dot)} />
@@ -911,7 +911,7 @@ function AccountsPageContent() {
               <span className="text-emerald-600">{inst.success ?? 0} thành công</span>
               <span className="text-rose-700 dark:text-rose-400">{inst.fail ?? 0} thất bại</span>
             </div>
-            <div className="flex items-center justify-between text-[11px] text-[var(--muted-foreground)] pt-1 border-t border-[var(--border)]">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-[11px] text-[var(--muted-foreground)] pt-1 border-t border-[var(--border)]">
               <span>Dùng lần cuối</span>
               <span className="font-medium text-[var(--muted-foreground)]">{formatRelativeTime(inst.last_used_at, lang)}</span>
             </div>
@@ -1028,7 +1028,7 @@ function AccountsPageContent() {
       {/* ── Header: multi-row layout ── */}
       <section className="space-y-3">
         {/* Row 1: Title + count */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <h1 className="text-[22px] font-bold tracking-tight text-[var(--foreground)]">{t("title")}</h1>
             <Badge variant="secondary" className="rounded-lg bg-[var(--secondary)] px-2.5 py-0.5 text-sm text-[var(--foreground)]">
@@ -1234,7 +1234,7 @@ function AccountsPageContent() {
                   `bg-gradient-to-br ${item.bg}`,
                 )}
               >
-                <div className="flex items-start justify-between gap-1">
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-1">
                   <div className="min-w-0">
                     <p className={cn("text-[10px] font-semibold mb-0.5 truncate", item.labelColor)}>{t(item.labelKey)}</p>
                     <p className={cn("text-lg font-bold leading-none", item.textColor)}>
@@ -1511,7 +1511,7 @@ function AccountsPageContent() {
                                     <div className="pl-12 pr-5 pb-3 bg-[var(--muted)]/50 border-t border-amber-100">
                                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3">
                                         <div className="rounded-[12px] p-4 card-3d card-tint-emerald space-y-3">
-                                          <div className="flex items-center justify-between">
+                                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                             <div>
                                               <p className="text-[13px] font-bold text-[var(--foreground)]">{accountLabel(account)}</p>
                                               <div className="flex items-center gap-2 mt-0.5">
@@ -1563,7 +1563,7 @@ function AccountsPageContent() {
                                           {account.limits_progress?.map((lp, i) => (
                                             <QuotaBar key={i} label={t(lp.feature_name as TranslationKey) ?? lp.feature_name ?? `Limit ${i + 1}`} remaining={lp.remaining ?? 0} total={(lp as any).total} resetAfter={lp.reset_after ? formatRestoreAt(lp.reset_after, lang).relative : undefined} ordinal={featureRanks[lp.feature_name ?? ""]?.[account.access_token]} />
                                           ))}
-                                          <div className="flex items-center justify-between text-[11px] text-[var(--muted-foreground)] pt-1 border-t border-[var(--border)]">
+                                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-[11px] text-[var(--muted-foreground)] pt-1 border-t border-[var(--border)]">
                                             <span>Dùng lần cuối</span>
                                             <span className="font-medium text-[var(--muted-foreground)]">{formatRelativeTime(account.last_used_at, lang)}</span>
                                           </div>
@@ -1572,13 +1572,13 @@ function AccountsPageContent() {
                                           <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">Thống kê yêu cầu</p>
                                           <div className="space-y-3">
                                             <div className="space-y-1.5">
-                                              <div className="flex items-center justify-between gap-2">
+                                              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                                                 <div className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-emerald-500" /><span className="text-[11px] text-[var(--muted-foreground)]">Thành công</span></div>
                                                 <span className="text-[11px] font-bold text-emerald-600">{account.success}</span>
                                               </div>
                                             </div>
                                             <div className="space-y-1.5">
-                                              <div className="flex items-center justify-between gap-2">
+                                              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                                                 <div className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-rose-500" /><span className="text-[11px] text-[var(--muted-foreground)]">Thất bại</span></div>
                                                 <span className="text-[11px] font-bold text-rose-500">{account.fail}</span>
                                               </div>
@@ -2021,7 +2021,7 @@ function AccountsPageContent() {
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 {/* Connection info card */}
                                 <div className="rounded-[12px] p-4 card-3d card-tint-emerald space-y-3">
-                                  <div className="flex items-center justify-between">
+                                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                     <div>
                                       <p className="text-[13px] font-bold text-[var(--foreground)]">{inst.name}</p>
                                       <div className="flex items-center gap-2 mt-0.5">
@@ -2070,7 +2070,7 @@ function AccountsPageContent() {
                                       Agnes / NVIDIA / OpenAI / DeepSeek API keys with FIFO rotation. */}
                                   {Array.isArray(inst.keys) && inst.keys.length > 0 && (
                                     <div className="pt-2 border-t border-[var(--border)] space-y-2">
-                                      <div className="flex items-center justify-between">
+                                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                         <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">API Keys & Quota Pool</span>
                                         <span className="text-[10px] text-[var(--muted-foreground)]">{inst.keys.length} key{inst.keys.length > 1 ? "s" : ""}</span>
                                       </div>
@@ -2116,7 +2116,7 @@ function AccountsPageContent() {
                                             </div>
                                             {totalQ > 0 && (
                                               <div className="space-y-1 pt-1">
-                                                <div className="flex items-center justify-between text-[10px] text-[var(--muted-foreground)]">
+                                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-[10px] text-[var(--muted-foreground)]">
                                                   <span>Quota: {remQ} / {totalQ} còn lại</span>
                                                   <span className="font-semibold">{percent}%</span>
                                                 </div>
@@ -2159,7 +2159,7 @@ function AccountsPageContent() {
 
                                   {Array.isArray(inst.endpoints) && inst.endpoints.length > 1 && (
                                     <div className="pt-2 border-t border-[var(--border)] space-y-1">
-                                      <div className="flex items-center justify-between">
+                                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                         <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">Endpoints (multi-pool)</span>
                                         <span className="text-[10px] text-[var(--muted-foreground)]">{inst.endpoints.length} URLs</span>
                                       </div>
@@ -2195,7 +2195,7 @@ function AccountsPageContent() {
                                   <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">Số liệu hoạt động</p>
                                   <div className="space-y-3">
                                     <div className="space-y-1.5">
-                                      <div className="flex items-center justify-between gap-2">
+                                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                                         <div className="flex items-center gap-1.5">
                                           <span className="size-2 rounded-full bg-emerald-500" />
                                           <span className="text-[11px] text-[var(--muted-foreground)]">Models</span>
@@ -2209,7 +2209,7 @@ function AccountsPageContent() {
                                       )}
                                     </div>
                                     <div className="space-y-1.5">
-                                      <div className="flex items-center justify-between gap-2">
+                                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                                         <div className="flex items-center gap-1.5">
                                           <span className="size-2 rounded-full bg-sky-500" />
                                           <span className="text-[11px] text-[var(--muted-foreground)]">Clients</span>
@@ -2223,7 +2223,7 @@ function AccountsPageContent() {
                                       )}
                                     </div>
                                     <div className="space-y-1.5">
-                                      <div className="flex items-center justify-between gap-2">
+                                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                                         <div className="flex items-center gap-1.5">
                                           <span className="size-2 rounded-full bg-violet-500" />
                                           <span className="text-[11px] text-[var(--muted-foreground)]">Entries</span>
@@ -2241,7 +2241,7 @@ function AccountsPageContent() {
                                 {/* Per-key status card */}
                                 {inst.keys && inst.keys.length > 0 && (
                                   <div className="rounded-[12px] p-4 card-3d card-tint-indigo space-y-3 md:col-span-2">
-                                    <div className="flex items-center justify-between">
+                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                       <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">
                                         API Keys ({inst.available_keys}/{inst.total_keys} active)
                                       </p>

@@ -288,7 +288,7 @@ function LogsContent() {
                 {Object.entries(detailLog?.detail || {})
                   .filter(([key, value]) => key !== "urls" && typeof value !== "object")
                   .map(([key, value]) => (
-                    <div key={key} className="flex items-start justify-between gap-4">
+                    <div key={key} className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
                       <span className="text-[var(--muted-foreground)]">{key}</span>
                       <span className="text-right font-medium break-all text-[var(--foreground)]">{String(value)}</span>
                     </div>

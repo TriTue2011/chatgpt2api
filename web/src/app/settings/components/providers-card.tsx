@@ -96,7 +96,7 @@ export function ProvidersCard() {
               const p = providers[name] || {};
               return (
                 <div key={name} className="rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-3 space-y-2">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <span className="text-sm font-medium text-[var(--foreground)]">{name}</span>
                     <label className="flex items-center gap-1 text-xs">
                       <input type="checkbox" checked={p.enabled !== false}
@@ -135,7 +135,7 @@ export function ProvidersCard() {
                         onChange={(e) => meta.setState(e.target.value)}
                         placeholder="Mỗi dòng 1 API key"
                         className="w-full h-16 rounded-lg border border-[var(--border)] text-xs p-2 resize-y" />
-                      <div className="flex justify-between items-center">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center">
                         <p className="text-[10px] text-[var(--muted-foreground)]">Nhiều key → tự chuyển khi hết quota</p>
                         <button type="button" onClick={() => meta.setState("")}
                           className="text-[10px] text-red-500 hover:text-red-700">Xóa</button>

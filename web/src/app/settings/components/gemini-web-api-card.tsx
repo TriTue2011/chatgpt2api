@@ -289,7 +289,7 @@ export function GeminiWebApiCard() {
   return (
     <Card className="rounded-3xl border-violet-100/80 bg-violet-50/30">
       <CardContent className="space-y-4 p-5">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="flex items-center gap-2">
               <Sparkles className="size-4 text-violet-600" />

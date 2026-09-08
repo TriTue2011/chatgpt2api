@@ -165,7 +165,7 @@ function ServersTab({ showToast }: TabProps) {
             className="card cursor-pointer animate-in hover:border-[var(--primary)]/30"
             style={{ animationDelay: `${idx * 0.05}s`, borderLeft: allOn ? "3px solid var(--accent)" : partial ? "3px solid #f6c23e" : undefined }}>
             <div className="card-body">
-              <div className="flex items-start justify-between mb-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-3">
                 <div className="flex items-center gap-2.5">
                   <span className="text-xl">{g.icon}</span>
                   <div>
@@ -354,7 +354,7 @@ function KbTab({ showToast }: TabProps) {
                       const info: SrcInfo = typeof v === "object" ? v : { enabled: v };
                       return (
                         <div key={k} className="space-y-1.5">
-                          <div className="flex items-center justify-between gap-3">
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                             <div className="flex flex-col min-w-0">
                               <span className="text-sm inline-flex items-center gap-1.5">
                                 {k}

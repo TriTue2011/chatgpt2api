@@ -378,7 +378,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
 
       return (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <button
               type="button"
               onClick={() => setMethod("menu")}
@@ -432,7 +432,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
 
       return (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <button
               type="button"
               onClick={() => setMethod("menu")}
@@ -872,7 +872,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
           />
           {selectedAccount ? (
             <div className="rounded-lg border border-amber-200 bg-[var(--card)]/80 px-3 py-2.5">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-2 min-w-0">
                   <KeyRound className="size-3.5 shrink-0 text-amber-500" />
                   <span className="text-xs font-medium text-amber-900 truncate">{multiDraft.email}</span>

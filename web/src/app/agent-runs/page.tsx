@@ -375,7 +375,7 @@ function AgentRunsContent() {
 
       {detail ? (
         <Card>
-          <CardHeader className="flex flex-row items-start justify-between gap-2">
+          <CardHeader className="flex flex-col sm:flex-row flex-row sm:items-start sm:justify-between gap-2">
             <div>
               <CardTitle className="text-base flex flex-wrap items-center gap-2">
                 Run `{detail.id}`

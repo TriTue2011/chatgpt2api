@@ -705,7 +705,7 @@ export function RcloneCard() {
 
             {/* Cấu hình thô */}
             <div className="space-y-2 border-t border-[var(--border)] pt-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <h3 className="text-sm font-medium">Cấu hình rclone.conf</h3>
                 <Button variant="outline" size="sm" className="rounded-lg" onClick={() => void napConf()}>
                   {hienConf ? "Tải lại" : "Mở"}

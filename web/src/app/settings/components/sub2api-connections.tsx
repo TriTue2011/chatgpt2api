@@ -384,7 +384,7 @@ export function Sub2APIConnections() {
     <>
       <Card className="rounded-2xl card-3d card-tint-violet">
         <CardContent className="space-y-6 p-6">
-          <div className="flex items-start justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex items-center gap-3">
               <div className="flex size-10 items-center justify-center rounded-xl bg-[var(--secondary)]">
                 <ServerCog className="size-5 text-[var(--muted-foreground)]" />
@@ -430,7 +430,7 @@ export function Sub2APIConnections() {
                     key={server.id}
                     className="flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[var(--card)] px-4 py-3"
                   >
-                    <div className="flex items-center justify-between gap-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                       <div className="min-w-0">
                         <div className="text-sm font-medium text-[var(--foreground)]">{server.name || server.base_url}</div>
                         <div className="truncate text-xs text-[var(--muted-foreground)]">
@@ -491,7 +491,7 @@ export function Sub2APIConnections() {
                               : 0;
                           return (
                             <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-3">
-                              <div className="flex items-center justify-between gap-3">
+                              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                                 <div className="min-w-0">
                                   <div className="text-sm font-medium text-[var(--foreground)]">
                                     Trạng thái {importJob.status}, đã xử lý {importJob.completed}/{importJob.total}
@@ -684,7 +684,7 @@ export function Sub2APIConnections() {
                 />
               )}
               {editingServer ? (
-                <div className="flex items-center justify-between gap-2 text-xs text-[var(--muted-foreground)]">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs text-[var(--muted-foreground)]">
                   <span>Khi đồng bộ sẽ lọc theo ID nhóm, để trống = đồng bộ tất cả tài khoản OpenAI OAuth.</span>
                   <Button
                     variant="outline"
@@ -780,7 +780,7 @@ export function Sub2APIConnections() {
           </div>
 
           <div className="rounded-xl border border-[var(--border)]">
-            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3 text-sm text-[var(--muted-foreground)]">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-[var(--border)] px-4 py-3 text-sm text-[var(--muted-foreground)]">
               <div className="flex items-center gap-3">
                 <Checkbox
                   checked={allFilteredSelected}
@@ -833,7 +833,7 @@ export function Sub2APIConnections() {
             </div>
           </div>
 
-          <div className="flex items-center justify-between text-sm text-[var(--muted-foreground)]">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-sm text-[var(--muted-foreground)]">
             <span>
               {filteredAccounts.length === 0 ? 0 : (safeAccountPage - 1) * currentPageSize + 1} -{" "}
               {Math.min(safeAccountPage * currentPageSize, filteredAccounts.length)} trong tổng số {filteredAccounts.length}

@@ -179,7 +179,7 @@ export function ImageComposer({
             />
 
             <div className="rounded-b-[24px] border-t border-[var(--border)] bg-[var(--card)] px-3 pb-3 pt-2 sm:px-6 sm:pb-4 sm:pt-3" onClick={(event) => event.stopPropagation()}>
-              <div className="flex items-end justify-between gap-2 sm:gap-3">
+              <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2 sm:gap-3">
                 <div className="hide-scrollbar flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5 sm:flex-wrap sm:gap-2 sm:overflow-visible sm:pb-0">
                   <Button
                     type="button"

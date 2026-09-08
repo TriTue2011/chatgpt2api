@@ -330,7 +330,7 @@ export function ClaudeCard() {
   return (
     <Card className="rounded-3xl border-orange-100/80 bg-orange-50/30">
       <CardContent className="space-y-4 p-5">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <Bot className="size-4 text-orange-600" />

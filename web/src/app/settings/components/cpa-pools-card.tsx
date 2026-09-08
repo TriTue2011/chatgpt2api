@@ -21,7 +21,7 @@ export function CPAPoolsCard() {
   return (
     <Card className="rounded-2xl card-3d card-tint-indigo">
       <CardContent className="space-y-6 p-6">
-        <div className="flex items-start justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-center gap-3">
             <div className="flex size-10 items-center justify-center rounded-xl bg-[var(--secondary)]">
               <ServerCog className="size-5 text-[var(--muted-foreground)]" />
@@ -63,7 +63,7 @@ export function CPAPoolsCard() {
 
               return (
                 <div key={pool.id} className="flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[var(--card)] px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <div className="min-w-0">
                       <div className="text-sm font-medium text-[var(--foreground)]">{pool.name || pool.base_url}</div>
                       <div className="truncate text-xs text-[var(--muted-foreground)]">{pool.base_url}</div>
@@ -114,7 +114,7 @@ export function CPAPoolsCard() {
                     <div className="space-y-2 rounded-xl bg-[var(--secondary)] px-3 py-3">
                       <div className="text-xs font-medium tracking-[0.16em] text-[var(--muted-foreground)] uppercase">Tác vụ nhập</div>
                       <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-3">
-                        <div className="flex items-center justify-between gap-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                           <div className="min-w-0">
                             <div className="text-sm font-medium text-[var(--foreground)]">
                               Trạng thái {importJob.status}, đã xử lý {importJob.completed}/{importJob.total}

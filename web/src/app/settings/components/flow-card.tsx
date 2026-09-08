@@ -512,7 +512,7 @@ export function FlowCard() {
     <Card className="rounded-3xl border-emerald-500/25 bg-emerald-500/10">
       <CardContent className="space-y-4 p-5">
         {/* Header + global enable */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <Sparkles className="size-4 text-emerald-600" />
@@ -694,7 +694,7 @@ export function FlowCard() {
 
         {/* â”€â”€ 1-CLICK ADD ACCOUNT â”€â”€ primary onboarding path */}
         <div className="space-y-2 rounded-xl border-2 border-fuchsia-300 bg-gradient-to-br from-fuchsia-50/60 to-cyan-50/60 p-3">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs font-bold text-fuchsia-800 flex items-center gap-1.5">
               <Sparkles className="size-3.5" /> 1-click thÃªm tÃ i khoáº£n (tá»± Ä‘á»™ng hoÃ n toÃ n)
             </p>
