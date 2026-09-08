@@ -22,7 +22,7 @@ class FlowProjectSessionTests(unittest.TestCase):
 
     def test_no_configured_project_is_not_a_live_session(self):
         with mock.patch.object(ar, "_flow_project_id", return_value=""):
-            self.assertEqual(ar._flow_session_trang_thai("google-a"), "mat")
+            self.assertEqual(ar._flow_session_trang_thai("google-a"), "chua_ro")
 
     def test_exact_project_rpc_ready_is_live(self):
         calls = []
@@ -40,4 +40,4 @@ class FlowProjectSessionTests(unittest.TestCase):
         with mock.patch.object(ar, "_flow_project_id", return_value="project-a"), \
                 mock.patch.object(ar, "_solver_cfg", return_value=("http://solver", "k")), \
                 mock.patch("requests.post", return_value=_Response(200, {"project_id": "other"})):
-            self.assertEqual(ar._flow_session_trang_thai("google-a"), "mat")
+            self.assertEqual(ar._flow_session_trang_thai("google-a"), "chua_ro")

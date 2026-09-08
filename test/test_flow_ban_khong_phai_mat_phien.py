@@ -62,11 +62,11 @@ class BaTrangThaiTests(unittest.TestCase):
     def test_co_project_id_la_ok(self):
         self.assertEqual(_trang_thai(_PhanHoi(200, {"ready": True})), "ok")
 
-    def test_200_nhung_rong_la_mat(self):
-        self.assertEqual(_trang_thai(_PhanHoi(200, {})), "mat")
+    def test_200_nhung_rong_chua_chung_minh_mat_phien(self):
+        self.assertEqual(_trang_thai(_PhanHoi(200, {})), "chua_ro")
 
-    def test_loi_that_van_la_mat(self):
-        self.assertEqual(_trang_thai(_PhanHoi(502, {"detail": "boom"})), "mat")
+    def test_loi_solver_chua_chung_minh_mat_phien(self):
+        self.assertEqual(_trang_thai(_PhanHoi(502, {"detail": "boom"})), "chua_ro")
 
     def test_ban_khong_duoc_tinh_la_ok(self):
         """`_flow_session_ok` phải giữ nghĩa hẹp: chỉ 'ok' mới là True.

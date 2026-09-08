@@ -152,3 +152,21 @@ zalo-server/data/cookies/
 .mcp.json
 .serena/
 data/mcp_oauth/
+
+# Private machine settings and runtime data: only static dictionaries ship.
+.claude/settings.json
+.env.*
+!.env.example
+/data/**
+!/data/glossary/
+!/data/glossary/**
+/captcha-solver/data/
+/captcha-solver/profiles/
+**/.env
+**/.env.local
+*.bak
+*.backup
+*.old
+*.har
+/backups/
+/logs/

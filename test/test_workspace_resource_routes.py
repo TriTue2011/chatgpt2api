@@ -24,7 +24,7 @@ def route(name, **environment):
 
 def test_flow_check_closes_browser_after_success_and_failure():
     async def run():
-        page = SimpleNamespace(evaluate=AsyncMock(return_value=True))
+        page = SimpleNamespace(url="https://flow.google.com/project/project", evaluate=AsyncMock(return_value=True))
         @asynccontextmanager
         async def browser(**kwargs):
             yield page
@@ -89,3 +89,26 @@ def test_relogin_cleanup_reports_manual_workspace_as_busy():
     cleanup = route('_don_ho_so_truoc_khi_dang_nhap', pool=pool)
     assert 'thủ công' in asyncio.run(cleanup('workspace_a'))
     pool.close_profile.assert_not_called()
+
+
+@pytest.mark.parametrize('url,expected', [
+    ('https://accounts.google.com/v3/signin/identifier', 401),
+    ('https://accounts.google.com/v3/signin/challenge/pwd', 401),
+    ('https://accounts.google.com/v3/signin/challenge/recaptcha', 503),
+    ('https://accounts.google.com/o/oauth2/approval', 503),
+    ('https://flow.google.com/project/p', 503),
+])
+def test_flow_probe_requires_observed_login_page_before_reporting_expiry(url, expected):
+    page = SimpleNamespace(url=url)
+    @asynccontextmanager
+    async def browser(**kwargs):
+        yield page
+    pool = SimpleNamespace(page=browser, close_profile=AsyncMock())
+    check = route('api_flow_check_project', pool=pool, flow_open_project=AsyncMock(side_effect=TimeoutError()),
+                  logger=Mock(), _loi_flow_rest=lambda exc: HTTPException(503, 'unavailable'))
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(check(SimpleNamespace(profile='workspace_a', project_id='p', headless=True)))
+    assert error.value.status_code == expected
+    if expected == 401:
+        assert error.value.detail['code'] == 'flow_login_required'
+    pool.close_profile.assert_awaited_once()

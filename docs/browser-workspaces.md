@@ -47,3 +47,10 @@ Gemini-FastAPI, commit `66dc3f71a40a283e17539d0c47058a04ad26b179`:
 - Chrome thật với hồ sơ tạm: tạo A/B qua giao diện, lưu cookie bền vững + localStorage khác nhau, đóng B không ảnh hưởng A, mở lại B giữ dữ liệu, đọc cookie lạnh không để lại context. Các nút chọn đủ năm dịch vụ; desktop/mobile không lỗi JavaScript hoặc tràn ngang.
 - `npm run build` thành công. Chưa đăng nhập tài khoản thật tại Google/ChatGPT/Claude/Flow trong kiểm chứng này; chưa đo mức giảm CPU/RAM trên máy chủ thực tế và chưa triển khai.
 - Kết quả 08/09/2026: 99 kiểm thử liên quan và 12 subtest qua; lượt toàn bộ suite ghi nhận 5.379 qua, 83 bỏ qua, 564 subtest qua và 17 lỗi HTTP tích hợp do không có API tại `localhost:8000`. Kiểm thử khóa bổ sung sau lượt toàn bộ đã chạy lại trong nhóm 99 kiểm thử.
+
+## Khôi phục Flow khi CAPTCHA hoặc solver chập chờn
+
+- Chỉ lỗi có mã `flow_login_required` từ trang đăng nhập Google được quan sát mới kích hoạt đăng nhập lại. Timeout, 502/503, lỗi API key, thiếu project hoặc trang chưa sẵn sàng là **chưa kiểm chứng**, không phải mất phiên.
+- Hồ sơ bị hoãn bởi CAPTCHA của hồ sơ khác không mở thêm Chrome và không nhận thông báo “khôi phục thất bại”. Hồ sơ thực sự chờ người dùng nhận thông báo CAPTCHA/2FA riêng.
+- Khoảng 359 phút là thời gian nghỉ tự đăng nhập của hệ thống (tối đa 6 giờ), không phải thời gian Google xác nhận khóa tài khoản. Kiểm tra trạng thái đăng nhập của đúng hồ sơ gặp CAPTCHA để mở lại sớm khi người dùng hoàn tất. Hồ sơ khỏe khác không được xóa nhầm trạng thái này.
+- Các file runtime, cấu hình máy, cookie, `.env`, log và bản sao lưu được loại khỏi Git/build context. `.env.example`, từ điển tĩnh và tài liệu kiến thức mẫu không chứa phiên cá nhân vẫn được giữ để ứng dụng hoạt động.

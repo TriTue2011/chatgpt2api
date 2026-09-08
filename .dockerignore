@@ -42,3 +42,23 @@ scripts/__pycache__
 .claude
 .github
 *.md
+
+# Secrets must never enter the build context, even when building a working tree.
+**/.env
+**/.env.*
+**/remote_config.json
+**/remote_accounts.json
+config.json
+captcha-solver/data
+captcha-solver/profiles
+*.key
+*.pem
+*.sqlite
+*.sqlite3
+*.db
+*.bak
+*.backup
+*.old
+*.har
+backups
+logs

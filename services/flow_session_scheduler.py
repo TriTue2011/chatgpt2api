@@ -144,7 +144,7 @@ def _scan_once() -> None:
             tt = _flow_session_trang_thai(profile)
             if tt == "ok":
                 continue
-            if tt == "ban":
+            if tt in ("ban", "chua_ro"):
                 # Hồ sơ đang tạo ảnh/video → `pool.page()` fast-failover 429.
                 # Đó là tài khoản KHOẺ nhất có thể, không phải mất phiên. Bỏ
                 # qua lượt này, vòng sau kiểm lại.

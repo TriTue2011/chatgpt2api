@@ -270,14 +270,14 @@ class TinBaoFlowNoiDungLyDoTests(unittest.TestCase):
     def test_captcha_thi_chi_ra_noVNC_go_captcha(self):
         tin = self._chay(profile="google-test-captcha", dang_nhap_ok=False,
                          trang_thai_login="need_captcha")[-1]
-        self.assertIn("❌", tin)
+        self.assertIn("⚠️", tin)
         self.assertIn("CAPTCHA", tin)
         self.assertIn("6080", tin)
 
     def test_thieu_TOTP_thi_noi_thieu_TOTP(self):
         tin = self._chay(profile="google-test-2fa", dang_nhap_ok=False,
                          trang_thai_login="need_code")[-1]
-        self.assertIn("TOTP", tin)
+        self.assertIn("2FA", tin)
 
     def test_loi_solver_thi_dan_nguyen_ly_do_doc_duoc(self):
         tin = self._chay(profile="google-test-mang", dang_nhap_ok=False,

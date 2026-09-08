@@ -731,6 +731,7 @@ def _loi_flow_rest(exc: Exception) -> HTTPException:
 @app.post("/v1/google/flow/check-project", dependencies=[Depends(require_api_key)])
 async def api_flow_check_project(req: FlowProjectCheckReq) -> dict[str, Any]:
     """Verify that the saved Google session can open this Flow project and RPC."""
+    page = None
     try:
         async with pool.page(profile=req.profile, headless=req.headless) as page:
             await flow_open_project(page, req.project_id, req.profile)
@@ -740,6 +741,11 @@ async def api_flow_check_project(req: FlowProjectCheckReq) -> dict[str, Any]:
         raise
     except Exception as exc:
         logger.info("flow project check failed profile=%s: %s", req.profile, str(exc)[:160])
+        from urllib.parse import urlsplit
+        current = urlsplit(page.url) if page is not None else None
+        if (current and current.hostname == "accounts.google.com"
+                and (current.path.endswith(("/identifier", "/challenge/pwd")) or current.path == "/ServiceLogin")):
+            raise HTTPException(401, {"code": "flow_login_required", "message": "Flow yêu cầu đăng nhập Google"}) from exc
         raise _loi_flow_rest(exc) from exc
     finally:
         try:

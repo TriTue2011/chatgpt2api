@@ -306,6 +306,43 @@ def _ghi_ket_qua(profile: str, state: str, note: str = "") -> None:
 _CAN_NGUOI = ("need_captcha", "need_code", "need_tap")
 
 
+def _refresh_captcha_hold(base: str, headers: dict) -> str:
+    """Read the challenged login's status under _glogin_serial; never open Chrome.
+
+    Only evidence from the owning profile releases the shared login pause.
+    Failure/timeout leaves the existing deadline unchanged.
+    """
+    global _glogin_captcha_until, _glogin_captcha_profile
+    if time.time() >= _glogin_captcha_until or not _glogin_captcha_profile:
+        return ""
+    import requests
+    from urllib.parse import quote
+    try:
+        response = requests.get(
+            f"{base}/v1/session/{quote(_glogin_captcha_profile, safe='')}/auto-login-status",
+            headers=headers, timeout=5)
+        if getattr(response, "status_code", 200) != 200:
+            return "paused"
+        payload = response.json()
+        state = str(payload.get("state") or "") if isinstance(payload, dict) else ""
+        if state in ("success", "done", "logged_in"):
+            _glogin_captcha_until = 0.0
+            _glogin_captcha_profile = ""
+            return "success"
+    except Exception:
+        pass
+    return "paused"
+
+
+def _flow_login_paused() -> bool:
+    if time.time() >= _glogin_captcha_until:
+        return False
+    url, key = _solver_cfg()
+    with _glogin_serial:
+        _refresh_captcha_hold(url.rstrip("/"), {"Authorization": f"Bearer {key}"})
+        return time.time() < _glogin_captcha_until
+
+
 def _freshen_google(profile: str, *,
                     khi_toi_luot: Callable[[float], None] | None = None) -> bool:
     """Tầng 2 — 'Đăng nhập tài khoản Google': làm tươi session Google bằng
@@ -329,12 +366,17 @@ def _freshen_google(profile: str, *,
     vao_hang = time.time()
     _glogin_serial.acquire()
     try:
+        owner = _glogin_captcha_profile
+        resolved = _refresh_captcha_hold(base, H)
+        if resolved == "success" and profile == owner:
+            _ghi_ket_qua(profile, "success", "Người dùng đã hoàn tất đăng nhập")
+            return True
         if time.time() < _glogin_captcha_until:
             remain = max(1, int((_glogin_captcha_until - time.time()) / 60))
             _ghi_ket_qua(
                 profile, "blocked_captcha_window",
-                f"Google đang chờ CAPTCHA ở {_glogin_captcha_profile or 'một hồ sơ khác'}; "
-                f"tạm dừng tự đăng nhập thêm khoảng {remain} phút.",
+                f"Hệ thống đang hoãn tự đăng nhập vì CAPTCHA ở {_glogin_captcha_profile or 'một hồ sơ khác'}; "
+                f"còn khoảng {remain} phút nghỉ tối đa, có thể mở lại sớm khi hồ sơ đó đăng nhập xong.",
             )
             return False
         cho = _GLOGIN_GAP_S - (time.time() - _glogin_last_done)
@@ -841,7 +883,7 @@ def gma_recover_and_notify(profile: str, reason: str = "mất session") -> None:
 # ── flow (Google Labs Flow / Veo) — theo PROFILE, session labs.google ─────────
 
 def _flow_session_trang_thai(profile: str) -> str:
-    """Phiên Flow của profile: 'ok' | 'ban' | 'mat'.
+    """Phiên Flow của profile: 'ok' | 'ban' | 'mat' | 'chua_ro'.
 
     VÌ SAO PHẢI TÁCH 'ban' RA: `get-or-create-project` lấy trình duyệt bằng
     `pool.page()`, mà hàm đó fast-failover **429 Account Busy** ngay khi hồ sơ
@@ -863,25 +905,33 @@ def _flow_session_trang_thai(profile: str) -> str:
     project_id = _flow_project_id(profile)
     if not project_id:
         logger.warning({"event": "flow_session_missing_project", "profile": profile})
-        return "mat"
+        return "chua_ro"
     url, api_key = _solver_cfg()
     H = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     try:
         r = requests.post(f"{url.rstrip('/')}/v1/google/flow/check-project",
                           headers=H, json={"profile": profile, "project_id": project_id,
                                            "headless": True, "timeout": 150}, timeout=170)
-        if r.status_code == 429:
+        if r.status_code in (409, 429):
             return "ban"
-        if bool((r.json() or {}).get("ready")):
+        if r.status_code == 401:
+            # Only an explicit session-expired result from the authenticated
+            # solver counts. A bad solver API key is not a Google login failure.
+            detail = (r.json() or {}).get("detail")
+            return "mat" if isinstance(detail, dict) and detail.get("code") == "flow_login_required" else "chua_ro"
+        if r.status_code != 200:
+            return "chua_ro"
+        if (r.json() or {}).get("ready") is True:
             # A manual CAPTCHA solve makes the recovery circuit usable again.
             global _glogin_captcha_until, _glogin_captcha_profile
             with _glogin_serial:
-                _glogin_captcha_until = 0.0
-                _glogin_captcha_profile = ""
+                if _glogin_captcha_profile == profile:
+                    _glogin_captcha_until = 0.0
+                    _glogin_captcha_profile = ""
             return "ok"
-        return "mat"
+        return "chua_ro"
     except Exception:
-        return "mat"
+        return "chua_ro"
 
 
 def _flow_project_id(profile: str) -> str:
@@ -901,7 +951,7 @@ def _flow_session_ok(profile: str) -> bool:
 
     'ban' KHÔNG phải 'ok' (chưa chứng minh được phiên còn sống) nhưng cũng
     tuyệt đối không phải 'mat'. Nơi nào ra quyết định khôi phục thì phải gọi
-    `_flow_session_trang_thai` để thấy đủ ba trạng thái.
+    `_flow_session_trang_thai` để phân biệt cả trạng thái chưa kiểm chứng.
     """
     return _flow_session_trang_thai(profile) == "ok"
 
@@ -928,15 +978,19 @@ def flow_recover_and_notify(profile: str, reason: str = "mất phiên") -> None:
           nằm trong solver) — đúng nút "Chỉ đăng nhập". Xếp hàng toàn cục, và
           chỉ báo tin KHI TỚI LƯỢT: chờ tới lượt có thể mất hàng chục phút, báo
           trước là nói sai rằng mọi tài khoản đang đăng nhập cùng lúc.
-      T3  Đăng nhập xong thì kiểm lại phiên VÀI LƯỢT, không phải một. Sau khi
-          đăng nhập, 'ban' cũng là tin tốt: hồ sơ đang phục vụ việc khác, tức
-          trình duyệt sống và có phiên — đòi đúng 'ok' là báo hỏng cho một tài
-          khoản vừa khôi phục xong.
+      T3  Đăng nhập xong kiểm lại phiên; chỉ 'ok' xác nhận khôi phục thành công.
+          Bận hoặc chưa kiểm chứng được thì hoãn, không báo thành công/thất bại.
 
     Debounce 30 phút/hồ sơ. Ngân sách 1200s KHÔNG tính thời gian nằm chờ tới
     lượt đăng nhập — ngân sách để cắt ca vô vọng, không phải để phạt tài khoản
     xếp hàng sau.
     """
+    # An account waiting behind someone else's CAPTCHA has not failed.
+    # Probe only the existing login status, not every account's browser.
+    if _flow_login_paused():
+        logger.info({"event": "recover_deferred_captcha", "provider": "flow", "profile": profile})
+        return
+
     key = f"recover:flow:{profile}"
     with _lock:
         if time.time() - _last_attempt.get(key, 0.0) < _GRELOGIN_COOLDOWN_S:
@@ -961,7 +1015,7 @@ def flow_recover_and_notify(profile: str, reason: str = "mất phiên") -> None:
     # báo "đang tự khôi phục" rồi mới phát hiện ra thì người nhận đã hoảng, và
     # dòng "KHÔNG khôi phục được" ở cuối là lời báo sai.
     tt = _flow_session_trang_thai(profile)
-    if tt == "ban":
+    if tt in ("ban", "chua_ro"):
         logger.info({"event": "recover_skip_busy", "provider": "flow", "profile": profile,
                      "reason": reason[:120]})
         return
@@ -983,15 +1037,16 @@ def flow_recover_and_notify(profile: str, reason: str = "mất phiên") -> None:
             break
         tried.append(f"T1-kiểm-lại-{lan}")
         time.sleep(_FLOW_NGHI_S)
+        if _flow_login_paused():
+            return
         tt = _flow_session_trang_thai(profile)
         if tt == "ok":
             _xong("T1", "T1-kiem-lai-ok",
                   f"[T1] phiên lên lại sau {lan} lượt kiểm, không cần đăng nhập")
             return
-        if tt == "ban":
-            # Hồ sơ vừa được việc khác chiếm để tạo ảnh/video → đang khoẻ.
-            _notify(f"ℹ️ Flow — {profile}\nHoãn khôi phục: hồ sơ đang bận tạo ảnh/video "
-                    f"(tức trình duyệt và phiên đều sống). Vòng quét sau kiểm lại.",
+        if tt in ("ban", "chua_ro"):
+            _notify(f"ℹ️ Flow — {profile}\nHoãn khôi phục: hồ sơ đang bận hoặc chưa kiểm chứng được phiên. "
+                    "Chưa cần đăng nhập lại; lần sau kiểm lại.",
                     {**det, "step": "T1-ban"})
             logger.info({"event": "recover_hoan_busy", "provider": "flow", "profile": profile})
             return
@@ -1011,13 +1066,31 @@ def flow_recover_and_notify(profile: str, reason: str = "mất phiên") -> None:
 
         dang_nhap_ok = _freshen_google(profile, khi_toi_luot=_bao_khi_toi_luot)
 
+    if not dang_nhap_ok:
+        state = trang_thai_dang_nhap_cuoi(profile)
+        if state == "blocked_captcha_window":
+            with _lock:
+                _last_attempt.pop(key, None)
+            logger.info({"event": "recover_deferred_captcha", "provider": "flow", "profile": profile})
+            return
+        if state in _CAN_NGUOI:
+            action = "CAPTCHA" if state == "need_captcha" else "xác nhận 2FA"
+            _notify(f"⚠️ Flow — {profile}\nĐang chờ bạn hoàn thành {action} trong workspace trên noVNC cổng 6080. "
+                    "Nếu cửa sổ đã hết thời gian chờ, mở lại workspace để đăng nhập. "
+                    "Các hồ sơ khác bị hoãn tự đăng nhập, chưa được kết luận là lỗi.",
+                    {**det, "step": "waiting_user", "state": state})
+            return
+
     # ── T3: đăng nhập xong thì kiểm lại vài lượt ─────────────────────────────
     if dang_nhap_ok:
         for lan in range(1, _FLOW_KIEM_LAI + 1):
             if not _con_gio():
                 break
             tried.append(f"T3-kiểm-lại-{lan}")
-            if _flow_session_trang_thai(profile) in ("ok", "ban"):
+            checked = _flow_session_trang_thai(profile)
+            if checked in ("ban", "chua_ro"):
+                return
+            if checked == "ok":
                 _xong("T3", "T3-tai-lap-ok",
                       "[T2] đăng nhập Google + [T3] tái lập phiên labs.google")
                 return
