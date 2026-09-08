@@ -362,7 +362,7 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none shrink-0"
                 onClick={(e) => e.stopPropagation()}>
-                <input type="checkbox" className="size-3.5" checked={row.enabled}
+                <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5" checked={row.enabled}
                   onChange={(e) => patch(row.id, { enabled: e.target.checked })} />
                 Bật
               </label>
@@ -381,13 +381,13 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
             <div className="flex flex-wrap items-center gap-2">
               <label className="text-[11px] text-muted-foreground shrink-0">Token</label>
               <Input value={row.token} onChange={(e) => patch(row.id, { token: e.target.value })}
-                placeholder={tokenPlaceholder} className="flex-1 h-8 text-xs font-mono" />
+                placeholder={tokenPlaceholder} className="flex-1 h-8 text-base sm:text-xs font-mono" />
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <label className="text-[11px] text-muted-foreground shrink-0">Tên dễ nhớ</label>
               <Input value={row.label} onChange={(e) => patch(row.id, { label: e.target.value })}
                 placeholder="Tự lấy từ bot lúc đầu — bạn đổi được"
-                className="flex-1 h-8 text-xs" />
+                className="flex-1 h-8 text-base sm:text-xs" />
               <Button type="button" variant="outline" size="sm" className="h-8 text-[10px] shrink-0"
                 onClick={() => fillLabelFromPlatform(row)}>
                 Lấy tên bot
@@ -436,13 +436,13 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
                     <div>
                       <label className="text-[10px] text-muted-foreground">Tên</label>
-                      <Input className="h-8 text-xs" value={a.name}
+                      <Input className="h-8 text-base sm:text-xs" value={a.name}
                         onChange={(e) => patchAdmin(row.id, idx, { name: e.target.value })}
                         placeholder="Tên dễ nhớ" />
                     </div>
                     <div>
                       <label className="text-[10px] text-muted-foreground">Chat ID</label>
-                      <Input className="h-8 text-xs font-mono" value={a.chat_id}
+                      <Input className="h-8 text-base sm:text-xs font-mono" value={a.chat_id}
                         onChange={(e) => {
                           const cid = e.target.value;
                           patchAdmin(row.id, idx, {
@@ -475,22 +475,22 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
                   <div className="space-y-1 rounded border border-border/50 p-2">
                     <p className="text-[10px] font-medium text-muted-foreground">Thông báo tới admin này</p>
                     <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
-                      <input type="checkbox" className="size-3.5" checked={a.notify_enabled}
+                      <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5" checked={a.notify_enabled}
                         onChange={(e) => patchAdmin(row.id, idx, { notify_enabled: e.target.checked })} />
                       🔔 Lỗi &amp; cảnh báo (không phải provider, không phải chat mới)
                     </label>
                     <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
-                      <input type="checkbox" className="size-3.5" checked={a.account_log_enabled}
+                      <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5" checked={a.account_log_enabled}
                         onChange={(e) => patchAdmin(row.id, idx, { account_log_enabled: e.target.checked })} />
                       📋 Log tài khoản provider (Thêm/Xóa/Lỗi/Quota…)
                     </label>
                     <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
-                      <input type="checkbox" className="size-3.5" checked={a.account_update_log_enabled}
+                      <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5" checked={a.account_update_log_enabled}
                         onChange={(e) => patchAdmin(row.id, idx, { account_update_log_enabled: e.target.checked })} />
                       🔄 Log Cập nhật tài khoản (bản ghi token/status định kỳ)
                     </label>
                     <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
-                      <input type="checkbox" className="size-3.5" checked={a.newchat_alert_enabled}
+                      <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5" checked={a.newchat_alert_enabled}
                         onChange={(e) => patchAdmin(row.id, idx, { newchat_alert_enabled: e.target.checked })} />
                       💬 Chat/nhóm mới (thread ID + user ID) — tách hẳn 🔔/📋
                     </label>
@@ -555,6 +555,15 @@ export function TelegramCloudflareCard() {
   // nối XUYÊN kênh, nên nó không thuộc riêng kênh nào — để trong từng kênh là
   // lặp lại vô lý và gợi ý sai rằng mỗi kênh có cấu hình riêng.
   const [chTab, setChTab] = useState<"tg" | "zalo" | "zalop" | "memlinks" | "kholinks" | "nhatky">("tg");
+
+  // Link từ "Bắt đầu ở đây" chỉ thẳng tới một kênh: /settings?tim=…&tab=zalop
+  // Không có tham số, hoặc giá trị lạ → giữ nguyên tab mặc định (Telegram).
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("tab");
+    if (t && ["tg", "zalo", "zalop", "memlinks", "kholinks", "nhatky"].includes(t))
+      setChTab(t as typeof chTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [subTab, setSubTab] = useState<"settings" | "zaccounts" | "zwebhook" | "directory" | "filter" | "branches">("settings");
   // Danh bạ thread (setting ∪ auto bot) — tab riêng mỗi kênh
   type DirRow = {
@@ -1433,7 +1442,7 @@ export function TelegramCloudflareCard() {
                         name: e.target.value.trim() === u.userId.trim() ? u.name : "",
                       }, tid)}
                       placeholder="User ID (gõ /id trong nhóm để lấy)"
-                      className="h-7 text-xs font-mono flex-1 min-w-[8rem]"
+                      className="h-7 text-base sm:text-xs font-mono flex-1 min-w-[8rem]"
                     />
                     <Button
                       type="button"
@@ -1451,7 +1460,7 @@ export function TelegramCloudflareCard() {
                     value={u.name || ""}
                     onChange={(e) => setUserField(row.id, u.id, { name: e.target.value }, tid)}
                     placeholder="Tên user (tự điền / gõ tay)"
-                    className="h-7 text-xs"
+                    className="h-7 text-base sm:text-xs"
                   />
                   <div className="flex flex-wrap gap-x-3 gap-y-1">
                     {FUNCTION_GROUPS.filter(([key]) => holder.groups.includes(key)).map(([key, label]) => (
@@ -1459,7 +1468,7 @@ export function TelegramCloudflareCard() {
                         className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none">
                         <input
                           type="checkbox"
-                          className="size-3.5"
+                          className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                           checked={u.groups.includes(key)}
                           onChange={() => toggleUserGroup(row.id, u.id, key, holder.groups, tid)}
                         />
@@ -1481,7 +1490,7 @@ export function TelegramCloudflareCard() {
                       <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
                         <input
                           type="checkbox"
-                          className="size-3.5"
+                          className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                           checked={u.forward}
                           onChange={() => setUserField(row.id, u.id, { forward: !u.forward }, tid)}
                         />
@@ -1492,7 +1501,7 @@ export function TelegramCloudflareCard() {
                           value={u.forwardUrl}
                           onChange={(e) => setUserField(row.id, u.id, { forwardUrl: e.target.value }, tid)}
                           placeholder="URL webhook riêng cho user này (HA / n8n / URL bất kỳ)"
-                          className="h-7 text-xs"
+                          className="h-7 text-base sm:text-xs"
                         />
                       )}
                       {u.forward && !holder.requireMention && (
@@ -1500,7 +1509,7 @@ export function TelegramCloudflareCard() {
                           <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
                             <input
                               type="checkbox"
-                              className="size-3.5"
+                              className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                               checked={u.forwardTagOnly}
                               onChange={() => setUserField(row.id, u.id, { forwardTagOnly: !u.forwardTagOnly }, tid)}
                             />
@@ -1511,7 +1520,7 @@ export function TelegramCloudflareCard() {
                               value={u.forwardKeyword}
                               onChange={(e) => setUserField(row.id, u.id, { forwardKeyword: e.target.value }, tid)}
                               placeholder="Tag RIÊNG để chuyển tiếp, vd @n8n — bỏ trống thì dùng chung từ khóa tag của thread"
-                              className="h-7 text-xs"
+                              className="h-7 text-base sm:text-xs"
                             />
                           )}
                           {u.forwardTagOnly && (
@@ -1920,10 +1929,10 @@ export function TelegramCloudflareCard() {
                       ? "Thread ID (userId / groupId)"
                       : "Chat ID (vd: 123456789)"
                   }
-                  className="flex-1 min-w-[10rem] font-mono text-xs"
+                  className="flex-1 min-w-[10rem] font-mono text-base sm:text-xs"
                 />
                 <select
-                  className="rounded-md border border-border bg-background px-2 text-xs h-9 shrink-0"
+                  className="rounded-md border border-border bg-background px-2 text-base sm:text-xs h-9 shrink-0"
                   value={row.kind === "user" ? "user" : "group"}
                   onChange={(e) => setFilterField(row.id, { kind: e.target.value })}
                   title="Thread này là nhóm hay chat cá nhân — cá nhân thì không cần lọc user/tag"
@@ -1951,7 +1960,7 @@ export function TelegramCloudflareCard() {
                   value={row.name || ""}
                   onChange={(e) => setFilterField(row.id, { name: e.target.value })}
                   placeholder="Vd: Nhóm gia đình / Nguyễn Văn A"
-                  className="h-8 text-xs"
+                  className="h-8 text-base sm:text-xs"
                 />
               </div>
               {/* Model riêng của thread — thắng model mặc định của bot/kênh.
@@ -1965,7 +1974,7 @@ export function TelegramCloudflareCard() {
                   value={row.aiModel || " "}
                   onValueChange={(v) => setFilterField(row.id, { aiModel: v.trim() })}
                 >
-                  <SelectTrigger className="h-8 text-xs">
+                  <SelectTrigger className="h-8 text-base sm:text-xs">
                     <SelectValue placeholder="-- Dùng model mặc định --" />
                   </SelectTrigger>
                   <SelectContent>
@@ -2000,7 +2009,7 @@ export function TelegramCloudflareCard() {
                   >
                     <input
                       type="checkbox"
-                      className="size-3.5"
+                      className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                       checked={row.groups.includes(key)}
                       onChange={() => toggleFilterGroup(row.id, key)}
                     />
@@ -2019,7 +2028,7 @@ export function TelegramCloudflareCard() {
               <label className="flex items-center gap-1.5 rounded border border-dashed border-rose-500/50 p-2 text-xs cursor-pointer select-none">
                 <input
                   type="checkbox"
-                  className="size-3.5"
+                  className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                   checked={row.aiOff}
                   onChange={() => setFilterField(row.id, { aiOff: !row.aiOff })}
                 />
@@ -2032,7 +2041,7 @@ export function TelegramCloudflareCard() {
                 <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
                   <input
                     type="checkbox"
-                    className="size-3.5"
+                    className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                     checked={row.requireMention}
                     onChange={() => setFilterField(row.id, { requireMention: !row.requireMention })}
                   />
@@ -2043,7 +2052,7 @@ export function TelegramCloudflareCard() {
                     value={row.mentionKeyword}
                     onChange={(e) => setFilterField(row.id, { mentionKeyword: e.target.value })}
                     placeholder="Từ khóa tag, vd: @Bot Bến Bắp (Telegram tự nhận @username; Zalo dùng từ khóa này)"
-                    className="h-8 text-xs"
+                    className="h-8 text-base sm:text-xs"
                   />
                 )}
                 {/* Ô RIÊNG, ĐỘC LẬP với «bắt buộc tag» ở trên. Zalo Cá Nhân chạy
@@ -2056,7 +2065,7 @@ export function TelegramCloudflareCard() {
                     <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
                       <input
                         type="checkbox"
-                        className="size-3.5"
+                        className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                         checked={row.replyToSelf}
                         onChange={() => setFilterField(row.id, { replyToSelf: !row.replyToSelf })}
                       />
@@ -2085,7 +2094,7 @@ export function TelegramCloudflareCard() {
                 <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
                   <input
                     type="checkbox"
-                    className="size-3.5"
+                    className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                     checked={row.userOnly}
                     onChange={() => setFilterField(row.id, { userOnly: !row.userOnly })}
                   />
@@ -2099,7 +2108,7 @@ export function TelegramCloudflareCard() {
                 <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
                   <input
                     type="checkbox"
-                    className="size-3.5"
+                    className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                     checked={row.forward}
                     onChange={() => setFilterField(row.id, { forward: !row.forward })}
                   />
@@ -2111,12 +2120,12 @@ export function TelegramCloudflareCard() {
                       value={row.forwardUrl}
                       onChange={(e) => setFilterField(row.id, { forwardUrl: e.target.value })}
                       placeholder="https://ha.local/api/webhook/xxx — POST JSON {platform, bot, chat_id, user_id, sender, text…}"
-                      className="h-8 text-xs"
+                      className="h-8 text-base sm:text-xs"
                     />
                     <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
                       <input
                         type="checkbox"
-                        className="size-3.5"
+                        className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                         checked={row.forwardTagOnly}
                         onChange={() => setFilterField(row.id, { forwardTagOnly: !row.forwardTagOnly })}
                       />
@@ -2127,7 +2136,7 @@ export function TelegramCloudflareCard() {
                         value={row.forwardKeyword}
                         onChange={(e) => setFilterField(row.id, { forwardKeyword: e.target.value })}
                         placeholder="Tag RIÊNG để chuyển tiếp, vd @n8n — bỏ trống thì dùng chung từ khóa «bắt buộc tag»"
-                        className="h-7 text-xs"
+                        className="h-7 text-base sm:text-xs"
                       />
                     )}
                     <p className="text-[10px] text-muted-foreground">
@@ -2227,13 +2236,13 @@ export function TelegramCloudflareCard() {
                           topicId: e.target.value.replace(/[^0-9]/g, ""),
                         })}
                         placeholder="Topic ID (số — gõ /id trong topic để lấy)"
-                        className="h-7 text-xs font-mono flex-1 min-w-[8rem]"
+                        className="h-7 text-base sm:text-xs font-mono flex-1 min-w-[8rem]"
                       />
                       <Input
                         value={t.name || ""}
                         onChange={(e) => setTopicField(row.id, t.id, { name: e.target.value })}
                         placeholder="Tên topic (gõ tay — Bot API không trả tên topic)"
-                        className="h-7 text-xs flex-1 min-w-[8rem]"
+                        className="h-7 text-base sm:text-xs flex-1 min-w-[8rem]"
                       />
                     </div>
                     <div>
@@ -2244,7 +2253,7 @@ export function TelegramCloudflareCard() {
                         value={t.aiModel || " "}
                         onValueChange={(v) => setTopicField(row.id, t.id, { aiModel: v.trim() })}
                       >
-                        <SelectTrigger className="h-7 text-xs">
+                        <SelectTrigger className="h-7 text-base sm:text-xs">
                           <SelectValue placeholder="-- Theo model của nhóm --" />
                         </SelectTrigger>
                         <SelectContent>
@@ -2275,7 +2284,7 @@ export function TelegramCloudflareCard() {
                           className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none">
                           <input
                             type="checkbox"
-                            className="size-3.5"
+                            className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                             checked={t.groups.includes(key)}
                             onChange={() => toggleTopicGroup(row.id, t.id, key, row.groups)}
                           />
@@ -2296,7 +2305,7 @@ export function TelegramCloudflareCard() {
                       <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
                         <input
                           type="checkbox"
-                          className="size-3.5"
+                          className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                           checked={t.requireMention}
                           onChange={() => setTopicField(row.id, t.id, { requireMention: !t.requireMention })}
                         />
@@ -2305,7 +2314,7 @@ export function TelegramCloudflareCard() {
                       <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
                         <input
                           type="checkbox"
-                          className="size-3.5"
+                          className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                           checked={t.userOnly}
                           onChange={() => setTopicField(row.id, t.id, { userOnly: !t.userOnly })}
                         />
@@ -2316,7 +2325,7 @@ export function TelegramCloudflareCard() {
                           value={t.mentionKeyword}
                           onChange={(e) => setTopicField(row.id, t.id, { mentionKeyword: e.target.value })}
                           placeholder="Từ khóa tag (Telegram tự nhận @username — để trống vẫn được)"
-                          className="h-7 text-xs"
+                          className="h-7 text-base sm:text-xs"
                         />
                       )}
                     </div>
@@ -2325,7 +2334,7 @@ export function TelegramCloudflareCard() {
                       <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
                         <input
                           type="checkbox"
-                          className="size-3.5"
+                          className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                           checked={t.forward}
                           onChange={() => setTopicField(row.id, t.id, { forward: !t.forward })}
                         />
@@ -2337,7 +2346,7 @@ export function TelegramCloudflareCard() {
                             value={t.forwardUrl}
                             onChange={(e) => setTopicField(row.id, t.id, { forwardUrl: e.target.value })}
                             placeholder="https://ha.local/api/webhook/xxx — POST JSON có cả topic_id"
-                            className="h-7 text-xs"
+                            className="h-7 text-base sm:text-xs"
                           />
                           <p className="text-[10px] text-muted-foreground">
                             Mọi tin trong topic này đi tới URL trên và <b>ChatGPT KHÔNG trả lời</b>

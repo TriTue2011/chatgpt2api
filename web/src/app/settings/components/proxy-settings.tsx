@@ -127,7 +127,7 @@ export function ProxySettingsCard() {
             <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-[var(--border)] bg-[var(--card)] px-4 py-3">
               <input
                 type="checkbox"
-                className="mt-1 size-4 rounded border-[var(--border)] text-[var(--foreground)] focus:ring-[var(--ring)]"
+                className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] mt-1 size-4 rounded border-[var(--border)] text-[var(--foreground)] focus:ring-[var(--ring)]"
                 checked={formEnabled}
                 onChange={(event) => setFormEnabled(event.target.checked)}
               />
@@ -148,7 +148,7 @@ export function ProxySettingsCard() {
                 value={formUrl}
                 onChange={(event) => setFormUrl(event.target.value)}
                 placeholder="http://user:pass@host:port hoặc socks5://host:port"
-                className="h-11 rounded-xl border-[var(--border)] bg-[var(--card)] font-mono text-xs"
+                className="h-11 rounded-xl border-[var(--border)] bg-[var(--card)] font-mono text-base sm:text-xs"
               />
               <div className="text-xs text-[var(--muted-foreground)]">
                 Hỗ trợ <code className="font-mono">http / https / socks4 / socks5 / socks5h</code>.

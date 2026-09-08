@@ -312,7 +312,7 @@ export function GeminiWebApiCard() {
               <Input
                 value={profile} onChange={(e) => setProfile(e.target.value)}
                 placeholder="gemini-web-api-default"
-                className="mt-1 h-8 rounded-lg border-violet-200 text-xs font-mono"
+                className="mt-1 h-8 rounded-lg border-violet-200 text-base sm:text-xs font-mono"
               />
             </div>
             <div>
@@ -321,7 +321,7 @@ export function GeminiWebApiCard() {
                 type="number" min={30} max={600}
                 value={timeout}
                 onChange={(e) => setTimeoutVal(Number(e.target.value))}
-                className="mt-1 h-8 rounded-lg border-violet-200 text-xs font-mono"
+                className="mt-1 h-8 rounded-lg border-violet-200 text-base sm:text-xs font-mono"
               />
             </div>
           </div>
@@ -365,7 +365,7 @@ export function GeminiWebApiCard() {
               <Input
                 value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })}
                 placeholder="you@gmail.com"
-                className="mt-1 h-8 rounded-lg border-violet-200 text-xs font-mono"
+                className="mt-1 h-8 rounded-lg border-violet-200 text-base sm:text-xs font-mono"
                 autoComplete="off" disabled={running}
               />
             </div>
@@ -375,7 +375,7 @@ export function GeminiWebApiCard() {
                 type="password" value={draft.password}
                 onChange={(e) => setDraft({ ...draft, password: e.target.value })}
                 placeholder="••••••••"
-                className="mt-1 h-8 rounded-lg border-violet-200 text-xs font-mono"
+                className="mt-1 h-8 rounded-lg border-violet-200 text-base sm:text-xs font-mono"
                 autoComplete="off" disabled={running}
               />
             </div>
@@ -386,7 +386,7 @@ export function GeminiWebApiCard() {
               value={draft.totpSecret}
               onChange={(e) => setDraft({ ...draft, totpSecret: e.target.value })}
               placeholder="xxxx xxxx xxxx xxxx xxxx xxxx xxxx xxxx"
-              className="mt-1 h-8 rounded-lg border-amber-200 text-xs font-mono bg-amber-50/30"
+              className="mt-1 h-8 rounded-lg border-amber-200 text-base sm:text-xs font-mono bg-amber-50/30"
               autoComplete="off" disabled={running}
             />
             {totpCode && (

@@ -205,7 +205,7 @@ export function CameraCard() {
           <div className="flex flex-wrap gap-2">
             <Input className="w-48" value={ten} onChange={(e) => setTen(e.target.value)}
               placeholder="Tên gọi, vd: Sân trước" />
-            <select className="h-9 rounded border border-input bg-background px-2 text-sm"
+            <select className="h-9 rounded border border-input bg-background px-2 text-base sm:text-sm"
               value={moi.kind}
               onChange={(e) => setMoi({ ...moi, kind: e.target.value as Cam["kind"] })}>
               <option value="go2rtc">go2rtc</option>
@@ -325,7 +325,7 @@ export function CameraCard() {
             ảnh thì bỏ qua, không tốn model. Để «Mặc định» nếu không chắc.
           </p>
           <select
-            className="w-full rounded-lg border border-border bg-background p-2 text-sm"
+            className="w-full rounded-lg border border-border bg-background p-2 text-base sm:text-sm"
             value={modelAnh}
             onChange={(e) => void luuModel(e.target.value)}
           >

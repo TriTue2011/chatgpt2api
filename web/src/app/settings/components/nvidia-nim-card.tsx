@@ -68,7 +68,7 @@ export function NvidiaNimCard() {
           <label className="text-sm text-[var(--foreground)]">API Keys (mỗi dòng 1 key)</label>
           <Textarea value={apiKey} onChange={(e) => setApiKey(e.target.value)}
             placeholder={"nvapi-xxx...\nnvapi-yyy..."}
-            className="min-h-24 rounded-xl border-[var(--border)] bg-[var(--secondary)] font-mono text-xs" />
+            className="min-h-24 rounded-xl border-[var(--border)] bg-[var(--secondary)] font-mono text-base sm:text-xs" />
           <p className="text-xs text-[var(--muted-foreground)]">Nhiều key → tự động round-robin khi rate limit. Lấy tại build.nvidia.com</p>
         </div>
 

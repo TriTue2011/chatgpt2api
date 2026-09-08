@@ -209,18 +209,18 @@ export function CustomProvidersCard() {
               <div>
                 <label className="text-xs text-[var(--muted-foreground)]">Tên hiển thị</label>
                 <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder="VD: DeepSeek" className="mt-1 h-9 rounded-lg border-[var(--border)] text-sm" />
+                  placeholder="VD: DeepSeek" className="mt-1 h-9 rounded-lg border-[var(--border)] text-base sm:text-sm" />
               </div>
               <div>
                 <label className="text-xs text-[var(--muted-foreground)]">Prefix (dùng trong model ID)</label>
                 <Input value={form.prefix} onChange={(e) => setForm({ ...form, prefix: e.target.value })}
-                  placeholder="VD: deepseek" className="mt-1 h-9 rounded-lg border-[var(--border)] text-sm font-mono" />
+                  placeholder="VD: deepseek" className="mt-1 h-9 rounded-lg border-[var(--border)] text-base sm:text-sm font-mono" />
               </div>
               <div className="sm:col-span-2">
                 <label className="text-xs text-[var(--muted-foreground)]">Base URL (mỗi dòng 1 endpoint)</label>
                 <Textarea value={form.base_url} onChange={(e) => setForm({ ...form, base_url: e.target.value })}
                   placeholder={"https://api.deepseek.com\nhttp://host:8001\nhttp://host:8002"}
-                  className="mt-1 min-h-16 rounded-xl border-[var(--border)] font-mono text-xs" />
+                  className="mt-1 min-h-16 rounded-xl border-[var(--border)] font-mono text-base sm:text-xs" />
                 <p className="text-xs text-[var(--muted-foreground)] mt-1">
                   Nhiều URL cùng API key → priority FIFO + auto demote 60s khi 429 / connection error
                   (vd: 4 Gemini Custom ports cùng 1 token).
@@ -230,7 +230,7 @@ export function CustomProvidersCard() {
                 <label className="text-xs text-[var(--muted-foreground)]">API Keys (mỗi dòng 1 key)</label>
                 <Textarea value={form.api_key} onChange={(e) => setForm({ ...form, api_key: e.target.value })}
                   placeholder={"sk-...\nsk-..."}
-                  className="mt-1 min-h-20 rounded-xl border-[var(--border)] font-mono text-xs" />
+                  className="mt-1 min-h-20 rounded-xl border-[var(--border)] font-mono text-base sm:text-xs" />
                 <p className="text-xs text-[var(--muted-foreground)] mt-1">Nhiều key → tự động round-robin khi rate limit (60s cooldown per key)</p>
               </div>
             </div>

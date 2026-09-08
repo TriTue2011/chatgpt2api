@@ -365,7 +365,7 @@ function LinksCard({ the }: { the: CauHinhThe }) {
         <div key={r.uiId} className="rounded-lg border border-border p-3 space-y-2">
           <div className="flex items-center gap-2 flex-wrap">
             <button type="button" aria-label={mo ? "Thu gọn" : "Mở rộng"}
-              className="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground"
+              className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground"
               onClick={() => setMoRong((s) => ({ ...s, [r.uiId]: !mo }))}>
               {mo ? "▾" : "▸"}
             </button>
@@ -375,7 +375,7 @@ function LinksCard({ the }: { the: CauHinhThe }) {
                 : "bg-sky-500/15 text-sky-600")}>
               {r.kind === "binh_dang" ? "⇄ Bình đẳng" : "→ Chính phụ"}
             </span>
-            <Input className="h-7 text-xs max-w-[240px]" value={r.name}
+            <Input className="h-7 text-base sm:text-xs max-w-[240px]" value={r.name}
               placeholder="Tên kết nối (vd: Nhà mình)"
               onChange={(e) => sua(r.uiId, { name: e.target.value })} />
             {/* Lúc gấp phải thấy ĐỦ để biết có cần mở ra không: số thành viên,

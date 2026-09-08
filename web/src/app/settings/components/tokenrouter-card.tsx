@@ -76,14 +76,14 @@ export function TokenRouterCard() {
           <label className="text-sm text-[var(--foreground)]">Base URL</label>
           <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)}
             placeholder={MAC_DINH_BASE}
-            className="h-9 rounded-xl border-[var(--border)] bg-[var(--secondary)] font-mono text-xs" />
+            className="h-9 rounded-xl border-[var(--border)] bg-[var(--secondary)] font-mono text-base sm:text-xs" />
         </div>
 
         <div className="space-y-2">
           <label className="text-sm text-[var(--foreground)]">API Keys (mỗi dòng 1 key)</label>
           <Textarea value={apiKey} onChange={(e) => setApiKey(e.target.value)}
             placeholder={"tr-xxx...\ntr-yyy..."}
-            className="min-h-20 rounded-xl border-[var(--border)] bg-[var(--secondary)] font-mono text-xs" />
+            className="min-h-20 rounded-xl border-[var(--border)] bg-[var(--secondary)] font-mono text-base sm:text-xs" />
         </div>
 
         <div className="p-3 rounded-lg bg-[var(--secondary)] text-xs text-[var(--muted-foreground)] space-y-1">

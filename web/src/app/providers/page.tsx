@@ -110,7 +110,7 @@ function ProvidersPageContent() {
                 "transition-all duration-300 hover:-translate-y-1"
               )}
             >
-              <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-[#FFD700] to-[#D4AF37] opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+              <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-[#FFD700] to-[#D4AF37] opacity-100 sm:opacity-0 transition-opacity duration-300 sm:group-hover:opacity-100" />
               <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="flex items-center gap-3">
                   <span className="text-2xl">{meta.icon}</span>

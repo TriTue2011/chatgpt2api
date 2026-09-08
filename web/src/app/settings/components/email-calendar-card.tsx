@@ -246,7 +246,7 @@ export function EmailCalendarCard() {
           {targetOptions.map((o) => (
             <label key={o.value}
               className="flex items-center gap-1 text-[11px] text-muted-foreground cursor-pointer select-none">
-              <input type="checkbox" className="size-3.5"
+              <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                 checked={targets.includes(o.value)}
                 onChange={() => set({
                   notify_targets: targets.includes(o.value)
@@ -259,7 +259,7 @@ export function EmailCalendarCard() {
         </div>
       )}
       <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
-        <input type="checkbox" className="size-3.5" checked={onNew}
+        <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5" checked={onNew}
           onChange={() => set({ notify_on_new: !onNew })} />
         ⚡ Cứ có mới là tóm tắt gửi ngay
       </label>
@@ -268,7 +268,7 @@ export function EmailCalendarCard() {
           🕐 Mốc giờ định kỳ (phẩy, vd: 07:00, 18:30) — gom các mục mới, tới giờ gửi
           MỘT bản tổng hợp; trống = không gửi định kỳ
         </label>
-        <Input value={times} className="h-7 text-xs"
+        <Input value={times} className="h-7 text-base sm:text-xs"
           onChange={(e) => set({ notify_times: e.target.value })}
           placeholder="07:00, 18:30" />
       </div>
@@ -334,43 +334,43 @@ export function EmailCalendarCard() {
                   <div className="grid gap-2 sm:grid-cols-2">
                     <div>
                       <label className="text-[10px] text-muted-foreground">Tên hiển thị</label>
-                      <Input value={a.label} className="h-8 text-xs"
+                      <Input value={a.label} className="h-8 text-base sm:text-xs"
                         onChange={(e) => patchAcc(a.uiId, { label: e.target.value })}
                         placeholder="Gmail chính" />
                     </div>
                     <label className="flex items-end gap-1.5 pb-1 text-xs cursor-pointer select-none">
-                      <input type="checkbox" className="size-3.5" checked={a.enabled}
+                      <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5" checked={a.enabled}
                         onChange={() => patchAcc(a.uiId, { enabled: !a.enabled })} />
                       Bật hộp này
                     </label>
                     <div>
                       <label className="text-[10px] text-muted-foreground">IMAP host</label>
-                      <Input value={a.imap_host} className="h-8 text-xs"
+                      <Input value={a.imap_host} className="h-8 text-base sm:text-xs"
                         onChange={(e) => patchAcc(a.uiId, { imap_host: e.target.value })}
                         placeholder="imap.gmail.com" />
                     </div>
                     <div>
                       <label className="text-[10px] text-muted-foreground">IMAP port</label>
-                      <Input value={a.imap_port} className="h-8 text-xs"
+                      <Input value={a.imap_port} className="h-8 text-base sm:text-xs"
                         onChange={(e) => patchAcc(a.uiId, { imap_port: e.target.value })} />
                     </div>
                     <div>
                       <label className="text-[10px] text-muted-foreground">
                         SMTP host (trống = tự đoán từ IMAP)
                       </label>
-                      <Input value={a.smtp_host} className="h-8 text-xs"
+                      <Input value={a.smtp_host} className="h-8 text-base sm:text-xs"
                         onChange={(e) => patchAcc(a.uiId, { smtp_host: e.target.value })}
                         placeholder="smtp.gmail.com" />
                     </div>
                     <div>
                       <label className="text-[10px] text-muted-foreground">SMTP port</label>
-                      <Input value={a.smtp_port} className="h-8 text-xs"
+                      <Input value={a.smtp_port} className="h-8 text-base sm:text-xs"
                         onChange={(e) => patchAcc(a.uiId, { smtp_port: e.target.value })} />
                     </div>
                     <div>
                       <label className="text-[10px] text-muted-foreground">Loại bảo mật</label>
                       <select value={a.security}
-                        className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-xs"
+                        className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-base sm:text-xs"
                         onChange={(e) => patchAcc(a.uiId, { security: e.target.value })}>
                         <option value="ssl">SSL/TLS (IMAP 993 · SMTP 465)</option>
                         <option value="starttls">STARTTLS (IMAP 143 · SMTP 587)</option>
@@ -378,13 +378,13 @@ export function EmailCalendarCard() {
                       </select>
                     </div>
                     <label className="flex items-end gap-1.5 pb-1 text-xs cursor-pointer select-none">
-                      <input type="checkbox" className="size-3.5" checked={!a.verify_ssl}
+                      <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5" checked={!a.verify_ssl}
                         onChange={() => patchAcc(a.uiId, { verify_ssl: !a.verify_ssl })} />
                       Chấp nhận mọi chứng chỉ (server nội bộ tự ký)
                     </label>
                     <div>
                       <label className="text-[10px] text-muted-foreground">Địa chỉ email</label>
-                      <Input value={a.user} className="h-8 text-xs"
+                      <Input value={a.user} className="h-8 text-base sm:text-xs"
                         onChange={(e) => patchAcc(a.uiId, { user: e.target.value })}
                         placeholder="ban@gmail.com hoặc ten@congty.vn" />
                     </div>
@@ -392,7 +392,7 @@ export function EmailCalendarCard() {
                       <label className="text-[10px] text-muted-foreground">
                         Mật khẩu (Gmail/Outlook: App Password)
                       </label>
-                      <Input type="password" value={a.password} className="h-8 text-xs"
+                      <Input type="password" value={a.password} className="h-8 text-base sm:text-xs"
                         onChange={(e) => patchAcc(a.uiId, { password: e.target.value })}
                         placeholder="Gmail: 16 ký tự · mail công ty: mật khẩu thường" />
                     </div>
@@ -403,23 +403,23 @@ export function EmailCalendarCard() {
                       <label className="text-[10px] text-muted-foreground">
                         Người gửi được nhận (phẩy; * = tất cả; trống = chặn hết)
                       </label>
-                      <Input value={a.allowed_senders} className="h-8 text-xs"
+                      <Input value={a.allowed_senders} className="h-8 text-base sm:text-xs"
                         onChange={(e) => patchAcc(a.uiId, { allowed_senders: e.target.value })}
                         placeholder="ban@gmail.com, @congty.com, *" />
                     </div>
                     <div>
                       <label className="text-[10px] text-muted-foreground">Poll (giây, ≥20)</label>
-                      <Input value={a.poll_seconds} className="h-8 text-xs"
+                      <Input value={a.poll_seconds} className="h-8 text-base sm:text-xs"
                         onChange={(e) => patchAcc(a.uiId, { poll_seconds: e.target.value })} />
                     </div>
                   </div>
                   <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
-                    <input type="checkbox" className="size-3.5" checked={a.summarize_files}
+                    <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5" checked={a.summarize_files}
                       onChange={() => patchAcc(a.uiId, { summarize_files: !a.summarize_files })} />
                     📎 Tóm tắt CẢ nội dung tệp đính kèm (PDF/Word/Excel/txt…)
                   </label>
                   <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
-                    <input type="checkbox" className="size-3.5" checked={a.reply_enabled}
+                    <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5" checked={a.reply_enabled}
                       onChange={() => patchAcc(a.uiId, { reply_enabled: !a.reply_enabled })} />
                     🤖 AI trả lời thẳng vào email (tắt = chỉ tóm tắt gửi kênh)
                   </label>
@@ -499,12 +499,12 @@ export function EmailCalendarCard() {
                   <div className="grid gap-2 sm:grid-cols-2">
                     <div>
                       <label className="text-[10px] text-muted-foreground">Tên hiển thị</label>
-                      <Input value={c.label} className="h-8 text-xs"
+                      <Input value={c.label} className="h-8 text-base sm:text-xs"
                         onChange={(e) => patchCal(c.uiId, { label: e.target.value })}
                         placeholder="Lịch gia đình" />
                     </div>
                     <label className="flex items-end gap-1.5 pb-1 text-xs cursor-pointer select-none">
-                      <input type="checkbox" className="size-3.5" checked={c.enabled}
+                      <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5" checked={c.enabled}
                         onChange={() => patchCal(c.uiId, { enabled: !c.enabled })} />
                       Bật lịch này
                     </label>
@@ -513,21 +513,21 @@ export function EmailCalendarCard() {
                     <label className="text-[10px] text-muted-foreground">
                       Link ICS (Google Calendar → Cài đặt lịch → «Địa chỉ bí mật ở định dạng iCal»)
                     </label>
-                    <Input value={c.ics_url} className="h-8 text-xs font-mono"
+                    <Input value={c.ics_url} className="h-8 text-base sm:text-xs font-mono"
                       onChange={(e) => patchCal(c.uiId, { ics_url: e.target.value })}
                       placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" />
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <div>
                       <label className="text-[10px] text-muted-foreground">Nhìn trước (ngày)</label>
-                      <Input value={c.days_ahead} className="h-8 text-xs w-24"
+                      <Input value={c.days_ahead} className="h-8 text-base sm:text-xs w-24"
                         onChange={(e) => patchCal(c.uiId, { days_ahead: e.target.value })} />
                     </div>
                     <div>
                       <label className="text-[10px] text-muted-foreground">
                         ⏰ Mốc nhắc trước sự kiện (phẩy — d=ngày, h=giờ, m=phút)
                       </label>
-                      <Input value={c.remind_before} className="h-8 text-xs"
+                      <Input value={c.remind_before} className="h-8 text-base sm:text-xs"
                         onChange={(e) => patchCal(c.uiId, { remind_before: e.target.value })}
                         placeholder="7d, 1d, 2h, 30m" />
                       <p className="text-[10px] text-muted-foreground mt-0.5">
@@ -578,7 +578,7 @@ export function EmailCalendarCard() {
                   trong danh sách vẫn giữ để không mất cấu hình. */}
               <Select value={value || " "}
                 onValueChange={(v) => set(v.trim())}>
-                <SelectTrigger className="h-9 text-xs">
+                <SelectTrigger className="h-9 text-base sm:text-xs">
                   <SelectValue placeholder="-- Mặc định --" />
                 </SelectTrigger>
                 <SelectContent>

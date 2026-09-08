@@ -598,7 +598,9 @@ body > * { position: relative; z-index: 1; }
 
 /* ═══ Display typography ═══ */
 .display-text {
-  font-family: "Space Grotesk", "Inter", "SF Pro Display", system-ui, sans-serif;
+  /* "Space Grotesk"/"SF Pro Display" không được nạp ở đâu cả — trên Windows
+     rơi thẳng về system-ui. Dùng Geist đã nạp để mọi máy hiện giống nhau. */
+  font-family: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
   font-weight: 700;
   letter-spacing: -0.045em;
   line-height: 0.95;
@@ -703,7 +705,11 @@ table.data-table { width: 100%; border-collapse: collapse; }
 }
 .data-table tr:hover td { background: var(--muted); }
 .sticky-table-header th { position: sticky; top: 0; z-index: 10; }
-.data-table .mono { font-family: "JetBrains Mono", "SF Mono", "Fira Code", monospace; font-size: 0.75rem; }
+/* Dùng GeistMono đã nạp sẵn qua next/font (layout.tsx). Bản cũ gọi
+   "JetBrains Mono"/"SF Mono"/"Fira Code" — KHÔNG máy Windows nào có sẵn,
+   nên mã model và token rơi về font mặc định xấu, dù font đúng đã nằm
+   trong bundle. */
+.data-table .mono { font-family: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.75rem; }
 
 /* ═══ Progress ═══ */
 .progress { height: 6px; background: var(--secondary); border-radius: 9999px; overflow: hidden; }
@@ -786,7 +792,7 @@ table.data-table { width: 100%; border-collapse: collapse; }
 }
 
 /* ═══ Utility ═══ */
-.text-mono { font-family: "JetBrains Mono", "SF Mono", "Fira Code", monospace; }
+.text-mono { font-family: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
 .divider { border-top: 1px solid var(--border); }
 .trend-up { color: var(--neon-lime); }
 .trend-down { color: var(--destructive); }

@@ -342,7 +342,7 @@ export function ConfigCard() {
               value={String(config?.global_system_prompt || "")}
               onChange={(event) => setGlobalSystemPrompt(event.target.value)}
               placeholder="Ví dụ: Đầu tiên hãy xác định xem prompt của người dùng có tuân thủ quy định hay không; từ chối trả lời khi gặp các yêu cầu vi phạm pháp luật, khiêu dâm, bạo lực, thù hận, v.v."
-              className="min-h-28 rounded-xl border-[var(--border)] bg-[var(--card)] font-mono text-xs shadow-none"
+              className="min-h-28 rounded-xl border-[var(--border)] bg-[var(--card)] font-mono text-base sm:text-xs shadow-none"
             />
             <p className="text-xs text-[var(--muted-foreground)]">Mỗi yêu cầu sẽ được chèn dưới dạng tin nhắn system, có thể được sử dụng để kiểm duyệt prompt của người dùng, tránh nội dung vi phạm, thống nhất các ràng buộc hành vi của mô hình hoặc thiết lập vai trò cố định.</p>
           </div>
@@ -352,7 +352,7 @@ export function ConfigCard() {
               value={(config?.sensitive_words || []).join("\n")}
               onChange={(event) => setSensitiveWordsText(event.target.value)}
               placeholder="Mỗi dòng một từ, nếu khớp sẽ từ chối"
-              className="min-h-28 rounded-xl border-[var(--border)] bg-[var(--card)] font-mono text-xs shadow-none"
+              className="min-h-28 rounded-xl border-[var(--border)] bg-[var(--card)] font-mono text-base sm:text-xs shadow-none"
             />
             <p className="text-xs text-[var(--muted-foreground)]">Chỉ cần yêu cầu của người dùng chứa bất kỳ từ nhạy cảm nào, yêu cầu đó sẽ bị từ chối trực tiếp.</p>
           </div>
@@ -383,7 +383,7 @@ export function ConfigCard() {
             </div>
             <div className="space-y-2">
               <label className="text-sm text-[var(--foreground)]">Prompt kiểm duyệt</label>
-              <Textarea value={String(config?.ai_review?.prompt || "")} onChange={(event) => setAIReviewField("prompt", event.target.value)} placeholder="Xác định xem yêu cầu của người dùng có được phép hay không. Chỉ trả lời ALLOW hoặc REJECT." className="min-h-24 rounded-xl border-[var(--border)] bg-[var(--card)] text-xs shadow-none" />
+              <Textarea value={String(config?.ai_review?.prompt || "")} onChange={(event) => setAIReviewField("prompt", event.target.value)} placeholder="Xác định xem yêu cầu của người dùng có được phép hay không. Chỉ trả lời ALLOW hoặc REJECT." className="min-h-24 rounded-xl border-[var(--border)] bg-[var(--card)] text-base sm:text-xs shadow-none" />
             </div>
           </div>
           <div className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--card)] px-4 py-3 md:col-span-2">

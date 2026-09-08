@@ -546,7 +546,7 @@ export function FlowCard() {
               onChange={(e) => setCfg({ ...cfg, cooldown_seconds: parseInt(e.target.value) || 3600 })}
               onBlur={() => void save(cfg)}
               placeholder="3600"
-              className="mt-1 h-9 rounded-lg border-emerald-200 text-sm font-mono"
+              className="mt-1 h-9 rounded-lg border-emerald-200 text-base sm:text-sm font-mono"
             />
             <p className="mt-1 text-[10px] text-[var(--muted-foreground)]">
               {Math.round((cfg.cooldown_seconds ?? 3600) / 60)} phÃºt Â· Khi 1 account dÃ­nh 429/quota â†’ skip trong khoáº£ng nÃ y. Auto re-enter pool khi háº¿t.
@@ -610,7 +610,7 @@ export function FlowCard() {
                   setManuallyEditedLabel(true);
                 }}
                 placeholder={suggestedLabel}
-                className="mt-1 h-8 rounded-lg border-[var(--border)] text-xs"
+                className="mt-1 h-8 rounded-lg border-[var(--border)] text-base sm:text-xs"
                 list="flow-label-presets"
                 autoComplete="off"
               />
@@ -649,7 +649,7 @@ export function FlowCard() {
                   setManuallyEditedProfile(true);
                 }}
                 placeholder={suggestedProfile}
-                className="mt-1 h-8 rounded-lg border-[var(--border)] text-xs font-mono"
+                className="mt-1 h-8 rounded-lg border-[var(--border)] text-base sm:text-xs font-mono"
               />
             </div>
             <div>
@@ -658,7 +658,7 @@ export function FlowCard() {
                 value={draft.project_id}
                 onChange={(e) => setDraft({ ...draft, project_id: e.target.value })}
                 placeholder="54468d77-02ff-4a06-..."
-                className="mt-1 h-8 rounded-lg border-[var(--border)] text-xs font-mono"
+                className="mt-1 h-8 rounded-lg border-[var(--border)] text-base sm:text-xs font-mono"
               />
             </div>
           </div>
@@ -724,7 +724,7 @@ export function FlowCard() {
                 value={autoLogin.email}
                 onChange={(e) => setAutoLogin({ ...autoLogin, email: e.target.value })}
                 placeholder="you@gmail.com"
-                className="mt-1 h-8 rounded-lg border-fuchsia-200 text-xs font-mono"
+                className="mt-1 h-8 rounded-lg border-fuchsia-200 text-base sm:text-xs font-mono"
                 autoComplete="off"
                 disabled={oneClickRunning}
               />
@@ -737,7 +737,7 @@ export function FlowCard() {
                   value={autoLogin.password}
                   onChange={(e) => setAutoLogin({ ...autoLogin, password: e.target.value })}
                   placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
-                  className="mt-1 h-8 rounded-lg border-fuchsia-200 text-xs font-mono pr-8"
+                  className="mt-1 h-8 rounded-lg border-fuchsia-200 text-base sm:text-xs font-mono pr-8"
                   autoComplete="off"
                   disabled={oneClickRunning}
                 />
@@ -758,7 +758,7 @@ export function FlowCard() {
               value={autoLogin.totpSecret}
               onChange={(e) => setAutoLogin({ ...autoLogin, totpSecret: e.target.value })}
               placeholder="xxxx xxxx xxxx xxxx xxxx xxxx xxxx xxxx"
-              className="mt-1 h-8 rounded-lg border-amber-200 text-xs font-mono bg-amber-50/30"
+              className="mt-1 h-8 rounded-lg border-amber-200 text-base sm:text-xs font-mono bg-amber-50/30"
               autoComplete="off"
               disabled={oneClickRunning}
             />
@@ -883,7 +883,7 @@ export function FlowCard() {
                       value={autoLogin.code}
                       onChange={(e) => setAutoLogin({ ...autoLogin, code: e.target.value })}
                       placeholder="123456"
-                      className="mt-1 h-8 rounded-lg border-amber-200 text-xs font-mono"
+                      className="mt-1 h-8 rounded-lg border-amber-200 text-base sm:text-xs font-mono"
                       autoComplete="off"
                       onKeyDown={(e) => { if (e.key === "Enter") void submit2faCode(); }}
                     />

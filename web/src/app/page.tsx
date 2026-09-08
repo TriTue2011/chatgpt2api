@@ -293,7 +293,7 @@ export default function DashboardPage() {
                 <span className="gradient-text">{session?.name || "Admin"}</span>
                 <button
                   onClick={startEditName}
-                  className="size-7 inline-flex items-center justify-center rounded-[8px] glass-subtle text-[var(--muted-foreground)] opacity-0 group-hover:opacity-100 hover:text-[var(--neon-cyan)] transition-all"
+                  className="size-7 inline-flex items-center justify-center rounded-[8px] glass-subtle text-[var(--muted-foreground)] opacity-100 sm:opacity-0 sm:group-hover:opacity-100 hover:text-[var(--neon-cyan)] transition-all"
                   title="Đổi tên" aria-label="Đổi tên"
                 >
                   <Pencil className="size-3.5" />

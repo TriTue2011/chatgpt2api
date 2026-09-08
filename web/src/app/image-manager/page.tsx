@@ -445,7 +445,7 @@ function ImageManagerContent() {
                         {tag}
                         <button
                           type="button"
-                          className="inline-flex size-3.5 items-center justify-center rounded-full hover:bg-[var(--secondary)]"
+                          className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] inline-flex size-3.5 items-center justify-center rounded-full hover:bg-[var(--secondary)]"
                           onClick={() => handleRemoveTag(item, tag)}
                         >
                           <X className="size-2.5" />
@@ -456,7 +456,7 @@ function ImageManagerContent() {
                       <PopoverTrigger asChild>
                         <button
                           type="button"
-                          className="inline-flex size-5 items-center justify-center rounded-full border border-dashed border-[var(--border)] text-[var(--muted-foreground)] hover:border-[var(--border)] hover:text-[var(--muted-foreground)]"
+                          className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] inline-flex size-5 items-center justify-center rounded-full border border-dashed border-[var(--border)] text-[var(--muted-foreground)] hover:border-[var(--border)] hover:text-[var(--muted-foreground)]"
                           title="Thêm nhãn" aria-label="Thêm nhãn"
                         >
                           <Plus className="size-3" />
@@ -470,7 +470,7 @@ function ImageManagerContent() {
                               value={tagInput}
                               onChange={(e) => setTagInput(e.target.value)}
                               placeholder="Nhập tên nhãn"
-                              className="h-8 text-xs"
+                              className="h-8 text-base sm:text-xs"
                               onKeyDown={(e) => {
                                 if (e.key === "Enter") {
                                   e.preventDefault();

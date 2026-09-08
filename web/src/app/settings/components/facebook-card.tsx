@@ -241,7 +241,7 @@ export function FacebookCard() {
               {pages.map((p) => (
                 <label key={p.id}
                   className="flex items-center gap-1 cursor-pointer select-none">
-                  <input type="checkbox" className="size-3.5"
+                  <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                     checked={ids.includes(p.id)}
                     onChange={() => datPage(khoa, p.id)} />
                   {p.name || p.id}

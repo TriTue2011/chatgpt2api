@@ -289,7 +289,7 @@ function ModelsPageContent() {
                 "transition-all duration-300"
               )}
             >
-              <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-[#FFD700] to-[#D4AF37] opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+              <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-[#FFD700] to-[#D4AF37] opacity-100 sm:opacity-0 transition-opacity duration-300 sm:group-hover:opacity-100" />
               {/* Provider header — click to expand */}
               <button
                 type="button"

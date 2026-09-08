@@ -1103,11 +1103,11 @@ function AccountsPageContent() {
               value={query}
               onChange={(event) => { setQuery(event.target.value); setPage(1); }}
               placeholder="Tìm kiếm..."
-              className="h-9 rounded-lg border-[var(--border)] bg-[var(--card)] pl-8 w-full text-sm"
+              className="h-9 rounded-lg border-[var(--border)] bg-[var(--card)] pl-8 w-full text-base sm:text-sm"
             />
           </div>
           <Select value={typeFilter} onValueChange={(value) => { setTypeFilter(value); setPage(1); }}>
-            <SelectTrigger className="h-9 rounded-lg border-[var(--border)] bg-[var(--card)] w-auto min-w-[110px] text-sm">
+            <SelectTrigger className="h-9 rounded-lg border-[var(--border)] bg-[var(--card)] w-auto min-w-[110px] text-base sm:text-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1119,7 +1119,7 @@ function AccountsPageContent() {
             </SelectContent>
           </Select>
           <Select value={statusFilter} onValueChange={(value) => { setStatusFilter(value as AccountStatus | "all"); setPage(1); }}>
-            <SelectTrigger className="h-9 rounded-lg border-[var(--border)] bg-[var(--card)] w-auto min-w-[120px] text-sm">
+            <SelectTrigger className="h-9 rounded-lg border-[var(--border)] bg-[var(--card)] w-auto min-w-[120px] text-base sm:text-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

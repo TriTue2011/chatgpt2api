@@ -474,7 +474,7 @@ export function ChatGPTOnboardCard() {
                 value={draft.email}
                 onChange={(e) => setDraft({ ...draft, email: e.target.value })}
                 placeholder="you@gmail.com"
-                className="mt-1 h-8 rounded-lg border-blue-200 text-xs font-mono"
+                className="mt-1 h-8 rounded-lg border-blue-200 text-base sm:text-xs font-mono"
                 autoComplete="off"
                 disabled={running}
               />
@@ -487,7 +487,7 @@ export function ChatGPTOnboardCard() {
                   value={draft.password}
                   onChange={(e) => setDraft({ ...draft, password: e.target.value })}
                   placeholder="••••••••"
-                  className="mt-1 h-8 rounded-lg border-blue-200 text-xs font-mono pr-8"
+                  className="mt-1 h-8 rounded-lg border-blue-200 text-base sm:text-xs font-mono pr-8"
                   autoComplete="off"
                   disabled={running}
                 />
@@ -508,7 +508,7 @@ export function ChatGPTOnboardCard() {
               value={draft.totpSecret}
               onChange={(e) => setDraft({ ...draft, totpSecret: e.target.value })}
               placeholder="xxxx xxxx xxxx xxxx xxxx xxxx xxxx xxxx"
-              className="mt-1 h-8 rounded-lg border-blue-200 text-xs font-mono"
+              className="mt-1 h-8 rounded-lg border-blue-200 text-base sm:text-xs font-mono"
               autoComplete="off"
               disabled={running}
             />
@@ -646,7 +646,7 @@ export function ChatGPTOnboardCard() {
                         value={draft.code}
                         onChange={(e) => setDraft({ ...draft, code: e.target.value })}
                         placeholder="123456"
-                        className="mt-1 h-8 rounded-lg border-amber-200 text-xs font-mono"
+                        className="mt-1 h-8 rounded-lg border-amber-200 text-base sm:text-xs font-mono"
                         autoComplete="off"
                         onKeyDown={(e) => { if (e.key === "Enter") void submit2faCode(); }}
                       />

@@ -315,7 +315,7 @@ export function LectureTab({ student }: { student: Student }) {
         <div className="grid gap-2 sm:grid-cols-4">
           <div>
             <label className="text-[10px] text-muted-foreground">Môn (lớp {student.grade || "?"})</label>
-            <select className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs"
+            <select className="w-full h-9 rounded-md border border-border bg-background px-2 text-base sm:text-xs"
               value={subject} onChange={(e) => setSubject(e.target.value)}>
               {subjects.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
             </select>
@@ -332,7 +332,7 @@ export function LectureTab({ student }: { student: Student }) {
               * nào thì hiện đúng option đó; gõ tay không khớp thì ô chọn về rỗng
               * và ô gõ tay bên dưới là nơi hiển thị. */}
             {toc.length > 0 && (
-              <select className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs mb-1"
+              <select className="w-full h-9 rounded-md border border-border bg-background px-2 text-base sm:text-xs mb-1"
                 value={tocValues.includes(bai) ? bai : ""}
                 onChange={(e) => setBai(e.target.value)}>
                 <option value="">— chọn bài theo mục lục SGK —</option>
@@ -343,7 +343,7 @@ export function LectureTab({ student }: { student: Student }) {
                 ))}
               </select>
             )}
-            <Input className="h-9 text-xs"
+            <Input className="h-9 text-base sm:text-xs"
               placeholder={toc.length
                 ? "hoặc gõ tay nếu không có trong mục lục"
                 : "vd: Bài 8 D d Đ đ · phép cộng qua 10 · Mùa nước nổi"}
@@ -351,7 +351,7 @@ export function LectureTab({ student }: { student: Student }) {
           </div>
           <div>
             <label className="text-[10px] text-muted-foreground">Loa phát lời cô</label>
-            <select className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs"
+            <select className="w-full h-9 rounded-md border border-border bg-background px-2 text-base sm:text-xs"
               value={speakerId} onChange={(e) => setSpeakerId(e.target.value)}>
               {!speakers.length && <option value="">(chưa khai loa)</option>}
               {speakers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -359,7 +359,7 @@ export function LectureTab({ student }: { student: Student }) {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Input className="h-8 text-xs flex-1 min-w-40"
+          <Input className="h-8 text-base sm:text-xs flex-1 min-w-40"
             placeholder="Ghi chú cho AI (tuỳ chọn): em còn yếu chỗ nào, thích ví dụ gì…"
             value={notes} onChange={(e) => setNotes(e.target.value)} />
           <Button size="sm" disabled={busy} onClick={() => void generate()}>
@@ -420,7 +420,7 @@ export function LectureTab({ student }: { student: Student }) {
                 Em chưa hiểu chỗ nào?
               </div>
               <div className="flex gap-1.5">
-                <Input className="h-8 text-xs" placeholder="vd: con chưa hiểu vì sao phải nhớ 1"
+                <Input className="h-8 text-base sm:text-xs" placeholder="vd: con chưa hiểu vì sao phải nhớ 1"
                   value={question} onChange={(e) => setQuestion(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") void askTutor(); }} />
                 <Button size="sm" disabled={askBusy} onClick={() => void askTutor()}>
@@ -493,14 +493,14 @@ export function SgkViewerTab({ student }: { student: Student }) {
       <div className="grid gap-2 sm:grid-cols-3">
         <div>
           <label className="text-[10px] text-muted-foreground">Môn (lớp {student.grade})</label>
-          <select className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs"
+          <select className="w-full h-9 rounded-md border border-border bg-background px-2 text-base sm:text-xs"
             value={subject} onChange={(e) => setSubject(e.target.value)}>
             {subjects.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
           </select>
         </div>
         <div className="sm:col-span-2">
           <label className="text-[10px] text-muted-foreground">Quyển</label>
-          <select className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs"
+          <select className="w-full h-9 rounded-md border border-border bg-background px-2 text-base sm:text-xs"
             value={slug} onChange={(e) => { setSlug(e.target.value); setPage(1); }}>
             {!books.length && <option value="">{loading ? "Đang tìm sách…" : "(chưa có sách)"}</option>}
             {books.map((b) => <option key={b.slug} value={b.slug}>{b.title}</option>)}

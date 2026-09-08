@@ -41,6 +41,8 @@ function soi(duong) {
   const noiDung = readFileSync(duong, "utf8");
   const ten = relative(GOC, duong);
 
+  loi.push(...soiTheoThe(noiDung, ten));
+
   for (const { chuoi, dong } of cacLopTrongTep(noiDung)) {
     const co = (r) => r.test(chuoi);
 
@@ -87,6 +89,46 @@ function soi(duong) {
 }
 
 /**
+ * Soi theo THẺ HTML — cần biết phần tử có bấm được không, mà chuỗi className
+ * đơn lẻ thì không nói lên điều đó.
+ *
+ *  A. Ô nhập chữ < 16px  → iOS Safari tự phóng to trang khi bấm vào. Cộng với
+ *     viewport khoá zoom là người dùng kẹt luôn ở trạng thái phóng to.
+ *  B. Vùng chạm < 24px   → WCAG 2.2 Target Size (mức AA). Lớp phủ trong suốt
+ *     `before:size-6` là cách hợp lệ để đạt chuẩn mà không đổi nét vẽ.
+ */
+function soiTheoThe(noiDung, ten) {
+  const ra = [];
+  const reThe = /<(input|textarea|select|button|a)\b[^>]{0,900}?className=(?:"([^"]*)"|\{cn\(([\s\S]{0,500}?)\)\})/g;
+  let m;
+  while ((m = reThe.exec(noiDung))) {
+    const the = m[1];
+    const lop = (m[2] || m[3] || "");
+    const dong = noiDung.slice(0, m.index).split("\n").length;
+    const co = (r) => r.test(lop);
+
+    if (["input", "textarea", "select"].includes(the)) {
+      const laAn = /type="(hidden|checkbox|radio)"/.test(m[0]);
+      // ĐẠT khi cỡ chữ MẶC ĐỊNH (chưa có breakpoint) là >= 16px. Mẫu đúng là
+      // `text-base sm:text-sm`: mobile 16px, desktop trả về 14px. Chỉ báo khi
+      // cỡ mặc định vẫn là text-xs/text-sm.
+      const macDinh = lop.replace(/\b(sm|md|lg|xl):[^\s"]+/g, " ");
+      if (!laAn && /\btext-(xs|sm)\b/.test(macDinh))
+        ra.push({ ten, dong, muc: "input-gay-zoom-ios",
+          chi: "ô nhập chữ < 16px: iOS tự phóng to trang khi bấm vào" });
+    }
+
+    const msz = lop.match(/\bsize-(3\.5|4|5)\b/);
+    if (msz && !co(/before:size-[6-9]/) && !co(/\bpointer-events-none\b/)) {
+      const px = { "3.5": 14, "4": 16, "5": 20 }[msz[1]];
+      ra.push({ ten, dong, muc: "vung-cham-qua-nho",
+        chi: `vùng chạm ${px}px < 24px (WCAG 2.2); thêm before:size-6 để mở rộng mà không đổi nét vẽ` });
+    }
+  }
+  return ra;
+}
+
+/**
  * Miễn trừ — đã soi tận nơi, xếp dọc ở đây là SAI:
  *   ui/select.tsx        ô select: nhãn và mũi tên phải cùng một dòng.
  *   app-shell.tsx        thanh trên cùng cao cố định h-14.
@@ -110,6 +152,8 @@ const NHAN = {
   "be-rong-ghi-cung": "Bề rộng ghi cứng vượt khổ điện thoại (tràn ngang)",
   "chu-toi-khong-co-ban-toi": "Chữ tối thiếu bản cho chế độ tối (tàng hình)",
   "luoi-nhieu-cot-co-dinh": "Lưới nhiều cột không đổ xuống trên điện thoại",
+  "input-gay-zoom-ios": "Ô nhập chữ < 16px (iOS tự phóng to trang)",
+  "vung-cham-qua-nho": "Vùng chạm < 24px (WCAG 2.2 Target Size)",
 };
 
 for (const [muc, ds] of Object.entries(theoMuc)) {

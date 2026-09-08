@@ -182,9 +182,11 @@ export function Sidebar({ collapsed, onToggle, mobileOpen = false, onMobileClose
         <button
           onClick={onToggle}
           className={cn(
+            // Vùng chạm 24px (WCAG 2.2): nút vẽ 22px nên phủ thêm lớp trong suốt.
+            "relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']",
             "rounded-md p-1 text-[var(--sidebar-foreground)]/70 hover:text-[var(--neon-cyan)] hover:bg-[var(--sidebar-accent)] transition",
             collapsed
-              ? "absolute -right-2.5 top-3.5 bg-[var(--card)] border border-[var(--border)] rounded-full size-5 flex items-center justify-center"
+              ? "absolute -right-2.5 top-3.5 bg-[var(--card)] border border-[var(--border)] rounded-full size-5 flex items-center justify-center relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']"
               : "ml-auto",
           )}
         >

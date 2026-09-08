@@ -419,7 +419,7 @@ export function VoiceSpeakersCard() {
         <div className="grid gap-2 sm:grid-cols-2">
           <div>
             <label className="text-xs text-muted-foreground">Backend đọc (TTS)</label>
-            <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+            <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
               value={String(ttsCfg.backend || "auto")}
               onChange={(e) => patchVoice("tts", { backend: e.target.value })}>
               <option value="auto">Tự động (local trước, rồi Wyoming)</option>
@@ -430,7 +430,7 @@ export function VoiceSpeakersCard() {
           </div>
           <div>
             <label className="text-xs text-muted-foreground">Giọng đọc mặc định</label>
-            <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+            <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
               value={String(ttsCfg.voice || tts?.voice || "")}
               onChange={(e) => patchVoice("tts", { voice: e.target.value })}>
               {catalog.length === 0 && <option value="">(chưa tải giọng nào)</option>}
@@ -467,7 +467,7 @@ export function VoiceSpeakersCard() {
                 <span className="w-56 shrink-0">{nhan}</span>
                 {(["vi", "en", "ja", "zh", "ko"] as const).map((lng) => (
                   <label key={lng} className="flex cursor-pointer items-center gap-1 select-none">
-                    <input type="checkbox" className="size-3.5"
+                    <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                       checked={tiengCua(ma).includes(lng)}
                       onChange={(e) => {
                         const cur = tiengCua(ma);
@@ -535,7 +535,7 @@ export function VoiceSpeakersCard() {
                   <div className="sm:col-span-2">
                     <label className="text-xs text-muted-foreground">Giọng đọc</label>
                     {r.ma === "vi" ? (
-                      <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                      <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
                         value={String(ttsCfg.voice || tts?.voice || "")}
                         onChange={(e) => patchVoice("tts", { voice: e.target.value })}>
                         {catalog.length === 0 && <option value="">(chưa tải giọng nào)</option>}
@@ -546,7 +546,7 @@ export function VoiceSpeakersCard() {
                         ))}
                       </select>
                     ) : r.ma === "en" ? (
-                      <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                      <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
                         value={String(wyCfg.en_voice || "")}
                         onChange={(e) => patchVoice("wyoming_server", { en_voice: e.target.value })}>
                         <option value="">af (mặc định)</option>
@@ -557,7 +557,7 @@ export function VoiceSpeakersCard() {
                         ))}
                       </select>
                     ) : r.ma === "zh" ? (
-                      <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                      <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
                         value={String(ttsCfg.kokoro_zh_sid ?? "")}
                         onChange={(e) => patchVoice("tts", {
                           kokoro_zh_sid: e.target.value === "" ? "" : Number(e.target.value),
@@ -569,7 +569,7 @@ export function VoiceSpeakersCard() {
                         {!soGiong.zh && <option value="0">(chưa tải model giọng Trung)</option>}
                       </select>
                     ) : (
-                      <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                      <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
                         value={String(ttsCfg[`supertonic_${r.ma}_sid`] ?? "")}
                         onChange={(e) => patchVoice("tts", {
                           [`supertonic_${r.ma}_sid`]: e.target.value === "" ? "" : Number(e.target.value),
@@ -588,7 +588,7 @@ export function VoiceSpeakersCard() {
                   </div>
                   <div className="sm:col-span-2">
                     <label className="text-xs text-muted-foreground">Giọng lồng tiếng video</label>
-                    <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                    <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
                       value={dubChon[r.ma] ?? ""}
                       onChange={(e) => setDubChon({ ...dubChon, [r.ma]: e.target.value })}>
                       <option value="">
@@ -692,7 +692,7 @@ export function VoiceSpeakersCard() {
         <div className="grid gap-2 sm:grid-cols-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
           <div>
             <label className="text-xs text-muted-foreground">Backend nghe (STT)</label>
-            <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+            <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
               value={String(sttCfg.backend || stt?.backend || "auto")}
               onChange={(e) => patchVoice("stt", { backend: e.target.value })}>
               <option value="auto">Tự động (local trước, rồi Wyoming)</option>
@@ -710,7 +710,7 @@ export function VoiceSpeakersCard() {
               Ngôn ngữ nghe — dùng cho Home Assistant, và cho tin nhắn thoại khi
               hàng «Theo từng tính năng» để trống
             </label>
-            <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+            <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
               value={String(sttCfg.language || stt?.language || "vi")}
               onChange={(e) => patchVoice("stt", { language: e.target.value })}>
               <option value="vi">Tiếng Việt (vi) — Zipformer</option>
@@ -720,7 +720,7 @@ export function VoiceSpeakersCard() {
             {/* Cổng bật EN nằm ở backend (stt.en_enabled) — không có ô này thì
                 chọn en/auto ở trên vẫn tự rơi về tiếng Việt, dễ tưởng là hỏng. */}
             <label className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
-              <input type="checkbox" className="size-3.5"
+              <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                 checked={Boolean(sttCfg.en_enabled)}
                 onChange={() => patchVoice("stt", { en_enabled: !sttCfg.en_enabled })} />
               🇬🇧 Bật STT tiếng Anh (Parakeet)
@@ -794,7 +794,7 @@ export function VoiceSpeakersCard() {
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <select
-                  className="h-9 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs"
+                  className="h-9 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-base sm:text-xs"
                   value={pick} onChange={(e) => setTryVoice(e.target.value)}
                   title="Giọng cần nghe thử">
                   {catalog.length === 0 ? <option value="">(chưa có giọng nào)</option> : null}
@@ -824,7 +824,7 @@ export function VoiceSpeakersCard() {
                 )}
               </div>
               <textarea
-                className="w-full rounded-md border border-border bg-background p-2 text-xs"
+                className="w-full rounded-md border border-border bg-background p-2 text-base sm:text-xs"
                 rows={2} maxLength={600} value={tryText}
                 onChange={(e) => setTryText(e.target.value)}
                 placeholder="Nhập đoạn muốn nghe thử…" />
@@ -853,7 +853,7 @@ export function VoiceSpeakersCard() {
         {/* Sổ loa */}
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-semibold flex-1 min-w-full sm:min-w-0">📢 Loa đã kết nối ({rows.length})</span>
-          <select className="rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+          <select className="rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
             value={scanKind} onChange={(e) => setScanKind(e.target.value)} title="Loại loa cần dò">
             <option value="all">Tất cả loại</option>
             <option value="cast">Google Cast</option>
@@ -861,7 +861,7 @@ export function VoiceSpeakersCard() {
             <option value="r1">Loa R1</option>
           </select>
           <Input value={scanSubnet} onChange={(e) => setScanSubnet(e.target.value)}
-            className="h-9 w-32 text-xs" placeholder="Dải: 172.16.10"
+            className="h-9 w-32 text-base sm:text-xs" placeholder="Dải: 172.16.10"
             title="Dải mạng cần quét (trống = tự suy từ URL Home Assistant/gateway)" />
           <Button type="button" variant="outline" size="sm" onClick={() => void discover()} disabled={scanning || busy}>
             <Radar className={`size-3.5 mr-1 ${scanning ? "animate-spin" : ""}`} /> {scanning ? "Đang dò..." : "Dò loa"}
@@ -975,7 +975,7 @@ export function VoiceSpeakersCard() {
           <div className="rounded-md border border-dashed border-border p-2 space-y-2">
             <div className="text-xs font-medium">⏰ Hẹn giờ đọc thông báo ra loa</div>
             <div className="grid gap-2 sm:grid-cols-2">
-              <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+              <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
                 value={ann.speaker} onChange={(e) => setAnn({ ...ann, speaker: e.target.value })}>
                 <option value="">— chọn loa —</option>
                 {rows.filter((r) => r.kind !== "r1").map((r) => (
@@ -1028,7 +1028,7 @@ export function VoiceSpeakersCard() {
           <div className="grid gap-2 sm:grid-cols-3">
             <Input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })}
               placeholder="Tên loa (vd: loa phòng khách)" />
-            <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+            <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
               value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value })}>
               <option value="cast">Google Cast</option>
               <option value="dlna">DLNA / UPnP</option>
@@ -1038,7 +1038,7 @@ export function VoiceSpeakersCard() {
             {draft.kind === "ha" ? (
               haPlayers.length > 0 ? (
                 /* Dropdown media_player lấy THẲNG từ HA — khỏi gõ entity_id tay */
-                <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
                   value={draft.entity_id || ""}
                   onChange={(e) => {
                     const eid = e.target.value;

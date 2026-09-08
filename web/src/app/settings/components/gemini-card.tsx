@@ -101,7 +101,7 @@ export function GeminiCard() {
             value={geminiKey}
             onChange={(e) => setGeminiKey(e.target.value)}
             placeholder={"AIzaSyKey1...\nAIzaSyKey2..."}
-            className="min-h-28 rounded-xl border-[var(--border)] bg-[var(--secondary)] text-[var(--foreground)] font-mono text-xs placeholder:text-[var(--muted-foreground)]"
+            className="min-h-28 rounded-xl border-[var(--border)] bg-[var(--secondary)] text-[var(--foreground)] font-mono text-base sm:text-xs placeholder:text-[var(--muted-foreground)]"
           />
           <p className="text-xs text-[var(--muted-foreground)]">
             Lấy key tại <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer"

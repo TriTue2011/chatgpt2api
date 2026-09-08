@@ -82,7 +82,7 @@ export function ChatGPTWebCard() {
                 value={profile}
                 onChange={(e) => setProfile(e.target.value)}
                 placeholder="chatgpt-default"
-                className="mt-1 h-8 rounded-lg border-emerald-200 text-xs font-mono"
+                className="mt-1 h-8 rounded-lg border-emerald-200 text-base sm:text-xs font-mono"
               />
             </div>
             <div>
@@ -91,7 +91,7 @@ export function ChatGPTWebCard() {
                 type="number" min={30} max={600}
                 value={timeout}
                 onChange={(e) => setTimeoutVal(Number(e.target.value))}
-                className="mt-1 h-8 rounded-lg border-emerald-200 text-xs font-mono"
+                className="mt-1 h-8 rounded-lg border-emerald-200 text-base sm:text-xs font-mono"
               />
             </div>
           </div>

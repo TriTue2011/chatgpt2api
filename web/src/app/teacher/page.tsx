@@ -434,7 +434,7 @@ function BulkSgkPanel() {
       <div className="flex items-end gap-2 flex-wrap">
         <div>
           <label className="text-[10px] text-muted-foreground">Từ lớp</label>
-          <select className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+          <select className="w-full h-8 rounded-md border border-border bg-background px-2 text-base sm:text-xs"
             value={gradeFrom} disabled={running}
             onChange={(e) => setGradeFrom(Number(e.target.value))}>
             {GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
@@ -442,7 +442,7 @@ function BulkSgkPanel() {
         </div>
         <div>
           <label className="text-[10px] text-muted-foreground">Đến lớp</label>
-          <select className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+          <select className="w-full h-8 rounded-md border border-border bg-background px-2 text-base sm:text-xs"
             value={gradeTo} disabled={running}
             onChange={(e) => setGradeTo(Number(e.target.value))}>
             {GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
@@ -1574,7 +1574,7 @@ export default function TeacherPage() {
           <div>
             <label className="text-[10px] text-muted-foreground">Lớp</label>
             <select
-              className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs"
+              className="w-full h-9 rounded-md border border-border bg-background px-2 text-base sm:text-xs"
               value={grade}
               onChange={(e) => setGrade(Number(e.target.value))}
             >
@@ -1588,7 +1588,7 @@ export default function TeacherPage() {
           <div>
             <label className="text-[10px] text-muted-foreground">Môn</label>
             <select
-              className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs"
+              className="w-full h-9 rounded-md border border-border bg-background px-2 text-base sm:text-xs"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
             >
@@ -1602,7 +1602,7 @@ export default function TeacherPage() {
           <div>
             <label className="text-[10px] text-muted-foreground">Học sinh (id)</label>
             <Input
-              className="h-9 text-xs"
+              className="h-9 text-base sm:text-xs"
               value={student}
               onChange={(e) => setStudent(e.target.value)}
               placeholder="hs1 / tên con"
@@ -1779,19 +1779,19 @@ export default function TeacherPage() {
               <div className="grid gap-2 sm:grid-cols-3">
                 <div>
                   <label className="text-[10px] text-muted-foreground">Tên học sinh</label>
-                  <Input className="h-9 text-xs" placeholder="Nguyễn Văn An"
+                  <Input className="h-9 text-base sm:text-xs" placeholder="Nguyễn Văn An"
                     value={newName} disabled={rosterBusy}
                     onChange={(e) => setNewName(e.target.value)} />
                 </div>
                 <div>
                   <label className="text-[10px] text-muted-foreground">Năm sinh</label>
-                  <Input className="h-9 text-xs" placeholder="2019" inputMode="numeric"
+                  <Input className="h-9 text-base sm:text-xs" placeholder="2019" inputMode="numeric"
                     value={newBirth} disabled={rosterBusy}
                     onChange={(e) => setNewBirth(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))} />
                 </div>
                 <div>
                   <label className="text-[10px] text-muted-foreground">Lớp (chỉ khi cần khai tay)</label>
-                  <Input className="h-9 text-xs" placeholder="để trống = tự suy" inputMode="numeric"
+                  <Input className="h-9 text-base sm:text-xs" placeholder="để trống = tự suy" inputMode="numeric"
                     value={newOverride} disabled={rosterBusy}
                     onChange={(e) => setNewOverride(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} />
                 </div>
@@ -1907,13 +1907,13 @@ export default function TeacherPage() {
                   <Sparkles className="size-3 text-amber-600" /> AI soạn bài
                 </div>
                 <Input
-                  className="h-8 text-xs"
+                  className="h-8 text-base sm:text-xs"
                   placeholder="Chủ đề AI (vd: trừ có mượn, chính tả hỏi ngã, animals)"
                   value={lessonTopic}
                   onChange={(e) => setLessonTopic(e.target.value)}
                 />
                 <Input
-                  className="h-8 text-xs"
+                  className="h-8 text-base sm:text-xs"
                   placeholder="Ghi chú thêm cho AI (tuỳ chọn): HS còn yếu mượn, thích ví dụ kẹo…"
                   value={lessonNotes}
                   onChange={(e) => setLessonNotes(e.target.value)}
@@ -1948,7 +1948,7 @@ export default function TeacherPage() {
                 </div>
               </div>
               <Input
-                className="h-9 text-xs"
+                className="h-9 text-base sm:text-xs"
                 placeholder="Tiêu đề bài"
                 value={lessonTitle}
                 onChange={(e) => setLessonTitle(e.target.value)}
@@ -1958,7 +1958,7 @@ export default function TeacherPage() {
                   Nội dung cho học sinh đọc (văn chữ)
                 </label>
                 <textarea
-                  className="w-full min-h-[160px] rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+                  className="w-full min-h-[160px] rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs"
                   value={lessonBody}
                   onChange={(e) => setLessonBody(e.target.value)}
                   placeholder="Viết bài giảng rõ ràng, từng bước… hoặc bấm AI soạn"
@@ -1969,7 +1969,7 @@ export default function TeacherPage() {
                   Kịch bản đọc loa / TTS (câu ngắn, không ký hiệu ×÷=)
                 </label>
                 <textarea
-                  className="w-full min-h-[80px] rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+                  className="w-full min-h-[80px] rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs"
                   value={lessonTts}
                   onChange={(e) => setLessonTts(e.target.value)}
                   placeholder="Để trống = hệ thống rút từ nội dung. Ví dụ: Hôm nay học phép trừ có mượn…"
@@ -2077,7 +2077,7 @@ export default function TeacherPage() {
                 Generator bài thật · hoặc <b>AI soạn đề</b> (LLM) · adaptive sau 3 đúng/sai
               </p>
               <Input
-                className="h-8 text-xs"
+                className="h-8 text-base sm:text-xs"
                 placeholder="Tiêu đề bài tập"
                 value={asgTitle}
                 onChange={(e) => setAsgTitle(e.target.value)}
@@ -2086,7 +2086,7 @@ export default function TeacherPage() {
                 * bản cũ khoá value="" nên chọn xong ô nhảy về dòng gợi ý, còn tên
                 * bài rơi xuống ô "Chủ đề" bên dưới, trông như chưa chọn được gì. */}
               {asgToc.length > 0 && (
-                <select className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                <select className="w-full h-8 rounded-md border border-border bg-background px-2 text-base sm:text-xs"
                   value={asgTocValues.includes(asgTopic) ? asgTopic : ""}
                   onChange={(e) => setAsgTopic(e.target.value)}>
                   <option value="">— chọn bài theo mục lục SGK ({asgToc.length} bài) —</option>
@@ -2098,7 +2098,7 @@ export default function TeacherPage() {
                 </select>
               )}
               <Input
-                className="h-8 text-xs"
+                className="h-8 text-base sm:text-xs"
                 placeholder={asgToc.length
                   ? "hoặc gõ tay nếu không có trong mục lục"
                   : "Chủ đề (vd trừ có mượn · chính tả · animals)"}
@@ -2112,7 +2112,7 @@ export default function TeacherPage() {
                     type="number"
                     min={1}
                     max={10}
-                    className="h-8 text-xs"
+                    className="h-8 text-base sm:text-xs"
                     value={asgN}
                     onChange={(e) => setAsgN(Number(e.target.value) || 5)}
                   />
@@ -2120,7 +2120,7 @@ export default function TeacherPage() {
                 <div>
                   <label className="text-[10px] text-muted-foreground">Độ khó</label>
                   <select
-                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                    className="w-full h-8 rounded-md border border-border bg-background px-2 text-base sm:text-xs"
                     value={asgDiff}
                     onChange={(e) => setAsgDiff(e.target.value)}
                   >
@@ -2364,7 +2364,7 @@ export default function TeacherPage() {
                 <code>data/agent/teacher/students/&lt;id&gt;/</code>
               </p>
               <Input
-                className="h-8 text-xs"
+                className="h-8 text-base sm:text-xs"
                 placeholder="ID học sinh"
                 value={student}
                 onChange={(e) => setStudent(e.target.value)}
@@ -2452,7 +2452,7 @@ export default function TeacherPage() {
                         {q.id}. {q.prompt}
                       </div>
                       <textarea
-                        className="w-full min-h-[56px] rounded-md border border-border bg-background px-2 py-1 text-xs"
+                        className="w-full min-h-[56px] rounded-md border border-border bg-background px-2 py-1 text-base sm:text-xs"
                         value={placeAnswers[q.id] || ""}
                         onChange={(e) =>
                           setPlaceAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))
@@ -2687,7 +2687,7 @@ export default function TeacherPage() {
               <div>
                 <label className="text-[10px] text-muted-foreground">Lớp</label>
                 <select
-                  className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs"
+                  className="w-full h-9 rounded-md border border-border bg-background px-2 text-base sm:text-xs"
                   value={grade}
                   disabled={impBusy || impUrlBusy}
                   onChange={(e) => setGrade(Number(e.target.value))}
@@ -2700,7 +2700,7 @@ export default function TeacherPage() {
               <div>
                 <label className="text-[10px] text-muted-foreground">Môn</label>
                 <select
-                  className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs"
+                  className="w-full h-9 rounded-md border border-border bg-background px-2 text-base sm:text-xs"
                   value={subject}
                   disabled={impBusy || impUrlBusy}
                   onChange={(e) => setSubject(e.target.value)}
@@ -2716,7 +2716,7 @@ export default function TeacherPage() {
                   * là vẫn có thể đang ở tab SGV mà nạp vào kho SGK, và không có
                   * gì báo sai. */}
                 <select
-                  className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs"
+                  className="w-full h-9 rounded-md border border-border bg-background px-2 text-base sm:text-xs"
                   value={impMode}
                   onChange={(e) => setImpMode(e.target.value as "append" | "replace")}
                   disabled={impBusy || impUrlBusy}
@@ -2734,7 +2734,7 @@ export default function TeacherPage() {
                   * im lặng. Bỏ trống thì đường nạp tự đoán từ tên tệp/tiêu đề. */}
                 <label className="text-[10px] text-muted-foreground">Tập</label>
                 <select
-                  className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs"
+                  className="w-full h-9 rounded-md border border-border bg-background px-2 text-base sm:text-xs"
                   value={impVol}
                   disabled={impBusy || impUrlBusy}
                   onChange={(e) => setImpVol(e.target.value)}
@@ -2762,7 +2762,7 @@ export default function TeacherPage() {
               </div>
               <div className="flex flex-col sm:flex-row gap-2">
                 <Input
-                  className="h-9 text-xs flex-1"
+                  className="h-9 text-base sm:text-xs flex-1"
                   placeholder="https://taphuan.nxbgd.vn/tap-huan/chi-tiet-sach/… hoặc link .pdf"
                   value={impUrl}
                   disabled={impUrlBusy || impBusy}

@@ -306,19 +306,19 @@ export function GoogleProvidersCard() {
           <div className="grid gap-2 sm:grid-cols-2">
             <div>
               <label className="text-[11px] text-[var(--muted-foreground)]">Email Google</label>
-              <Input value={draft.email} onChange={e=>setDraft({...draft,email:e.target.value})} placeholder="you@gmail.com" className="mt-1 h-8 rounded-lg border-blue-200 text-xs font-mono" autoComplete="off" disabled={running}/>
+              <Input value={draft.email} onChange={e=>setDraft({...draft,email:e.target.value})} placeholder="you@gmail.com" className="mt-1 h-8 rounded-lg border-blue-200 text-base sm:text-xs font-mono" autoComplete="off" disabled={running}/>
             </div>
             <div>
               <label className="text-[11px] text-[var(--muted-foreground)]">Mật khẩu</label>
               <div className="relative">
-                <Input type={showPw?"text":"password"} value={draft.password} onChange={e=>setDraft({...draft,password:e.target.value})} placeholder="••••••••" className="mt-1 h-8 rounded-lg border-blue-200 text-xs font-mono pr-8" autoComplete="off" disabled={running}/>
+                <Input type={showPw?"text":"password"} value={draft.password} onChange={e=>setDraft({...draft,password:e.target.value})} placeholder="••••••••" className="mt-1 h-8 rounded-lg border-blue-200 text-base sm:text-xs font-mono pr-8" autoComplete="off" disabled={running}/>
                 <button type="button" className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]" onClick={()=>setShowPw(!showPw)} tabIndex={-1}>{showPw?<EyeOff className="size-3.5"/>:<Eye className="size-3.5"/>}</button>
               </div>
             </div>
           </div>
           <div>
             <TotpSecretLabel />
-            <Input value={draft.totpSecret} onChange={e=>setDraft({...draft,totpSecret:e.target.value})} placeholder="xxxx xxxx xxxx xxxx..." className="mt-1 h-8 rounded-lg border-amber-200 text-xs font-mono bg-amber-50/30" autoComplete="off" disabled={running}/>
+            <Input value={draft.totpSecret} onChange={e=>setDraft({...draft,totpSecret:e.target.value})} placeholder="xxxx xxxx xxxx xxxx..." className="mt-1 h-8 rounded-lg border-amber-200 text-base sm:text-xs font-mono bg-amber-50/30" autoComplete="off" disabled={running}/>
             {totpCode && <div className="mt-1 flex items-center gap-2"><span className="text-[11px] text-amber-700">Mã TOTP:</span><span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-mono text-sm font-bold tracking-widest">{totpCode}</span><span className="text-[10px] text-amber-500">({totpRem}s)</span></div>}
             {totpErr && <p className="mt-1 text-[10px] text-red-500">⚠️ {totpErr}</p>}
             <TotpSecretGuide />
@@ -342,7 +342,7 @@ export function GoogleProvidersCard() {
           <div className="grid gap-2 sm:grid-cols-3">
             <div>
               <label className="text-[11px] text-[var(--muted-foreground)]">Cooldown rate-limit (giây)</label>
-              <Input type="number" min={60} max={86400} value={flowCfg.cooldown_seconds} onChange={e=>setFlowCfg({...flowCfg,cooldown_seconds:parseInt(e.target.value)||3600})} onBlur={()=>void saveFlow(flowCfg)} className="mt-1 h-8 rounded-lg border-emerald-200 text-xs font-mono"/>
+              <Input type="number" min={60} max={86400} value={flowCfg.cooldown_seconds} onChange={e=>setFlowCfg({...flowCfg,cooldown_seconds:parseInt(e.target.value)||3600})} onBlur={()=>void saveFlow(flowCfg)} className="mt-1 h-8 rounded-lg border-emerald-200 text-base sm:text-xs font-mono"/>
             </div>
           </div>
 
@@ -366,7 +366,7 @@ export function GoogleProvidersCard() {
           {/* Reuse picker */}
           <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-2 space-y-1">
             <p className="text-[11px] font-medium text-emerald-700">Tái dùng profile Google → thêm vào Flow</p>
-            <div className="flex gap-2 items-center"><ReuseProfilePicker cs={cs} onReuse={reuseFlow}/>{flowSt && flowSt.state!=="none" && <Button variant="ghost" size="sm" onClick={()=>setFlowSt(null)}><X className="size-3"/></Button>}</div>
+            <div className="flex min-w-0 flex-wrap gap-2 items-center"><ReuseProfilePicker cs={cs} onReuse={reuseFlow}/>{flowSt && flowSt.state!=="none" && <Button variant="ghost" size="sm" onClick={()=>setFlowSt(null)}><X className="size-3"/></Button>}</div>
             {flowSt && flowSt.state!=="none" && <div className="mt-2"><StatusBox st={flowSt}/></div>}
           </div>
         </div>
@@ -375,7 +375,7 @@ export function GoogleProvidersCard() {
         <div className="space-y-2 rounded-xl border-2 border-blue-200 bg-[var(--card)]/60 p-3">
           <p className="text-xs font-bold text-blue-800 flex items-center gap-1.5"><span>💬</span>ChatGPT via Google OAuth</p>
           <p className="text-[10px] text-blue-700/70">Tái dùng profile Google đã đăng nhập → scrape JWT access_token → add vào pool ChatGPT free.</p>
-          <div className="flex gap-2 items-center"><ReuseProfilePicker cs={cs} onReuse={reuseChatGPT}/>{chatgptSt && chatgptSt.state!=="none" && <Button variant="ghost" size="sm" onClick={()=>setChatgptSt(null)}><X className="size-3"/></Button>}</div>
+          <div className="flex min-w-0 flex-wrap gap-2 items-center"><ReuseProfilePicker cs={cs} onReuse={reuseChatGPT}/>{chatgptSt && chatgptSt.state!=="none" && <Button variant="ghost" size="sm" onClick={()=>setChatgptSt(null)}><X className="size-3"/></Button>}</div>
           {chatgptSt && chatgptSt.state!=="none" && <div className="mt-2"><StatusBox st={chatgptSt}/></div>}
         </div>
 
@@ -383,7 +383,7 @@ export function GoogleProvidersCard() {
         <div className="space-y-2 rounded-xl border-2 border-violet-200 bg-[var(--card)]/60 p-3">
           <p className="text-xs font-bold text-violet-800 flex items-center gap-1.5"><span>♊</span>Gemini Web API (gemini.google.com)</p>
           <p className="text-[10px] text-violet-700/70">Tái dùng profile → lấy cookie __Secure-1PSID → gọi API ẩn gemini.google.com.</p>
-          <div className="flex gap-2 items-center"><ReuseProfilePicker cs={cs} onReuse={reuseGeminiApi}/>{geminiSt && geminiSt.state!=="none" && <Button variant="ghost" size="sm" onClick={()=>setGeminiSt(null)}><X className="size-3"/></Button>}</div>
+          <div className="flex min-w-0 flex-wrap gap-2 items-center"><ReuseProfilePicker cs={cs} onReuse={reuseGeminiApi}/>{geminiSt && geminiSt.state!=="none" && <Button variant="ghost" size="sm" onClick={()=>setGeminiSt(null)}><X className="size-3"/></Button>}</div>
           {geminiSt && geminiSt.state!=="none" && <div className="mt-2"><StatusBox st={geminiSt}/></div>}
         </div>
 
@@ -391,7 +391,7 @@ export function GoogleProvidersCard() {
         <div className="space-y-2 rounded-xl border-2 border-orange-200 bg-[var(--card)]/60 p-3">
           <p className="text-xs font-bold text-orange-800 flex items-center gap-1.5"><span>🤖</span>Claude via Google OAuth</p>
           <p className="text-[10px] text-orange-700/70">Tái dùng profile → scrape sessionKey → lưu config Claude.</p>
-          <div className="flex gap-2 items-center"><ReuseProfilePicker cs={cs} onReuse={reuseClaude}/>{claudeSt && claudeSt.state!=="none" && <Button variant="ghost" size="sm" onClick={()=>setClaudeSt(null)}><X className="size-3"/></Button>}</div>
+          <div className="flex min-w-0 flex-wrap gap-2 items-center"><ReuseProfilePicker cs={cs} onReuse={reuseClaude}/>{claudeSt && claudeSt.state!=="none" && <Button variant="ghost" size="sm" onClick={()=>setClaudeSt(null)}><X className="size-3"/></Button>}</div>
           {claudeSt && claudeSt.state!=="none" && <div className="mt-2"><StatusBox st={claudeSt}/></div>}
         </div>
 

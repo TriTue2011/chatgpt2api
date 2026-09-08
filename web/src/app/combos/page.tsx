@@ -46,7 +46,7 @@ function ModelPickerModal({
           <div className="px-6 pb-2">
             <input
               autoFocus
-              className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:border-[var(--border)] focus:outline-none"
+              className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-base sm:text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:border-[var(--border)] focus:outline-none"
               placeholder="Tìm model... (lọc theo tên)"
               onChange={(e) => onSearchChange?.(e.target.value)}
             />
@@ -171,7 +171,7 @@ function ComboEditView({ editModels, editName, setEditName, allModels, filteredM
               <div key={idx} className="flex items-center gap-2">
                 <span className={cn("text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center shrink-0", idx === 0 ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-400" : "bg-[var(--secondary)] text-[var(--muted-foreground)]")}>{idx + 1}</span>
                 <CapIcon className="size-3 shrink-0 text-[var(--muted-foreground)]" />
-                <button type="button" onClick={() => setSwapIdx(idx)} className="rounded-lg px-3 py-1.5 text-xs font-mono bg-[var(--secondary)] text-[var(--foreground)] flex-1 text-left flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between hover:border-violet-400 border border-transparent transition group" title="Đổi model khác"><span>{modelId}</span><ChevronDown className="size-3 text-[var(--muted-foreground)] opacity-0 group-hover:opacity-100 transition" /></button>
+                <button type="button" onClick={() => setSwapIdx(idx)} className="rounded-lg px-3 py-1.5 text-xs font-mono bg-[var(--secondary)] text-[var(--foreground)] flex-1 text-left flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between hover:border-violet-400 border border-transparent transition group" title="Đổi model khác"><span>{modelId}</span><ChevronDown className="size-3 text-[var(--muted-foreground)] opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition" /></button>
                 <div className="flex flex-col gap-0.5">
                   <button type="button" onClick={() => moveUpInEdit(idx)} disabled={idx === 0} className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] disabled:opacity-30"><ArrowUp className="size-3" /></button>
                   <button type="button" onClick={() => moveDownInEdit(idx)} disabled={idx === editModels.length - 1} className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)] disabled:opacity-30"><ArrowDown className="size-3" /></button>
@@ -523,7 +523,7 @@ function CombosPageContent() {
           {plEditors.map((id, idx) => (
             <div key={idx} className="flex items-center gap-2">
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20 shrink-0 w-24 text-center">CON #{idx + 1} · code</span>
-              <button type="button" onClick={() => setSwapPlIdx(idx)} className="flex-1 rounded-lg bg-[var(--card)] border border-[var(--border)] px-3 py-2 text-xs font-mono text-[var(--foreground)] text-left hover:border-violet-400 transition flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between group" title="Đổi model khác"><span>{id}</span><ChevronDown className="size-3 text-[var(--muted-foreground)] opacity-0 group-hover:opacity-100 transition" /></button>
+              <button type="button" onClick={() => setSwapPlIdx(idx)} className="flex-1 rounded-lg bg-[var(--card)] border border-[var(--border)] px-3 py-2 text-xs font-mono text-[var(--foreground)] text-left hover:border-violet-400 transition flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between group" title="Đổi model khác"><span>{id}</span><ChevronDown className="size-3 text-[var(--muted-foreground)] opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition" /></button>
               <div className="flex flex-col gap-0.5">
                 <button type="button" onClick={() => movePlEditor(idx, -1)} disabled={idx === 0} className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] disabled:opacity-30"><ArrowUp className="size-3" /></button>
                 <button type="button" onClick={() => movePlEditor(idx, 1)} disabled={idx === plEditors.length - 1} className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--secondary)] disabled:opacity-30"><ArrowDown className="size-3" /></button>
@@ -654,7 +654,7 @@ function CombosPageContent() {
             const isEditing = editingCombo === name;
             return (
             <div key={name} className={cn("group relative overflow-hidden rounded-[16px] p-6 card-3d", TINT_CYCLE[idx % TINT_CYCLE.length], "transition-all duration-300 hover:-translate-y-1")}>
-              <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-[#FFD700] to-[#D4AF37] opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+              <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-[#FFD700] to-[#D4AF37] opacity-100 sm:opacity-0 transition-opacity duration-300 sm:group-hover:opacity-100" />
               <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-2.5">
                   <div className="flex size-9 items-center justify-center rounded-[10px] bg-[var(--muted)]"><Combine className="size-[18px] text-[var(--muted-foreground)]" /></div>

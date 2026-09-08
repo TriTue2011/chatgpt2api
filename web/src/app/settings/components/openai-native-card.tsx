@@ -198,7 +198,7 @@ export function OpenAINativeCard() {
               value={draft.email}
               onChange={(e) => setDraft({ ...draft, email: e.target.value })}
               placeholder="you@gmail.com hoặc you@icloud.com"
-              className="mt-1 h-8 rounded-lg text-xs font-mono"
+              className="mt-1 h-8 rounded-lg text-base sm:text-xs font-mono"
               autoComplete="off"
               disabled={dangChay}
             />
@@ -211,7 +211,7 @@ export function OpenAINativeCard() {
                 value={draft.password}
                 onChange={(e) => setDraft({ ...draft, password: e.target.value })}
                 placeholder="••••••••"
-                className="mt-1 h-8 rounded-lg text-xs font-mono pr-8"
+                className="mt-1 h-8 rounded-lg text-base sm:text-xs font-mono pr-8"
                 autoComplete="off"
                 disabled={dangChay}
               />
@@ -235,7 +235,7 @@ export function OpenAINativeCard() {
             value={draft.totpSecret}
             onChange={(e) => setDraft({ ...draft, totpSecret: e.target.value })}
             placeholder="xxxx xxxx xxxx xxxx xxxx xxxx xxxx xxxx"
-            className="mt-1 h-8 rounded-lg text-xs font-mono"
+            className="mt-1 h-8 rounded-lg text-base sm:text-xs font-mono"
             autoComplete="off"
             disabled={dangChay}
           />
@@ -274,7 +274,7 @@ export function OpenAINativeCard() {
                   value={maTay}
                   onChange={(e) => setMaTay(e.target.value)}
                   placeholder="mã 6 số"
-                  className="h-8 w-32 rounded-lg text-xs font-mono"
+                  className="h-8 w-32 rounded-lg text-base sm:text-xs font-mono"
                 />
                 <Button onClick={guiMa} className="h-8 rounded-lg text-xs">Gửi mã</Button>
               </div>

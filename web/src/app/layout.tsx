@@ -13,8 +13,10 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  // KHÔNG khoá thu phóng. Bản cũ đặt maximumScale:1 + userScalable:false —
+  // vi phạm WCAG 1.4.4 (người mắt kém không phóng to được), và trên iPhone nó
+  // còn khoá luôn người dùng ở trạng thái phóng to mà Safari tự bật khi bấm
+  // vào ô nhập chữ nhỏ hơn 16px: phóng lên rồi KHÔNG thu lại được.
   themeColor: "#0c0a09",
 };
 

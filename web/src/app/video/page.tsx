@@ -320,7 +320,7 @@ export default function VideoPage() {
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 placeholder="Ví dụ: Cảnh quay điện ảnh từ góc máy drone, con rồng vàng bay qua thung lũng sương mù lúc hoàng hôn, hiệu ứng ánh sáng rực rỡ..."
-                className="min-h-[110px] rounded-xl border-[var(--border)] bg-[var(--card)] focus:ring-2 focus:ring-violet-500/30 text-sm leading-relaxed"
+                className="min-h-[110px] rounded-xl border-[var(--border)] bg-[var(--card)] focus:ring-2 focus:ring-violet-500/30 text-base sm:text-sm leading-relaxed"
               />
               <p className="text-xs text-[var(--muted-foreground)]">
                 💡 Mô tả càng chi tiết về chủ thể, góc máy, hiệu ứng ánh sáng và phong cách điện ảnh sẽ cho kết quả càng đẹp.
@@ -342,7 +342,7 @@ export default function VideoPage() {
                     onChange={(e) => setNegativePrompt(e.target.value)}
                     disabled={!modelConfig.supportsNegativePrompt}
                     placeholder={modelConfig.supportsNegativePrompt ? "VD: mờ, giật lag, biến dạng, chất lượng thấp, logo, watermark..." : "Engine Flow tự động tối ưu chi tiết hình ảnh..."}
-                    className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)] text-sm disabled:opacity-60"
+                    className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)] text-base sm:text-sm disabled:opacity-60"
                   />
                 </div>
 
@@ -425,7 +425,7 @@ export default function VideoPage() {
                       onChange={(e) => setSeed(e.target.value)}
                       disabled={!modelConfig.supportsSeed}
                       placeholder={modelConfig.supportsSeed ? "Ví dụ: 12345" : "Tự động ngẫu nhiên"}
-                      className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)] text-sm disabled:opacity-60"
+                      className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)] text-base sm:text-sm disabled:opacity-60"
                     />
                   </div>
 

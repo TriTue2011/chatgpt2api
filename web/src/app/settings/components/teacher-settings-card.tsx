@@ -309,7 +309,7 @@ export function TeacherSettingsCard() {
     <div>
       <label className="text-xs text-muted-foreground">{label}</label>
       <select
-        className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+        className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
         value={value}
         onChange={(e) => onChange(e.target.value)}
       >
@@ -342,7 +342,7 @@ export function TeacherSettingsCard() {
           <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
             <input
               type="checkbox"
-              className="size-3.5"
+              className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
               checked={Boolean(teacher.enabled ?? true)}
               onChange={(e) => patchTeacher({ enabled: e.target.checked })}
             />
@@ -437,7 +437,7 @@ export function TeacherSettingsCard() {
                       Fallback · Nghe/Nói (listening + speaking)
                     </label>
                     <select
-                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
                       value={String(teacher.model_speak || "")}
                       onChange={(e) => patchTeacher({ model_speak: e.target.value })}
                     >
@@ -454,7 +454,7 @@ export function TeacherSettingsCard() {
                       Fallback · Ngữ pháp/Đọc/Viết (+ Văn/Toán AI)
                     </label>
                     <select
-                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
                       value={String(teacher.model_write || "")}
                       onChange={(e) => patchTeacher({ model_write: e.target.value })}
                     >
@@ -589,7 +589,7 @@ export function TeacherSettingsCard() {
           <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
             <input
               type="checkbox"
-              className="size-3.5"
+              className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
               checked={Boolean(teacher.speak_to_speaker)}
               onChange={(e) => patchTeacher({ speak_to_speaker: e.target.checked })}
             />
@@ -604,7 +604,7 @@ export function TeacherSettingsCard() {
               Loa mặc định khi không nói rõ tên (tuỳ chọn)
             </label>
             <select
-              className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+              className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
               value={String(teacher.default_speaker || "")}
               onChange={(e) => patchTeacher({ default_speaker: e.target.value })}
             >
@@ -664,7 +664,7 @@ export function TeacherSettingsCard() {
                   Thread (Chat) đã lọc
                 </label>
                 <select
-                  className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                  className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
                   value={addParent}
                   onChange={(e) => {
                     setAddParent(e.target.value);
@@ -687,7 +687,7 @@ export function TeacherSettingsCard() {
                   User ID (tuỳ chọn)
                 </label>
                 <select
-                  className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                  className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
                   value={
                     addUserMode === "all"
                       ? ""
@@ -728,7 +728,7 @@ export function TeacherSettingsCard() {
               <div className="min-w-0">
                 <label className="text-[10px] text-muted-foreground">Loa</label>
                 <select
-                  className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                  className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
                   value={addSpeaker}
                   onChange={(e) => setAddSpeaker(e.target.value)}
                 >
@@ -802,7 +802,7 @@ export function TeacherSettingsCard() {
                       Khoá thread (vd tg:BOT:CHAT)
                     </label>
                     <Input
-                      className="h-8 text-xs font-mono"
+                      className="h-8 text-base sm:text-xs font-mono"
                       placeholder="tg:123:456 hoặc zalop:789"
                       value={addCustomParent}
                       onChange={(e) => setAddCustomParent(e.target.value)}
@@ -815,7 +815,7 @@ export function TeacherSettingsCard() {
                       User ID (Telegram / Zalo user)
                     </label>
                     <Input
-                      className="h-8 text-xs font-mono"
+                      className="h-8 text-base sm:text-xs font-mono"
                       placeholder="vd 123456789"
                       value={addUserId}
                       onChange={(e) => setAddUserId(e.target.value)}
@@ -861,7 +861,7 @@ export function TeacherSettingsCard() {
                 <div className="lg:col-span-4 min-w-0">
                   <label className="text-[10px] text-muted-foreground">Thread</label>
                   <select
-                    className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-8"
+                    className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-8"
                     value={
                       parent && threadParents.includes(parent)
                         ? parent
@@ -895,7 +895,7 @@ export function TeacherSettingsCard() {
                   <label className="text-[10px] text-muted-foreground">User ID</label>
                   <div className="flex gap-1">
                     <select
-                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-8 min-w-0"
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-8 min-w-0"
                       value={
                         !userId
                           ? ""
@@ -940,7 +940,7 @@ export function TeacherSettingsCard() {
                     User ID (sửa tay) / khoá đầy đủ
                   </label>
                   <Input
-                    className="h-8 text-xs font-mono"
+                    className="h-8 text-base sm:text-xs font-mono"
                     value={userId || (!parent ? row.key : "")}
                     placeholder="User ID hoặc để trống = cả thread"
                     onChange={(e) => {
@@ -1108,7 +1108,7 @@ export function TeacherSettingsCard() {
             <div>
               <label className="text-[10px] text-muted-foreground">Lớp</label>
               <select
-                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
                 value={impGrade}
                 onChange={(e) => setImpGrade(Number(e.target.value))}
               >
@@ -1123,7 +1123,7 @@ export function TeacherSettingsCard() {
             <div>
               <label className="text-[10px] text-muted-foreground">Môn</label>
               <select
-                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
                 value={impSubject}
                 onChange={(e) => setImpSubject(e.target.value)}
               >
@@ -1135,7 +1135,7 @@ export function TeacherSettingsCard() {
             <div>
               <label className="text-[10px] text-muted-foreground">Chế độ</label>
               <select
-                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
                 value={impMode}
                 onChange={(e) => setImpMode(e.target.value as "append" | "replace")}
               >
@@ -1147,7 +1147,7 @@ export function TeacherSettingsCard() {
           <input
             type="file"
             accept="application/pdf,.pdf"
-            className="block w-full text-xs"
+            className="block w-full text-base sm:text-xs"
             disabled={impBusy}
             onChange={async (e) => {
               const f = e.target.files?.[0];
@@ -1201,7 +1201,7 @@ export function TeacherSettingsCard() {
             </p>
             <div className="flex gap-1.5">
               <Input
-                className="h-8 text-xs"
+                className="h-8 text-base sm:text-xs"
                 placeholder="https://taphuan.nxbgd.vn/tap-huan/doc-sach/sgk-toan-4-tap-mot.4714093295"
                 value={impUrl}
                 disabled={impBusy}

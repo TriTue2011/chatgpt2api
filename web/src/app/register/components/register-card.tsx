@@ -254,7 +254,7 @@ export function RegisterCard() {
                     {type === "tempmail_lol" || type === "cloudflare_temp_email" || type === "moemail" || type === "inbucket" || type === "yyds_mail" ? (
                       <div className="space-y-2">
                         <label className="text-sm text-[var(--foreground)]">{type === "inbucket" ? "Danh sách tên miền cơ sở" : "Tên miền (Domain)"}</label>
-                        <Textarea value={domains} onChange={(event) => updateProvider(index, { domain: event.target.value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean) })} placeholder={type === "inbucket" ? "Mỗi dòng một tên miền cơ sở, hệ thống sẽ tự động tạo tên miền phụ ngẫu nhiên" : type === "moemail" ? "Mỗi dòng một tên miền" : "Mỗi dòng một tên miền, để trống để sử dụng tên miền mặc định của dịch vụ"} className="min-h-20 rounded-xl border-[var(--border)] bg-[var(--card)] font-mono text-xs" disabled={config.enabled} />
+                        <Textarea value={domains} onChange={(event) => updateProvider(index, { domain: event.target.value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean) })} placeholder={type === "inbucket" ? "Mỗi dòng một tên miền cơ sở, hệ thống sẽ tự động tạo tên miền phụ ngẫu nhiên" : type === "moemail" ? "Mỗi dòng một tên miền" : "Mỗi dòng một tên miền, để trống để sử dụng tên miền mặc định của dịch vụ"} className="min-h-20 rounded-xl border-[var(--border)] bg-[var(--card)] font-mono text-base sm:text-xs" disabled={config.enabled} />
                       </div>
                     ) : null}
                   </div>

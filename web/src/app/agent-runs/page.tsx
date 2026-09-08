@@ -228,7 +228,7 @@ function AgentRunsContent() {
         </div>
         <div className="flex flex-wrap gap-2">
           <select
-            className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+            className="h-9 rounded-md border border-border bg-background px-2 text-base sm:text-sm"
             value={channel}
             onChange={(e) => setChannel(e.target.value)}
           >
@@ -242,7 +242,7 @@ function AgentRunsContent() {
             <option value="web">Web admin</option>
           </select>
           <select
-            className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+            className="h-9 rounded-md border border-border bg-background px-2 text-base sm:text-sm"
             value={kindFilter}
             onChange={(e) => setKindFilter(e.target.value)}
           >

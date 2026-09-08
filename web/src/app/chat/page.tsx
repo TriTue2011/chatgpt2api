@@ -491,12 +491,15 @@ export default function ChatPage() {
 
   if (isCheckingAuth) return <div className="p-6 text-muted-foreground">Đang tải...</div>;
 
+  // dvh chứ không phải vh: trên điện thoại thanh địa chỉ trình duyệt co giãn
+  // khi cuộn, 100vh tính theo lúc thanh ĐÓNG nên ô nhập chat bị đẩy khuất dưới
+  // mép màn. dvh bám đúng vùng nhìn thấy thật.
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] p-4 max-w-3xl mx-auto">
+    <div className="flex flex-col h-[calc(100dvh-4rem)] p-4 max-w-3xl mx-auto">
       <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-4">
         <h1 className="text-lg font-bold shrink-0">Chat</h1>
         <select value={model} onChange={e => setModel(e.target.value)}
-          className="min-w-0 flex-1 sm:flex-none max-w-[55vw] sm:max-w-xs px-3 py-1.5 rounded-lg border bg-background text-sm truncate">
+          className="min-w-0 flex-1 sm:flex-none max-w-[55vw] sm:max-w-xs px-3 py-1.5 rounded-lg border bg-background text-base sm:text-sm truncate">
           {models.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
         </select>
         <Button variant="outline" size="sm" className="shrink-0" onClick={() => { stopSpeech(); setMessages([]); }}>Xóa</Button>
@@ -521,7 +524,7 @@ export default function ChatPage() {
         <select
           value={mdAccent}
           onChange={e => setMdAccent(e.target.value as MdAccent)}
-          className="px-2 py-1.5 rounded-lg border bg-background text-xs max-w-[9rem]"
+          className="px-2 py-1.5 rounded-lg border bg-background text-base sm:text-xs max-w-[9rem]"
           title="Màu markdown (đậm / tiêu đề) — giống HA Zalo Markdown Color"
         >
           <option value="orange">MD · orange</option>

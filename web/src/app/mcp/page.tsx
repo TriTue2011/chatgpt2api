@@ -366,13 +366,13 @@ function KbTab({ showToast }: TabProps) {
                               </span>
                               {info.help && <span className="text-xs text-[var(--muted-foreground)]">{info.help}</span>}
                             </div>
-                            <input type="checkbox" className="size-4 shrink-0" checked={!!info.enabled}
+                            <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-4 shrink-0" checked={!!info.enabled}
                               onChange={(e) => toggleSource(m.name, k, e.target.checked)} />
                           </div>
                           {/* API key field integrated right under the source that needs one */}
                           {info.needsKey && (
                             <input type="password"
-                              className="w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                              className="w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-2.5 py-1.5 text-base sm:text-xs focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                               placeholder={info.hasKey ? "✓ Đã lưu key — nhập để thay" : `Nhập API key cho ${k}…`}
                               onBlur={(e) => { if (e.target.value) saveKey(k, e.target.value); }} />
                           )}
@@ -807,7 +807,7 @@ function IngestTab({ showToast }: TabProps) {
               {items.map((it) => (
                 <div key={it.id} className="rounded-lg border border-[var(--border)]">
                   <div className="flex items-center gap-2 px-3 py-2">
-                    <input type="checkbox" className="size-4 shrink-0" checked={it.on}
+                    <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-4 shrink-0" checked={it.on}
                       onChange={(e) => patch(it.id, { on: e.target.checked })} />
                     <button className="min-w-0 text-sm text-left flex-1 truncate hover:underline"
                       title={it.title}
@@ -1358,7 +1358,7 @@ function DevicesTab({ showToast }: TabProps) {
                       ["can_capture", "chụp webcam/màn hình"],
                     ] as const).map(([k, nhan]) => (
                       <label key={k} className="inline-flex items-center gap-1.5 cursor-pointer">
-                        <input type="checkbox" className="size-3.5" checked={!!d[k]}
+                        <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5" checked={!!d[k]}
                           onChange={() => togglePerm(d, k)} />
                         <span className={d[k] ? "font-medium text-amber-600" : "text-[var(--muted-foreground)]"}>{nhan}</span>
                       </label>

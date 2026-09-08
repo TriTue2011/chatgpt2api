@@ -120,14 +120,14 @@ export function ProvidersCard() {
                           np[name] = { ...p, account_id: e.target.value };
                           setField("providers", np);
                         }}
-                        placeholder="Account ID" className="h-8 rounded-lg border-[var(--border)] text-xs" />
+                        placeholder="Account ID" className="h-8 rounded-lg border-[var(--border)] text-base sm:text-xs" />
                       <Input value={p.api_token || ""}
                         onChange={(e) => {
                           const np = { ...providers };
                           np[name] = { ...p, api_token: e.target.value };
                           setField("providers", np);
                         }}
-                        placeholder="API Token" className="h-8 rounded-lg border-[var(--border)] text-xs" />
+                        placeholder="API Token" className="h-8 rounded-lg border-[var(--border)] text-base sm:text-xs" />
                     </>
                   ) : meta.type === "textarea" ? (
                     <div className="space-y-1">
@@ -149,7 +149,7 @@ export function ProvidersCard() {
                         setField("providers", np);
                       }}
                       placeholder={meta.placeholder || "API key"}
-                      className="h-8 rounded-lg border-[var(--border)] text-xs" />
+                      className="h-8 rounded-lg border-[var(--border)] text-base sm:text-xs" />
                   )}
                 </div>
               );
@@ -168,7 +168,7 @@ export function ProvidersCard() {
               <label className="text-xs text-[var(--muted-foreground)]">Default Chat Model</label>
               <Input value={backends.default_chat || "auto"}
                 onChange={(e) => setField("backends", { ...backends, default_chat: e.target.value })}
-                className="h-9 rounded-lg border-[var(--border)] text-sm" />
+                className="h-9 rounded-lg border-[var(--border)] text-base sm:text-sm" />
             </div>
             <div className="space-y-1">
               <label className="text-xs text-[var(--muted-foreground)]">Default Image Size</label>
@@ -184,7 +184,7 @@ export function ProvidersCard() {
               <label className="text-xs text-[var(--muted-foreground)]">9router URL</label>
               <Input value={ninerouter.base_url || "http://localhost:20128"}
                 onChange={(e) => setField("ninerouter", { ...ninerouter, base_url: e.target.value })}
-                className="h-9 rounded-lg border-[var(--border)] text-sm" />
+                className="h-9 rounded-lg border-[var(--border)] text-base sm:text-sm" />
             </div>
           </div>
         </div>
@@ -205,7 +205,7 @@ export function ProvidersCard() {
                 <label className="text-xs text-[var(--muted-foreground)]">{label}</label>
                 <Input value={(rateLimit as any)[key] || def}
                   onChange={(e) => setField("rate_limit", { ...rateLimit, [key]: parseInt(e.target.value) || def })}
-                  className="h-9 rounded-lg border-[var(--border)] text-sm" />
+                  className="h-9 rounded-lg border-[var(--border)] text-base sm:text-sm" />
               </div>
             ))}
           </div>
@@ -228,7 +228,7 @@ export function ProvidersCard() {
               setField("combo_models", combos);
             }}
             placeholder="ha-agent=oc/auto,cx/auto,chatgpt/auto"
-            className="min-h-24 rounded-xl border-[var(--border)] bg-[var(--card)] font-mono text-xs" />
+            className="min-h-24 rounded-xl border-[var(--border)] bg-[var(--card)] font-mono text-base sm:text-xs" />
           <p className="text-xs text-[var(--muted-foreground)] mt-1">Mỗi dòng: tên=model1,model2. Thứ tự = thứ tự fallback.</p>
         </div>
 

@@ -229,7 +229,7 @@ export function ImageComposer({
                       step="1"
                       value={imageCount}
                       onChange={(event) => onImageCountChange(event.target.value)}
-                      className="h-7 w-[36px] border-0 bg-transparent px-0 text-center text-xs font-medium text-[var(--foreground)] shadow-none focus-visible:ring-0 sm:h-8 sm:w-[48px] sm:text-sm"
+                      className="h-7 w-[36px] border-0 bg-transparent px-0 text-center text-base sm:text-xs font-medium text-[var(--foreground)] shadow-none focus-visible:ring-0 sm:h-8 sm:w-[48px] sm:text-sm"
                     />
                   </div>
                   <div

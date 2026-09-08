@@ -152,7 +152,7 @@ export function CodexOnboardCard() {
             value={String(config?.codex_auto_list || "")}
             onChange={(event) => setField("codex_auto_list", event.target.value)}
             placeholder="Ví dụ:&#10;acc1@outlook.com|pass1|receiver1@gmail.com|apppass1&#10;acc2@outlook.com|pass2|receiver2@gmail.com|apppass2"
-            className="min-h-[160px] rounded-xl border-[var(--border)] bg-[var(--card)] font-mono text-xs"
+            className="min-h-[160px] rounded-xl border-[var(--border)] bg-[var(--card)] font-mono text-base sm:text-xs"
           />
           <p className="text-[10px] text-[var(--muted-foreground)]">
             Cú pháp: <code className="bg-[var(--secondary)] px-1 py-0.5 rounded text-[var(--foreground)]">codex_email|codex_pass</code>
@@ -178,7 +178,7 @@ export function CodexOnboardCard() {
                   setGmailEmail(e.target.value);
                   setField("codex_imap_gmail_email", e.target.value);
                 }} 
-                className="mt-1 h-8 rounded-lg text-xs"
+                className="mt-1 h-8 rounded-lg text-base sm:text-xs"
               />
             </div>
             <div>
@@ -191,7 +191,7 @@ export function CodexOnboardCard() {
                   setGmailAppPassword(e.target.value);
                   setField("codex_imap_gmail_app_password", e.target.value);
                 }} 
-                className="mt-1 h-8 rounded-lg text-xs"
+                className="mt-1 h-8 rounded-lg text-base sm:text-xs"
               />
               <GmailAppPasswordHint />
             </div>

@@ -96,7 +96,7 @@ export function HACard() {
         </div>
         <div className="rounded border border-dashed border-border/70 p-2 space-y-1.5">
           <label className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
-            <input type="checkbox" className="size-3.5" checked={limitOn}
+            <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5" checked={limitOn}
               onChange={() => setLimitOn(!limitOn)} />
             🎚️ Giới hạn chức năng cho yêu cầu TỪ Home Assistant
           </label>
@@ -110,7 +110,7 @@ export function HACard() {
               {HA_GROUPS.map(([key, label]) => (
                 <label key={key}
                   className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none">
-                  <input type="checkbox" className="size-3.5"
+                  <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
                     checked={haGroups.includes(key)}
                     onChange={() => setHaGroups((p) =>
                       p.includes(key) ? p.filter((x) => x !== key) : [...p, key])} />

@@ -159,9 +159,15 @@ export function ReuseProfilePicker({
   }
 
   return (
-    <div className="flex items-center gap-2">
+    // Đo trên máy 390px: một hàng gồm ô chọn + 3 nút rộng hơn màn hình, nút
+    // "Tái dùng" thò 117px ra ngoài rồi bị overflow-x-hidden cắt mất — người
+    // dùng không bấm được. `flex-wrap` cho nhóm nút xuống hàng khi chật.
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
       <select
-        className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
+        // `flex-1` KHÔNG đủ: flex item mặc định min-width:auto nên ô chọn không
+        // co nhỏ hơn tên profile dài nhất (google-smarthomebenbap…) và đẩy cả
+        // hàng tràn ra. `min-w-0` mới cho phép co; `basis` giữ ô đủ rộng để đọc.
+        className="min-w-0 flex-1 basis-full sm:basis-48 rounded-md border border-input bg-background px-3 py-2 text-base sm:text-sm"
         value={selected}
         onChange={(e) => setSelected(e.target.value)}
         disabled={busy || loading}

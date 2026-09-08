@@ -455,7 +455,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
               placeholder="Mỗi dòng một OAuth Token (JWT: eyJ...)..."
               value={tokenInput}
               onChange={(event) => setTokenInput(event.target.value)}
-              className="min-h-56 resize-none rounded-xl border-[var(--border)] font-mono text-xs"
+              className="min-h-56 resize-none rounded-xl border-[var(--border)] font-mono text-base sm:text-xs"
             />
           </div>
           <div className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--secondary)] p-4">
@@ -524,7 +524,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
               placeholder='Dán toàn bộ JSON, ví dụ đối tượng chứa "accessToken"...'
               value={sessionInput}
               onChange={(event) => setSessionInput(event.target.value)}
-              className="min-h-56 resize-none rounded-xl border-[var(--border)] font-mono text-xs"
+              className="min-h-56 resize-none rounded-xl border-[var(--border)] font-mono text-base sm:text-xs"
             />
           </div>
         </div>
@@ -652,7 +652,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
               placeholder="http://localhost:1455/auth/callback?code=...&state=..."
               value={oauthRedirectUrl}
               onChange={(e) => setOauthRedirectUrl(e.target.value)}
-              className="min-h-24 resize-none rounded-xl border-[var(--border)] font-mono text-xs mb-3"
+              className="min-h-24 resize-none rounded-xl border-[var(--border)] font-mono text-base sm:text-xs mb-3"
             />
             <Button className="w-full bg-[var(--primary)] text-[var(--primary-foreground)] hover:brightness-110"
               disabled={!oauthRedirectUrl || isSubmitting}
@@ -920,7 +920,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
                     value={multiTotpSecret}
                     onChange={(e) => setMultiTotpSecret(e.target.value)}
                     placeholder="xxxx xxxx xxxx xxxx..."
-                    className="mt-1 h-8 rounded-lg border-amber-200 text-xs font-mono bg-amber-50/30"
+                    className="mt-1 h-8 rounded-lg border-amber-200 text-base sm:text-xs font-mono bg-amber-50/30"
                     autoComplete="off"
                     disabled={multiRunning}
                   />
@@ -1036,7 +1036,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
                 placeholder="Ví dụ:&#10;acc1@outlook.com|pass123&#10;acc2@hotmail.com|pass456|receiver@gmail.com|apppass" 
                 value={codexDraft.githubEmail} 
                 onChange={e => setCodexDraft({...codexDraft, githubEmail: e.target.value})} 
-                className="min-h-32 resize-none rounded-xl border-[var(--border)] font-mono text-xs mb-3"
+                className="min-h-32 resize-none rounded-xl border-[var(--border)] font-mono text-base sm:text-xs mb-3"
               />
               <div className="grid grid-cols-2 gap-2">
                 <div>
@@ -1187,7 +1187,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
               placeholder="http://localhost:8080/callback?code=..."
               value={oauthRedirectUrl}
               onChange={(e) => setOauthRedirectUrl(e.target.value)}
-              className="min-h-24 resize-none rounded-xl border-[var(--border)] font-mono text-xs mb-3"
+              className="min-h-24 resize-none rounded-xl border-[var(--border)] font-mono text-base sm:text-xs mb-3"
             />
             <Button className="w-full bg-[var(--primary)] text-[var(--primary-foreground)] hover:brightness-110"
               disabled={!oauthRedirectUrl || isSubmitting}
