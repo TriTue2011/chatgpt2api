@@ -54,3 +54,11 @@ Gemini-FastAPI, commit `66dc3f71a40a283e17539d0c47058a04ad26b179`:
 - Hồ sơ bị hoãn bởi CAPTCHA của hồ sơ khác không mở thêm Chrome và không nhận thông báo “khôi phục thất bại”. Hồ sơ thực sự chờ người dùng nhận thông báo CAPTCHA/2FA riêng.
 - Khoảng 359 phút là thời gian nghỉ tự đăng nhập của hệ thống (tối đa 6 giờ), không phải thời gian Google xác nhận khóa tài khoản. Kiểm tra trạng thái đăng nhập của đúng hồ sơ gặp CAPTCHA để mở lại sớm khi người dùng hoàn tất. Hồ sơ khỏe khác không được xóa nhầm trạng thái này.
 - Các file runtime, cấu hình máy, cookie, `.env`, log và bản sao lưu được loại khỏi Git/build context. `.env.example`, từ điển tĩnh và tài liệu kiến thức mẫu không chứa phiên cá nhân vẫn được giữ để ứng dụng hoạt động.
+
+## Đã chạy trên server — 08/09/2026
+
+Đã build và chạy image `c2a:6ac34ec` trên server, dùng PyPI qua build argument vì mirror Aliyun timeout tải wheel `browser-use`. Container mới healthy; API `/version`, trang `/settings/`, proxy workspace có xác thực và MCP custom API đều trả thành công. Bundle giao diện mới và mã hoãn khôi phục Flow hiện diện. 33 thư mục hồ sơ trước/sau cập nhật giữ nguyên trên volume; không sao chép dữ liệu đó vào image.
+
+Gitleaks không phát hiện secret trong bốn commit chuẩn bị push hoặc snapshot mã nguồn được Git theo dõi. Đã loại khỏi index cấu hình máy, cache runtime và file `.bak`; cập nhật cả `.gitignore` và `.dockerignore`. Việc này bảo vệ snapshot mới, không viết lại lịch sử Git đã tồn tại.
+
+Kiểm thử Flow cuối: 85 qua; lượt toàn bộ: 5.397 qua, 83 bỏ qua, 564 subtest qua, 17 test HTTP không có API tại `localhost:8000`. Smoke test image chạy không mạng xác nhận không có dữ liệu runtime/file backup và các module OAuth/Flow/workspace nạp thành công. Giữ container cũ trên server để rollback; chưa kiểm chứng lại đăng nhập Google/CAPTCHA thật.
