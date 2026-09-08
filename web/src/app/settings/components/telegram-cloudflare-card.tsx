@@ -557,14 +557,15 @@ export function TelegramCloudflareCard() {
   // "memlinks" đứng CÙNG HÀNG với các kênh (không phải tab con): kết nối bộ nhớ
   // nối XUYÊN kênh, nên nó không thuộc riêng kênh nào — để trong từng kênh là
   // lặp lại vô lý và gợi ý sai rằng mỗi kênh có cấu hình riêng.
-  const [chTab, setChTab] = useState<ChTab>("tg");
-
   // Link từ "Bắt đầu ở đây" chỉ thẳng tới một kênh: /settings?tim=…&tab=zalop
-  // Không có tham số, hoặc giá trị lạ → giữ nguyên tab mặc định (Telegram).
-  useEffect(() => {
+  // Đọc ngay lúc KHỞI TẠO state chứ không đặt lại trong useEffect: đặt state
+  // trong effect làm component render hai lượt và người dùng thấy tab nháy từ
+  // Telegram sang tab đích. Hàm khởi tạo chỉ chạy ở lượt đầu nên không tốn gì.
+  const [chTab, setChTab] = useState<ChTab>(() => {
+    if (typeof window === "undefined") return "tg";   // dựng tĩnh: chưa có URL
     const t = new URLSearchParams(window.location.search).get("tab");
-    if (t && (CH_TABS as readonly string[]).includes(t)) setChTab(t as ChTab);
-  }, []);
+    return t && (CH_TABS as readonly string[]).includes(t) ? (t as ChTab) : "tg";
+  });
   const [subTab, setSubTab] = useState<"settings" | "zaccounts" | "zwebhook" | "directory" | "filter" | "branches">("settings");
   // Danh bạ thread (setting ∪ auto bot) — tab riêng mỗi kênh
   type DirRow = {
