@@ -170,3 +170,5 @@ data/mcp_oauth/
 *.har
 /backups/
 /logs/
+*.log.*
+*.tar.gz

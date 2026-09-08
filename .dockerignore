@@ -62,3 +62,8 @@ captcha-solver/profiles
 *.har
 backups
 logs
+*.log
+*.log.*
+*.tar
+*.tar.gz
+*.tgz
