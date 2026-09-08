@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { KhopTuKhoa, useBoLocCaiDat } from "@/components/settings-filter";
@@ -44,6 +44,20 @@ export function SettingsSection({
     if (boLoc.dangLoc && khop) setOpen(true);
   }, [boLoc.dangLoc, khop]);
 
+  // Tới đây từ link ngoài (?tim=…) thì cuộn luôn tới thẻ: mở ra mà vẫn nằm dưới
+  // màn hình thì người dùng tưởng bấm không ăn. Chỉ làm MỘT lần, và chỉ khi tới
+  // bằng link — người đang gõ tay vào ô lọc không bị giật trang dưới chân.
+  const daCuon = useRef(false);
+  const oGoc = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (daCuon.current || !khop || !boLoc.dangLoc) return;
+    if (!new URLSearchParams(window.location.search).get("tim")) return;
+    daCuon.current = true;
+    // chờ thẻ mở xong rồi mới đo vị trí
+    const t = setTimeout(() => oGoc.current?.scrollIntoView({ block: "start", behavior: "smooth" }), 220);
+    return () => clearTimeout(t);
+  }, [khop, boLoc.dangLoc]);
+
   // Báo lên bộ lọc để nó biết khi nào không còn mục nào khớp.
   useEffect(() => {
     boLoc.bao(title, khop);
@@ -55,6 +69,7 @@ export function SettingsSection({
 
   return (
     <div
+      ref={oGoc}
       hidden={bienMat}
       className={cn(
         "overflow-hidden rounded-[16px] border border-[var(--border)] bg-[var(--card)]",

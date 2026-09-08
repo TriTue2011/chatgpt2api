@@ -58,6 +58,19 @@ export function BoLocCaiDat({ children }: { children: React.ReactNode }) {
   const [tuKhoa, datTuKhoa] = React.useState("");
   const oNhap = React.useRef<HTMLInputElement>(null);
 
+  // Nhảy thẳng tới một mục từ nơi khác: /settings?tim=zalo%20cá%20nhân
+  //
+  // Bơm vào ĐÚNG ô lọc sẵn có thay vì dựng cơ chế "mở thẻ theo id" riêng, vì
+  // settings-section.tsx đã tự mở khi lọc trúng. Người dùng cũng thấy ngay vì
+  // sao thẻ mở: từ khoá hiện trong ô, xoá đi là về như cũ.
+  //
+  // Đọc một lần lúc mount: sau đó ô lọc là của người dùng, không để URL cũ
+  // ghi đè khi họ đang gõ.
+  React.useEffect(() => {
+    const tim = new URLSearchParams(window.location.search).get("tim");
+    if (tim && tim.trim()) datTuKhoa(tim.trim());
+  }, []);
+
   // "/" để nhảy vào ô lọc, Esc để xoá — quen thuộc với người dùng bàn phím.
   React.useEffect(() => {
     const nhan = (e: KeyboardEvent) => {

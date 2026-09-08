@@ -7,7 +7,7 @@ import { Check, ChevronDown, ChevronRight, CircleDashed, ArrowRight, BellOff, Un
 import { cn } from "@/lib/utils";
 import { GiaiThich } from "@/components/giai-thich";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { MOC_NHAC, boTamAn, conLaiNgay, dangAn, datTamAn, docTamAn } from "@/lib/tam-an-muc";
+import { MOC_NHAC, VINH_VIEN, anVinhVien, boTamAn, conLaiNgay, dangAn, datTamAn, napTamAn } from "@/lib/tam-an-muc";
 import {
   NHAN_MUC_DO,
   mucConThieu,
@@ -89,6 +89,22 @@ function NutBoQua({ ten, khiChon }: { ten: string; khiChon: (soNgay: number) => 
             {m.nhan}
           </button>
         ))}
+        {/* Ẩn hẳn: có mục người dùng biết chắc mình không bao giờ dùng (Facebook
+            khi không có Page, Giáo viên khi nhà không có trẻ đi học). Hẹn 90
+            ngày rồi nó lại hiện ra là phiền vô ích. Vẫn lấy lại được bằng nút
+            "hiện lại tất cả" ở cuối danh sách. */}
+        <div className="my-1 border-t border-[var(--border)]" />
+        <button
+          type="button"
+          onClick={() => { khiChon(VINH_VIEN); datMo(false); }}
+          className={cn(
+            "flex w-full items-center rounded-md px-2 py-1.5 text-left text-[13px]",
+            "text-[var(--muted-foreground)] transition-colors hover:bg-[var(--secondary)]",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+          )}
+        >
+          Ẩn hẳn, đừng nhắc nữa
+        </button>
       </PopoverContent>
     </Popover>
   );
@@ -168,7 +184,10 @@ export function BatDauODay({ tt }: { tt: TrangThaiHeThong }) {
   // đọc ngay trong lượt render đầu sẽ lệch giữa HTML dựng sẵn và lần render
   // đầu ở trình duyệt.
   const [tamAn, datTamAnState] = React.useState<Record<string, number>>({});
-  React.useEffect(() => { datTamAnState(docTamAn()); }, []);
+  // Nạp từ MÁY CHỦ (đã trộn với bộ đệm cục bộ): ẩn trên máy tính thì mở điện
+  // thoại cũng ẩn. `napTamAn` không bao giờ ném lỗi — mất mạng thì trả về bộ
+  // đệm cục bộ.
+  React.useEffect(() => { void napTamAn().then(datTamAnState); }, []);
 
   const conThieuTatCa = mucConThieu(tt);
   const { xong, tong } = tienDo(tt);
@@ -181,6 +200,30 @@ export function BatDauODay({ tt }: { tt: TrangThaiHeThong }) {
   // Chưa API nào về thì không kết luận gì. Kết luận sớm sẽ chớp một nhịp
   // "thiếu mọi thứ" — đúng cái nhịp làm người mới cài hoảng.
   if (tong === 0) return null;
+
+  // Người dùng đã ẩn HẾT mọi mục còn thiếu → thu cả khối lại, không để một hộp
+  // rỗng chiếm đầu trang chủ.
+  //
+  // Nhưng KHÔNG bỏ hẳn khỏi cây: ẩn sạch mà mất luôn nút "hiện lại tất cả" thì
+  // người dùng không còn đường quay lại từ giao diện (đã gặp đúng lúc thử: phải
+  // sửa thẳng config trên máy chủ mới lấy lại được). Để lại đúng một dòng chữ
+  // nhỏ, nhạt — đủ để bấm khi cần, không giành chỗ khi không cần.
+  if (conThieuTatCa.length > 0 && thieu.length === 0) {
+    return (
+      <button
+        type="button"
+        onClick={() => datTamAnState(boTamAn())}
+        className={cn(
+          "flex items-center gap-1.5 text-xs text-[var(--muted-foreground)]",
+          "transition-colors hover:text-[var(--foreground)]",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] rounded-md",
+        )}
+      >
+        <Undo2 className="size-3.5" aria-hidden />
+        Đang ẩn {conThieuTatCa.length} mục hướng dẫn — hiện lại
+      </button>
+    );
+  }
 
   // Ẩn KHÔNG phải là xong: còn mục đang ẩn thì chưa được nói "đã sẵn sàng".
   const donXong = conThieuTatCa.length === 0;
@@ -233,9 +276,13 @@ export function BatDauODay({ tt }: { tt: TrangThaiHeThong }) {
       {dangAnDs.length > 0 && (
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-[var(--muted-foreground)]">
           <span>
-            {dangAnDs.length} mục đang tạm ẩn
+            {dangAnDs.length} mục đang ẩn
             {dangAnDs.length <= 3 && (
-              <> ({dangAnDs.map((m) => `${m.ten} — còn ${conLaiNgay(tamAn, m.id)} ngày`).join("; ")})</>
+              <> ({dangAnDs
+                .map((m) => anVinhVien(tamAn, m.id)
+                  ? `${m.ten} — ẩn hẳn`
+                  : `${m.ten} — còn ${conLaiNgay(tamAn, m.id)} ngày`)
+                .join("; ")})</>
             )}
           </span>
           <button

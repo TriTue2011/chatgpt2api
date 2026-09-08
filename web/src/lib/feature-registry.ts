@@ -116,7 +116,7 @@ export const SO_TRA: MucTinhNang[] = [
     canGi: "Tên miền hoặc IP mà thiết bị khác gọi tới được.",
     mucDo: "bat-buoc",
     thuTu: 3,
-    duong: "/settings",
+    duong: "/settings?tim=cấu%20hình%20hệ%20thống",
     nhom: "Nền tảng",
     tuKhoa: ["base url", "địa chỉ", "domain", "tên miền", "webhook", "link"],
     // KHÔNG kiểm được từ đây. `Config.base_url` là property giải theo thứ tự
@@ -158,7 +158,7 @@ export const SO_TRA: MucTinhNang[] = [
     canGi: "Kho S3 hoặc Cloudflare R2 với khoá truy cập.",
     mucDo: "nen-co",
     thuTu: 5,
-    duong: "/backup",
+    duong: "/settings?tim=sao%20lưu",
     nhom: "Nền tảng",
     tuKhoa: ["backup", "sao lưu", "khôi phục", "r2", "s3", "cloudflare"],
     daXong: (tt) => {
@@ -176,7 +176,7 @@ export const SO_TRA: MucTinhNang[] = [
     canGi: "Địa chỉ proxy dạng http:// hoặc socks5://.",
     mucDo: "tuy-chon",
     thuTu: 20,
-    duong: "/settings",
+    duong: "/settings?tim=proxy",
     nhom: "Nền tảng",
     tuKhoa: ["proxy", "socks", "mạng", "ip", "vpn"],
     daXong: (tt) => coChu(lay(tt.config, "proxy")),
@@ -193,7 +193,7 @@ export const SO_TRA: MucTinhNang[] = [
     canGi: "Token bot lấy từ @BotFather, và địa chỉ gốc đã khai ở trên.",
     mucDo: "tuy-chon",
     thuTu: 21,
-    duong: "/settings",
+    duong: "/settings?tim=telegram%20%2F%20zalo&tab=tg",
     nhom: "Kênh trò chuyện",
     tuKhoa: ["telegram", "bot", "botfather", "webhook", "chat"],
     daXong: (tt) => coChu(lay(tt.config, "telegram_webhook_url")),
@@ -210,7 +210,7 @@ export const SO_TRA: MucTinhNang[] = [
     thuTu: 22,
     // /zalo chỉ là stub redirect sang /settings (giữ cho link cũ không chết),
     // nên trỏ thẳng đích để người dùng không đi hai chặng.
-    duong: "/settings",
+    duong: "/settings?tim=telegram%20%2F%20zalo&tab=zalop",
     nhom: "Kênh trò chuyện",
     tuKhoa: ["zalo", "cá nhân", "zca", "qr", "chat"],
   },
@@ -221,7 +221,7 @@ export const SO_TRA: MucTinhNang[] = [
     canGi: "App Facebook có quyền nhắn tin trang.",
     mucDo: "tuy-chon",
     thuTu: 23,
-    duong: "/settings",
+    duong: "/settings?tim=facebook",
     nhom: "Kênh trò chuyện",
     tuKhoa: ["facebook", "messenger", "fanpage", "trang"],
     daXong: (tt) => coPhanTu(lay(tt.config, "facebook")),
@@ -238,7 +238,7 @@ export const SO_TRA: MucTinhNang[] = [
     canGi: "Địa chỉ Home Assistant và token truy cập dài hạn.",
     mucDo: "tuy-chon",
     thuTu: 24,
-    duong: "/settings",
+    duong: "/settings?tim=home%20assistant",
     nhom: "Nhà thông minh",
     tuKhoa: ["home assistant", "nhà thông minh", "đèn", "thiết bị", "ha", "camera"],
     daXong: (tt) => coPhanTu(lay(tt.config, "home_assistant")),
@@ -255,7 +255,7 @@ export const SO_TRA: MucTinhNang[] = [
       "(download_stt_model.py, download_piper_voices.py).",
     mucDo: "tuy-chon",
     thuTu: 25,
-    duong: "/settings",
+    duong: "/settings?tim=giọng%20nói",
     nhom: "Nhà thông minh",
     tuKhoa: ["giọng nói", "tts", "stt", "loa", "đọc", "nghe", "voice", "piper", "whisper"],
   },
@@ -283,7 +283,7 @@ export const SO_TRA: MucTinhNang[] = [
     canGi: "Cấu hình rclone với ít nhất một remote.",
     mucDo: "tuy-chon",
     thuTu: 27,
-    duong: "/settings",
+    duong: "/settings?tim=kho%20lưu%20trữ",
     nhom: "Công cụ",
     tuKhoa: ["rclone", "drive", "kho", "đám mây", "lưu trữ", "onedrive", "s3"],
   },
@@ -295,7 +295,7 @@ export const SO_TRA: MucTinhNang[] = [
     canGi: "Một model riêng làm bộ kiểm (có thể dùng model rẻ).",
     mucDo: "tuy-chon",
     thuTu: 28,
-    duong: "/settings",
+    duong: "/settings?tim=cấu%20hình%20hệ%20thống",
     nhom: "Công cụ",
     tuKhoa: ["kiểm duyệt", "review", "lọc", "an toàn", "moderation"],
     daXong: (tt) => {
@@ -304,7 +304,246 @@ export const SO_TRA: MucTinhNang[] = [
     },
     nguon: "config",
   },
+  // ═══ Bổ sung: tính năng ĐANG DÙNG THẬT mà sổ tra chưa có ═══
+  // Danh sách rút từ config của máy chủ đang chạy (120 khoá), không phải đoán.
+  {
+    id: "zalo-bot",
+    ten: "Zalo Bot (Official Account)",
+    mucDich:
+      "Bot Zalo chính chủ trả lời trong Official Account. Khác Zalo Cá Nhân ở chỗ " +
+      "không cần quét mã QR và không dùng tài khoản riêng của anh.",
+    canGi: "Token bot lấy từ Zalo Developers và Chat ID của nhóm.",
+    mucDo: "tuy-chon",
+    thuTu: 21,
+    duong: "/settings?tim=telegram%20%2F%20zalo&tab=zalo",
+    nhom: "Kênh trò chuyện",
+    tuKhoa: ["zalo bot", "official account", "oa", "token", "kênh"],
+    daXong: (tt) => coPhanTu(lay(tt.config, "zalo_bots")),
+    nguon: "config",
+  },
+  {
+    id: "email-lich",
+    ten: "Email và Lịch",
+    mucDich:
+      "Đọc hộp thư và lịch để trả lời trong chat: hỏi 'hôm nay có lịch gì', " +
+      "'có thư mới không' là bot tra thẳng.",
+    canGi: "Tài khoản IMAP/SMTP (Gmail cần mật khẩu ứng dụng) hoặc link lịch ICS.",
+    mucDo: "tuy-chon",
+    thuTu: 24,
+    duong: "/settings?tim=email",
+    nhom: "Kênh trò chuyện",
+    tuKhoa: ["email", "imap", "smtp", "gmail", "lịch", "calendar", "ics"],
+    daXong: (tt) => coPhanTu(lay(tt.config, "email_accounts")) || coPhanTu(lay(tt.config, "calendars")),
+    nguon: "config",
+  },
+  {
+    id: "custom-providers",
+    ten: "Nhà cung cấp tự thêm",
+    mucDich:
+      "Nối bất kỳ dịch vụ nào nói chuẩn OpenAI: máy chạy Ollama ở nhà, dịch vụ " +
+      "mua ngoài, hay endpoint của chính anh.",
+    canGi: "Địa chỉ API và khoá (nếu dịch vụ đó đòi).",
+    mucDo: "tuy-chon",
+    thuTu: 12,
+    duong: "/settings?tim=custom%20providers",
+    nhom: "Model và định tuyến",
+    tuKhoa: ["custom", "provider", "ollama", "openai compatible", "endpoint", "tự thêm"],
+    daXong: (tt) => coPhanTu(lay(tt.config, "custom_providers")),
+    nguon: "config",
+  },
+  {
+    id: "tokenrouter",
+    ten: "TokenRouter",
+    mucDich:
+      "Đường gọi riêng có tự thử lại khi mạng lỗi, dùng khi nhà mạng chặn hoặc " +
+      "đường thẳng hay rớt.",
+    canGi: "Khoá TokenRouter.",
+    mucDo: "tuy-chon",
+    thuTu: 13,
+    duong: "/settings?tim=tokenrouter",
+    nhom: "Model và định tuyến",
+    tuKhoa: ["tokenrouter", "định tuyến", "retry", "thử lại", "proxy api"],
+    daXong: (tt) => coPhanTu(lay(tt.config, "tokenrouter")),
+    nguon: "config",
+  },
+  {
+    id: "combo-model",
+    ten: "Mô hình kết hợp (combo)",
+    mucDich:
+      "Gộp nhiều model thành một tên gọi: cái đầu hỏng thì tự rơi sang cái sau, " +
+      "người dùng không thấy gián đoạn.",
+    canGi: "Ít nhất hai model đang chạy được.",
+    mucDo: "nen-co",
+    thuTu: 14,
+    duong: "/combos",
+    nhom: "Model và định tuyến",
+    tuKhoa: ["combo", "kết hợp", "fallback", "dự phòng", "chuỗi model"],
+    daXong: (tt) => coPhanTu(lay(tt.config, "combo_models")),
+    nguon: "config",
+  },
+  {
+    id: "nhanh-agent",
+    ten: "Nhánh agent theo kênh",
+    mucDich:
+      "Mỗi kênh dùng một bộ tính cách và công cụ riêng: nhóm gia đình khác nhóm " +
+      "công việc, không lẫn lộn.",
+    canGi: "Đã có ít nhất một kênh chat chạy.",
+    mucDo: "tuy-chon",
+    thuTu: 25,
+    duong: "/settings?tim=telegram%20%2F%20zalo&tab=tg",
+    nhom: "Model và định tuyến",
+    tuKhoa: ["nhánh", "agent", "branch", "tính cách", "persona", "theo kênh"],
+    daXong: (tt) => coPhanTu(lay(tt.config, "agent_branches")),
+    nguon: "config",
+  },
+  {
+    id: "dich",
+    ten: "Dịch thuật",
+    mucDich:
+      "Dịch chữ, tài liệu, phụ đề YouTube bằng máy dịch trong stack — không tốn " +
+      "lượt gọi AI.",
+    canGi: "Máy dịch trong stack (đã có sẵn) hoặc bật thêm Google Dịch để đối chiếu.",
+    mucDo: "tuy-chon",
+    thuTu: 30,
+    duong: "/dich",
+    nhom: "Tiện ích",
+    tuKhoa: ["dịch", "translate", "phụ đề", "youtube", "ngôn ngữ"],
+    daXong: (tt) => coPhanTu(lay(tt.config, "dich")) || coPhanTu(lay(tt.config, "dich_llm")),
+    nguon: "config",
+  },
+  {
+    id: "tim-kiem",
+    ten: "Tìm kiếm web",
+    mucDich:
+      "Cho bot tra Internet khi câu hỏi vượt ngoài hiểu biết sẵn có: tin mới, giá " +
+      "cả, tra cứu chuyên ngành.",
+    canGi: "Dịch vụ tìm kiếm (SearXNG có sẵn trong stack).",
+    mucDo: "nen-co",
+    thuTu: 26,
+    duong: "/search",
+    nhom: "Tiện ích",
+    tuKhoa: ["tìm kiếm", "search", "searxng", "web", "tra cứu"],
+    daXong: (tt) => coPhanTu(lay(tt.config, "search")),
+    nguon: "config",
+  },
+  {
+    id: "giao-vien",
+    ten: "Giáo viên (lớp 1–12)",
+    mucDich:
+      "Dạy và chấm bài theo sách giáo khoa: ra đề, giải thích, theo dõi tiến bộ " +
+      "từng học sinh.",
+    canGi: "Chọn bộ sách và lớp trong phần Giáo viên.",
+    mucDo: "tuy-chon",
+    thuTu: 31,
+    duong: "/teacher",
+    nhom: "Tiện ích",
+    tuKhoa: ["giáo viên", "dạy học", "sgk", "chấm bài", "học sinh", "lớp"],
+    daXong: (tt) => coPhanTu(lay(tt.config, "teacher")),
+    nguon: "config",
+  },
+  {
+    id: "nhat-ky-chat",
+    ten: "Nhật ký hội thoại",
+    mucDich:
+      "Lưu lại các cuộc chat để xem lại và tra cứu. Tắt đi thì không có gì để đối " +
+      "chiếu khi bot trả lời sai.",
+    canGi: "Không cần gì thêm.",
+    mucDo: "nen-co",
+    thuTu: 27,
+    duong: "/settings?tim=telegram%20%2F%20zalo&tab=nhatky",
+    nhom: "Tiện ích",
+    tuKhoa: ["nhật ký", "log", "lịch sử", "hội thoại", "chatlog"],
+    daXong: (tt) => coPhanTu(lay(tt.config, "chatlog_settings")),
+    nguon: "config",
+  },
+  {
+    id: "camera",
+    ten: "Camera",
+    mucDich:
+      "Cho bot xem hình từ camera trong nhà: hỏi 'ngoài cổng có ai không' là nó " +
+      "chụp và mô tả lại.",
+    canGi: "Camera đã có trong Home Assistant hoặc địa chỉ RTSP.",
+    mucDo: "tuy-chon",
+    thuTu: 33,
+    duong: "/settings?tim=home%20assistant",
+    nhom: "Nhà thông minh",
+    tuKhoa: ["camera", "rtsp", "hình ảnh", "giám sát", "quan sát"],
+    daXong: (tt) => coPhanTu(lay(tt.config, "cameras")),
+    nguon: "config",
+  },
+  {
+    id: "cloudflare",
+    ten: "Cloudflare Tunnel",
+    mucDich:
+      "Mở một địa chỉ HTTPS ra Internet mà không cần mở cổng router — webhook của " +
+      "Telegram và Zalo cần địa chỉ này.",
+    canGi: "Token tunnel lấy từ trang Cloudflare Zero Trust.",
+    mucDo: "nen-co",
+    thuTu: 8,
+    duong: "/settings?tim=cloudflare",
+    nhom: "Nền tảng",
+    tuKhoa: ["cloudflare", "tunnel", "https", "webhook", "tên miền", "ngrok"],
+    daXong: (tt) => coChu(lay(tt.config, "cloudflare_tunnel_token")),
+    nguon: "config",
+  },
+  {
+    id: "khoa-nguoi-dung",
+    ten: "Khoá cho người dùng thường",
+    mucDich:
+      "Cấp khoá riêng cho người khác dùng, chỉ vào được trang vẽ ảnh — không thấy " +
+      "tài khoản và cấu hình của anh.",
+    canGi: "Không cần gì thêm.",
+    mucDo: "tuy-chon",
+    thuTu: 9,
+    duong: "/settings?tim=khóa%20người%20dùng",
+    nhom: "Nền tảng",
+    tuKhoa: ["khoá", "api key", "người dùng", "phân quyền", "chia sẻ"],
+    daXong: (tt) => coPhanTu(lay(tt.config, "user_keys")),
+    nguon: "config",
+  },
+  {
+    id: "workspace-trinh-duyet",
+    ten: "Workspace trình duyệt",
+    mucDich:
+      "Hồ sơ đăng nhập riêng cho từng tài khoản Google, dùng lại được cho Flow, " +
+      "ChatGPT, Gemini và Claude — đăng nhập một lần dùng chung.",
+    canGi: "Dịch vụ captcha-solver đang chạy (có sẵn trong stack).",
+    mucDo: "tuy-chon",
+    thuTu: 10,
+    duong: "/settings?tim=workspace",
+    nhom: "Nền tảng",
+    tuKhoa: ["workspace", "profile", "trình duyệt", "google", "đăng nhập", "session"],
+  },
+  {
+    id: "provider-google",
+    ten: "Provider qua tài khoản Google",
+    mucDich:
+      "Đăng nhập Google một lần rồi tái dùng cho Google Labs Flow, ChatGPT, " +
+      "Gemini Web API và Claude — không phải khai token từng cái.",
+    canGi: "Một tài khoản Google và workspace trình duyệt ở trên.",
+    mucDo: "tuy-chon",
+    thuTu: 11,
+    duong: "/settings?tim=provider%20qua%20tài%20khoản%20google",
+    nhom: "Nền tảng",
+    tuKhoa: ["google", "oauth", "flow", "gemini", "claude", "tái dùng", "sso"],
+  },
+  {
+    id: "mcp-hub",
+    ten: "Bộ công cụ MCP có sẵn",
+    mucDich:
+      "Hơn 30 công cụ tra cứu dựng sẵn trong stack: PubMed, PubChem, sách " +
+      "Gutenberg, tra cứu tiếng Việt — bot gọi khi cần.",
+    canGi: "Không cần gì thêm, chạy sẵn cùng hệ thống.",
+    mucDo: "tuy-chon",
+    thuTu: 29,
+    duong: "/mcp",
+    nhom: "Công cụ",
+    tuKhoa: ["mcp", "công cụ", "tra cứu", "pubmed", "hub", "tool"],
+    daXong: (tt) => coChu(lay(tt.config, "mcp_hub_url")),
+    nguon: "config",
+  },
 ];
+
 
 // ── Điều hướng: mọi trang đều tra được bằng Cmd+K ───────────────────────────
 
