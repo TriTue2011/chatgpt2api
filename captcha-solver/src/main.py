@@ -22,7 +22,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -168,9 +168,36 @@ app.add_middleware(
 )
 
 
+def _novnc_url(request: Request | None = None) -> str:
+    """URL noVNC mà NGƯỜI DÙNG mở được, không phải địa chỉ nội bộ của container.
+
+    `settings.novnc_external_url` mặc định "http://localhost:6080" — mà
+    `localhost` là máy của người BẤM, nên mở từ điện thoại hay máy khác trong
+    LAN là trỏ vào chính thiết bị đó và không thấy gì (đo 09/09).
+
+    Nên khi biến chưa được đặt riêng, suy host TỪ CHÍNH REQUEST: người dùng vào
+    bằng IP thì ra IP, vào bằng tên miền thì ra tên miền — không phải sửa cấu
+    hình mỗi lần đổi đường vào. Có đặt biến thì tôn trọng biến (ai đặt là có ý).
+    """
+    dat_rieng = settings.novnc_external_url
+    if dat_rieng and "localhost" not in dat_rieng and "127.0.0.1" not in dat_rieng:
+        return dat_rieng
+    host = ""
+    if request is not None:
+        # X-Forwarded-Host: khi đi qua Cloudflare Tunnel / reverse proxy thì
+        # request.url.hostname là địa chỉ nội bộ, không mở lại được từ ngoài.
+        host = (request.headers.get("x-forwarded-host")
+                or request.headers.get("host") or "").split(",")[0].strip()
+        host = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+    if not host:
+        return dat_rieng or "http://localhost:6080"
+    scheme = "https" if (request and request.headers.get("x-forwarded-proto") == "https") else "http"
+    return f"{scheme}://{host}:6080/vnc.html?host={host}&port=6080&autoconnect=1"
+
+
 @app.get("/health")
-async def health() -> dict[str, Any]:
-    return {"status": "ok", "novnc": settings.novnc_external_url}
+async def health(request: Request) -> dict[str, Any]:
+    return {"status": "ok", "novnc": _novnc_url(request)}
 
 
 class TurnstileReq(BaseModel):
@@ -935,7 +962,7 @@ async def api_facebook_group_post(req: FacebookGroupPostReq) -> dict[str, Any]:
 
 
 @app.post("/v1/session/manual-login", dependencies=[Depends(require_api_key)])
-async def api_manual_login(req: ManualLoginReq) -> dict[str, Any]:
+async def api_manual_login(req: ManualLoginReq, request: Request) -> dict[str, Any]:
     """Open `url` in a headful browser on the noVNC display so the user can
     sign in manually. The profile's user-data-dir persists, so the next
     automated call with the same `profile` is already logged in.
@@ -972,7 +999,7 @@ async def api_manual_login(req: ManualLoginReq) -> dict[str, Any]:
     return {
         "profile": req.profile,
         "url": req.url,
-        "open_in_browser": settings.novnc_external_url,
+        "open_in_browser": _novnc_url(request),
         "force": req.force,
         "message": (
             "Mở noVNC URL ở trên, đăng nhập tài khoản trong cửa sổ Chromium. "
@@ -983,7 +1010,7 @@ async def api_manual_login(req: ManualLoginReq) -> dict[str, Any]:
 
 
 @app.post("/v1/session/auto-login", dependencies=[Depends(require_api_key)])
-async def api_auto_login(req: AutoLoginReq) -> dict[str, Any]:
+async def api_auto_login(req: AutoLoginReq, request: Request) -> dict[str, Any]:
     """Start a CLI-driven Google login. Returns immediately with the
     initial session state — UI polls /v1/session/{profile}/auto-login-status
     to track progress and feeds 2FA codes via /auto-login-2fa-code.
@@ -1009,7 +1036,7 @@ async def api_auto_login(req: AutoLoginReq) -> dict[str, Any]:
         except Exception: pass
     return {
         **session.to_dict(),
-        "novnc": settings.novnc_external_url,
+        "novnc": _novnc_url(request),
         "note": "Theo dõi tiến trình ở /v1/session/{profile}/auto-login-status. "
                 "Mở noVNC để giám sát/can thiệp khi cần.",
     }
@@ -1238,7 +1265,7 @@ async def api_codex_onboard(req: CodexOnboardReq) -> dict[str, Any]:
 
 
 @app.post("/v1/session/auto-login-saved", dependencies=[Depends(require_api_key)])
-async def api_auto_login_saved(req: AutoLoginSavedReq) -> dict[str, Any]:
+async def api_auto_login_saved(req: AutoLoginSavedReq, request: Request) -> dict[str, Any]:
     """Freshen Google login KHÔNG cần truyền password — tự tra credentials đã
     lưu (accounts_db) theo profile/email. Dùng cho auto-recovery: caller chỉ
     biết profile, mật khẩu Google nằm trong solver (không lộ ra ngoài)."""
@@ -1253,11 +1280,11 @@ async def api_auto_login_saved(req: AutoLoginSavedReq) -> dict[str, Any]:
         prefer_method="auth" if totp else "tap",
         totp_secret=totp,
     )
-    return {**session.to_dict(), "novnc": settings.novnc_external_url}
+    return {**session.to_dict(), "novnc": _novnc_url(request)}
 
 
 @app.post("/v1/multi-onboard", dependencies=[Depends(require_api_key)])
-async def api_multi_onboard(req: MultiOnboardReq) -> dict[str, Any]:
+async def api_multi_onboard(req: MultiOnboardReq, request: Request) -> dict[str, Any]:
     """Kick off one Google login + fan out to multiple service onboards.
 
     UI flow:
@@ -1289,7 +1316,7 @@ async def api_multi_onboard(req: MultiOnboardReq) -> dict[str, Any]:
         "stage": state["stage"],
         "services": req.services,
         "prefer_method": req.prefer_method,
-        "novnc": settings.novnc_external_url,
+        "novnc": _novnc_url(request),
         "note": "Poll /v1/multi-onboard/{profile}/status. Khi state Google "
                 "ở need_code, POST mã vào /v1/session/{profile}/auto-login-2fa-code.",
     }
@@ -1413,7 +1440,7 @@ async def api_gemini_web_models(profile: str, headless: bool = True, timeout: in
 
 
 @app.post("/v1/gemini-web/onboard", dependencies=[Depends(require_api_key)])
-async def api_gemini_web_onboard(req: GeminiWebOnboardReq) -> dict[str, Any]:
+async def api_gemini_web_onboard(req: GeminiWebOnboardReq, request: Request) -> dict[str, Any]:
     email_tk, mat_khau, hat_giong = bu_credential(req)
     prefer = getattr(req, "prefer_method", "auth" if hat_giong else "tap")
     session = await start_gemini_web_login(
@@ -1425,7 +1452,7 @@ async def api_gemini_web_onboard(req: GeminiWebOnboardReq) -> dict[str, Any]:
         except Exception: pass
     return {
         **session.to_dict(),
-        "novnc": settings.novnc_external_url,
+        "novnc": _novnc_url(request),
         "note": "Theo dõi tiến trình ở /v1/gemini-web/{profile}/onboard-status. "
                 "Khi state=success, gọi /v1/gemini-web/chat để chat.",
     }
@@ -1481,7 +1508,7 @@ class OpenAIOnboardReq(BaseModel):
 
 
 @app.post("/v1/openai-native/onboard", dependencies=[Depends(require_api_key)])
-async def api_openai_native_onboard(req: OpenAIOnboardReq) -> dict[str, Any]:
+async def api_openai_native_onboard(req: OpenAIOnboardReq, request: Request) -> dict[str, Any]:
     email_tk, mat_khau, hat_giong = bu_credential(req)
     session = await start_openai_login(
         profile=req.profile, email=email_tk, password=mat_khau,
@@ -1496,7 +1523,7 @@ async def api_openai_native_onboard(req: OpenAIOnboardReq) -> dict[str, Any]:
             pass
     return {
         **session.to_dict(),
-        "novnc": settings.novnc_external_url,
+        "novnc": _novnc_url(request),
         "note": "Theo dõi /v1/openai-native/{profile}/onboard-status. "
                 "Không có hạt giống TOTP thì phiên dừng ở state=need_code.",
     }
@@ -1532,7 +1559,7 @@ async def api_openai_native_token(profile: str) -> dict[str, Any]:
 # ── Claude Web (claude.ai) ──────────────────────────────────────────────
 
 @app.post("/v1/claude-web/onboard", dependencies=[Depends(require_api_key)])
-async def api_claude_web_onboard(req: ClaudeWebOnboardReq) -> dict[str, Any]:
+async def api_claude_web_onboard(req: ClaudeWebOnboardReq, request: Request) -> dict[str, Any]:
     email_tk, mat_khau, hat_giong = bu_credential(req)
     prefer = getattr(req, "prefer_method", "auth" if hat_giong else "tap")
     session = await start_claude_web_login(
@@ -1545,7 +1572,7 @@ async def api_claude_web_onboard(req: ClaudeWebOnboardReq) -> dict[str, Any]:
         except Exception: pass
     return {
         **session.to_dict(),
-        "novnc": settings.novnc_external_url,
+        "novnc": _novnc_url(request),
         "note": "Theo dõi /v1/claude-web/{profile}/onboard-status. Khi state=success, "
                 "lấy sessionKey ở /v1/claude-web/{profile}/session.",
     }
