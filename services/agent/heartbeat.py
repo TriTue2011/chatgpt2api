@@ -166,6 +166,18 @@ def _parse_tasks() -> list[dict[str, Any]]:
         "text": "Chưng cất hồ sơ người dùng + fact từ hội thoại (mỗi ngày, sau giờ cấu hình)",
         "system": True,
     })
+    tasks.append({
+        "id": "tinh_huong_nha",
+        "intent": "read",
+        "text": "Học tình huống trong nhà (giờ ăn, buổi sáng…) rồi xin duyệt tên",
+        "system": True,
+    })
+    tasks.append({
+        "id": "canh_bao_nha",
+        "intent": "read",
+        "text": "Báo thiết bị nhà hỏng/đơ (5p → 30p → 60p → 6h → mỗi ngày)",
+        "system": True,
+    })
 
     _ensure_heartbeat_md()
     try:
@@ -402,11 +414,56 @@ def _eval_distill() -> tuple[str, str]:
         return "skip", f"error: {exc}"
 
 
+def _eval_canh_bao_nha() -> tuple[str, str]:
+    """Cảnh báo thiết bị nhà hỏng — services.canh_bao_nha.
+
+    Tick 5 phút của heartbeat CHÍNH LÀ mốc báo lại đầu tiên (5p → 30p → 60p →
+    6h → mỗi ngày), nên không cần hẹn giờ riêng.
+    """
+    try:
+        from services import canh_bao_nha
+        if not canh_bao_nha.is_enabled():
+            return "skip", "cảnh báo nhà tắt (mqtt.canh_bao)"
+        kq = canh_bao_nha.chay_mot_lan()
+        if kq.get("gui"):
+            return "act", f"báo {kq['so_loi']} lỗi tới {kq['gui']} người"
+        return "skip", kq.get("ly_do") or f"{kq.get('tong_hong', 0)} lỗi, chưa tới hạn báo"
+    except Exception as exc:
+        return "skip", f"error: {exc}"
+
+
+def _eval_tinh_huong() -> tuple[str, str]:
+    """Học tình huống trong nhà — services.tinh_huong_nha.
+
+    Chạy nền vì có gọi model đặt tên (tối đa 3 lần/ngày), không được ghim
+    luồng heartbeat như _eval_distill đã lường.
+    """
+    try:
+        from services import tinh_huong_nha as th
+        if not th.is_enabled():
+            return "skip", "học tình huống tắt (mqtt.tinh_huong)"
+        # Một ngày một lần là đủ: nếp sinh hoạt không đổi theo giờ. Ghi mốc
+        # TRƯỚC khi chạy nền, nếu không tick sau (5 phút) lại chạy đúp.
+        import time as _t
+        hom_nay = _t.strftime("%Y-%m-%d")
+        if _state.get("tinh_huong_ngay") == hom_nay:
+            return "skip", "hôm nay đã học rồi"
+        _state["tinh_huong_ngay"] = hom_nay
+        _save_state()
+        threading.Thread(target=th.chay_mot_lan, name="tinh-huong-nha",
+                         daemon=True).start()
+        return "act", "học tình huống chạy nền"
+    except Exception as exc:
+        return "skip", f"error: {exc}"
+
+
 _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
     "wiki_daily_digest": _eval_wiki_digest,
     "open_goals_nudge": _eval_open_goals,
     "chatlog_nhac_scan": _eval_chatlog_nhac,
     "user_profile_distill": _eval_distill,
+    "canh_bao_nha": _eval_canh_bao_nha,
+    "tinh_huong_nha": _eval_tinh_huong,
 }
 
 

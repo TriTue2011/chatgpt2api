@@ -1652,9 +1652,25 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
     ("homeassistant", _KW_NHATHONGMINH,
      "- Thiết bị nối THẲNG qua MQTT (không cần Home Assistant): "
      "mqtt_thiet_bi (xem có những thiết bị nào, đọc trạng thái); "
+     "mqtt_thiet_bi với dem_nguoi='1' khi hỏi CÓ NGƯỜI KHÔNG / mấy người — "
+     "camera đã đếm sẵn nên đọc số là xong. Số đó CŨ (tool tự báo mất kết "
+     "nối) hoặc người dùng muốn NHÌN ảnh, hoặc hỏi thứ camera không đếm "
+     "('trên bàn có gì') thì mới gọi xem_camera chụp; "
      "mqtt_dieu_khien (bật/tắt thẳng qua MQTT). Chỉ dùng khi người dùng nói "
      "rõ là MQTT, hoặc khi control_home báo không tìm thấy thiết bị — còn "
      "lại cứ control_home như thường."),
+    ("homeassistant", _KW_NHATHONGMINH,
+     "- Thiết bị Tuya/Smart Life (khoá cửa thông minh, ổ cắm Tuya) → "
+     "tuya_thiet_bi. Hỏi «khoá cửa khoá chưa», «pin khoá còn bao nhiêu», "
+     "«ai mở cửa» đều dùng tool này."),
+    ("homeassistant", _KW_NHATHONGMINH,
+     "- Nếp sinh hoạt bot học được (giờ ăn, buổi sáng, trước khi ngủ) → "
+     "tinh_huong_nha. Người dùng đồng ý với tên bot đề xuất thì gọi "
+     "viec='duyet', đặt tên khác thì thêm ten_moi."),
+    ("homeassistant", _KW_NHATHONGMINH,
+     "- Cảm biến/thiết bị hỏng, đơ, mất tín hiệu → canh_bao_nha. Người dùng "
+     "nói «tôi biết rồi», «thôi đừng nhắc nữa» NGAY SAU tin cảnh báo cũng "
+     "gọi tool này với viec='im'."),
     ("homeassistant", _KW_NHATHONGMINH,
      "- Cần thao tác HA ở mức thấp (khi control_home không đủ): ha_get_state "
      "đọc một entity, ha_search_entities tìm entity theo tên, ha_call_service "

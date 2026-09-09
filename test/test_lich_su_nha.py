@@ -56,6 +56,29 @@ class LichSuNhaTest(unittest.TestCase):
         n = self.m._db().execute("SELECT COUNT(*) FROM su_kien").fetchone()[0]
         self.assertEqual(n, 2)
 
+    def test_SU_KIEN_LAP_LAI_KHONG_BI_GOP(self) -> None:
+        """Cùng người mở cửa hai lần là HAI lần về, không phải một.
+
+        Lỗi thật 09/09/2026: luật "chỉ ghi khi đổi" đúng với cảm biến nhưng sai
+        với sự kiện rời rạc — 48 lần mở cửa nạp vào chỉ còn 35, mất 13 lần, và
+        phần học thói quen không đủ mẫu để dựng nếp.
+        """
+        now = time.time()
+        for i in range(5):
+            self._ghi("tuya", "khoa_cua", "nguoi_mo", "van_tay#11", False, now + i * 3600)
+        n = self.m._db().execute(
+            "SELECT COUNT(*) FROM su_kien WHERE truong='nguoi_mo'").fetchone()[0]
+        self.assertEqual(n, 5, "mỗi lần mở cửa phải là một bản ghi riêng")
+
+    def test_cam_bien_thuong_VAN_bi_gop(self) -> None:
+        """Sửa cho sự kiện lặp lại KHÔNG được làm hỏng luật gộp của cảm biến."""
+        now = time.time()
+        for i in range(5):
+            self._ghi("mqtt", "den", "state", "on", False, now + i)
+        n = self.m._db().execute(
+            "SELECT COUNT(*) FROM su_kien WHERE truong='state'").fetchone()[0]
+        self.assertEqual(n, 1, "đèn báo 'on' 5 lần vẫn chỉ là một lần bật")
+
     def test_gia_tri_cu_duoc_luu(self) -> None:
         """Giai đoạn 2 cần biết chiều đổi (bot bật → người tắt ngay sau)."""
         now = time.time()
@@ -332,6 +355,66 @@ class LichSuNhaTest(unittest.TestCase):
         finally:
             self.m.stop()
 
+
+
+class PhanBietDieuHoaVaAptomat(unittest.TestCase):
+    """"Bật điều hoà" trỏ vào HAI thiết bị khác nhau → phải hỏi lại.
+
+    Nhà chủ máy có `climate.dieu_hoa_panasonic` (máy lạnh) VÀ
+    `switch.aptomat_dieu_hoa_phong_ngu` (aptomat cấp điện). Đoán sai theo chiều
+    nào cũng hỏng: tắt nhầm aptomat là cắt điện cả máy; aptomat đang tắt mà bật
+    máy lạnh thì bấm mãi không lên.
+    """
+
+    THAT = [
+        {"entity_id": "climate.dieu_hoa_panasonic", "state": "cool",
+         "attributes": {"friendly_name": "Điều hòa Panasonic"}},
+        {"entity_id": "switch.aptomat_dieu_hoa_phong_ngu", "state": "on",
+         "attributes": {"friendly_name": "Aptomat điều hòa phòng ngủ"}},
+    ]
+
+    def _hoi(self, cau, states=None):
+        from services import ha_client
+        from services.agent import capabilities as cap
+        with mock.patch.object(ha_client, "get_states",
+                               return_value=self.THAT if states is None else states):
+            return cap._lan_lon_dieu_hoa(cau)
+
+    def test_cau_mo_ho_thi_hoi_lai(self) -> None:
+        for cau in ("bật điều hòa", "tắt điều hoà", "mở điều hòa"):
+            self.assertIsNotNone(self._hoi(cau), f"{cau!r} phải hỏi lại")
+
+    def test_CHU_BAT_KHONG_DUOC_COI_LA_CONG_TAC(self) -> None:
+        """Lỗi thật đã gặp: "at" nằm trong từ khoá công tắc, mà "bật" chứa "at"
+        → mọi câu "bật …" bị tưởng đã nói rõ, nhánh hỏi lại không bao giờ chạy.
+        """
+        self.assertIsNotNone(self._hoi("bật điều hòa"),
+                             "chữ 'bật' KHÔNG được coi là đã nêu công tắc")
+
+    def test_noi_ro_thi_di_thang(self) -> None:
+        for cau in ("bật aptomat điều hòa", "bật công tắc điều hòa",
+                    "bật điều hòa 25 độ", "bật máy lạnh"):
+            self.assertIsNone(self._hoi(cau), f"{cau!r} đã rõ, không được hỏi lại")
+
+    def test_khong_lien_quan_thi_khong_hoi(self) -> None:
+        self.assertIsNone(self._hoi("bật đèn phòng khách"))
+
+    def test_nha_chi_co_may_lanh_thi_khong_hoi(self) -> None:
+        """Không có aptomat riêng thì chẳng có gì để nhầm."""
+        self.assertIsNone(self._hoi("bật điều hòa", states=self.THAT[:1]))
+
+    def test_bao_them_khi_aptomat_dang_TAT(self) -> None:
+        """Aptomat tắt thì bật máy lạnh vô ích — phải nói cho người dùng biết."""
+        st = [self.THAT[0], {**self.THAT[1], "state": "off"}]
+        r = self._hoi("bật điều hòa", states=st)
+        self.assertIn("đang TẮT", r["text"])
+
+    def test_ha_loi_thi_khong_chan_duong(self) -> None:
+        from services import ha_client
+        from services.agent import capabilities as cap
+        with mock.patch.object(ha_client, "get_states",
+                               side_effect=RuntimeError("HA sập")):
+            self.assertIsNone(cap._lan_lon_dieu_hoa("bật điều hòa"))
 
 if __name__ == "__main__":
     unittest.main()

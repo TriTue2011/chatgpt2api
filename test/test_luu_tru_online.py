@@ -252,3 +252,51 @@ class ThreadAdminNhanTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TatRiengNhatKy(unittest.TestCase):
+    """Tắt đẩy nhật ký lên mây mà VẪN gửi tệp lên kho được.
+
+    Chủ máy hỏi 09/09/2026: "tắt ở Cài đặt → Kho lưu trữ đám mây thì sao đẩy
+    file lên được". Đúng — trước đây nhật ký và tệp dùng chung cờ `enabled`,
+    tắt là mất cả hai. Nhật ký đã nằm trong chatlog.sqlite cục bộ nên tắt bản
+    sao trên mây không mất dữ liệu, nhưng đường gửi tệp thì phải giữ.
+    """
+
+    def setUp(self):
+        from services.config import config
+        self._cu = config.data.get("luu_tru_online")
+
+    def tearDown(self):
+        from services.config import config
+        if self._cu is None:
+            config.data.pop("luu_tru_online", None)
+        else:
+            config.data["luu_tru_online"] = self._cu
+
+    def _cd(self, **them):
+        from services.agent import luu_tru_online as lt
+        from services.config import config
+        config.data["luu_tru_online"] = {
+            "zalop:1": {"enabled": True, "kho": "drive-test", **them}}
+        return lt.cai_dat("zalop", "1")
+
+    def test_tat_nhat_ky_van_day_duoc_tep(self) -> None:
+        from services.agent import luu_tru_online as lt
+        cd = self._cd(dong_bo_nhat_ky=False)
+        self.assertTrue(cd["enabled"], "cờ đẩy tệp phải còn bật")
+        self.assertFalse(cd["dong_bo_nhat_ky"])
+        self.assertTrue(lt.duong_dan_dich(cd, "anh.jpg"),
+                        "vẫn phải có đường đẩy tệp")
+
+    def test_mac_dinh_BAT_khong_doi_hanh_vi_cu(self) -> None:
+        """Cấu hình cũ chưa có khoá này thì phải chạy y như trước."""
+        self.assertTrue(self._cd()["dong_bo_nhat_ky"])
+
+    def test_vong_dong_bo_bo_qua_khi_tat(self) -> None:
+        """Vòng đồng bộ nhật ký phải đọc cờ riêng, không chỉ `enabled`."""
+        import inspect
+        from services.agent import nhat_ky_dong_bo as nk
+        src = inspect.getsource(nk)
+        self.assertIn("dong_bo_nhat_ky", src,
+                      "vòng đồng bộ phải kiểm cờ riêng")

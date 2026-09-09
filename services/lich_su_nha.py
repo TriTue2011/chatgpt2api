@@ -72,6 +72,15 @@ _DON_MOI_GIAY = 6 * 3600
 
 # ── Phân loại trường ────────────────────────────────────────────────────────
 # Trạng thái RỜI RẠC → su_kien. Đây là thứ nói lên nếp sinh hoạt.
+#: Trường mà MỖI LẦN XẢY RA là một sự kiện riêng, kể cả trùng giá trị liền
+#: nhau. "Vân tay 11 mở cửa" hai lần trong ngày là HAI lần về, không phải một
+#: — luật "chỉ ghi khi đổi" nuốt mất lần thứ hai. Đo thật 09/09/2026: 48 lần
+#: mở cửa nạp vào chỉ còn 35, mất 13 lần.
+TRUONG_LAP_LAI = frozenset({
+    "action", "nguoi_mo", "unlock", "doorbell", "chuong", "su_kien",
+    "scene", "event",
+})
+
 TRUONG_SU_KIEN = frozenset({
     "state", "state_l1", "state_l2", "state_l3",
     "state_left", "state_center", "state_right",
@@ -309,7 +318,9 @@ def _ghi_thang(conn: sqlite3.Connection, nguon: str, thiet_bi: str, truong: str,
         ).fetchone()
         gia_tri_cu = cu["gia_tri"] if cu else None
         # CHỈ ghi khi ĐỔI — đây là chỗ 67 triệu bản ghi rút còn 1,7 triệu.
-        if gia_tri_cu != gt:
+        # NGOẠI TRỪ trường lặp lại: mỗi lần xảy ra là một sự kiện riêng.
+        lap_lai = truong.lower() in TRUONG_LAP_LAI
+        if lap_lai or gia_tri_cu != gt:
             t = datetime.fromtimestamp(ts, _TZ)
             conn.execute(
                 "INSERT OR IGNORE INTO su_kien"
@@ -456,6 +467,24 @@ def doc_su_kien(thiet_bi: str, tu_ts: float, den_ts: float,
             rows = conn.execute(
                 "SELECT * FROM su_kien WHERE thiet_bi=? AND ts>=? AND ts<=? ORDER BY ts",
                 (thiet_bi, tu_ts, den_ts)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def doc_cua_so(tu_ts: float, den_ts: float, *,
+               tran: int = 20000) -> list[dict[str, Any]]:
+    """MỌI sự kiện trong một khoảng, không lọc theo thiết bị.
+
+    ``doc_su_kien`` bắt buộc nêu tên thiết bị nên không trả lời được câu hỏi
+    "lúc 19h30 trong nhà có những gì đang xảy ra" — mà đó chính là câu hỏi của
+    phần nhận ra tình huống. Dùng ``idx_sk_ts`` đã có nên quét cả nhà vẫn nhanh.
+
+    ``tran`` chặn trường hợp xin cả năm rồi kéo về hàng triệu dòng.
+    """
+    with _khoa_db:
+        conn = _db()
+        rows = conn.execute(
+            "SELECT * FROM su_kien WHERE ts>=? AND ts<=? ORDER BY ts LIMIT ?",
+            (tu_ts, den_ts, int(tran))).fetchall()
     return [dict(r) for r in rows]
 
 

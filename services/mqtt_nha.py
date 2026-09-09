@@ -83,6 +83,16 @@ _SAU_TOI_DA = 6
 #: chủ đề; không chặn thì tiến trình phình theo thời gian chạy.
 _TRAN_CHU_DE = 5000
 
+#: Quá bao lâu không nhận tin thì coi số liệu là CŨ, không dám khẳng định nữa.
+#: Frigate publish liên tục (đo: 208 tin/40 giây), nên im quá 3 phút là gương
+#: đã rớt chứ không phải nhà yên tĩnh.
+_HAN_TUOI = 180.0
+
+#: Rớt quá bao lâu mà paho chưa tự nối lại thì tự dựng phiên mới.
+_HAN_ROI = 60.0
+#: Đang "nối" nhưng câm quá lâu cũng là chết — máy chủ thật phát liên tục.
+_HAN_IM = 600.0
+
 
 class LoiMqtt(RuntimeError):
     """Hỏng ở phía MQTT — thông điệp đã sẵn sàng đọc cho người dùng."""
@@ -367,6 +377,8 @@ def _chay_mot_phien() -> None:
 
     def on_disconnect(client, userdata, flags, rc, props=None):
         _stats["connected"] = False
+        _stats["_roi_tu"] = time.time()
+        logger.warning({"event": "mqtt_roi", "rc": str(rc)[:40]})
 
     cl.on_connect = on_connect
     cl.on_message = on_message
@@ -375,10 +387,28 @@ def _chay_mot_phien() -> None:
     cl.connect(host, port, 60)
     cl.loop_start()
     try:
-        # Luồng nền của paho tự lo keepalive và nối lại trong phiên; ở đây chỉ
-        # cần canh cờ dừng.
+        # Luồng nền của paho lo keepalive, NHƯNG nó có thể kẹt ở trạng thái
+        # "đã rớt mà không nối lại được" và không báo gì cả. Chỉ canh cờ dừng
+        # thì hàm này quay vòng vĩnh viễn, vòng ngoài không bao giờ nối lại →
+        # gương chết IM LẶNG. Đo thật 09/09/2026: rớt 150 phút, reconnects=0,
+        # không một dòng log, mà bot vẫn trả lời bằng số đã đóng băng.
+        #
+        # Nên canh THÊM độ tươi: cờ connected tắt quá lâu, hoặc đang nối mà
+        # không tin nào về quá lâu → ném để vòng ngoài dựng phiên mới.
         while not _stop.is_set():
             _stop.wait(1.0)
+            now = time.time()
+            if not _stats.get("connected"):
+                if now - _stats.get("_roi_tu", now) > _HAN_ROI:
+                    raise RuntimeError(
+                        f"rớt quá {_HAN_ROI:.0f}s mà paho không nối lại được")
+                _stats.setdefault("_roi_tu", now)
+                continue
+            _stats.pop("_roi_tu", None)
+            cuoi = float(_stats.get("last_tin_ts") or 0)
+            if cuoi and now - cuoi > _HAN_IM:
+                raise RuntimeError(
+                    f"nối nhưng {(now - cuoi) / 60:.0f} phút không tin nào về")
     finally:
         _stats["connected"] = False
         try:
@@ -511,8 +541,10 @@ def _khop_ten(ten: str) -> str:
     ten = (ten or "").strip()
     if not ten:
         return ""
-    with _khoa_du_lieu:
-        so = list(_so_thiet_bi)
+    # PHẢI gộp cả camera Frigate: chúng không đi qua chuẩn tự khai báo nên
+    # không nằm trong `_so_thiet_bi`. Chỉ tra `_so_thiet_bi` thì hỏi "camera
+    # phòng khách" là trả rỗng, bot đành chịu — dù danh sách thiết bị có nó.
+    so = [d["ten"] for d in danh_sach_thiet_bi()]
     if not so:
         return ""
 
@@ -531,6 +563,57 @@ def _khop_ten(ten: str) -> str:
         return ""
     dan = [k for d, k in diem if d == cao]
     return dan[0] if len(dan) == 1 else ""
+
+
+def dem_nguoi(camera: str = "") -> dict[str, Any]:
+    """Frigate ĐẾM SẴN người trong khung hình — đọc thẳng, KHÔNG chụp lại ảnh.
+
+    Frigate chạy YOLO 24/7 trên GPU và publish số đếm lên
+    ``frigate/<camera>/person``. Hỏi "phòng khách có người không" mà đi dựng
+    luồng RTSP rồi gọi model thị giác là làm lại việc máy đã làm xong: chậm vài
+    giây, tốn tiền model, mà kết quả không chính xác hơn.
+
+    Chỉ chụp ảnh khi người dùng muốn NHÌN, hoặc hỏi thứ Frigate không đếm
+    ("trên bàn có gì", "con mèo đang làm gì").
+
+    Trả ``{camera: {"nguoi": n, "dang_hoat_dong": n, "ts": …}}``.
+    """
+    ra: dict[str, Any] = {}
+    with _khoa_du_lieu:
+        gt = dict(_gia_tri)
+        tin_cuoi = float(_stats.get("last_tin_ts") or 0)
+    # Số đếm CŨ nguy hiểm hơn không có số: MQTT chỉ gửi khi giá trị ĐỔI, nên
+    # mất kết nối là giá trị cuối cùng đóng băng vĩnh viễn. Đo thật 09/09/2026:
+    # gương rớt 150 phút mà vẫn báo "1 người" trong khi Frigate hiện là 0.
+    # Thà nói "em không chắc" còn hơn khẳng định một con số đã chết.
+    cu = time.time() - tin_cuoi if tin_cuoi else None
+    if cu is None or cu > _HAN_TUOI:
+        return {"_cu": True, "_giay": cu, "_han": _HAN_TUOI}
+    can = _tu(camera) if camera else set()
+    for ct, (v, ts) in gt.items():
+        f = nhan_dang_frigate(ct)
+        if not f or f["loai"] != "camera":
+            continue
+        muc = f["muc"]
+        if muc not in ("person", "person/active", "all", "all/active"):
+            continue
+        cam = f["camera"]
+        if can and not (can & _tu(cam)):
+            continue
+        try:
+            n = int(str(v).strip())
+        except (TypeError, ValueError):
+            continue
+        m = ra.setdefault(cam, {"camera": cam, "nguoi": 0, "dang_hoat_dong": 0,
+                                "vat_the": 0, "ts": ts})
+        if muc == "person":
+            m["nguoi"] = n
+        elif muc == "person/active":
+            m["dang_hoat_dong"] = n
+        elif muc == "all":
+            m["vat_the"] = n
+        m["ts"] = max(m["ts"], ts)
+    return ra
 
 
 def dieu_khien(ten: str, thuc_the: str, gia_tri: Any) -> bool:

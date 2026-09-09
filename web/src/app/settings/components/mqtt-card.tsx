@@ -33,7 +33,14 @@ type MayChu = {
 };
 
 type ThongKe = { su_kien?: number; so_do?: number; tuoi?: number; mb?: number; chay?: boolean };
+type CanhBao = { bat?: boolean; kenh?: string; nguoi_nhan?: string; gio_hang_ngay?: number };
+type TrangThaiCB = { dang_hong?: number; dang_im?: number; nguoi_nhan?: number };
 type Hong = { thiet_bi: string; truong: string; loai: string; chi_tiet: string };
+type TinhHuong = {
+  id: number; ten: string; trang_thai: string; gio: string;
+  lech_phut: number; so_lan: number; diem: number;
+  loi_cot: string[]; kem_theo: string[];
+};
 
 type Muc = { ten: string; chu_de?: string; gia_tri?: string | null; loai?: string; don_vi?: string };
 type ThietBi = {
@@ -69,6 +76,9 @@ export function MqttCard() {
   const [ds, setDs] = useState<ThietBi[]>([]);
   const [tk, setTk] = useState<ThongKe | null>(null);
   const [hong, setHong] = useState<Hong[] | null>(null);
+  const [cb, setCb] = useState<CanhBao>({ bat: true, kenh: "", nguoi_nhan: "", gio_hang_ngay: 8 });
+  const [ttCb, setTtCb] = useState<TrangThaiCB | null>(null);
+  const [th, setTh] = useState<TinhHuong[]>([]);
 
   // false = thu. Prerender (static export) và client render đầu tiên phải giống
   // nhau → không đọc localStorage trong initializer, đọc sau khi mount.
@@ -85,6 +95,13 @@ export function MqttCard() {
   useEffect(() => {
     const c = ((config as any)?.mqtt as MayChu) || {};
     setMay({ ...RONG, ...c });
+    const q = ((config as any)?.mqtt?.canh_bao as any) || {};
+    setCb({
+      bat: q.bat !== false,
+      kenh: String(q.kenh || ""),
+      nguoi_nhan: Array.isArray(q.nguoi_nhan) ? q.nguoi_nhan.join(", ") : "",
+      gio_hang_ngay: typeof q.gio_hang_ngay === "number" ? q.gio_hang_ngay : 8,
+    });
   }, [(config as any)?.mqtt]);
 
   // Nạp danh sách đã có sẵn trong bộ nhớ máy chủ (không mở kết nối mới).
@@ -105,6 +122,65 @@ export function MqttCard() {
     } catch { /* chưa bật thì thôi */ }
   };
   useEffect(() => { void napTk(); }, []);
+
+  const napCb = async () => {
+    try {
+      const r = await request.get("/api/mqtt/canh-bao");
+      const d = r.data as { ok?: boolean; trang_thai?: TrangThaiCB };
+      if (d.ok) setTtCb(d.trang_thai || null);
+    } catch { /* chưa bật thì thôi */ }
+  };
+  useEffect(() => { void napCb(); }, []);
+
+  const napTh = async () => {
+    try {
+      const r = await request.get("/api/mqtt/tinh-huong");
+      const d = r.data as { ok?: boolean; danh_sach?: TinhHuong[] };
+      if (d.ok) setTh(d.danh_sach || []);
+    } catch { /* chưa học được gì thì thôi */ }
+  };
+  useEffect(() => { void napTh(); }, []);
+
+  const duyetTh = async (id: number, bo = false) => {
+    setBusy(`th${id}`);
+    try {
+      await request.post("/api/mqtt/tinh-huong/duyet", { id, bo });
+      await napTh();
+    } catch (e: any) {
+      setMsg(`❌ ${e?.message || "Không lưu được"}`);
+    } finally { setBusy(""); }
+  };
+
+  const doiTenTh = async (id: number, cu: string) => {
+    const ten = window.prompt("Đặt lại tên tình huống:", cu);
+    if (!ten || ten === cu) return;
+    setBusy(`th${id}`);
+    try {
+      await request.post("/api/mqtt/tinh-huong/duyet", { id, ten });
+      await napTh();
+    } catch (e: any) {
+      setMsg(`❌ ${e?.message || "Không lưu được"}`);
+    } finally { setBusy(""); }
+  };
+
+  // Lưu riêng khối cảnh báo — không đụng phần máy chủ ở trên.
+  const luuCb = async () => {
+    const nguoi = (cb.nguoi_nhan || "").split(",").map((x) => x.trim()).filter(Boolean);
+    await saveConfig({
+      ...config,
+      mqtt: {
+        ...((config as any)?.mqtt || {}),
+        canh_bao: {
+          bat: cb.bat !== false,
+          kenh: (cb.kenh || "").trim(),
+          nguoi_nhan: nguoi,
+          gio_hang_ngay: cb.gio_hang_ngay ?? 8,
+        },
+      },
+    } as any);
+    setSaved(true); setTimeout(() => setSaved(false), 2000);
+    await napCb();
+  };
 
   // Nạp lịch sử HA sẵn có. HA chỉ giữ ~10 ngày rồi trôi mất, nên nạp sớm được
   // nhiều. Bấm lại nhiều lần không sao: máy chủ chặn ghi trùng.
@@ -297,6 +373,113 @@ export function MqttCard() {
           <p className="text-xs text-muted-foreground">
             Home Assistant chỉ giữ khoảng 10 ngày rồi xoá dần, nạp sớm thì được nhiều.
           </p>
+
+          {/* ── Tình huống đã học ─────────────────────────────────────── */}
+          {th.length ? (
+            <div className="mt-2 space-y-2 rounded border border-border p-2">
+              <p className="text-xs font-semibold">🕰️ Nếp sinh hoạt bot học được</p>
+              <p className="text-xs text-muted-foreground">
+                Nhận ra bằng <b>cảm biến có người</b>, không phải đèn nào bật — nên
+                hôm nào ăn ở phòng khách thay vì bếp thì vẫn nhận ra.
+              </p>
+              <div className="max-h-64 overflow-y-auto rounded border border-border">
+                {th.map((t) => (
+                  <div key={t.id} className="border-b border-border/60 px-2 py-1.5 text-xs last:border-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">{t.ten}</span>
+                      <span className="text-muted-foreground">
+                        khoảng {t.gio} ±{t.lech_phut}p · thấy {t.so_lan} lần
+                      </span>
+                      {t.trang_thai === "da_duyet" ? (
+                        <span className="text-green-600">· đã ghi nhớ</span>
+                      ) : t.trang_thai === "bo" ? (
+                        <span className="text-muted-foreground">· đã bỏ</span>
+                      ) : (
+                        <span className="text-amber-600">· chờ duyệt</span>
+                      )}
+                    </div>
+                    {t.trang_thai === "cho_duyet" ? (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        <Button variant="outline" size="sm"
+                          onClick={() => void duyetTh(t.id)} disabled={busy === `th${t.id}`}>
+                          Đúng rồi
+                        </Button>
+                        <Button variant="outline" size="sm"
+                          onClick={() => void doiTenTh(t.id, t.ten)} disabled={busy === `th${t.id}`}>
+                          Đổi tên
+                        </Button>
+                        <Button variant="outline" size="sm"
+                          onClick={() => void duyetTh(t.id, true)} disabled={busy === `th${t.id}`}>
+                          Bỏ qua
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {/* ── Thông báo lỗi ─────────────────────────────────────────── */}
+          <div className="mt-2 space-y-2 rounded border border-border p-2">
+            <label className="flex items-center gap-2 text-xs font-semibold">
+              <input
+                type="checkbox"
+                checked={cb.bat !== false}
+                onChange={(e) => setCb({ ...cb, bat: e.target.checked })}
+              />
+              🔔 Báo cho tôi khi thiết bị hỏng
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Báo lần đầu ngay, rồi thưa dần: sau 5 phút, 30 phút, 1 tiếng, 6 tiếng,
+              rồi mỗi ngày một lần. Nhắn «tôi biết rồi» là thôi nhắc lỗi đó — nhưng
+              sửa xong mà hỏng lại thì vẫn báo.
+            </p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Gửi qua kênh</p>
+                <select
+                  className="h-9 w-full rounded-md border border-border bg-transparent px-2 text-sm"
+                  value={cb.kenh || ""}
+                  onChange={(e) => setCb({ ...cb, kenh: e.target.value })}
+                >
+                  <option value="">Kênh đang dùng</option>
+                  <option value="telegram">Telegram</option>
+                  <option value="zalo">Zalo</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Gửi cho ai (id, cách nhau dấu phẩy)</p>
+                <Input
+                  placeholder="bỏ trống = admin của bot"
+                  value={cb.nguoi_nhan || ""}
+                  onChange={(e) => setCb({ ...cb, nguoi_nhan: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Giờ báo hằng ngày</p>
+                <Input
+                  type="number"
+                  min={0}
+                  max={23}
+                  value={cb.gio_hang_ngay ?? 8}
+                  onChange={(e) => setCb({ ...cb, gio_hang_ngay: Number(e.target.value) })}
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => void luuCb()}>
+                {saved ? "Đã lưu!" : "Lưu cài đặt thông báo"}
+              </Button>
+              {ttCb ? (
+                <span className="text-xs text-muted-foreground">
+                  {ttCb.dang_hong ?? 0} lỗi đang theo dõi
+                  {ttCb.dang_im ? ` · ${ttCb.dang_im} cái đã tắt nhắc` : ""}
+                  {!ttCb.nguoi_nhan ? " · ⚠️ chưa có người nhận" : ""}
+                </span>
+              ) : null}
+            </div>
+          </div>
 
           {hong && hong.length ? (
             <div className="space-y-1 pt-1">

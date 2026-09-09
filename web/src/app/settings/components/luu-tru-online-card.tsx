@@ -28,6 +28,7 @@ type CaiDat = {
   kho?: string;
   thu_muc?: string;
   hoi_truoc?: boolean;
+  dong_bo_nhat_ky?: boolean;
   giu_ngay?: Record<string, number>;
   gio_dong_bo?: string;
   /** Thread admin nhận câu hỏi xác nhận. Nhiều admin thì phải chỉ rõ ai. */
@@ -333,8 +334,25 @@ export function LuuTruOnlineCard() {
                 <label className="text-xs font-medium">Giờ đồng bộ nhật ký</label>
                 <Input value={cd.gio_dong_bo || "03:00"} placeholder="03:00"
                   onChange={(e) => setEntry(key, { gio_dong_bo: e.target.value })}
+                  disabled={cd.dong_bo_nhat_ky === false}
                   className="h-10 rounded-xl" />
-                <p className="text-xs text-[var(--muted-foreground)]">Chỉ áp cho nhật ký — tệp thì hỏi ngay lúc nhận.</p>
+                <label className="flex items-start gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={cd.dong_bo_nhat_ky !== false}
+                    onChange={(e) => setEntry(key, { dong_bo_nhat_ky: e.target.checked })}
+                  />
+                  <span>
+                    Đẩy nhật ký lên kho
+                    <span className="block text-[var(--muted-foreground)]">
+                      Bỏ tích thì thôi gửi nhật ký lên mây, <b>tệp vẫn gửi bình thường</b>.
+                      Nhật ký nằm sẵn trong máy chủ (giữ 30 ngày) nên không mất gì,
+                      chỉ mất bản sao dự phòng.
+                    </span>
+                  </span>
+                </label>
+                <p className="text-xs text-[var(--muted-foreground)]">Giờ này chỉ áp cho nhật ký — tệp thì hỏi ngay lúc nhận.</p>
               </div>
             </div>
 

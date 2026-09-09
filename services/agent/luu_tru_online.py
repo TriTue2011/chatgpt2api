@@ -131,7 +131,7 @@ def cai_dat(kenh: str, chat: str = "", topic: str = "", user: str = "") -> dict:
     """
     mac_dinh = {"enabled": False, "kho": "", "thu_muc": "",
                 "hoi_truoc": True, "giu_ngay": _giu_ngay(None),
-                "gio_dong_bo": MAC_DINH_GIO_DONG_BO}
+                "gio_dong_bo": MAC_DINH_GIO_DONG_BO, "dong_bo_nhat_ky": True}
     try:
         cfg = config.get().get("luu_tru_online")
     except Exception:
@@ -151,6 +151,11 @@ def cai_dat(kenh: str, chat: str = "", topic: str = "", user: str = "") -> dict:
             "hoi_truoc": bool(v.get("hoi_truoc", True)),
             "giu_ngay": _giu_ngay(v.get("giu_ngay")),
             "gio_dong_bo": _gio(v.get("gio_dong_bo")),
+            # Công tắc RIÊNG cho nhật ký. Trước đây nhật ký và tệp dùng chung
+            # `enabled`, nên muốn thôi đẩy nhật ký là mất luôn đường gửi tệp
+            # lên kho — chủ máy hỏi đúng chỗ này 09/09/2026. Mặc định BẬT để
+            # không đổi hành vi của cấu hình đang chạy.
+            "dong_bo_nhat_ky": bool(v.get("dong_bo_nhat_ky", True)),
         }
     return mac_dinh
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import unittest
 from unittest import mock
 
@@ -297,6 +298,89 @@ class CauHinhTests(unittest.TestCase):
             self.assertNotIn("SieuBiMat", chuoi)
             mq._reset_for_tests()
 
+
+
+class KhopTenCamera(unittest.TestCase):
+    """Camera Frigate phải khớp được tên như thiết bị thường.
+
+    Lỗi thật đã gặp (09/09/2026): hỏi "camera phòng khách" trả rỗng, bot không
+    trả lời được, dù danh sách thiết bị CÓ 'Camera phong-khach'. Vì _khop_ten
+    chỉ tra `_so_thiet_bi` (chuẩn tự khai báo) mà Frigate không đi đường đó.
+    """
+
+    def setUp(self) -> None:
+        mq._reset_for_tests()
+        mq._so_thiet_bi.update({t: {} for t in
+                                ("Cảm biến phòng khách", "Quạt phòng khách",
+                                 "Hiện diện bếp", "Phòng khách")})
+        mq._gia_tri.update({f"frigate/{c}/person": ("1", 0.0)
+                            for c in ("phong-khach", "bep", "cua")})
+
+    def tearDown(self) -> None:
+        mq._reset_for_tests()
+
+    def test_khop_duoc_camera_frigate(self) -> None:
+        self.assertEqual(mq._khop_ten("camera phòng khách"), "Camera phong-khach")
+
+    def test_khop_ten_camera_viet_khong_dau(self) -> None:
+        self.assertEqual(mq._khop_ten("Camera phong-khach"), "Camera phong-khach")
+
+    def test_van_khop_dung_thiet_bi_thuong(self) -> None:
+        """Sửa cho camera KHÔNG được làm hỏng khớp thiết bị Zigbee."""
+        self.assertEqual(mq._khop_ten("quạt phòng khách"), "Quạt phòng khách")
+        self.assertEqual(mq._khop_ten("hiện diện bếp"), "Hiện diện bếp")
+
+    def test_map_mo_van_tra_rong(self) -> None:
+        """Nguyên tắc cũ giữ nguyên: không chắc thì KHÔNG đoán."""
+        self.assertEqual(mq._khop_ten("cái gì đó"), "")
+
+
+class DemNguoiTuFrigate(unittest.TestCase):
+    """Đọc số Frigate ĐÃ đếm thay vì chụp lại ảnh — và không được tin số CŨ.
+
+    Lỗi thật 09/09/2026: gương MQTT rớt 150 phút, `person` đóng băng ở 1 trong
+    khi Frigate thật đang là 0. Bot vẫn khẳng định "có 1 người". Số đã chết mà
+    nói chắc chắn thì tệ hơn im lặng.
+    """
+
+    def setUp(self) -> None:
+        mq._reset_for_tests()
+        mq._gia_tri.update({
+            "frigate/phong-khach/person": ("2", 1.0),
+            "frigate/phong-khach/person/active": ("1", 1.0),
+            "frigate/bep/person": ("0", 1.0),
+        })
+
+    def tearDown(self) -> None:
+        mq._reset_for_tests()
+
+    def test_doc_duoc_so_nguoi(self) -> None:
+        mq._stats["last_tin_ts"] = time.time()
+        d = mq.dem_nguoi()
+        self.assertEqual(d["phong-khach"]["nguoi"], 2)
+        self.assertEqual(d["phong-khach"]["dang_hoat_dong"], 1)
+        self.assertEqual(d["bep"]["nguoi"], 0)
+
+    def test_loc_theo_ten_camera(self) -> None:
+        mq._stats["last_tin_ts"] = time.time()
+        self.assertEqual(list(mq.dem_nguoi("bep")), ["bep"])
+
+    def test_DU_LIEU_CU_KHONG_DUOC_TRA_SO(self) -> None:
+        """Mấu chốt: rớt mạng thì thà báo không chắc còn hơn báo số đã chết."""
+        mq._stats["last_tin_ts"] = time.time() - 9000      # 150 phút trước
+        d = mq.dem_nguoi()
+        self.assertTrue(d.get("_cu"), "dữ liệu cũ PHẢI bị đánh dấu")
+        self.assertNotIn("phong-khach", d, "không được trả số khi đã cũ")
+
+    def test_chua_nhan_tin_nao_cung_la_cu(self) -> None:
+        mq._stats["last_tin_ts"] = 0
+        self.assertTrue(mq.dem_nguoi().get("_cu"))
+
+    def test_bo_qua_anh_snapshot(self) -> None:
+        """person/snapshot là ảnh JPEG thô, không phải số đếm."""
+        mq._stats["last_tin_ts"] = time.time()
+        mq._gia_tri["frigate/cua/person/snapshot"] = ("\xff\xd8\xff", 1.0)
+        self.assertNotIn("cua", mq.dem_nguoi())
 
 if __name__ == "__main__":
     unittest.main()

@@ -48,6 +48,10 @@ _TEN_BI_MAT: frozenset[str] = frozenset({
     # Thêm "token_long" để bắt cả tên đúng lẫn mọi "*_token_long" sau này.
     "token_long", "user_token_long",
     "cookie", "cookies",
+    # Tuya: access_id là NỬA CÒN LẠI của cặp khoá — lộ cả hai là điều khiển
+    # được thiết bị từ xa (nhà chủ máy có khoá cửa chạy Tuya). local_key là
+    # khoá điều khiển thẳng trong LAN, cũng không được lộ.
+    "access_id", "access_secret", "local_key", "device_id",
     "credential", "credentials",
     "private_key", "totp_secret", "totp_seed", "seed",
 })

@@ -4644,6 +4644,33 @@ def _h_mqtt_thiet_bi(args: dict, ctx: dict) -> dict:
 
     ten = str(args.get("ten") or "").strip()
     try:
+        # Hỏi "có người không" → đọc số Frigate ĐÃ đếm sẵn, không chụp lại ảnh.
+        # Frigate chạy YOLO 24/7 trên GPU; chụp RTSP rồi gọi model thị giác là
+        # làm lại việc đã xong, chậm hơn và tốn tiền model.
+        if str(args.get("dem_nguoi") or "").strip().lower() in ("1", "true", "co", "có"):
+            dem = mqtt_nha.dem_nguoi(ten)
+            if dem.get("_cu"):
+                # Dữ liệu đóng băng → NÓI THẬT là không chắc, rồi mới chụp ảnh.
+                # Khẳng định một con số đã chết 2 tiếng là tệ hơn im lặng.
+                giay = dem.get("_giay")
+                lau = f"{giay / 60:.0f} phút" if giay else "khá lâu"
+                return {"text": f"⚠️ Em MẤT kết nối MQTT ({lau} rồi chưa nhận tin "
+                                "mới), nên số người camera đếm được đang là số cũ, "
+                                "không đáng tin. Muốn biết chắc thì để em chụp ảnh "
+                                "xem trực tiếp bằng xem_camera nhé."}
+            if not dem:
+                return {"text": "Em chưa thấy camera nào trên MQTT ạ."
+                                if not ten else
+                                f"Em không thấy camera nào tên '{ten}'."}
+            dong = []
+            for m in dem.values():
+                n = m["nguoi"]
+                dong.append(f"{m['camera']}: "
+                            + (f"{n} người" if n else "không có ai")
+                            + (f" ({m['dang_hoat_dong']} đang cử động)"
+                               if m.get("dang_hoat_dong") else ""))
+            return {"text": "👤 Camera đang thấy — " + "; ".join(dong)}
+
         if ten:
             tt = mqtt_nha.trang_thai(ten)
             if not tt:
@@ -4731,12 +4758,234 @@ def _thu_mqtt_truoc(command: str) -> dict | None:
                     f"{'bật' if bat else 'tắt'} xong"}
 
 
+# Cùng một câu "bật điều hoà" có thể trỏ vào HAI thiết bị khác hẳn nhau:
+# cái aptomat CẤP ĐIỆN cho nó, và chính cái máy lạnh. Đo trên nhà chủ máy
+# 09/09/2026: có `switch.aptomat_dieu_hoa_phong_ngu` (đang on) VÀ
+# `climate.dieu_hoa_panasonic` (đang cool). Đoán bừa là hỏng việc theo cả hai
+# chiều — tắt nhầm aptomat thì cắt điện cả máy, còn aptomat đang tắt mà bật
+# máy lạnh thì bấm mãi không lên.
+_TU_DIEU_HOA = ("dieu hoa", "điều hòa", "điều hoà", "dieu hoa", "may lanh", "máy lạnh")
+# KHÔNG để "at" hay "cb" ở đây: "bật" chứa "at" nên mọi câu "bật …" đều bị
+# tưởng là đã nói rõ công tắc, và nhánh hỏi lại không bao giờ chạy.
+_TU_CONG_TAC = ("aptomat", "cong tac", "công tắc", "nguồn điện", "nguon dien")
+
+
+def _lan_lon_dieu_hoa(command: str) -> dict | None:
+    """Câu nhắc điều hoà mà nhà có CẢ máy lạnh lẫn aptomat riêng → HỎI LẠI.
+
+    Trả ``None`` khi không mập mờ (câu đã nói rõ, hoặc nhà chỉ có một thứ).
+    """
+    from services.agent.vi_text import fold
+
+    low = fold(command.lower())
+    if not any(fold(t) in low for t in _TU_DIEU_HOA):
+        return None
+    # Người dùng đã nói rõ là aptomat/công tắc → không mập mờ nữa.
+    if any(fold(t) in low for t in _TU_CONG_TAC):
+        return None
+    # Nói rõ nhiệt độ / chế độ thì chắc chắn là máy lạnh, không phải aptomat.
+    if any(k in low for k in ("do c", "đo c", "che do", "chế độ", "lanh", "nong",
+                              "gio", "quat", "16", "18", "20", "22", "24", "25",
+                              "26", "27", "28", "30")):
+        return None
+
+    try:
+        from services import ha_client
+        st = ha_client.get_states()
+    except Exception:
+        return None
+
+    may = [s for s in st if str(s.get("entity_id", "")).startswith("climate.")]
+    # entity_id dùng GẠCH DƯỚI ("switch.aptomat_dieu_hoa_phong_ngu") còn từ
+    # khoá viết bằng dấu cách → phải thay _ thành cách trước khi so, nếu không
+    # không bao giờ khớp.
+    def _phang(x: str) -> str:
+        return fold(str(x or "").lower()).replace("_", " ").replace(".", " ")
+
+    apt = [s for s in st if str(s.get("entity_id", "")).startswith("switch.")
+           and any(_phang(t) in _phang(s.get("entity_id"))
+                   or _phang(t) in _phang((s.get("attributes") or {}).get("friendly_name"))
+                   for t in _TU_DIEU_HOA)]
+    if not may or not apt:
+        return None       # chỉ có một loại → không có gì để nhầm
+
+    ten_may = (may[0].get("attributes") or {}).get("friendly_name") or may[0]["entity_id"]
+    ten_apt = (apt[0].get("attributes") or {}).get("friendly_name") or apt[0]["entity_id"]
+    tt_apt = str(apt[0].get("state") or "")
+    them = ("" if tt_apt != "off" else
+            f"\n(Lưu ý: {ten_apt} đang TẮT, nên bật máy lạnh lúc này sẽ không lên.)")
+    return {"text": f"Anh/chị muốn em bật cái nào ạ — **{ten_may}** (máy lạnh, "
+                    f"đặt nhiệt độ được) hay **{ten_apt}** (aptomat cấp điện cho "
+                    f"nó)?{them}"}
+
+
+def _h_tuya(args: dict, ctx: dict) -> dict:
+    """Xem / điều khiển thiết bị Tuya (khoá cửa, ổ cắm, đèn… qua mây Tuya).
+
+    ĐƯỜNG THỨ BA, sau Home Assistant và MQTT. Dùng khi thiết bị chỉ nói chuyện
+    với mây Tuya — như khoá cửa: nó KHÔNG phát gì ra LAN (đã đo: nghe quảng bá
+    UDP 6666/6667 trên đúng mạng nhà 30 giây, không thiết bị nào).
+    """
+    from services import tuya_nha
+
+    viec = str(args.get("viec") or "xem").strip().lower()
+    ten = str(args.get("thiet_bi") or "").strip()
+
+    try:
+        ds = tuya_nha.danh_sach_thiet_bi()
+        if not ds:
+            return {"text": "Em chưa thấy thiết bị Tuya nào. Vào Cài đặt → "
+                            "Home Assistant → thẻ Tuya để khai Access ID/Secret."}
+
+        if viec in ("liet_ke", "xem") and not ten:
+            dong = [f"- {d['ten']} ({d['loai']})" for d in ds[:20]]
+            return {"text": "🔗 Thiết bị Tuya:\n" + "\n".join(dong)}
+
+        did = tuya_nha._khop_ten(ten, ds)
+        if not did:
+            co = ", ".join(d["ten"] for d in ds[:10])
+            return {"text": f"Em không rõ '{ten}' là thiết bị nào. Đang có: {co}."}
+        ho_so = next((d for d in ds if str(d["id"]) == did), {})
+
+        if viec in ("dieu_khien", "bat", "tat", "mo", "khoa"):
+            ma = str(args.get("ma") or "").strip()
+            if not ma:
+                tt = tuya_nha.thuoc_tinh(did)
+                return {"text": f"Em cần biết điều khiển cái gì trên "
+                                f"{ho_so.get('ten')}. Nó có: {', '.join(list(tt)[:15])}."}
+            tuya_nha.dieu_khien(did, ma, args.get("gia_tri"))
+            return {"text": f"✅ Em đã gửi lệnh tới {ho_so.get('ten')} rồi ạ."}
+
+        tt = tuya_nha.thuoc_tinh(did)
+        # Nêu mấy thứ người dùng quan tâm trước, rồi mới tới phần còn lại.
+        uu_tien = ("battery_percentage", "lock_motor_state", "closed_opened",
+                   "doorbell", "switch", "switch_1", "temp_current", "humidity_value")
+        dong = [f"{k}: {tt[k]}" for k in uu_tien if k in tt]
+        con = [f"{k}: {v}" for k, v in tt.items()
+               if k not in uu_tien and v not in (None, "", [])][:10]
+        return {"text": f"🔗 {ho_so.get('ten')} ({ho_so.get('loai')}) — "
+                        + "; ".join(dong + con)}
+    except tuya_nha.LoiTuya as exc:
+        return {"text": f"{exc}"}
+    except Exception as exc:
+        logger.warning("tuya lỗi: %s", exc)
+        return {"text": f"Em hỏi Tuya chưa được ạ: {str(exc)[:160]}"}
+
+
+def _h_tinh_huong_nha(args: dict, ctx: dict) -> dict:
+    """Xem / duyệt / đổi tên các TÌNH HUỐNG bot học được trong nhà.
+
+    Tình huống = nếp sinh hoạt lặp lại (giờ ăn, buổi sáng…), nhận ra bằng cảm
+    biến hiện diện chứ không phải bằng đèn nào bật — nên đổi phòng vẫn nhận ra.
+    """
+    from services import tinh_huong_nha as th
+
+    viec = str(args.get("viec") or "xem").strip().lower()
+    ten = str(args.get("ten") or "").strip()
+
+    try:
+        if viec in ("duyet", "dong_y", "dung"):
+            ds = [d for d in th.danh_sach("cho_duyet")
+                  if not ten or ten.lower() in str(d["ten"]).lower()]
+            if not ds:
+                return {"text": "Em không thấy tình huống nào đang chờ duyệt ạ."}
+            ten_moi = str(args.get("ten_moi") or "").strip()
+            th.duyet(int(ds[0]["id"]), ten_moi)
+            goi = ten_moi or ds[0]["ten"]
+            return {"text": f"✅ Em ghi nhớ tình huống «{goi}» rồi ạ. "
+                            "Từ giờ em nhận ra được lúc nó đang diễn ra."}
+
+        if viec in ("bo", "khong", "xoa"):
+            ds = [d for d in th.danh_sach("cho_duyet")
+                  if not ten or ten.lower() in str(d["ten"]).lower()]
+            if not ds:
+                return {"text": "Không có tình huống nào chờ duyệt ạ."}
+            th.bo(int(ds[0]["id"]))
+            return {"text": f"Dạ, em bỏ «{ds[0]['ten']}» ạ."}
+
+        ds = th.danh_sach()
+        if not ds:
+            return {"text": "Em chưa học được tình huống nào. Cần vài ngày "
+                            "ghi lịch sử nhà trước đã ạ."}
+        cho = [d for d in ds if d["trang_thai"] == "cho_duyet"]
+        xong = [d for d in ds if d["trang_thai"] == "da_duyet"]
+        dong = []
+        if xong:
+            dong.append("Đã ghi nhớ:")
+            dong += [f"  - {d['ten']} — khoảng {d['gio']}, thấy {d['so_lan']} lần"
+                     for d in xong[:10]]
+        if cho:
+            dong.append("Đang chờ anh/chị duyệt:")
+            dong += [f"  - {d['ten']} — khoảng {d['gio']}, thấy {d['so_lan']} lần"
+                     for d in cho[:10]]
+        return {"text": "\n".join(dong)}
+    except Exception as exc:
+        logger.warning("tinh_huong_nha lỗi: %s", exc)
+        return {"text": f"Em xem tình huống chưa được ạ: {str(exc)[:160]}"}
+
+
+def _h_canh_bao_nha(args: dict, ctx: dict) -> dict:
+    """Xem hoặc TẮT cảnh báo thiết bị hỏng.
+
+    «Tôi biết rồi» tắt đúng LƯỢT HỎNG đang diễn ra, không tắt vĩnh viễn theo
+    tên: sửa xong mà hỏng lại thì vẫn báo — đó mới là lúc cần biết nhất.
+    """
+    from services import canh_bao_nha
+
+    viec = str(args.get("viec") or "xem").strip().lower()
+    ten = str(args.get("thiet_bi") or "").strip()
+
+    try:
+        if viec in ("im", "tat", "biet_roi", "da_biet"):
+            if ten:
+                kq = canh_bao_nha.im_di(ten)
+                if not kq.get("da_im"):
+                    return {"text": f"Em không thấy cảnh báo nào đang bật cho '{ten}' ạ."}
+                return {"text": f"Dạ, em thôi nhắc {kq['da_im']} lỗi của {ten}. "
+                                "Sửa xong mà hỏng lại thì em vẫn báo anh/chị nhé."}
+            # Không nêu tên → im TẤT CẢ lỗi đang báo.
+            n = 0
+            for d in canh_bao_nha.danh_sach():
+                if d.get("dang_hong") and not d.get("im"):
+                    n += canh_bao_nha.im_di(d["thiet_bi"]).get("da_im", 0)
+            return {"text": f"Dạ, em thôi nhắc {n} lỗi đang báo. "
+                            "Cái nào sửa xong hỏng lại thì em báo tiếp ạ."}
+
+        if viec in ("bat_lai", "bo_im", "nhan_lai"):
+            kq = canh_bao_nha.bo_im(ten)
+            return {"text": f"Em bật lại {kq['da_bo_im']} cảnh báo rồi ạ."}
+
+        ds = [d for d in canh_bao_nha.danh_sach() if d.get("dang_hong")]
+        if not ds:
+            return {"text": "Hiện không có thiết bị nào lỗi ạ 👍"}
+        im = sum(1 for d in ds if d.get("im"))
+        dong = [f"- {d['thiet_bi']}"
+                + (f" · {d['truong']}" if d.get("truong") not in ("", "state") else "")
+                + f" — {d['loai']}" + (" (đã tắt nhắc)" if d.get("im") else "")
+                for d in ds[:12]]
+        them = f"\n…và {len(ds) - 12} cái nữa." if len(ds) > 12 else ""
+        return {"text": f"[{len(ds)} thiết bị đang lỗi, {im} cái đã tắt nhắc]\n"
+                        + "\n".join(dong) + them}
+    except Exception as exc:
+        logger.warning("canh_bao_nha lỗi: %s", exc)
+        return {"text": f"Em xem cảnh báo chưa được ạ: {str(exc)[:160]}"}
+
+
 def _h_control_home(args: dict, ctx: dict) -> dict:
     """Control a smart-home device by forwarding the natural-language command
     to the existing Home-Assistant pipeline (intent parsing + confirmation)."""
     command = str(args.get("command") or "").strip()
     if not command:
         return {"text": "Anh/chị muốn em điều khiển thiết bị gì ạ?"}
+
+    # "Bật điều hoà" có thể là máy lạnh HOẶC aptomat cấp điện — hỏi lại chứ
+    # không đoán, vì đoán sai theo chiều nào cũng hỏng việc.
+    try:
+        hoi = _lan_lon_dieu_hoa(command)
+        if hoi is not None:
+            return hoi
+    except Exception as exc:
+        logger.debug("kiểm điều hoà bỏ qua: %s", exc)
 
     # Ô tích "ưu tiên MQTT": đi thẳng MQTT khi tên khớp CHÍNH XÁC một thiết bị,
     # còn lại rơi về Home Assistant y như cũ. Khớp mập mờ thì _khop_ten trả ""
@@ -6190,7 +6439,11 @@ CAPABILITIES: dict[str, Capability] = {
                      "home_status vì nó biết cả phòng và khu vực."),
         parameters={"type": "object", "properties": {
             "ten": {"type": "string",
-                    "description": "Tên thiết bị muốn xem. Bỏ trống = liệt kê tất cả."}}},
+                    "description": "Tên thiết bị muốn xem. Bỏ trống = liệt kê tất cả."},
+            "dem_nguoi": {"type": "string",
+                          "description": "Đặt '1' khi người dùng hỏi CÓ NGƯỜI KHÔNG / "
+                                         "mấy người — đọc số Frigate đã đếm sẵn, "
+                                         "nhanh và không tốn gì. Bỏ trống nếu hỏi việc khác."}}},
         workflow=("Kết quả là danh sách hoặc số liệu — thuật lại ngắn gọn. Chưa thấy "
                   "thiết bị nào thì bảo người dùng khai máy chủ MQTT trong Cài đặt → "
                   "Home Assistant, ĐỪNG đoán tên thiết bị.")),
@@ -6209,6 +6462,57 @@ CAPABILITIES: dict[str, Capability] = {
                   "thì tool trả lời kèm danh sách gợi ý — hỏi lại người dùng chọn cái "
                   "nào, TUYỆT ĐỐI không tự đoán rồi gửi lệnh, vì bật nhầm thiết bị là "
                   "chuyện không sửa lại được.")),
+    "tuya_thiet_bi": Capability(
+        name="tuya_thiet_bi", risk=CHANGE, handler=_h_tuya,
+        emoji="🔗", label="Thiết bị Tuya (khoá cửa, ổ cắm…)",
+        description=("Xem trạng thái hoặc điều khiển thiết bị Tuya/Smart Life. "
+                     "Dùng cho thiết bị chỉ nói chuyện với mây Tuya — vd khoá "
+                     "cửa thông minh (pin, đã khoá chưa, mở bằng gì)."),
+        parameters={"type": "object", "properties": {
+            "viec": {"type": "string",
+                     "description": "'xem' (mặc định) | 'liet_ke' | 'dieu_khien'"},
+            "thiet_bi": {"type": "string",
+                         "description": "Tên thiết bị. Bỏ trống khi chỉ muốn liệt kê."},
+            "ma": {"type": "string",
+                   "description": "Mã lệnh khi điều khiển, vd 'switch_1'. "
+                                  "Chưa biết thì gọi viec='xem' trước để thấy danh sách."},
+            "gia_tri": {"description": "Giá trị gửi kèm mã lệnh."}}},
+        workflow=("Tên mập mờ thì tool trả kèm danh sách — HỎI LẠI người dùng, "
+                  "TUYỆT ĐỐI không tự đoán rồi gửi lệnh: nhà này có KHOÁ CỬA "
+                  "chạy Tuya, mở nhầm là chuyện không sửa lại được.")),
+    "tinh_huong_nha": Capability(
+        name="tinh_huong_nha", risk=READ, handler=_h_tinh_huong_nha,
+        emoji="🕰️", label="Tình huống trong nhà (giờ ăn, buổi sáng…)",
+        description=("Xem nếp sinh hoạt bot học được, hoặc duyệt/bỏ tên bot đề "
+                     "xuất. Dùng khi người dùng hỏi «bot học được gì», «nhà "
+                     "mình có nếp gì», hoặc trả lời tin xin duyệt tên."),
+        parameters={"type": "object", "properties": {
+            "viec": {"type": "string",
+                     "description": "'xem' (mặc định) | 'duyet' khi người dùng đồng ý "
+                                    "| 'bo' khi người dùng không muốn"},
+            "ten": {"type": "string",
+                    "description": "Tên tình huống. Bỏ trống = cái đang chờ duyệt."},
+            "ten_moi": {"type": "string",
+                        "description": "Tên người dùng muốn đổi thành, nếu họ sửa lại."}}},
+        workflow=("Bot ĐỀ XUẤT tên, người dùng quyết. Họ nói «đúng rồi»/«ừ» sau tin "
+                  "xin duyệt thì gọi viec='duyet'; nói tên khác thì truyền thêm "
+                  "ten_moi. Người bỏ qua KHÔNG phải là bot sai — đừng nài.")),
+    "canh_bao_nha": Capability(
+        name="canh_bao_nha", risk=READ, handler=_h_canh_bao_nha,
+        emoji="⚠️", label="Cảnh báo thiết bị nhà hỏng",
+        description=("Xem thiết bị nhà đang hỏng/đơ, hoặc TẮT nhắc khi người dùng "
+                     "nói «tôi biết rồi», «biết rồi», «thôi đừng nhắc nữa»."),
+        parameters={"type": "object", "properties": {
+            "viec": {"type": "string",
+                     "description": "'xem' (mặc định) | 'im' khi người dùng bảo đã biết "
+                                    "| 'bat_lai' để nhận cảnh báo trở lại"},
+            "thiet_bi": {"type": "string",
+                         "description": "Tên thiết bị. Bỏ trống khi người dùng nói "
+                                        "chung chung ('biết rồi') — sẽ áp cho tất cả."}}},
+        workflow=("Người dùng nói «tôi biết rồi» ngay sau tin cảnh báo thì gọi với "
+                  "viec='im'. Nói rõ tên thiết bị thì truyền thiet_bi, nói chung "
+                  "chung thì bỏ trống. Nhớ nói lại cho họ yên tâm: sửa xong mà hỏng "
+                  "lại thì bot VẪN báo.")),
     "create_automation": Capability(
         name="create_automation", risk=CHANGE, handler=_h_create_automation,
         emoji="⚙️", label="Tạo automation Home Assistant (tự viết + nạp + sửa lỗi)",
@@ -7202,6 +7506,9 @@ _CAP_GROUP: dict[str, str] = {
     # MQTT cùng nhóm quyền với Home Assistant: ai được điều khiển nhà thì được
     # điều khiển qua cả hai đường, không phải tích thêm ô riêng.
     "mqtt_thiet_bi": "homeassistant", "mqtt_dieu_khien": "homeassistant",
+    "canh_bao_nha": "homeassistant",
+    "tinh_huong_nha": "homeassistant",
+    "tuya_thiet_bi": "homeassistant",
     "speak_to_speaker": "tts_speaker",
     "play_music_on_speaker": "tts_speaker",
     "announce_on_speaker": "tts_speaker",

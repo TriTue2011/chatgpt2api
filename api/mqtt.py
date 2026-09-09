@@ -154,4 +154,119 @@ def create_router() -> APIRouter:
             logger.warning("mqtt soi hỏng lỗi: %s", exc)
             return {"ok": False, "error": str(exc)[:200]}
 
+    @router.get("/api/mqtt/canh-bao")
+    async def canh_bao(authorization: str | None = Header(default=None)):
+        """Trạng thái cảnh báo + danh sách lỗi đang theo dõi."""
+        require_admin(authorization)
+
+        from services import canh_bao_nha
+
+        try:
+            return {"ok": True, "trang_thai": canh_bao_nha.trang_thai(),
+                    "danh_sach": canh_bao_nha.danh_sach()}
+        except Exception as exc:
+            logger.warning("mqtt cảnh báo lỗi: %s", exc)
+            return {"ok": False, "error": str(exc)[:200]}
+
+    @router.post("/api/mqtt/canh-bao/im")
+    async def canh_bao_im(body: dict, authorization: str | None = Header(default=None)):
+        """Tắt / bật lại nhắc cho một thiết bị (hoặc tất cả nếu bỏ trống tên)."""
+        require_admin(authorization)
+
+        from services import canh_bao_nha
+
+        ten = str(body.get("thiet_bi") or "").strip()
+        try:
+            if body.get("bat_lai"):
+                return {"ok": True, **canh_bao_nha.bo_im(ten)}
+            if not ten:
+                return {"ok": False, "error": "Chưa chọn thiết bị nào."}
+            return {"ok": True, **canh_bao_nha.im_di(
+                ten, str(body.get("truong") or ""), str(body.get("loai") or ""))}
+        except Exception as exc:
+            logger.warning("mqtt im cảnh báo lỗi: %s", exc)
+            return {"ok": False, "error": str(exc)[:200]}
+
+    @router.post("/api/tuya/test")
+    async def tuya_test(body: dict, authorization: str | None = Header(default=None)):
+        """Thử Access ID/Secret. KHÔNG ghi bí mật ra log."""
+        require_admin(authorization)
+
+        from services import tuya_nha
+        from services.config import config
+
+        cu = config.data.get("tuya")
+        try:
+            # Thử với thông tin người dùng vừa nhập mà CHƯA lưu — nhập sai thì
+            # không làm hỏng cấu hình đang chạy.
+            tam = dict(cu or {})
+            for k in ("access_id", "access_secret", "endpoint"):
+                v = str(body.get(k) or "").strip()
+                if v and v != "***":
+                    tam[k] = v
+            config.data["tuya"] = tam
+            tuya_nha._reset_for_tests()
+            return await asyncio.to_thread(tuya_nha.thu_ket_noi)
+        except Exception as exc:
+            logger.warning("tuya test lỗi: %s", str(exc)[:120])
+            return {"ok": False, "error": str(exc)[:200]}
+        finally:
+            if cu is None:
+                config.data.pop("tuya", None)
+            else:
+                config.data["tuya"] = cu
+            tuya_nha._reset_for_tests()
+
+    @router.get("/api/tuya/thiet-bi")
+    async def tuya_thiet_bi(authorization: str | None = Header(default=None)):
+        """Thiết bị Tuya kèm trạng thái."""
+        require_admin(authorization)
+
+        from services import tuya_nha
+
+        try:
+            ds = await asyncio.to_thread(tuya_nha.danh_sach_thiet_bi)
+            return {"ok": True, "thiet_bi": ds, "trang_thai": tuya_nha.stats()}
+        except tuya_nha.LoiTuya as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            logger.warning("tuya danh sách lỗi: %s", str(exc)[:120])
+            return {"ok": False, "error": str(exc)[:200]}
+
+    @router.get("/api/mqtt/tinh-huong")
+    async def tinh_huong(authorization: str | None = Header(default=None)):
+        """Tình huống bot học được, kèm trạng thái duyệt."""
+        require_admin(authorization)
+
+        from services import tinh_huong_nha as th
+
+        try:
+            return {"ok": True, "danh_sach": th.danh_sach(),
+                    "thong_ke": th.thong_ke()}
+        except Exception as exc:
+            logger.warning("mqtt tình huống lỗi: %s", exc)
+            return {"ok": False, "error": str(exc)[:200]}
+
+    @router.post("/api/mqtt/tinh-huong/duyet")
+    async def tinh_huong_duyet(body: dict,
+                               authorization: str | None = Header(default=None)):
+        """Duyệt / đổi tên / bỏ một tình huống."""
+        require_admin(authorization)
+
+        from services import tinh_huong_nha as th
+
+        try:
+            i = int(body.get("id") or 0)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "Thiếu id."}
+        if not i:
+            return {"ok": False, "error": "Thiếu id."}
+        try:
+            if body.get("bo"):
+                return {"ok": th.bo(i)}
+            return {"ok": th.duyet(i, str(body.get("ten") or ""))}
+        except Exception as exc:
+            logger.warning("mqtt duyệt tình huống lỗi: %s", exc)
+            return {"ok": False, "error": str(exc)[:200]}
+
     return router

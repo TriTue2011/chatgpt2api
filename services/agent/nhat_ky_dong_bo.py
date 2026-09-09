@@ -248,6 +248,11 @@ def dong_bo(*, now: float | None = None) -> dict:
         cd = lt.cai_dat(kenh, chat, topic)
         if not cd.get("enabled"):
             continue
+        # Tắt riêng nhật ký mà VẪN gửi tệp lên kho được. Nhật ký đã nằm trong
+        # SQLite cục bộ (chatlog.sqlite) nên tắt cái này không mất dữ liệu,
+        # chỉ mất bản sao dự phòng trên mây.
+        if not cd.get("dong_bo_nhat_ky", True):
+            continue
         if not can_chay(cd.get("gio_dong_bo") or "", now=now,
                         lan_cuoi=str(lan_cuoi.get(scope) or "")):
             continue
