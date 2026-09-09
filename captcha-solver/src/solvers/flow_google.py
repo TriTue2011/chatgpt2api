@@ -1225,15 +1225,40 @@ async def _prime_flow_session(page, profile: str = "") -> None:
         return
 
     async def _app_shell_visible() -> bool:
+        """Đã vào được giao diện làm việc chưa (khác trang marketing).
+
+        Bộ dò cũ chỉ tìm "dự án mới"/"new project"/"add_2". Đo 09/09: Google đã
+        đổi giao diện — trang thật giờ hiện "Tất cả nội dung nghe nhìn", "Hình
+        ảnh", "Nhân vật", "Cảnh", "Thùng rác" — nên bộ dò báo trượt dù phiên ĐÃ
+        vào được app, và luồng kết thúc bằng "priming ended without app shell".
+
+        Google cũng chuyển tên miền `labs.google/fx/...` → `flow.google.com`;
+        đứng trên tên miền đó mà không còn nút marketing thì coi như đã vào.
+        """
         try:
-            return await page.evaluate(
+            if await page.evaluate(
                 """() => Array.from(document.querySelectorAll('button,a')).some(e => {
                     const t = (e.innerText || e.getAttribute('aria-label') || '').trim();
                     return /^pro$|dự án mới|new project|add_2|chỉnh sửa dự án/i.test(t);
                 })"""
-            )
+            ):
+                return True
         except Exception:
             return False
+        # Giao diện mới: thanh bên trái của studio.
+        try:
+            if await page.evaluate(
+                """() => {
+                    const t = document.body ? (document.body.innerText || '') : '';
+                    const co = /tất cả nội dung nghe nhìn|all media|nhân vật|characters|thùng rác|trash/i.test(t);
+                    const marketing = /tạo bằng google flow|create with google flow/i.test(t);
+                    return co && !marketing;
+                }"""
+            ):
+                return True
+        except Exception:
+            pass
+        return False
 
     # Poll loop: the landing shows a transient "Đang tải" spinner, then either
     # the app shell, the marketing CTA, or a Google OAuth re-consent (when the
