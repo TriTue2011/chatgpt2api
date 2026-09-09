@@ -1334,6 +1334,21 @@ def _ha_local_intent(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | N
                     eids = [s.get("entity_id") for s in states if s.get("entity_id", "").startswith(dom+".")]
                     if eids:
                         out.append((service, {"domain": [dom], "_eids": eids}))
+                else:
+                    # Không nêu khu vực, không nói "hết" — nhưng cả nhà chỉ có
+                    # ĐÚNG MỘT thiết bị loại đó thì câu trống vẫn rõ nghĩa.
+                    #
+                    # Đo 09/09: nhà có duy nhất `fan.phong_khach` mà "tắt quạt"
+                    # KHÔNG được fast-path bắt (chỉ "tắt quạt phòng khách" hoặc
+                    # "tắt hết quạt" mới ăn), nên lệnh phải vòng qua model —
+                    # người dùng thấy chậm hẳn so với bật/tắt đèn.
+                    #
+                    # Từ HAI thiết bị trở lên thì GIỮ NGUYÊN hành vi cũ: thà để
+                    # model hỏi lại còn hơn đoán bừa rồi tắt nhầm đồ trong nhà.
+                    eids = [e for e in (s.get("entity_id") for s in states)
+                            if e and e.startswith(dom + ".") and (not exposed or e in exposed)]
+                    if len(eids) == 1:
+                        out.append((service, {"domain": [dom], "_eids": eids}))
                 break
         return out or _fuzzy_controls(service, seg)
 
@@ -1399,6 +1414,20 @@ def _ha_local_level(messages: list[dict[str, Any]]) -> str | None:
                     "nhanh nhat", "toi da", "het co", "turbo", "boost", "full"},
     }
     _concept_pct = {"lowest": 1, "low": 25, "medium": 50, "high": 75, "highest": 100}
+
+    # Nhiệt độ điều hoà: "xuống 28 độ", "để 26 độ C", "tăng lên 27 do".
+    #
+    # Trước đây fast-path KHÔNG có nhánh nào gọi `climate.set_temperature`
+    # (grep set_temperature = 0), nên câu "hạ nhiệt độ điều hoà xuống 28 độ C"
+    # rơi xuống `_ha_local_query` và bị trả lời như câu HỎI: "Nhiệt độ phòng ngủ
+    # 31,4 °C ạ." — lệnh không bao giờ chạy (đo 09/09).
+    #
+    # Chỉ nhận khi câu có ĐỘNG TỪ chỉnh mức đi kèm, để không cướp câu hỏi thật
+    # ("nhiệt độ phòng ngủ bao nhiêu" vẫn phải là câu hỏi).
+    _mtemp = _re.search(r"(\d{1,2})\s*(?:do\s*c?\b|°\s*c?)", fd)
+    _co_dong_tu_muc = bool(_re.search(
+        r"\b(ha|giam|tang|dat|chinh|de|set|len|xuong|hoi|van)\b", fd))
+    temp_c = int(_mtemp.group(1)) if (_mtemp and _co_dong_tu_muc) else None
     concept = None
     if _re.search(r"\b(?:thap nhat|yeu nhat|nho nhat|cham nhat|lowest|minimum|min)\b", fd):
         concept = "lowest"
@@ -1413,7 +1442,8 @@ def _ha_local_level(messages: list[dict[str, Any]]) -> str | None:
     osc_off = any(p in fd for p in ("dung quay", "ngung quay", "tat quay", "khong quay",
                                     "dung xoay", "ngung xoay", "tat xoay", "khong xoay"))
     osc_on = (not osc_off) and ("quay" in toks or "xoay" in toks or "dao chieu" in fd)
-    if pct is None and lvl_num is None and concept is None and not osc_on and not osc_off:
+    if (pct is None and lvl_num is None and concept is None
+            and temp_c is None and not osc_on and not osc_off):
         return None
 
     states = get_states(use_cache=True) or []
@@ -1423,7 +1453,7 @@ def _ha_local_level(messages: list[dict[str, Any]]) -> str | None:
     for s in states:
         eid = s.get("entity_id", "")
         dom = eid.split(".")[0] if "." in eid else ""
-        if dom not in ("fan", "light", "select", "input_select"):
+        if dom not in ("fan", "light", "select", "input_select", "climate"):
             continue
         if exposed and eid not in exposed:
             continue
@@ -1481,7 +1511,9 @@ def _ha_local_level(messages: list[dict[str, Any]]) -> str | None:
     # Không khớp tên đầy đủ → lọc theo domain + KHU VỰC nêu trong câu, để hỗ trợ
     # NHIỀU quạt/đèn cùng loại (vd "quạt phòng ngủ số 1" dù quạt đặt tên chung).
     if best is None:
-        wanted = "fan" if (osc_on or osc_off or "quat" in toks) else ("light" if ("sang" in toks or "den" in toks) else None)
+        wanted = ("climate" if temp_c is not None else
+                  "fan" if (osc_on or osc_off or "quat" in toks) else
+                  ("light" if ("sang" in toks or "den" in toks) else None))
         if wanted:
             idx = get_ha_area_index()
             area_names = idx.get("area_names") or {}
@@ -1543,6 +1575,23 @@ def _ha_local_level(messages: list[dict[str, Any]]) -> str | None:
             if bright is not None:
                 if call_service("light", "turn_on", {"entity_id": eid, "brightness_pct": bright}):
                     done.append(f"độ sáng {bright}%")
+        elif dom == "climate":
+            # Kẹp trong khoảng máy CHO PHÉP, đọc từ chính thiết bị. Ngoài khoảng
+            # thì BÁO LẠI chứ không tự ý đặt sát biên — người dùng gõ nhầm 82
+            # thay vì 28 mà máy im lặng đặt 30 là khó hiểu.
+            if temp_c is not None:
+                lo = attrs.get("min_temp")
+                hi = attrs.get("max_temp")
+                try:
+                    lo = int(float(lo)) if lo is not None else 16
+                    hi = int(float(hi)) if hi is not None else 30
+                except Exception:
+                    lo, hi = 16, 30
+                if temp_c < lo or temp_c > hi:
+                    invalid = f"{orig} chỉ đặt được từ {lo} đến {hi} °C."
+                elif call_service("climate", "set_temperature",
+                                  {"entity_id": eid, "temperature": temp_c}):
+                    done.append(f"{temp_c} °C")
         elif dom in ("select", "input_select"):
             # Cửa gió/chế độ dạng chọn: khớp CHỮ vào ĐÚNG TÊN option (highest/high/
             # middle/low/lowest…). Không có option tương ứng → báo lại, không thực hiện.
