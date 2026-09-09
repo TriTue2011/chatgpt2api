@@ -73,7 +73,17 @@ def summarize(messages: list[dict[str, Any]], *, prev_summary: str = "") -> str:
         "Tóm tắt ngắn gọn (tiếng Việt, gạch đầu dòng, tối đa 12 dòng) các điểm "
         "quan trọng trong đoạn hội thoại sau để trợ lý nhớ mạch chuyện sau này. "
         "Giữ: quyết định, sở thích, việc đang làm dở, nhắc hẹn, thiết bị/nhà. "
-        "Bỏ: chào hỏi, filler, lặp lại.",
+        "Bỏ: chào hỏi, filler, lặp lại.\n"
+        # Dòng dưới thêm 09/09. Lời dặn cũ không nhắc gì tới CHỦ ĐỀ đã hỏi, nên
+        # model gộp cả cuộc thành một chủ đề nổi bật rồi bỏ hết phần còn lại: đo
+        # thật, phiên hỏi đủ thứ (giá vàng, dịch tiếng Anh, thuốc trợ tim, Ninh
+        # Bình, thời tiết) bị tóm thành đúng ba dòng — TOÀN thời tiết. Người dùng
+        # gõ tiếp "Hôm nay" thì trợ lý đọc tóm tắt đó và trả lời… thời tiết.
+        "BẮT BUỘC có một dòng \"Chủ đề đã hỏi:\" liệt kê NGẮN GỌN mọi chủ đề "
+        "người dùng đã nhắc theo thứ tự mới nhất trước (ví dụ: giá vàng, dịch "
+        "tiếng Anh, thời tiết) — kể cả chủ đề chỉ hỏi một lần và đã trả lời "
+        "xong. Đây là chỗ trợ lý dựa vào khi câu sau quá cụt như \"Hôm nay\", "
+        "\"Thế còn?\" — thiếu nó là đoán sai chủ đề.",
     ]
     if prev_summary.strip():
         prompt_parts.append(f"Tóm tắt cũ (gộp thêm nếu còn liên quan):\n{prev_summary.strip()}")
