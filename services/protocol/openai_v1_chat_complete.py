@@ -2736,7 +2736,23 @@ def ha_local_fastpath_answer(user_text: str) -> tuple[str | None, bool]:
     câu hỏi giá trị cảm biến / trạng thái on-off / âm lịch / thời tiết trả lời
     từ dữ liệu thật. Trả (văn mẫu, đã_điều_khiển); (None, False) khi không
     fast-path nào khớp → caller đi đường model như cũ."""
-    messages: list[dict[str, Any]] = [{"role": "user", "content": str(user_text or "")}]
+    # Câu có ĐƯỜNG LINK thì KHÔNG phải lệnh nhà — chặn ngay ở cửa, trước mọi
+    # bộ dò.
+    #
+    # Đo 09/09: câu chỉ đường mang link ghim Google Maps
+    #   "chỉ đường từ https://…/search/?api=1&query=21.0103763%2C105.85… đến …"
+    # bị hiểu thành lệnh chỉnh đèn và ĐÃ BẬT ĐÈN NHÀ TẮM 100% thật, trong khi
+    # người dùng chỉ đang chọn địa chỉ. Hai thứ cộng lại gây ra: chuỗi mã hoá
+    # URL "763%2C" cho ra "763%" → kẹp còn 100%, và "đến" trong "từ … đến …"
+    # bỏ dấu thành "den" → trùng "đèn".
+    #
+    # Chặn ở CỬA VÀO chứ không vá từng hàm: cả năm bộ dò đều so khớp trên chuỗi
+    # đã bỏ dấu nên đều dính cùng kiểu, và không lệnh nhà thật nào cần URL.
+    _u = str(user_text or "")
+    if "http://" in _u or "https://" in _u or "www." in _u:
+        return None, False
+
+    messages: list[dict[str, Any]] = [{"role": "user", "content": _u}]
     try:
         level = _ha_local_level(messages)
     except Exception as exc:
