@@ -11,7 +11,7 @@ import { SavedAccountsSelect } from "@/components/saved-accounts-select";
 import { generateTotpCode, totpSecondsRemaining } from "@/lib/totp";
 import { TotpSecretGuide, TotpSecretLabel } from "@/components/google-security-hints";
 import { ReuseProfilePicker } from "./reuse-profile-picker";
-import { duongNoVNC } from "@/lib/duong-dan";
+import { moNoVNC } from "@/lib/duong-dan";
 
 type OnboardState = {
   profile: string;
@@ -239,8 +239,7 @@ export function GeminiWebApiCard() {
       if (!res.ok) throw new Error(`onboard HTTP ${res.status}`);
       const initial = await res.json();
       setSession(initial);
-      const noVncUrl = duongNoVNC();
-      window.open(noVncUrl, "_blank", "noopener,width=1024,height=720");
+      void moNoVNC("noopener,width=1024,height=720");
       if (initial.state === "success" || initial.state === "failed") {
         void pollStatus();
       } else {
@@ -253,7 +252,7 @@ export function GeminiWebApiCard() {
   }
 
   function openNoVNC() {
-    window.open(duongNoVNC(), "_blank");
+    void moNoVNC();
   }
 
   async function handleSaveAccount() {

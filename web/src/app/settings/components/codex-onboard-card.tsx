@@ -14,7 +14,7 @@ import {
   GmailAppPasswordLabel,
 } from "@/components/google-security-hints";
 import { useSettingsStore } from "../store";
-import { duongNoVNC } from "@/lib/duong-dan";
+import { moNoVNC } from "@/lib/duong-dan";
 
 export function CodexOnboardCard() {
   const config = useSettingsStore((state) => state.config);
@@ -78,8 +78,7 @@ export function CodexOnboardCard() {
     let failCount = 0;
 
     // Open NoVNC for monitoring
-    const noVncUrl = duongNoVNC();
-    window.open(noVncUrl, "_blank", "noopener,width=1024,height=720");
+    void moNoVNC("noopener,width=1024,height=720");
     
     try {
       for (let i = 0; i < lines.length; i++) {
@@ -222,8 +221,7 @@ export function CodexOnboardCard() {
           <Button
             className="h-9 rounded-lg border border-blue-200 bg-[var(--card)] px-3 text-xs text-blue-700 hover:bg-blue-50 ml-auto"
             onClick={() => {
-              const noVncUrl = duongNoVNC();
-              window.open(noVncUrl, "_blank");
+              void moNoVNC();
             }}
           >
             <ExternalLink className="mr-1 size-3.5" /> Theo dõi VNC

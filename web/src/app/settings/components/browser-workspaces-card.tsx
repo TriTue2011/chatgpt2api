@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { request } from "@/lib/request";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { duongNoVNC } from "@/lib/duong-dan";
+import { moNoVNC } from "@/lib/duong-dan";
 
 type Workspace = { profile: string; name: string; open: boolean; manual: boolean };
 const API = "/api/captcha/v1/workspaces";
@@ -16,7 +16,6 @@ export function BrowserWorkspacesCard() {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [viewerUrl, setViewerUrl] = useState("");
   const load = useCallback(async () => {
     try { const response = await request.get(API); setRows(response.data.workspaces || []); setError(""); }
     catch (error) { setError((error as Error).message); }
@@ -28,17 +27,13 @@ export function BrowserWorkspacesCard() {
     finally { setBusy(false); }
   };
   const open = (row: Workspace) => {
-    const viewer = window.open("about:blank", "_blank", "popup,width=1100,height=800");
-    if (viewer) viewer.opener = null;
     void run(async () => {
-      try {
-        const response = await request.post(`${API}/${encodeURIComponent(row.profile)}/open`, { url: url.trim() });
-        const destination = duongNoVNC();
-        setViewerUrl(destination);
-        if (viewer) viewer.location.href = destination;
-        if (response.data.warning) toast.warning(response.data.warning);
-        else toast.success(`Đã mở ${row.name}`);
-      } catch (error) { viewer?.close(); throw error; }
+      const response = await request.post(`${API}/${encodeURIComponent(row.profile)}/open`, { url: url.trim() });
+      // `moNoVNC` tự mở tab rồi xin vé; bị chặn pop-up thì nó điều hướng
+      // ngay tab hiện tại, nên không cần link dự phòng nữa.
+      await moNoVNC("popup,width=1100,height=800");
+      if (response.data.warning) toast.warning(response.data.warning);
+      else toast.success(`Đã mở ${row.name}`);
     });
   };
   return <div className="space-y-4">
@@ -56,7 +51,6 @@ export function BrowserWorkspacesCard() {
         <Button key={label} size="sm" variant={url === destination ? "secondary" : "outline"} onClick={() => setUrl(destination)}>{label}</Button>)}
     </div>
     <p className="text-xs text-muted-foreground">Đăng nhập Google trong workspace, sau đó chọn dịch vụ và bấm Mở trên cùng workspace để dùng “Tiếp tục với Google”. Mỗi dịch vụ giữ phiên riêng và có thể cần xác nhận lần đầu.</p>
-    {viewerUrl && <a href={viewerUrl} target="_blank" rel="noopener noreferrer" className="block text-sm underline">Mở noVNC nếu cửa sổ bị chặn</a>}
     <p className="text-xs text-muted-foreground">Workspace mở thủ công được giữ nguyên để bạn thao tác. Đóng workspace trước khi dùng tài khoản đó cho tác vụ tự động.</p>
     {error && <p role="alert" className="text-sm text-red-500">{error}</p>}
     <div className="space-y-2 max-h-[32rem] overflow-y-auto">

@@ -18,10 +18,21 @@ Gồm hai phần, thiếu một là màn hình đen:
   · WS    `/novnc/websockify` → kênh RFB thật; noVNC nói WebSocket nhị phân với
     websockify, nên phải chuyển tiếp hai chiều theo byte, không đụng nội dung.
 
-BẢO MẬT: cùng cổng nghĩa là cùng ai vào được web UI thì vào được đây. Đường HTTP
-đòi khoá quản trị như các proxy khác. Đường WS thì KHÔNG kiểm được bằng header
-(trình duyệt không cho đặt header khi mở WebSocket) — nó dựa vào chính lớp bảo
-vệ của noVNC/x11vnc, đúng như khi vào thẳng cổng 6080 từ LAN.
+XÁC THỰC — vì sao phải dùng vé chứ không phải header. Web UI gắn khoá admin vào
+header `Authorization` bằng JavaScript, nhưng noVNC mở bằng `window.open` sang
+TAB MỚI: tab đó là điều hướng thường của trình duyệt, không có JavaScript nào
+gắn header vào được. Bản đầu đòi `require_admin(authorization)` nên tab mới
+luôn 401 (chủ máy dán ảnh 09/09) — đúng cái lỗi mà `services/sse_ticket.py` đã
+gặp và giải cho SSE.
+
+Bám theo đúng khuôn mẫu đó, thêm một bước vì noVNC khác SSE: SSE mở MỘT kết nối
+nên vé dùng-một-lần là đủ, còn noVNC tải hàng chục tệp (vnc.html, rồi core/*.js,
+app/*.js…) nên vé sẽ cháy ngay ở tệp đầu. Vé vì thế đổi lấy một COOKIE ngắn hạn
+giới hạn trong đường `/novnc` — mọi tệp con và kênh WebSocket dùng chung cookie
+đó, và nó không mở được bất kỳ endpoint nào khác.
+
+Nhờ vậy kênh WebSocket cũng được bảo vệ: trình duyệt tự gửi cookie khi mở
+WebSocket cùng gốc, thứ mà header không làm được.
 """
 
 from __future__ import annotations
@@ -34,6 +45,7 @@ from fastapi import APIRouter, Header, HTTPException, Request, WebSocket, WebSoc
 from fastapi.responses import Response
 
 from api.support import require_admin
+from services.novnc_ve import kho_ve_novnc
 from services.ingress_guard import BodyTooLarge, read_body_limited, read_upstream_limited
 
 NOVNC_URL = os.getenv("NOVNC_URL_INTERNAL", "http://127.0.0.1:6080").rstrip("/")
@@ -45,6 +57,39 @@ _TIMEOUT = httpx.Timeout(connect=5.0, read=60.0, write=30.0, pool=5.0)
 _DROP_REQ = {"host", "content-length", "connection", "accept-encoding",
              "authorization", "cookie", "x-csrf-token"}
 _DROP_RESP = {"content-encoding", "transfer-encoding", "content-length", "connection"}
+
+# Cookie phiên noVNC. Đặt path=/novnc nên không lẫn với cookie phiên chính.
+TEN_COOKIE = "c2a_novnc"
+
+
+async def _chuyen_tiep(path: str, request: Request) -> Response:
+    """Lấy một tệp của noVNC từ cổng 6080 nội bộ và trả nguyên về cho trình duyệt."""
+    url = f"{NOVNC_URL}/{path}"
+    try:
+        body = await read_body_limited(request, _MAX_BODY)
+    except BodyTooLarge:
+        raise HTTPException(status_code=413, detail={"error": "payload too large"})
+    fwd = {k: v for k, v in request.headers.items() if k.lower() not in _DROP_REQ}
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            async with client.stream(
+                request.method, url, params=request.query_params,
+                content=body, headers=fwd,
+            ) as upstream:
+                try:
+                    payload = await read_upstream_limited(upstream, _MAX_BODY)
+                except BodyTooLarge:
+                    raise HTTPException(status_code=502,
+                                        detail={"error": "upstream response too large"})
+                status = upstream.status_code
+                headers = {k: v for k, v in upstream.headers.items()
+                           if k.lower() not in _DROP_RESP}
+                ctype = upstream.headers.get("content-type")
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502,
+                            detail={"error": f"noVNC không phản hồi: {str(exc)[:120]}"})
+    return Response(content=payload, status_code=status,
+                    headers=headers, media_type=ctype)
 
 
 def create_router() -> APIRouter:
@@ -58,6 +103,12 @@ def create_router() -> APIRouter:
         đó, không đáp lại thì nó đóng kết nối ngay và người dùng thấy màn hình
         đen không rõ lý do.
         """
+        # Trình duyệt TỰ gửi cookie khi mở WebSocket cùng gốc — nên kênh này
+        # kiểm được danh tính, thứ mà header không làm được. Từ chối trước khi
+        # accept để kẻ không có phiên không chạm tới VNC server.
+        if not kho_ve_novnc.phien_con_han(ws.cookies.get(TEN_COOKIE, "")):
+            await ws.close(code=1008)   # 1008 = vi phạm chính sách
+            return
         try:
             import websockets
         except ImportError:
@@ -106,36 +157,52 @@ def create_router() -> APIRouter:
             except Exception:
                 pass
 
+    @router.post("/api/novnc/ve")
+    async def novnc_cap_ve(authorization: str | None = Header(default=None)):
+        """Xin vé mở noVNC. Xác thực bằng header như mọi endpoint khác.
+
+        Web UI gọi cái này TRƯỚC khi `window.open`, rồi nhét vé vào URL. Vé
+        sống 60 giây và dùng một lần nên lộ qua log hay lịch sử trình duyệt
+        cũng gần như vô hại — khác hẳn việc nhét thẳng khoá admin vào URL.
+        """
+        require_admin(authorization)
+        ve, ttl = kho_ve_novnc.cap()
+        return {"ok": True, "ticket": ve, "expires_in": ttl}
+
     @router.api_route("/novnc/{path:path}", methods=["GET", "POST", "HEAD"])
     async def novnc_http(path: str, request: Request,
                          authorization: str | None = Header(default=None)):
-        """Tệp tĩnh của noVNC. Đòi khoá quản trị như các proxy nội bộ khác."""
+        """Tệp tĩnh của noVNC.
+
+        Nhận xác thực theo ba đường, theo thứ tự thực tế hay gặp:
+          1. cookie phiên noVNC — các tệp con sau khi đã vào bằng vé;
+          2. `?ve=` — lần mở đầu tiên từ tab mới, đổi luôn lấy cookie;
+          3. header — script hoặc client tự gọi.
+        """
+        phien = request.cookies.get(TEN_COOKIE, "")
+        if kho_ve_novnc.phien_con_han(phien):
+            return await _chuyen_tiep(path, request)
+
+        ve = request.query_params.get("ve", "")
+        if ve and kho_ve_novnc.dung(ve):
+            # Vé hợp lệ → cấp cookie cho các tệp con, rồi phục vụ luôn tệp này.
+            phien_moi = kho_ve_novnc.mo_phien()
+            resp = await _chuyen_tiep(path, request)
+            resp.set_cookie(
+                TEN_COOKIE, phien_moi,
+                max_age=int(kho_ve_novnc.PHIEN_TTL),
+                # Chỉ gửi kèm cho chính đường /novnc — cookie này không mở
+                # được bất kỳ endpoint nào khác của hệ thống.
+                path="/novnc",
+                httponly=True,
+                samesite="lax",
+                # Qua tunnel là HTTPS, mở bằng IP LAN là HTTP. Đặt cứng
+                # secure=True là cookie không bao giờ tới khi vào bằng IP.
+                secure=request.url.scheme == "https",
+            )
+            return resp
+
         require_admin(authorization)
-        url = f"{NOVNC_URL}/{path}"
-        try:
-            body = await read_body_limited(request, _MAX_BODY)
-        except BodyTooLarge:
-            raise HTTPException(status_code=413, detail={"error": "payload too large"})
-        fwd = {k: v for k, v in request.headers.items() if k.lower() not in _DROP_REQ}
-        try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                async with client.stream(
-                    request.method, url, params=request.query_params,
-                    content=body, headers=fwd,
-                ) as upstream:
-                    try:
-                        payload = await read_upstream_limited(upstream, _MAX_BODY)
-                    except BodyTooLarge:
-                        raise HTTPException(status_code=502,
-                                            detail={"error": "upstream response too large"})
-                    status = upstream.status_code
-                    headers = {k: v for k, v in upstream.headers.items()
-                               if k.lower() not in _DROP_RESP}
-                    ctype = upstream.headers.get("content-type")
-        except httpx.RequestError as exc:
-            raise HTTPException(status_code=502,
-                                detail={"error": f"noVNC không phản hồi: {str(exc)[:120]}"})
-        return Response(content=payload, status_code=status,
-                        headers=headers, media_type=ctype)
+        return await _chuyen_tiep(path, request)
 
     return router
