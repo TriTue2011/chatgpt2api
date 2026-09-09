@@ -1770,7 +1770,14 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None,
         "<<<END>>>\n"
         "Lấy các lựa chọn từ dòng «Chủ đề đã hỏi» trong tóm tắt phiên (mới nhất "
         "trước, tối đa 4 mục). Tóm tắt không có chủ đề nào thì hỏi thẳng một câu "
-        "ngắn: người dùng muốn hỏi về gì.")
+        "ngắn: người dùng muốn hỏi về gì.\n"
+        # Cùng một loại việc mà khác đối tượng thì phải tách thành nhiều mục:
+        # hỏi thời tiết ba nơi rồi gõ "Hôm nay" — gộp thành một mục «thời tiết»
+        # là người dùng vẫn phải gõ lại tên tỉnh, menu thành vô ích.
+        "Giữ NGUYÊN phần cụ thể của mỗi mục (địa điểm, tên người, tên thiết bị): "
+        "hỏi thời tiết nhiều nơi thì liệt kê từng nơi thành mục riêng "
+        "(«thời tiết Hà Nội», «thời tiết Đà Nẵng»…), đừng gộp thành một mục "
+        "«thời tiết» chung chung.")
     if allow is not None:
         # TUYỆT ĐỐI không nêu ví dụ TĨNH về "chức năng bị tắt" ở đây. Bản cũ
         # viết cứng "vd: xem/điều khiển nhà thông minh, xem máy chủ…" cho MỌI
@@ -1869,6 +1876,12 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None,
         if summary.strip():
             parts.append(
                 "## Tóm tắt hội thoại trước với người này\n" + summary.strip()
+                + "\n\n(Đây là chuyện ĐÃ QUA, KHÔNG phải chủ đề của câu đang "
+                  "hỏi. Câu mới cụt nghĩa thì hỏi lại bằng menu như đã dặn — "
+                  "đừng mặc định người dùng vẫn đang nói về chủ đề nổi bật "
+                  "trong tóm tắt. Đo 09/09: tóm tắt chỉ ghi «quan tâm thời tiết» "
+                  "nên câu «Hôm nay» sau khi trích tin GIÁ VÀNG vẫn bị trả lời "
+                  "bằng thời tiết.)"
             )
     except Exception:
         pass
