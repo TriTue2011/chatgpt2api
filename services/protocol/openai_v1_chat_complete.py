@@ -1094,7 +1094,25 @@ _LOCAL_OFF_VERBS = {"tat", "dong", "ngat", "off", "ngung", "cup"}
 #
 # LƯU Ý khi đọc log: 6/7 cái đang `unavailable` (mất kết nối), nên lệnh tới
 # chúng vẫn không ăn — đó là việc của hạ tầng, không phải của bộ dò.
-_LOCAL_CANON_DOMAINS = ("light", "switch", "fan", "media_player")
+# ĐỦ danh sách domain BẬT/TẮT được theo tài liệu chính thức Home Assistant
+# (home-assistant.io/integrations + developers.home-assistant.io/docs/intent_builtin
+# — `HassTurnOn`/`HassTurnOff` là intent KHÔNG giới hạn domain).
+#
+# Khai sẵn cả domain nhà CHƯA có: thêm thiết bị mới (rèm, khoá cửa, robot hút
+# bụi, máy tạo ẩm…) là dùng được ngay, không phải sửa code rồi build lại image.
+# Domain không có thiết bị nào thì vòng lặp bên dưới tự bỏ qua — không tốn gì.
+#
+# CỐ Ý KHÔNG có ở đây: `script`, `scene`, `automation`, `button`. Chúng "bật"
+# được nhưng là KỊCH BẢN chứ không phải thiết bị; nhà này có 15 script mà 12
+# cái là công cụ nội bộ của trợ lý giọng nói (Voice - Send to Zalo, Voice - AI
+# Image Generator…). Đưa vào bộ khớp tên chỉ tăng rủi ro chạy nhầm.
+_LOCAL_CANON_DOMAINS = (
+    "light", "switch", "fan", "media_player",      # nhà đang có
+    "climate", "water_heater", "humidifier",       # nhiệt / ẩm
+    "cover", "valve", "lock",                      # rèm / van / khoá
+    "vacuum", "lawn_mower",                        # robot
+    "siren", "remote", "input_boolean",            # còi / điều khiển / cờ ảo
+)
 # Generic device-class nouns → HA domain (folded; keep đ as _fold_diacritics does,
 # plus the d-form as a fallback for STT that drops the đ). Used when no specific
 # entity name matched: "tắt đèn phòng khách" → all lights in that area.
@@ -1106,6 +1124,15 @@ _LOCAL_DEVICE_CLASS = {
     "rem": "cover", "rem cua": "cover", "man cua": "cover", "cua cuon": "cover",
     "khoa": "lock", "khoa cua": "lock",
     "binh nong lanh": "water_heater", "may nuoc nong": "water_heater",
+    # Thêm 09/09 cho các domain vừa khai trong _LOCAL_CANON_DOMAINS — có sẵn
+    # tên gọi tiếng Việt thì thiết bị mới cắm vào là gọi được ngay.
+    "loa": "media_player", "tivi": "media_player", "ti vi": "media_player",
+    "tv": "media_player", "man hinh": "media_player",
+    "may hut bui": "vacuum", "robot hut bui": "vacuum", "hut bui": "vacuum",
+    "may tao am": "humidifier", "may phun suong": "humidifier",
+    "van": "valve", "van nuoc": "valve",
+    "coi": "siren", "coi bao": "siren", "chuong bao": "siren",
+    "may cat co": "lawn_mower",
 }
 # Sensor-value questions → HA device_class + Vietnamese label. Keys are matched on
 # a đ→d-flattened query so "độ sáng"/"do sang" both hit. Used by the read-path so
@@ -1256,6 +1283,19 @@ def _ha_local_intent(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | N
             args["area"] = area
         return [(service, args)]
 
+    def _loai_neu_trong_cau(seg: list[str]) -> str | None:
+        """Danh từ chỉ LOẠI thiết bị mà câu nêu rõ ("rèm", "khoá", "quạt"…).
+
+        Dùng để chặn khớp nhầm sang thiết bị khác loại: nhà này có loa Google
+        Home đặt tên đúng bằng "Phòng khách", nên "mở rèm phòng khách" khớp
+        TRÚNG TÊN loa rồi báo "đã thực hiện xong" — dù nhà không có cái rèm nào
+        (đo 09/09). Người dùng tưởng lệnh đã chạy.
+        """
+        for _ph, _d in sorted(_LOCAL_DEVICE_CLASS.items(), key=lambda kv: -len(kv[0].split())):
+            if _find_sublist(seg, _ph.split()) >= 0:
+                return _d
+        return None
+
     def _segment_controls(service: str, seg: list[str]) -> list[tuple[str, dict]]:
         """All controls in one verb-segment → [(service, args)…]."""
         # Non-overlapping entity-name matches, longest first.
@@ -1363,7 +1403,13 @@ def _ha_local_intent(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | N
     results: list[tuple[str, dict]] = []
     for k, (vi, svc) in enumerate(verbs):
         seg_end = verbs[k + 1][0] if k + 1 < len(verbs) else len(toks)
-        results.extend(_segment_controls(svc, toks[vi + 1:seg_end]))
+        seg = toks[vi + 1:seg_end]
+        got = _segment_controls(svc, seg)
+        # Câu nêu rõ LOẠI thiết bị thì chỉ giữ kết quả đúng loại đó.
+        loai = _loai_neu_trong_cau(seg)
+        if loai:
+            got = [(sv, a) for (sv, a) in got if loai in (a.get("domain") or [loai])]
+        results.extend(got)
 
     if not results:
         return None
