@@ -931,6 +931,27 @@ def _run_task(user_id: str, prompt: str, *, channel: str = "",
     # ngày để lập báo cáo theo mẫu…" chạy ra đúng một câu chào — "Dạ em đây ạ 😊
     # Anh cần em giúp việc gì hôm nay nè?". Model bị cấm hỏi, lại bị bảo trả lời
     # ngắn gọn, nên nó chào rồi thôi. Việc đó chạy 5 lần, hỏng cả 5.
+    # Fast-path nhà thông minh chỉ bật khi CHÍNH nội dung việc là lệnh nhà.
+    #
+    # Vì sao phải kiểm riêng: orchestrate nhận cả khối lời dặn hệ thống dán
+    # trước nội dung việc, mà bộ dò trạng thái của fast-path so khớp theo TỪ đã
+    # bỏ dấu. Lời dặn có "không mô tả cách làm" → "mô" thành "mo" (trùng "mở")
+    # và "không" thành "khong" → nó tưởng là câu hỏi "mở … không" rồi trả lời
+    # trạng thái đèn.
+    #
+    # Đo thật 09/09: việc "lấy tin tức và thời tiết Hoàng Mai" chạy ra đúng một
+    # câu "Tất cả 9 đèn đều đang tắt ạ." (runs.sqlite: tools=["ha_fastpath"],
+    # steps=0) — hỏng 2 lượt liên tiếp, người dùng không nhận được bản tin nào.
+    #
+    # Kiểm trên `prompt` TRẦN nên lệnh nhà đặt theo lịch ("7h sáng bật đèn bếp")
+    # vẫn đi fast-path như cũ.
+    fastpath_ok = False
+    try:
+        from services.protocol.openai_v1_chat_complete import ha_local_fastpath_answer
+        fastpath_ok = bool(ha_local_fastpath_answer(prompt)[0])
+    except Exception:
+        fastpath_ok = False
+
     token = delivery_context.set({"channel": channel, **(meta or {})})
     try:
         out = orchestrate(
@@ -941,7 +962,7 @@ def _run_task(user_id: str, prompt: str, *, channel: str = "",
              "Hệ thống sẽ gửi kết quả đến nơi nhận đã lưu; không gọi send_to_contact hay đặt thêm lịch.\n"
              if (meta or {}).get("delivery_targets") else "") + f"{prompt}",
             user_id,
-            ha_fastpath=True,
+            ha_fastpath=fastpath_ok,
             auto_approve=True,
             model=model or None,
         )
