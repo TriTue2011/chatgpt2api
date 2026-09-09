@@ -472,6 +472,23 @@ export const SO_TRA: MucTinhNang[] = [
     nguon: "config",
   },
   {
+    id: "mqtt",
+    ten: "Thiết bị qua MQTT",
+    mucDich:
+      "Bot đọc trạng thái và bật/tắt thiết bị THẲNG qua MQTT — dùng được cả khi " +
+      "nhà không cài Home Assistant.",
+    canGi: "Một máy chủ MQTT đang chạy (EMQX, Mosquitto…) và địa chỉ của nó.",
+    mucDo: "tuy-chon",
+    thuTu: 34,
+    duong: "/settings?tim=home%20assistant",
+    nhom: "Nhà thông minh",
+    tuKhoa: ["mqtt", "emqx", "mosquitto", "zigbee", "thiết bị", "broker"],
+    // lay() chỉ đọc khoá PHẲNG (xem định nghĩa ở trên), nên "mqtt.host" luôn
+    // trả undefined. Lấy object rồi đọc host bên trong.
+    daXong: (tt) => coChu((lay(tt.config, "mqtt") as { host?: unknown } | undefined)?.host),
+    nguon: "config",
+  },
+  {
     id: "cloudflare",
     ten: "Cloudflare Tunnel",
     mucDich:

@@ -4633,12 +4633,124 @@ def _h_system_status(args: dict, ctx: dict) -> dict:
     return {"text": "Máy chủ em đang chạy (container c2a):\n" + body}
 
 
+def _h_mqtt_thiet_bi(args: dict, ctx: dict) -> dict:
+    """Liệt kê thiết bị thấy trên MQTT, hoặc đọc trạng thái một cái.
+
+    ĐƯỜNG THỨ HAI, không thay `home_status`: nhà có Home Assistant thì đường kia
+    giàu thông tin hơn (sổ phòng, khu vực). Cái này cho nhà KHÔNG cài HA — thiết
+    bị vẫn nói chuyện qua MQTT nên vẫn đọc được.
+    """
+    from services import mqtt_nha
+
+    ten = str(args.get("ten") or "").strip()
+    try:
+        if ten:
+            tt = mqtt_nha.trang_thai(ten)
+            if not tt:
+                ds = [d["ten"] for d in mqtt_nha.danh_sach_thiet_bi()]
+                if not ds:
+                    return {"text": "Em chưa thấy thiết bị nào trên MQTT ạ. "
+                                    "Vào Cài đặt → Home Assistant để khai máy chủ MQTT."}
+                return {"text": f"Em không rõ '{ten}' là thiết bị nào. "
+                                f"Đang có: {', '.join(ds[:15])}."}
+            dong = [f"{k}: {v}" for k, v in tt.items() if k != "ten"]
+            return {"text": f"📟 {tt['ten']} — " + ("; ".join(dong) if dong
+                            else "chưa có số liệu nào")}
+
+        ds = mqtt_nha.danh_sach_thiet_bi()
+        if not ds:
+            return {"text": "Em chưa thấy thiết bị nào trên MQTT ạ. "
+                            "Vào Cài đặt → Home Assistant để khai máy chủ MQTT."}
+        dong = []
+        for d in ds[:40]:
+            n = len(d["dieu_khien"])
+            dong.append(f"• {d['ten']}" + (f" — điều khiển được {n} thứ" if n else ""))
+        return {"text": f"📟 Thấy {len(ds)} thiết bị trên MQTT:\n" + "\n".join(dong)}
+    except Exception as exc:
+        logger.warning("mqtt_thiet_bi lỗi: %s", exc)
+        return {"text": f"Em đọc MQTT chưa được ạ: {str(exc)[:160]}"}
+
+
+def _h_mqtt_dieu_khien(args: dict, ctx: dict) -> dict:
+    """Bật/tắt một thiết bị THẲNG qua MQTT, không đi qua Home Assistant."""
+    from services import mqtt_nha
+
+    ten = str(args.get("ten") or "").strip()
+    thuc_the = str(args.get("thuc_the") or "").strip()
+    gia_tri = args.get("gia_tri")
+    if not ten:
+        return {"text": "Anh/chị muốn em điều khiển thiết bị nào ạ?"}
+
+    try:
+        mqtt_nha.dieu_khien(ten, thuc_the, gia_tri)
+    except mqtt_nha.LoiMqtt as exc:
+        # Thông điệp của LoiMqtt đã viết sẵn cho người đọc (kèm gợi ý tên đúng),
+        # nên đưa nguyên văn thay vì gói lại.
+        return {"text": f"{exc}"}
+    except Exception as exc:
+        logger.warning("mqtt_dieu_khien lỗi: %s", exc)
+        return {"text": f"Em gửi lệnh chưa được ạ: {str(exc)[:160]}"}
+    return {"text": f"✅ Em đã gửi lệnh tới {ten} rồi ạ."}
+
+
+# Từ chỉ hành động bật/tắt — chỉ nhận lệnh MQTT khi câu có một trong số này.
+# Câu phức ("bật đèn rồi hạ điều hoà xuống 25") KHÔNG khớp, để HA lo, vì lớp
+# MQTT chỉ gửi được một lệnh đơn.
+_TU_BAT = ("bật", "bat", "mở", "mo", "on")
+_TU_TAT = ("tắt", "tat", "đóng", "dong", "off")
+
+
+def _thu_mqtt_truoc(command: str) -> dict | None:
+    """Trả kết quả nếu MQTT xử lý được câu lệnh, ``None`` để nhường cho HA."""
+    from services import mqtt_nha
+
+    tu = command.lower().split()
+    bat = any(t in tu for t in _TU_BAT)
+    tat = any(t in tu for t in _TU_TAT)
+    if bat == tat:                      # không rõ bật hay tắt, hoặc có cả hai
+        return None
+
+    ten = mqtt_nha._khop_ten(command)   # "" khi mập mờ — KHÔNG đoán
+    if not ten:
+        return None
+    ho_so = next((d for d in mqtt_nha.danh_sach_thiet_bi()
+                  if d.get("ten") == ten), None)
+    if not ho_so:
+        return None
+    dk = [m.get("ten") for m in (ho_so.get("dieu_khien") or []) if m.get("ten")]
+    if len(dk) != 1:                    # nhiều công tắc → không đoán cái nào
+        return None
+
+    try:
+        mqtt_nha.dieu_khien(ten, dk[0], bat)
+    except Exception as exc:
+        logger.info("MQTT không nhận '%s' (%s) — nhường Home Assistant", command, exc)
+        return None
+    return {"text": f"[kết quả từ hệ thống nhà cho lệnh '{command}']: "
+                    f"đã gửi thẳng qua MQTT tới {ten}, "
+                    f"{'bật' if bat else 'tắt'} xong"}
+
+
 def _h_control_home(args: dict, ctx: dict) -> dict:
     """Control a smart-home device by forwarding the natural-language command
     to the existing Home-Assistant pipeline (intent parsing + confirmation)."""
     command = str(args.get("command") or "").strip()
     if not command:
         return {"text": "Anh/chị muốn em điều khiển thiết bị gì ạ?"}
+
+    # Ô tích "ưu tiên MQTT": đi thẳng MQTT khi tên khớp CHÍNH XÁC một thiết bị,
+    # còn lại rơi về Home Assistant y như cũ. Khớp mập mờ thì _khop_ten trả ""
+    # và ta im lặng đi tiếp — nguyên tắc của ha_live: "Tệ nhất bằng hiện trạng,
+    # không bao giờ tệ hơn."
+    try:
+        from services import mqtt_nha
+        if mqtt_nha.uu_tien_mqtt():
+            kq = _thu_mqtt_truoc(command)
+            if kq is not None:
+                return kq
+    except Exception as exc:
+        logger.debug("uu_tien_mqtt bỏ qua: %s", exc)
+
     # Chụp trạng thái TRƯỚC khi ra lệnh để lát nữa còn đối chiếu. Pipeline HA
     # trả "đã thực hiện xong" kể cả khi thiết bị mất kết nối hay khớp nhầm sang
     # thực thể khác, nên lời nó nói không đủ để bot khẳng định với người dùng.
@@ -6066,6 +6178,37 @@ CAPABILITIES: dict[str, Capability] = {
                   "thuật lại ngắn gọn. Nếu lệnh thất bại hoặc thiết bị không tìm thấy: "
                   "báo đúng nguyên nhân, gợi ý tên thiết bị gần đúng (dùng home_status "
                   "để tra), KHÔNG thử lệnh khác khi chưa được đồng ý.")),
+    # Hai tool MQTT dưới đây là ĐƯỜNG THỨ HAI, KHÔNG thay control_home/home_status.
+    # Nhà có Home Assistant thì hai tool kia giàu thông tin hơn (sổ phòng, khu vực,
+    # dò tên tiếng Việt). Cái này dành cho nhà KHÔNG cài HA — thiết bị vẫn nói
+    # chuyện qua MQTT nên vẫn đọc và điều khiển được.
+    "mqtt_thiet_bi": Capability(
+        name="mqtt_thiet_bi", risk=READ, handler=_h_mqtt_thiet_bi,
+        emoji="📟", label="Xem thiết bị trên MQTT",
+        description=("Liệt kê thiết bị thấy trên MQTT, hoặc đọc trạng thái một cái. "
+                     "Dùng khi nhà KHÔNG cài Home Assistant — có HA thì dùng "
+                     "home_status vì nó biết cả phòng và khu vực."),
+        parameters={"type": "object", "properties": {
+            "ten": {"type": "string",
+                    "description": "Tên thiết bị muốn xem. Bỏ trống = liệt kê tất cả."}}},
+        workflow=("Kết quả là danh sách hoặc số liệu — thuật lại ngắn gọn. Chưa thấy "
+                  "thiết bị nào thì bảo người dùng khai máy chủ MQTT trong Cài đặt → "
+                  "Home Assistant, ĐỪNG đoán tên thiết bị.")),
+    "mqtt_dieu_khien": Capability(
+        name="mqtt_dieu_khien", risk=CHANGE, handler=_h_mqtt_dieu_khien,
+        emoji="🔌", label="Bật/tắt thiết bị qua MQTT",
+        description=("Bật/tắt một thiết bị THẲNG qua MQTT, không qua Home Assistant. "
+                     "Cần đúng tên thiết bị và tên thực thể như mqtt_thiet_bi liệt kê."),
+        parameters={"type": "object", "properties": {
+            "ten": {"type": "string", "description": "Tên thiết bị (đúng như đã liệt kê)"},
+            "thuc_the": {"type": "string",
+                         "description": "Thứ cần điều khiển, vd 'Left', 'Center'"},
+            "gia_tri": {"description": "true/false để bật/tắt, hoặc giá trị cụ thể"}},
+            "required": ["ten"]},
+        workflow=("Gọi mqtt_thiet_bi TRƯỚC để lấy đúng tên nếu chưa chắc. Tên mập mờ "
+                  "thì tool trả lời kèm danh sách gợi ý — hỏi lại người dùng chọn cái "
+                  "nào, TUYỆT ĐỐI không tự đoán rồi gửi lệnh, vì bật nhầm thiết bị là "
+                  "chuyện không sửa lại được.")),
     "create_automation": Capability(
         name="create_automation", risk=CHANGE, handler=_h_create_automation,
         emoji="⚙️", label="Tạo automation Home Assistant (tự viết + nạp + sửa lỗi)",
@@ -7056,6 +7199,9 @@ _CAP_GROUP: dict[str, str] = {
     "write_code": "code",
     "home_status": "homeassistant", "control_home": "homeassistant",
     "describe_device": "homeassistant",
+    # MQTT cùng nhóm quyền với Home Assistant: ai được điều khiển nhà thì được
+    # điều khiển qua cả hai đường, không phải tích thêm ô riêng.
+    "mqtt_thiet_bi": "homeassistant", "mqtt_dieu_khien": "homeassistant",
     "speak_to_speaker": "tts_speaker",
     "play_music_on_speaker": "tts_speaker",
     "announce_on_speaker": "tts_speaker",

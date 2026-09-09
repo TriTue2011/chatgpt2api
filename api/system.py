@@ -67,6 +67,24 @@ def _ha_live_stats() -> dict:
         return {"connected": False}
 
 
+def _mqtt_stats() -> dict:
+    """Trạng thái lớp MQTT nhà — cho card health trên UI."""
+    try:
+        from services import mqtt_nha
+        return mqtt_nha.stats()
+    except Exception:
+        return {"connected": False}
+
+
+def _lich_su_stats() -> dict:
+    """Trạng thái tầng ghi lịch sử nhà — cho card health trên UI."""
+    try:
+        from services import lich_su_nha
+        return lich_su_nha.thong_ke()
+    except Exception:
+        return {"chay": False}
+
+
 def _check_gemini_status() -> dict:
     """Check Gemini API and ALL custom provider instances (all ports)."""
     import requests as req
@@ -1139,6 +1157,8 @@ def create_router(app_version: str) -> APIRouter:
             },
             "gemini": _check_gemini_status(),
             "ha_live": _ha_live_stats(),
+            "mqtt": _mqtt_stats(),
+            "lich_su_nha": _lich_su_stats(),
         }
 
     # Cache health kiểu stale-while-revalidate: trả bản cũ NGAY, làm mới ngầm

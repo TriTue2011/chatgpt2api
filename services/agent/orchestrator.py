@@ -1650,6 +1650,12 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
      "- Soi chi tiết phần tử trong tệp Office → office_query; xem tác giả/ngày "
      "tạo/số trang/số sheet/số slide → office_thong_tin."),
     ("homeassistant", _KW_NHATHONGMINH,
+     "- Thiết bị nối THẲNG qua MQTT (không cần Home Assistant): "
+     "mqtt_thiet_bi (xem có những thiết bị nào, đọc trạng thái); "
+     "mqtt_dieu_khien (bật/tắt thẳng qua MQTT). Chỉ dùng khi người dùng nói "
+     "rõ là MQTT, hoặc khi control_home báo không tìm thấy thiết bị — còn "
+     "lại cứ control_home như thường."),
+    ("homeassistant", _KW_NHATHONGMINH,
      "- Cần thao tác HA ở mức thấp (khi control_home không đủ): ha_get_state "
      "đọc một entity, ha_search_entities tìm entity theo tên, ha_call_service "
      "gọi service trực tiếp, ha_home_map xem sơ đồ nhà, GetLiveContext lấy "

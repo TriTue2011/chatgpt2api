@@ -12,6 +12,7 @@ import { RcloneCard } from "./components/rclone-card";
 import { LuuTruOnlineCard } from "./components/luu-tru-online-card";
 import { HACard } from "./components/ha-card";
 import { CameraCard } from "./components/camera-card";
+import { MqttCard } from "./components/mqtt-card";
 import { FacebookCard } from "./components/facebook-card";
 import { EmailCalendarCard } from "./components/email-calendar-card";
 import { VoiceSpeakersCard } from "./components/voice-speakers-card";
@@ -178,6 +179,7 @@ function SettingsPageContent() {
         >
           <HACard />
           <CameraCard />
+          <MqttCard />
         </SettingsSection>
 
         <SettingsSection

@@ -33,6 +33,10 @@ dependencies = [
     # dựng sạch mà thiếu NumPy, tới lúc người dùng gửi video mới nổ import.
     "numpy>=2.0",
     "python-multipart>=0.0.26",
+    # MQTT: đường thứ hai để bot biết nhà, không cần Home Assistant (services/mqtt_nha.py).
+    # Không tự viết bằng stdlib như WebSocket ở ha_live.py — MQTT còn QoS, phiên bền,
+    # LWT, retained message; tự viết là đẻ ra một lớp giao thức phải tự bảo trì.
+    "paho-mqtt>=2.1.0",
     "tiktoken>=0.12.0",
     "uvicorn>=0.44.0",
     "sqlalchemy>=2.0.0",

@@ -8,7 +8,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from api import accounts, ai, browser_auth, camera, captcha_proxy, channels, claude, devices, dich, image_tasks, mcp, mcp_admin, novnc_proxy, oauth, ollama_compat, rclone, register, system, voice, zalo_bot, zalo_personal
+from api import accounts, ai, browser_auth, camera, captcha_proxy, channels, claude, devices, dich, image_tasks, mcp, mcp_admin, mqtt, novnc_proxy, oauth, ollama_compat, rclone, register, system, voice, zalo_bot, zalo_personal
 from api.support import resolve_web_asset, start_limited_account_watcher, require_admin
 from api.veo_video import handle_video_generation
 from services.backup_service import backup_service
@@ -194,6 +194,20 @@ def create_app() -> FastAPI:
             format_states_context()  # Triggers initial device registry fetch
         except Exception as exc:
             _record_startup_failure("ha_preload", str(exc))
+        # MQTT nhà — đường THỨ HAI để bot biết thiết bị, không cần Home Assistant.
+        # Nằm im khi chưa khai máy chủ trong Cài đặt (start() trả False), nên bật
+        # sẵn ở đây không tốn gì với người không dùng MQTT.
+        try:
+            from services import mqtt_nha
+            mqtt_nha.start()
+        except Exception as exc:
+            _record_startup_failure("mqtt_nha", str(exc))
+
+        try:
+            from services import lich_su_nha
+            lich_su_nha.start()
+        except Exception as exc:
+            _record_startup_failure("lich_su_nha", str(exc))
         # Prewarm MCP tools cache in background so the first chat request
         # doesn't pay the cold-start probe (e.g. a dead remote MCP that
         # times out at 5s adds latency to whoever asks first).
@@ -274,6 +288,16 @@ def create_app() -> FastAPI:
             try:
                 from services.voice import wyoming_server as voice_wyoming
                 voice_wyoming.stop()
+            except Exception:
+                pass
+            try:
+                from services import mqtt_nha
+                mqtt_nha.stop()      # đóng sạch để máy chủ thấy DISCONNECT
+            except Exception:
+                pass
+            try:
+                from services import lich_su_nha
+                lich_su_nha.stop()   # vét nốt hàng đợi trước khi tắt
             except Exception:
                 pass
             await quota_watcher.stop()
@@ -372,6 +396,7 @@ def create_app() -> FastAPI:
     app.include_router(zalo_personal.create_router())  # kênh Zalo Cá Nhân (bot server zca-js)
     app.include_router(channels.create_router())  # hoạt động gần đây + blacklist đa kênh
     app.include_router(camera.create_router())  # camera nhà (go2rtc / RTSP), không cần Home Assistant
+    app.include_router(mqtt.create_router())  # MQTT nhà: thiết bị + điều khiển, không cần Home Assistant
     app.include_router(devices.create_router())  # device agent (WS quay ra) + REST cho MCP device_fs
     app.include_router(rclone.create_router())  # kho lưu trữ đám mây qua rclone (Drive, OneDrive, S3…)
     app.include_router(system.create_router(app_version))
