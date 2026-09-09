@@ -23,6 +23,7 @@ import time
 import uuid
 from typing import Any
 
+from ..auto_login import _pick_authenticator_method
 from ..browser_pool import pool
 
 logger = logging.getLogger(__name__)
@@ -441,7 +442,7 @@ async def generate_image(
         except Exception as exc:
             logger.debug("flow_stealth_clear_failed: %s", exc)
 
-        await _prime_flow_session(page)
+        await _prime_flow_session(page, profile)
         await page.goto(flow_url, wait_until="domcontentloaded", timeout=30_000)
 
         # Flow renders the prompt input as a contenteditable DIV (not a
@@ -1058,7 +1059,93 @@ async def generate_image(
     }
 
 
-async def _prime_flow_session(page) -> None:
+async def _freshen_google(page, profile: str) -> bool:
+    """Google đòi lại mật khẩu giữa lượt hâm nóng → gõ mật khẩu + TOTP đã lưu.
+
+    VÌ SAO CẦN. `_prime_flow_session` chỉ biết BẤM chọn tài khoản. Khi Google
+    hỏi lại mật khẩu cho labs.google (`/challenge/pwd`) — chuyện xảy ra dù cookie
+    còn nguyên và còn hạn — nó bấm đi bấm lại cùng cái tile cho tới khi Google
+    trả `/signin/rejected`, và mọi lượt tạo ảnh sau đó rơi về trang marketing
+    ("no new images in DOM"). Ghi nhận trong code từ 24/08, lối thoát tới nay
+    vẫn là bấm tay "Chỉ đăng nhập" — đo lại 09/09 vẫn đúng chuỗi đó.
+
+    Mật khẩu và hạt giống TOTP đã nằm sẵn trong solver (`accounts_db`), nên chỗ
+    này tự đi tiếp được. Trả True khi đã gõ được gì đó.
+
+    CỐ Ý KHÔNG tự vượt CAPTCHA: gặp `/challenge/recaptcha` thì trả False ngay để
+    bên gọi báo người xử lý trên noVNC. Thử máy móc ở đó chỉ làm Google nâng mức
+    chặn — đúng thứ cơ chế tạm dừng toàn hệ thống đang cố tránh.
+    """
+    try:
+        u = page.url or ""
+    except Exception:
+        return False
+    if "/challenge/recaptcha" in u:
+        logger.info("flow_prime: gặp reCAPTCHA — nhường cho người, không thử tự qua")
+        return False
+    if "/challenge/pwd" not in u and "/signin/challenge" not in u:
+        return False
+
+    try:
+        from ..accounts_db import resolve_account
+    except Exception:
+        return False
+    if not profile:
+        return False
+    acct = resolve_account(profile) or {}
+    matkhau = str(acct.get("password") or "")
+    hat = str(acct.get("totp_secret") or "")
+    if not matkhau:
+        logger.info("flow_prime: Google đòi mật khẩu nhưng hồ sơ %s chưa lưu mật khẩu", profile)
+        return False
+
+    da_go = False
+    for sel in ('input[type="password"]', 'input[name="Passwd"]',
+                'input[autocomplete="current-password"]'):
+        try:
+            o = page.locator(sel).first
+            if await o.is_visible(timeout=1500):
+                await o.fill(matkhau)
+                await o.press("Enter")
+                da_go = True
+                logger.info("flow_prime: đã gõ lại mật khẩu cho %s", profile)
+                await asyncio.sleep(4.0)
+                break
+        except Exception:
+            continue
+    if not da_go:
+        return False
+
+    # 2FA: chỉ đi tiếp được khi có hạt giống TOTP. Không có thì dừng ở đây —
+    # bên gọi sẽ báo cần người bấm.
+    if not hat:
+        return True
+    try:
+        import pyotp
+    except Exception:
+        return True
+    try:
+        if "/challenge/totp" not in (page.url or ""):
+            await _pick_authenticator_method(page)
+            await asyncio.sleep(2.0)
+    except Exception:
+        pass
+    for sel in ('input[name="totpPin"]', 'input[id="totpPin"]',
+                'input[type="tel"]', 'input[type="text"]'):
+        try:
+            o = page.locator(sel).first
+            if await o.is_visible(timeout=1500):
+                await o.fill(pyotp.TOTP(hat).now())
+                await o.press("Enter")
+                logger.info("flow_prime: đã gõ mã 2FA cho %s", profile)
+                await asyncio.sleep(4.0)
+                break
+        except Exception:
+            continue
+    return True
+
+
+async def _prime_flow_session(page, profile: str = "") -> None:
     """Prime the Flow session so subsequent project URLs render the app
     (not the marketing landing page).
 
@@ -1084,6 +1171,16 @@ async def _prime_flow_session(page) -> None:
         except Exception:
             return False
         logger.info("flow_prime: on Google OAuth (%s) — clicking through", pg.url[:80])
+
+        # Google đòi lại mật khẩu → gõ mật khẩu + TOTP đã lưu, ĐỪNG bấm lại tile.
+        # Bấm lặp ở màn này chính là thứ dẫn tới `/signin/rejected` (đo 09/09).
+        try:
+            if "/challenge/" in (pg.url or "") and await _freshen_google(pg, profile):
+                await asyncio.sleep(2.0)
+                return True
+        except Exception as exc:
+            logger.warning("flow_prime: freshen lỗi: %s", str(exc)[:100])
+
         acted = False
         try:
             picked = await pg.evaluate("""() => {
@@ -1241,7 +1338,7 @@ async def get_or_create_project(
     started = time.time()
     async with pool.page(profile=profile, headless=headless) as page:
         # Prime session — handles the marketing-landing detour itself.
-        await _prime_flow_session(page)
+        await _prime_flow_session(page, profile)
 
         # If priming clicked "Create with Google Flow", we may already be
         # on /project/<auto-uuid>. Grab that UUID — it's a perfectly
@@ -1326,7 +1423,7 @@ async def get_or_create_project(
         if not clicked:
             # Fallback 2: re-prime session (clears marketing landing) then retry
             logger.warning("get_or_create_project: still not found, re-priming session...")
-            await _prime_flow_session(page)
+            await _prime_flow_session(page, profile)
             cur2 = page.url
             m2 = re.search(r"/project/([0-9a-f-]+)", cur2, re.I)
             if m2:
@@ -1738,7 +1835,7 @@ async def flow_generate_video(
         page.on("response", _on_resp)
 
         # ── Warm up + navigate ────────────────────────────────────────────
-        await _prime_flow_session(page)
+        await _prime_flow_session(page, profile)
         nav_url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}"
         await page.goto(nav_url, wait_until="domcontentloaded", timeout=30_000)
 
