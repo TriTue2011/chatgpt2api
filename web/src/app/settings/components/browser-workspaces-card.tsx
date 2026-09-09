@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { request } from "@/lib/request";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { duongNoVNC } from "@/lib/duong-dan";
 
 type Workspace = { profile: string; name: string; open: boolean; manual: boolean };
 const API = "/api/captcha/v1/workspaces";
@@ -32,7 +33,7 @@ export function BrowserWorkspacesCard() {
     void run(async () => {
       try {
         const response = await request.post(`${API}/${encodeURIComponent(row.profile)}/open`, { url: url.trim() });
-        const destination = `${window.location.protocol}//${window.location.hostname}:6080/vnc.html?autoconnect=1`;
+        const destination = duongNoVNC();
         setViewerUrl(destination);
         if (viewer) viewer.location.href = destination;
         if (response.data.warning) toast.warning(response.data.warning);

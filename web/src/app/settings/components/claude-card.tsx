@@ -11,6 +11,7 @@ import { SavedAccountsSelect } from "@/components/saved-accounts-select";
 import { generateTotpCode, totpSecondsRemaining } from "@/lib/totp";
 import { TotpSecretGuide, TotpSecretLabel } from "@/components/google-security-hints";
 import { ReuseProfilePicker } from "./reuse-profile-picker";
+import { duongNoVNC } from "@/lib/duong-dan";
 
 type OnboardState = {
   profile: string;
@@ -153,7 +154,7 @@ export function ClaudeCard() {
       setSession(initData);
       
       // Mở noVNC để user giải captcha/BotGuard nếu cần (giống "Chỉ đăng nhập")
-      const vncWin = window.open(`${window.location.protocol}//${window.location.hostname}:6080/vnc.html?autoconnect=1`, "_blank", "noopener,width=1024,height=720");
+      const vncWin = window.open(duongNoVNC(), "_blank", "noopener,width=1024,height=720");
       
       const pollId = window.setInterval(async () => {
         try {
@@ -202,7 +203,7 @@ export function ClaudeCard() {
       if (!res.ok) throw new Error(`onboard HTTP ${res.status}`);
       const initData = await res.json();
       setSession(initData);
-      window.open(`${window.location.protocol}//${window.location.hostname}:6080/vnc.html?autoconnect=1`, "_blank", "noopener,width=1024,height=720");
+      window.open(duongNoVNC(), "_blank", "noopener,width=1024,height=720");
       const handleSuccess = async () => {
         try {
           await persistClaudeConfig(profile);
@@ -324,7 +325,7 @@ export function ClaudeCard() {
   }
 
   function openNoVNC() {
-    window.open(`${window.location.protocol}//${window.location.hostname}:6080/vnc.html?autoconnect=1`, "_blank");
+    window.open(duongNoVNC(), "_blank");
   }
 
   return (

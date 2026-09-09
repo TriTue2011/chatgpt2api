@@ -84,3 +84,9 @@ GitPython>=3.1.55
 # ── shared / proxy ──
 httpx>=0.28.1
 uvicorn[standard]>=0.44.0
+# Proxy noVNC (`api/novnc_proxy.py`) nối tiếp kênh RFB, nên cần websockets ở
+# phía CLIENT. Gói này đã vào image nhờ extra `[standard]` của uvicorn, nhưng
+# đó là phụ thuộc gián tiếp: uvicorn bỏ nó khỏi extra là kênh WebSocket chết mà
+# build vẫn xanh, và lỗi chỉ hiện ra khi người dùng bấm "Mở noVNC" (màn hình
+# đen, không thông báo). Khai tường minh để việc cần nó được ghi thành ràng buộc.
+websockets>=13.0

@@ -11,6 +11,7 @@ import { SavedAccountsSelect } from "@/components/saved-accounts-select";
 import { generateTotpCode, totpSecondsRemaining } from "@/lib/totp";
 import { TotpSecretGuide, TotpSecretLabel } from "@/components/google-security-hints";
 import { ReuseProfilePicker } from "./reuse-profile-picker";
+import { duongNoVNC } from "@/lib/duong-dan";
 
 type OnboardState = {
   profile: string;
@@ -194,7 +195,7 @@ export function ChatGPTOnboardCard() {
       const initial = await res.json();
       setSession(initial);
       // Open noVNC so user can monitor / handle anti-bot challenges
-      const noVncUrl = `${window.location.protocol}//${window.location.hostname}:6080/vnc.html?autoconnect=1`;
+      const noVncUrl = duongNoVNC();
       window.open(noVncUrl, "_blank", "noopener,width=1024,height=720");
 
       // 2) Poll for success
@@ -326,7 +327,7 @@ export function ChatGPTOnboardCard() {
       if (!res.ok) throw new Error(`auto-login HTTP ${res.status}`);
       const initial = await res.json();
       setSession({ ...initial, profile, email: draft.email.trim() });
-      const noVncUrl = `${window.location.protocol}//${window.location.hostname}:6080/vnc.html?autoconnect=1`;
+      const noVncUrl = duongNoVNC();
       window.open(noVncUrl, "_blank", "noopener,width=1024,height=720");
       toast.info(`Đang đăng nhập Google vào ${profile} (KHÔNG add pool)…`);
       if (initial.state === "success") {
@@ -421,7 +422,7 @@ export function ChatGPTOnboardCard() {
   }
 
   function openNoVNC() {
-    const noVncUrl = `${window.location.protocol}//${window.location.hostname}:6080/vnc.html?autoconnect=1`;
+    const noVncUrl = duongNoVNC();
     window.open(noVncUrl, "_blank");
   }
 

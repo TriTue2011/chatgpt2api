@@ -10,6 +10,7 @@ import { SavedAccountsSelect } from "@/components/saved-accounts-select";
 import { generateTotpCode, totpSecondsRemaining } from "@/lib/totp";
 import { TotpSecretGuide, TotpSecretLabel } from "@/components/google-security-hints";
 import { ReuseProfilePicker } from "./reuse-profile-picker";
+import { duongNoVNC } from "@/lib/duong-dan";
 
 type FlowAccount = { profile: string; project_id: string; label?: string };
 type Cfg = { url: string; apiKey: string };
@@ -166,7 +167,7 @@ export function GoogleProvidersCard() {
       const r = await request.post(`${cs.url}/v1/session/auto-login`, { profile, email:draft.email.trim(), password:draft.password, totp_secret:draft.totpSecret.trim(), prefer_method:coTotp?"auth":"tap" });
       const d = r.data;
       setLoginSt({...d, profile});
-      const vncWin = window.open(`${window.location.protocol}//${window.location.hostname}:6080/vnc.html?autoconnect=1`,"_blank","noopener,width=1024,height=720");
+      const vncWin = window.open(duongNoVNC(),"_blank","noopener,width=1024,height=720");
       if(d.state==="success") { 
         setRunning(false); 
         toast.success(`Đã đăng nhập ${profile} ✓`); 
@@ -328,7 +329,7 @@ export function GoogleProvidersCard() {
             <Button className="h-9 rounded-lg bg-blue-600 px-3 text-xs text-white hover:bg-blue-700" onClick={autoLoginOnly} disabled={running}>
               {running?<><LoaderCircle className="size-3.5 animate-spin mr-1"/>Đang đăng nhập…</>:<><KeyRound className="size-3.5 mr-1"/>Chỉ đăng nhập</>}
             </Button>
-            <Button className="h-9 rounded-lg border border-blue-200 bg-[var(--card)] px-3 text-xs text-blue-700" onClick={()=>window.open(`${window.location.protocol}//${window.location.hostname}:6080/vnc.html?autoconnect=1`,"_blank")}><ExternalLink className="size-3.5 mr-1"/>Mở noVNC</Button>
+            <Button className="h-9 rounded-lg border border-blue-200 bg-[var(--card)] px-3 text-xs text-blue-700" onClick={()=>window.open(duongNoVNC(),"_blank")}><ExternalLink className="size-3.5 mr-1"/>Mở noVNC</Button>
             {loginSt && loginSt.state!=="none" && <Button className="h-9 rounded-lg border bg-[var(--card)] px-3 text-xs text-[var(--muted-foreground)]" onClick={()=>{stopPoll();setLoginSt(null);setRunning(false);}}><X className="size-3.5"/></Button>}
           </div>
           {loginSt && loginSt.state!=="none" && <StatusBox st={loginSt}/>}

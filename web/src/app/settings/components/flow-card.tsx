@@ -11,6 +11,7 @@ import { SavedAccountsSelect } from "@/components/saved-accounts-select";
 import { ReuseProfilePicker } from "./reuse-profile-picker";
 import { generateTotpCode, totpSecondsRemaining } from "@/lib/totp";
 import { TotpSecretGuide, TotpSecretLabel } from "@/components/google-security-hints";
+import { duongNoVNC } from "@/lib/duong-dan";
 
 type FlowAccount = {
   profile: string;
@@ -242,8 +243,7 @@ export function FlowCard() {
       toast.error("Cáº§n Ä‘iá»n captcha_solver_url trÆ°á»›c");
       return;
     }
-    const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
-    window.open(`${window.location.protocol}//${host}:6080/vnc.html?autoconnect=1`, "_blank");
+    window.open(duongNoVNC(), "_blank");
   }
 
   async function triggerManualLogin(force = false) {
