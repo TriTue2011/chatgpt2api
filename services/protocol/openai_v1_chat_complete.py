@@ -1461,7 +1461,7 @@ def _ha_local_level(messages: list[dict[str, Any]]) -> str | None:
     for s in states:
         eid = s.get("entity_id", "")
         dom = eid.split(".")[0] if "." in eid else ""
-        if dom not in ("fan", "light", "select", "input_select", "climate"):
+        if dom not in ("fan", "light", "select", "input_select", "climate", "media_player"):
             continue
         if exposed and eid not in exposed:
             continue
@@ -1519,7 +1519,9 @@ def _ha_local_level(messages: list[dict[str, Any]]) -> str | None:
     # Không khớp tên đầy đủ → lọc theo domain + KHU VỰC nêu trong câu, để hỗ trợ
     # NHIỀU quạt/đèn cùng loại (vd "quạt phòng ngủ số 1" dù quạt đặt tên chung).
     if best is None:
+        _am_luong = any(w in fd for w in ("am luong", "volume", "tieng"))
         wanted = ("climate" if temp_c is not None else
+                  "media_player" if _am_luong else
                   "fan" if (osc_on or osc_off or "quat" in toks) else
                   ("light" if ("sang" in toks or "den" in toks) else None))
         if wanted:
@@ -1583,6 +1585,16 @@ def _ha_local_level(messages: list[dict[str, Any]]) -> str | None:
             if bright is not None:
                 if call_service("light", "turn_on", {"entity_id": eid, "brightness_pct": bright}):
                     done.append(f"độ sáng {bright}%")
+        elif dom == "media_player":
+            # HassSetVolume của HA nhận volume_level 0-100 (%); dịch vụ
+            # `volume_set` lại lấy 0.0-1.0. Nhà có 7 loa/tivi mà "âm lượng loa
+            # phòng khách 30%" trước đây trượt fast-path (đo 09/09, đối chiếu
+            # danh sách intent chuẩn ở developers.home-assistant.io).
+            vol = pct if pct is not None else (_concept_pct.get(concept) if concept else None)
+            if vol is not None:
+                if call_service("media_player", "volume_set",
+                                {"entity_id": eid, "volume_level": round(vol / 100, 2)}):
+                    done.append(f"âm lượng {vol}%")
         elif dom == "climate":
             # Kẹp trong khoảng máy CHO PHÉP, đọc từ chính thiết bị. Ngoài khoảng
             # thì BÁO LẠI chứ không tự ý đặt sát biên — người dùng gõ nhầm 82
