@@ -1086,7 +1086,15 @@ def _ha_confirm_text(messages: list[dict[str, Any]]) -> str | None:
 # matched against the live HA registry (different HA = different devices/areas).
 _LOCAL_ON_VERBS = {"bat", "mo", "len", "on", "khoi", "kich"}
 _LOCAL_OFF_VERBS = {"tat", "dong", "ngat", "off", "ngung", "cup"}
-_LOCAL_CANON_DOMAINS = ("light", "switch", "fan")
+# Domain điều khiển được bằng bật/tắt qua fast-path.
+#
+# `media_player` thêm 09/09 sau khi soi entity THẬT của nhà: 7 loa/tivi đã
+# expose (Google Home phòng khách, tivi LG, dàn R1…) mà "tắt ti vi phòng khách"
+# vẫn trượt fast-path vì domain không nằm trong danh sách này.
+#
+# LƯU Ý khi đọc log: 6/7 cái đang `unavailable` (mất kết nối), nên lệnh tới
+# chúng vẫn không ăn — đó là việc của hạ tầng, không phải của bộ dò.
+_LOCAL_CANON_DOMAINS = ("light", "switch", "fan", "media_player")
 # Generic device-class nouns → HA domain (folded; keep đ as _fold_diacritics does,
 # plus the d-form as a fallback for STT that drops the đ). Used when no specific
 # entity name matched: "tắt đèn phòng khách" → all lights in that area.
