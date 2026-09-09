@@ -1408,7 +1408,13 @@ def _ha_local_intent(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | N
         # Câu nêu rõ LOẠI thiết bị thì chỉ giữ kết quả đúng loại đó.
         loai = _loai_neu_trong_cau(seg)
         if loai:
-            got = [(sv, a) for (sv, a) in got if loai in (a.get("domain") or [loai])]
+            # `switch` LUÔN được giữ: rất nhiều thiết bị thật cắm qua ổ cắm/công
+            # tắc thông minh nên mang domain `switch` dù tên là "Bình nóng lạnh",
+            # "Điều hòa phòng ngủ"… Loại chúng đi là chặn mất chính thiết bị mà
+            # người dùng vừa gọi đúng tên (đo 09/09: "bật bình nóng lạnh" trượt
+            # vì `switch.binh_nong_lanh` bị lọc do câu nêu loại water_heater).
+            got = [(sv, a) for (sv, a) in got
+                   if loai in (a.get("domain") or [loai]) or "switch" in (a.get("domain") or [])]
         results.extend(got)
 
     if not results:
