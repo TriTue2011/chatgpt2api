@@ -1749,6 +1749,28 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None,
         "Khi ai hỏi em làm được gì: kể xong thì hỏi luôn một câu ngắn rằng có "
         "muốn em hướng dẫn cách dùng không, và nói rõ nhắn «hướng dẫn» là em "
         "đưa menu đánh số để chọn. Đừng tự kể cách dùng hay tự bịa tên lệnh.")
+
+    # Câu CỤT thì HỎI LẠI bằng menu, ĐỪNG đoán chủ đề.
+    #
+    # Đo thật 09/09: người dùng bấm "trả lời" vào tin "Giá vàng hôm nay" rồi gõ
+    # "Hôm nay". Zalo Bot API KHÔNG gửi kèm trích dẫn nên trợ lý chỉ thấy đúng
+    # hai chữ đó, và nó đoán sang… thời tiết — sai hẳn chủ đề, người dùng phải
+    # hỏi lại từ đầu. Đoán sai ở đây tốn nhiều lượt hơn hỏi một câu.
+    #
+    # Dùng <<<ASK>>> vì đó là menu code tự dựng thành nút bấm/đánh số; hỏi bằng
+    # câu chữ thường thì người dùng lại phải gõ tay.
+    parts.append(
+        "Câu quá ngắn hoặc thiếu chủ đề (\"Hôm nay\", \"Thế còn?\", \"Cái đó\", "
+        "\"Còn cái kia\"…) mà ngữ cảnh KHÔNG chỉ rõ đang nói về gì: TUYỆT ĐỐI "
+        "không tự chọn một chủ đề rồi trả lời. Hãy hỏi lại bằng menu — một câu "
+        "ngắn rồi khối:\n"
+        "<<<ASK>>>\n"
+        "<chủ đề 1> | <câu hỏi đầy đủ tương ứng>\n"
+        "<chủ đề 2> | <câu hỏi đầy đủ tương ứng>\n"
+        "<<<END>>>\n"
+        "Lấy các lựa chọn từ dòng «Chủ đề đã hỏi» trong tóm tắt phiên (mới nhất "
+        "trước, tối đa 4 mục). Tóm tắt không có chủ đề nào thì hỏi thẳng một câu "
+        "ngắn: người dùng muốn hỏi về gì.")
     if allow is not None:
         # TUYỆT ĐỐI không nêu ví dụ TĨNH về "chức năng bị tắt" ở đây. Bản cũ
         # viết cứng "vd: xem/điều khiển nhà thông minh, xem máy chủ…" cho MỌI
