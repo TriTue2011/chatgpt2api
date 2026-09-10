@@ -341,6 +341,35 @@ class NhipNhanhTest(unittest.TestCase):
         from services.agent.heartbeat import _parse_tasks
         self.assertNotIn("khoa_cua_nha", [t["id"] for t in _parse_tasks()])
 
+    def test_NHIP_TRU_THOI_GIAN_GOI_API(self) -> None:
+        """Một lượt gọi Tuya mất ~4 giây. Cộng thẳng 15 giây nữa thì nhịp THẬT
+        thành 19 giây chứ không phải 15 như đã hứa với chủ máy."""
+        moc = []
+
+        def cham():
+            time.sleep(0.6)
+            return {"gui": 0}
+
+        def ghi_roi_dung(t):
+            moc.append(t)
+            self.m._nhip_dung.set()      # dừng vòng ngay sau lượt đầu
+            return True
+
+        with mock.patch.object(self.m, "chay_mot_lan", side_effect=cham), \
+             mock.patch.object(self.m, "_nhip", return_value=3.0), \
+             mock.patch.object(self.m._nhip_dung, "wait",
+                               side_effect=ghi_roi_dung):
+            self.m._nhip_dung.clear()
+            self.m._chay_mai()
+        self.m._nhip_dung.clear()
+        self.assertTrue(moc)
+        # Nhịp 3 giây, lượt tốn 0,6 giây → phải chờ ~2,4 chứ không phải trọn 3.
+        # (Sàn 1 giây trong `max()` chỉ chặn khi nhịp quá nhỏ, không ảnh hưởng
+        # con số thật 15 giây.)
+        self.assertLess(moc[0], 2.8,
+                        "phải trừ thời gian vừa tốn, không chờ trọn nhịp")
+        self.assertGreater(moc[0], 2.0)
+
     def test_MOT_LUOT_HONG_khong_lam_chet_vong(self) -> None:
         goi = []
 
@@ -348,10 +377,11 @@ class NhipNhanhTest(unittest.TestCase):
             goi.append(1)
             raise RuntimeError("Tuya mất mạng")
 
+        # Sàn chờ là 1 giây, nên phải cho vòng đủ thời gian chạy hai lượt.
         with mock.patch.object(self.m, "chay_mot_lan", side_effect=hong), \
              mock.patch.object(self.m, "_nhip", return_value=0.05):
             self.m.start()
-            time.sleep(0.3)
+            time.sleep(2.2)
             self.m.stop()
         self.assertGreater(len(goi), 1, "hỏng một lượt thì lượt sau vẫn phải chạy")
 

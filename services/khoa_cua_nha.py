@@ -515,12 +515,18 @@ def _nhip() -> float:
 
 def _chay_mai() -> None:
     while not _nhip_dung.is_set():
+        t0 = time.time()
         try:
             if is_enabled():
                 chay_mot_lan()
         except Exception as exc:
             logger.info({"event": "khoa_cua_nhip_loi", "loi": str(exc)[:150]})
-        _nhip_dung.wait(_nhip())
+        # Trừ thời gian vừa tốn: một lượt gọi Tuya mất ~4 giây (đo thật
+        # 10/09/2026), cộng thẳng 15 giây nữa thì nhịp THẬT thành 19 giây chứ
+        # không phải 15. Vòng chạy tuần tự nên không bao giờ chồng lượt; chỉ
+        # cần bù lại phần đã tốn, và giữ sàn 1 giây phòng khi Tuya chậm hơn cả
+        # nhịp.
+        _nhip_dung.wait(max(1.0, _nhip() - (time.time() - t0)))
 
 
 def start() -> bool:
