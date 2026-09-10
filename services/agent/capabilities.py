@@ -7941,7 +7941,32 @@ def duoc_giao_tiep(platform: str, bot_id: str, chat_id: str,
     Tắt công tắc (mặc định) → luôn True, mọi thread đang chạy giữ nguyên hành vi.
     Bật → chỉ ai CÓ bản ghi trong `thread_user_filters` (ở bất kỳ cấp khóa nào)
     mới qua; người lạ bị bot bỏ qua im lặng.
+
+    TICK RỖNG = CHƯA CHO PHÉP GÌ CẢ, kể cả trò chuyện. Chủ máy nêu 10/09/2026:
+    *"trong lọc thread tôi chưa cài mà nó lại phản hồi"* — kênh Ben Bắp
+    (`zalo:3502200276161491057:...`) có bản ghi lọc với danh sách RỖNG, tức chủ
+    máy đã thêm kênh vào bảng lọc nhưng chưa tick ô nào, vậy mà bot vẫn chào
+    hỏi và tự giới thiệu.
+
+    Bản cũ cố ý để vậy — tập rỗng khác `None` nên "vẫn tán gẫu, chỉ không gọi
+    được tool". Nhưng người dùng đọc bảng lọc theo nghĩa thẳng: chưa tick gì là
+    chưa cho phép gì. Ba trạng thái nay rạch ròi:
+
+        không có bản ghi  (None)  → thread lạ, đường whitelist cũ quyết định
+        có bản ghi, rỗng  (set()) → đã thêm nhưng CHƯA cấp gì → im lặng
+        có bản ghi, có tick       → nói chuyện, và dùng đúng nhóm đã tick
+
+    Không đụng tới thread chưa có bản ghi, nên hành vi của mọi kênh đang chạy
+    giữ nguyên: 7/8 kênh trên máy chủ đều đã tick sẵn nhiều nhóm.
+
+    CHỈ XÉT LỌC THEO KÊNH, không xét lọc theo NGƯỜI. Hai tầng mang hai nghĩa
+    khác nhau và đã được chốt riêng: một NGƯỜI có tên trong
+    `thread_user_filters` với tick rỗng nghĩa là "được nói, không được dùng
+    tool" — cố ý, xem `test_chi_nguoi_trong_danh_sach.py`. Trộn hai tầng là
+    chặn oan người đã được cho phép đích danh.
     """
+    if allowed_groups_for_bot(platform, bot_id, chat_id, topic_id) == set():
+        return False
     if not chi_nguoi_trong_danh_sach(platform, bot_id, chat_id, topic_id):
         return True
     return user_filter_for_bot(platform, bot_id, chat_id,

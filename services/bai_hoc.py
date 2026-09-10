@@ -188,6 +188,20 @@ def do_giong(a: str, b: str) -> float:
 _AI_TOI_DA = 3
 
 
+def model_hoc() -> str:
+    """Model dùng cho phần học hỏi. Rỗng = theo định tuyến chung (`burst`).
+
+    Tách riêng vì việc ở đây khác hẳn việc trả lời chủ máy: chỉ so hai câu có
+    cùng ý không, trả về đúng một từ. Một model nhỏ và nhanh làm tốt việc này
+    với chi phí thấp hơn nhiều, mà chọn sai cũng không hỏng gì — không kết luận
+    được thì `_ai_cung_y` trả None và phần đếm từ vẫn quyết định.
+
+    Đặt ở `mqtt.bai_hoc.model`, chọn trong Cài đặt → MQTT. Cùng khoá cho cả
+    `du_doan_nha`, để chủ máy không phải chỉnh hai nơi cho một việc.
+    """
+    return str(_cfg().get("model") or "").strip()
+
+
 def dung_ai() -> bool:
     """Có nhờ AI so ý khi đếm từ không kết luận nổi không. Mặc định BẬT.
 
@@ -218,7 +232,7 @@ def _ai_cung_y(a: str, b: str) -> bool | None:
         return None
     try:
         r = call_model(
-            _main_model("burst"),
+            model_hoc() or _main_model("burst"),
             [{"role": "system", "content":
               "Hai câu dưới đây có hỏi/yêu cầu CÙNG MỘT VIỆC không? "
               "Chỉ trả đúng một từ: CO hoặc KHONG. Không giải thích."},

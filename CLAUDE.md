@@ -121,6 +121,58 @@ Mỗi skill của bot tốn context MỖI LƯỢT chat: `services/agent/skills.p
 `SKILL_DESC_MAX = 150` ký tự và có `max_list()` chặn số skill vào bộ định tuyến. Thêm
 skill không dùng tới sẽ làm bot kém nhạy ở đúng việc nó đang làm.
 
+# Bot tự học — bốn tầng, đừng sửa nhầm tầng
+
+| Tầng | File | Trả lời câu gì |
+|---|---|---|
+| Ghi | `services/lich_su_nha.py` | chuyện gì đã xảy ra, lúc mấy giờ |
+| Bối cảnh | `services/boi_canh_nha.py` | lúc ấy trong nhà thế nào |
+| Xác suất | `services/du_doan_nha.py` | có nên bật / có nên báo không |
+| Sổ lỗi | `services/bai_hoc.py` | câu nào bot từng trả lời sai |
+
+**Ba bẫy đã đo được, đừng làm hỏng lại:**
+
+1. **Không dùng bảng `tuoi` cho mốc quá khứ** — rò rỉ tương lai. Mô hình sẽ
+   học "lux lúc bật đèn = lux bây giờ", đúng gần 100% trên dữ liệu cũ và vô
+   dụng ngoài đời. `boi_canh()` cho quá khứ, `hien_tai()` cho bây giờ.
+2. **Phải sinh mẫu ÂM** — log chỉ ghi cái đã xảy ra; không có mẫu âm thì mọi
+   xác suất bằng 1.
+3. **Học phải bỏ `do_ai=1`** — bot bật đèn rồi thấy đèn bật rồi tự khẳng định
+   vòng quanh. Dùng `doc_cua_so(..., bo_do_ai=True)`.
+
+**Mức tự chủ tự lên cấp, từng thiết bị**: đúng 19/20 lần VÀ đủ 50 lượt được
+chấm thì mới tự làm; sai 2 lần trong 10 lượt gần nhất là tụt về hỏi lại. Khoá
+cửa / bếp / bình nóng lạnh không bao giờ tự làm.
+
+**Đo trên dữ liệu thật, đừng tin test suông**: `scripts/do_hoc_nha.py`. Cổng
+chặn — tra ngược bối cảnh phải > 60%, kiểm tiến dần phải vượt 58,3%. Đo
+10/09/2026: đèn bếp 74,2% so với 62,9% của mốc "luôn đoán không".
+
+# Đưa bản sửa ra máy chủ — DÙNG SCRIPT, đừng gõ tay
+
+```bash
+scripts/day_va_dung.sh          # đẩy main → lo trọn vòng tới lúc ảnh lên GHCR
+scripts/day_va_dung.sh --chi-dung        # bỏ qua đẩy code, chỉ dựng ảnh
+scripts/day_va_dung.sh --khong-day-anh   # dựng thử, không đẩy
+```
+
+Script hỏi GitHub Actions trước; Actions dựng xong thì nó không làm gì thêm,
+Actions hỏng (hoặc không hỏi được) thì mới dựng tại chỗ, gắn `:latest`, đẩy
+GHCR, rồi dọn ảnh cũ giữ 3 bản gần nhất.
+
+**Actions hiện KHÔNG dựng được** — đo 10/09/2026, ba lần gần nhất đều
+`failure` vì *"recent account payments have failed or your spending limit needs
+to be increased"*. Hết hạn mức tài khoản, không phải lỗi code. Nên đường thực
+tế bây giờ luôn là dựng tại chỗ.
+
+**Đẩy ảnh xong thì DỪNG.** Watchtower trên máy chủ quét mỗi 600 giây và tự kéo
+về. Đừng thêm bước khởi động lại — hai đường cùng làm một việc là cách sinh ra
+tình huống không ai truy được.
+
+**Đĩa máy chủ chật**: mỗi ảnh 5,76 GB, còn 19/99 GB. Cron 0h00 chạy
+`docker image prune -f` — **không cờ `-a`**, vì `-a` xoá luôn bản dự phòng để
+lùi khi bản mới hỏng.
+
 # Máy chủ chạy thật
 
 - Host `172.16.10.38`, stack quản lý bằng **Portainer** (không phải `docker compose` trên

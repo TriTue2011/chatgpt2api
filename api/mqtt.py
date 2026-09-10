@@ -247,6 +247,51 @@ def create_router() -> APIRouter:
             logger.warning("mqtt tình huống lỗi: %s", exc)
             return {"ok": False, "error": str(exc)[:200]}
 
+    @router.get("/api/mqtt/du-doan")
+    async def du_doan(authorization: str | None = Header(default=None)):
+        """Bot đang nghĩ gì, và nó đã đoán đúng bao nhiêu lần.
+
+        Trả cả `dang_nghi` (gợi ý lúc này) lẫn `thong_ke` (thành tích từng
+        thiết bị, còn thiếu bao nhiêu lượt nữa mới được tự làm).
+        """
+        require_admin(authorization)
+
+        from services import du_doan_nha as dn
+
+        try:
+            return {"ok": True, "dang_nghi": dn.quet(),
+                    "thong_ke": dn.thong_ke()}
+        except Exception as exc:
+            logger.warning("mqtt dự đoán lỗi: %s", exc)
+            return {"ok": False, "error": str(exc)[:200]}
+
+    @router.post("/api/mqtt/du-doan/cham")
+    async def du_doan_cham(body: dict,
+                           authorization: str | None = Header(default=None)):
+        """Chấm một lần đoán: đúng hay sai.
+
+        Đây là đường bot lên cấp: đủ 50 lượt được chấm mà đúng ≥95% thì thiết
+        bị đó tự làm được, không cần ai bật tay.
+        """
+        require_admin(authorization)
+
+        from services import du_doan_nha as dn
+
+        try:
+            i = int(body.get("id") or 0)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "Thiếu id."}
+        if not i:
+            return {"ok": False, "error": "Thiếu id."}
+        try:
+            ok = (dn.ghi_dung(i) if body.get("dung") else dn.ghi_sai(i))
+            if not ok:
+                return {"ok": False, "error": "Lần đoán này đã chấm rồi."}
+            return {"ok": True, "giai_thich": dn.giai_thich(i)}
+        except Exception as exc:
+            logger.warning("mqtt chấm dự đoán lỗi: %s", exc)
+            return {"ok": False, "error": str(exc)[:200]}
+
     @router.post("/api/mqtt/tinh-huong/duyet")
     async def tinh_huong_duyet(body: dict,
                                authorization: str | None = Header(default=None)):

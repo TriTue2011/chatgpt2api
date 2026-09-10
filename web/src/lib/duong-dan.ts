@@ -54,10 +54,14 @@ export async function moNoVNC(dacTa?: string): Promise<Window | null> {
     const { request } = await import("@/lib/request");
     const res = await request.post("/api/novnc/ve");
     const ve = (res.data as { ticket?: string })?.ticket || "";
-    // `path=novnc/websockify` là đường WebSocket noVNC sẽ nối tới (tương đối so
-    // với trang), phải khớp endpoint proxy mở. Thiếu nó thì noVNC gọi
-    // `/websockify` ở gốc, gặp trang web thay vì kênh RFB → màn hình đen.
-    const dich = `/novnc/vnc.html?autoconnect=1&path=novnc/websockify&ve=${encodeURIComponent(ve)}`;
+    // `path` phải là đường TUYỆT ĐỐI (có `/` đầu). noVNC ghép `path` vào GỐC
+    // TRANG, mà trang nằm ở `/novnc/vnc.html`, nên viết `novnc/websockify`
+    // (không dấu `/`) cho ra `/novnc/novnc/websockify` — hai lần "novnc".
+    //
+    // Đo thật 10/09/2026 trên log máy chủ: 9/9 lần nối đều gọi đúng đường sai
+    // đó và bị trả 403, không lần nào chạm được endpoint thật. Chủ máy thấy
+    // "Failed to connect to server".
+    const dich = `/novnc/vnc.html?autoconnect=1&path=/novnc/websockify&ve=${encodeURIComponent(ve)}`;
     if (tab) tab.location.href = dich;
     else window.location.href = dich;  // bị chặn pop-up → đi thẳng
     return tab;

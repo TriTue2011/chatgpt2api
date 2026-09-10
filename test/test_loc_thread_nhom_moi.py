@@ -102,5 +102,46 @@ class TestDongDauKhiLuu(unittest.TestCase):
         self.assertEqual(data["thread_filter_meta"], {})
 
 
+class TestTickRongThiImLang(unittest.TestCase):
+    """Tick RỖNG = chưa cho phép gì cả, kể cả trò chuyện.
+
+    Chủ máy nêu 10/09/2026: *"trong lọc thread tôi chưa cài mà nó lại phản
+    hồi"*. Kênh Ben Bắp (`zalo:3502200276161491057:...`) có bản ghi lọc với
+    danh sách rỗng — đã thêm vào bảng nhưng chưa tick ô nào — vậy mà bot vẫn
+    chào hỏi và tự giới thiệu.
+
+    Bản cũ cố ý thế: tập rỗng khác `None` nên "vẫn tán gẫu, chỉ không gọi được
+    tool". Nhưng người dùng đọc bảng lọc theo nghĩa thẳng.
+    """
+
+    def _nghe(self, filters: dict, meta: dict) -> bool:
+        cfg = {"thread_filters": filters, "thread_filter_meta": meta}
+        with patch("services.config.config.get", return_value=cfg), \
+             patch.object(caps, "all_groups", return_value=list(NHOM)):
+            return caps.duoc_giao_tiep("zalo", "bot1", "chat1", "u1")
+
+    def test_TICK_RONG_thi_bot_IM_LANG(self):
+        """Ca thật của kênh Ben Bắp: `known` đủ mọi nhóm, tick rỗng."""
+        self.assertFalse(
+            self._nghe({"zalo:bot1:chat1": []},
+                       {"zalo:bot1:chat1": {"known": list(NHOM)}}))
+
+    def test_CO_TICK_thi_bot_van_noi(self):
+        self.assertTrue(
+            self._nghe({"zalo:bot1:chat1": ["web"]},
+                       {"zalo:bot1:chat1": {"known": list(NHOM)}}))
+
+    def test_KHONG_CO_BAN_GHI_thi_giu_nguyen_hanh_vi_cu(self):
+        """Thread lạ vẫn đi theo đường whitelist cũ — không được đổi hành vi
+        của mọi kênh đang chạy chỉ vì sửa một ca."""
+        self.assertTrue(self._nghe({}, {}))
+
+    def test_ban_ghi_cu_KHONG_CO_known_thi_van_noi(self):
+        """Bản ghi lưu trước khi có `known`: mọi nhóm chưa tick đều là "chưa
+        từng được hỏi ý" nên tập quyền KHÁC rỗng → vẫn nói chuyện."""
+        self.assertTrue(
+            self._nghe({"zalo:bot1:chat1": []}, {"zalo:bot1:chat1": {}}))
+
+
 if __name__ == "__main__":
     unittest.main()

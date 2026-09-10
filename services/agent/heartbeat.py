@@ -182,6 +182,12 @@ def _parse_tasks() -> list[dict[str, Any]]:
         "system": True,
     })
     tasks.append({
+        "id": "du_doan_nha",
+        "intent": "read",
+        "text": "Học thói quen theo bối cảnh (lux, nhiệt độ, hiện diện) rồi gợi ý",
+        "system": True,
+    })
+    tasks.append({
         "id": "bai_hoc",
         "intent": "read",
         "text": "Bản tin «em học được gì» — mặc định TẮT (mqtt.bai_hoc.bao)",
@@ -501,6 +507,33 @@ def _eval_bai_hoc() -> tuple[str, str]:
         return "skip", f"error: {exc}"
 
 
+def _eval_du_doan_nha() -> tuple[str, str]:
+    """Học thói quen theo bối cảnh rồi gợi ý — services.du_doan_nha.
+
+    CHỈ TRẢ VỀ danh sách gợi ý, không tự bật gì ở đây: bật thiết bị là tác
+    dụng phụ, phải đi qua cổng riêng.
+
+    Chạy nền vì `hoc()` quét lịch sử nhiều ngày và dựng bối cảnh cho từng ô 30
+    phút — vài giây. Khuôn theo `_eval_tinh_huong`: ghi mốc TRƯỚC khi chạy nền
+    để tick 5 phút sau không chạy đúp.
+    """
+    try:
+        from services import du_doan_nha as dn
+        if not dn.is_enabled():
+            return "skip", "đang tắt (mqtt.du_doan.bat)"
+        import time as _t
+        moc = _t.strftime("%Y-%m-%d %H")
+        if _state.get("du_doan_gio") == moc:
+            return "skip", "giờ này đã xem rồi"
+        _state["du_doan_gio"] = moc
+        _save_state()
+        threading.Thread(target=dn.chay_mot_lan, name="du-doan-nha",
+                         daemon=True).start()
+        return "act", "học thói quen theo bối cảnh (chạy nền)"
+    except Exception as exc:
+        return "skip", f"error: {exc}"
+
+
 _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
     "wiki_daily_digest": _eval_wiki_digest,
     "open_goals_nudge": _eval_open_goals,
@@ -510,6 +543,7 @@ _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
     "tinh_huong_nha": _eval_tinh_huong,
     "khoa_cua_nha": _eval_khoa_cua,
     "bai_hoc": _eval_bai_hoc,
+    "du_doan_nha": _eval_du_doan_nha,
 }
 
 

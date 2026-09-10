@@ -95,6 +95,14 @@ export function MqttCard() {
     bao: boolean; kenh_nhan: string[]; bao_moi_ngay: number; dung_ai: boolean;
   }>({ bat: true, du_mau: 4, han_ngay: 180, bao: false, kenh_nhan: [],
        bao_moi_ngay: 7, dung_ai: true });
+  // Học thói quen theo BỐI CẢNH: không chỉ "mấy giờ hay bật đèn" mà "lúc đó
+  // trời tối chưa, có ai ở nhà không, mùa nào".
+  const [dd, setDd] = useState<{ bat: boolean; so_ngay: number }>({
+    bat: true, so_ngay: 30,
+  });
+  // Model cho phần học hỏi. Rỗng = theo định tuyến chung của bot.
+  const [modelHoc, setModelHoc] = useState("");
+  const [dsModel, setDsModel] = useState<string[]>([]);
   const [ttCb, setTtCb] = useState<TrangThaiCB | null>(null);
   const [th, setTh] = useState<TinhHuong[]>([]);
 
@@ -130,6 +138,12 @@ export function MqttCard() {
       kenh_nhan: Array.isArray(h.kenh_nhan) ? h.kenh_nhan.map((x: unknown) => String(x)) : [],
       bao_moi_ngay: typeof h.bao_moi_ngay === "number" ? h.bao_moi_ngay : 7,
       dung_ai: h.dung_ai !== false,
+    });
+    setModelHoc(String(h.model || ""));
+    const d = ((config as any)?.mqtt?.du_doan as any) || {};
+    setDd({
+      bat: d.bat !== false,
+      so_ngay: typeof d.so_ngay === "number" ? d.so_ngay : 30,
     });
   }, [(config as any)?.mqtt]);
 
@@ -169,6 +183,27 @@ export function MqttCard() {
     } catch { /* chưa học được gì thì thôi */ }
   };
   useEffect(() => { void napTh(); }, []);
+
+  // Danh sách model THẬT của gateway, cùng nguồn với thẻ Giáo viên
+  // (`teacher-settings-card.tsx`): `/v1/models` trả kiểu OpenAI `{data:[{id}]}`.
+  // Gõ tay thì sai một ký tự là hỏng lặng lẽ, nên cho chọn trong danh sách.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const r = await request.get("/v1/models");
+        const raw = (r as { data?: any })?.data;
+        let ids: string[] = [];
+        if (Array.isArray(raw?.data)) {
+          ids = raw.data.map((m: { id?: string }) => String(m?.id || "")).filter(Boolean);
+        } else if (Array.isArray(raw)) {
+          ids = raw.map((m: unknown) =>
+            typeof m === "string" ? m : String((m as { id?: string })?.id || ""),
+          ).filter(Boolean);
+        }
+        setDsModel(Array.from(new Set(ids)).sort((a, b) => a.localeCompare(b)));
+      } catch { /* chưa cấu hình provider thì thôi, vẫn gõ tay được */ }
+    })();
+  }, []);
 
   const duyetTh = async (id: number, bo = false) => {
     setBusy(`th${id}`);
@@ -214,6 +249,11 @@ export function MqttCard() {
           kenh_nhan: bh.kenh_nhan || [],
           bao_moi_ngay: bh.bao_moi_ngay ?? 7,
           dung_ai: bh.dung_ai !== false,
+          model: (modelHoc || "").trim(),
+        },
+        du_doan: {
+          bat: dd.bat !== false,
+          so_ngay: dd.so_ngay ?? 30,
         },
       },
     } as any);
@@ -534,6 +574,54 @@ export function MqttCard() {
             </div>
           </div>
 
+          {/* ── Học thói quen theo bối cảnh ───────────────────────────── */}
+          <div className="mt-2 space-y-2 rounded border border-border p-2">
+            <label className="flex items-center gap-2 text-xs font-semibold">
+              <input
+                type="checkbox"
+                checked={dd.bat !== false}
+                onChange={(e) => setDd({ ...dd, bat: e.target.checked })}
+              />
+              🏠 Cho em học nếp nhà theo hoàn cảnh
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Em không chỉ nhớ «7 giờ tối hay bật đèn bếp», mà nhớ cả hoàn cảnh
+              lúc ấy: trời đã tối chưa, trong nhà nóng hay lạnh, có ai ở phòng
+              nào, mùa nào trong năm, và anh vừa bật cái gì trước đó. Nhờ vậy em
+              phân biệt được hôm mưa sập tối từ 5 giờ chiều với hôm nắng hè 7
+              giờ vẫn sáng.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Ban đầu em chỉ <b>hỏi ý anh</b> kèm hai nút «Ừ, bật đi / Không
+              cần». Mỗi lần anh bấm là một lần em học. Thiết bị nào em đoán đúng{" "}
+              <b>19 trên 20 lần</b> và đã được anh chấm đủ <b>50 lượt</b> thì em
+              mới tự làm, làm xong mới báo. Sai 2 lần trong 10 lượt gần nhất là
+              em tự quay về hỏi lại.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Khoá cửa, bếp và bình nóng lạnh thì em <b>không bao giờ</b> tự
+              động, dù đoán đúng bao nhiêu lần — những thứ đó bật nhầm không sửa
+              lại được bằng một câu xin lỗi.
+            </p>
+            <label className="flex items-center gap-2 text-xs">
+              Nhìn lại
+              <Input
+                type="number"
+                className="h-7 w-20"
+                value={dd.so_ngay}
+                onChange={(e) =>
+                  setDd({ ...dd, so_ngay: Number(e.target.value) || 30 })
+                }
+              />
+              ngày gần đây để học
+            </label>
+            <p className="text-[11px] text-muted-foreground">
+              Em nhắn gợi ý vào đúng những kênh anh chọn ở mục «Kể cho ai nghe»
+              ngay bên dưới — chung một chỗ cài, khỏi phải đặt hai lần. Chưa
+              chọn kênh nào thì em nhắn cho admin mặc định.
+            </p>
+          </div>
+
           {/* ── Học từ lỗi ────────────────────────────────────────────── */}
           <div className="mt-2 space-y-2 rounded border border-border p-2">
             <label className="flex items-center gap-2 text-xs font-semibold">
@@ -568,6 +656,36 @@ export function MqttCard() {
                 </span>
               </span>
             </label>
+
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">
+                Model cho phần học hỏi
+              </p>
+              <select
+                className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+                value={modelHoc}
+                onChange={(e) => setModelHoc(e.target.value)}
+              >
+                <option value="">(theo model chung của bot)</option>
+                {Array.from(new Set([...dsModel, ...(modelHoc ? [modelHoc] : [])]))
+                  .map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+              </select>
+              <p className="text-[11px] text-muted-foreground">
+                Việc ở đây rất nhẹ: chỉ đọc hai câu rồi trả lời «cùng ý» hay
+                «khác ý». Một model nhỏ và nhanh làm tốt việc này mà rẻ hơn
+                nhiều. Chọn sai cũng không hỏng gì — model không trả lời được
+                thì em quay về cách so chữ như cũ. Để trống là dùng chung model
+                với phần còn lại của bot.
+              </p>
+              {dsModel.length === 0 ? (
+                <p className="text-[11px] text-amber-600">
+                  Chưa lấy được danh sách model — kiểm tra lại phần nhà cung cấp
+                  AI. Vẫn để trống được, em dùng model chung.
+                </p>
+              ) : null}
+            </div>
 
             <div className="grid gap-2 sm:grid-cols-2">
               <div className="space-y-1">
