@@ -203,9 +203,22 @@ def _patch_state(new_state: dict[str, Any] | None, entity_id: str,
 _GHI_HA = ("light.", "switch.", "binary_sensor.", "lock.", "climate.",
            "fan.", "cover.", "media_player.", "vacuum.", "water_heater.")
 
-#: Cảm biến CÓ ghi dù nằm trong `sensor.` — thứ nói lên nếp sinh hoạt.
-_GHI_SENSOR = ("illuminance", "occupancy", "presence", "person", "motion",
-               "temperature", "humidity", "power")
+#: Cảm biến CÓ ghi dù nằm trong `sensor.` — CHỈ thứ nói lên CÓ NGƯỜI hay không.
+#:
+#: Đo thật 10/09/2026 sau vài giờ chạy: 104/224 bản ghi (46%) là aptomat tổng
+#: (`power` + `temperature`), thêm 59 bản ghi là độ sáng ban công. Cả ba đều
+#: KHÔNG phải hành vi người: aptomat đo dòng điện cả nhà nên phản ánh tủ lạnh,
+#: điều hoà, bình nóng lạnh tự chạy; độ sáng ngoài trời đổi liên tục theo mây.
+#: Với chúng, nhịp ghi là ~24.000 sự kiện/ngày thay vì ~200 như dự tính.
+#:
+#: Nhiệt độ/độ ẩm/công suất VẪN đọc được theo thời gian thực từ `tuoi` khi cần
+#: — bỏ ở đây chỉ là không lưu chuỗi lịch sử để học thói quen.
+_GHI_SENSOR = ("occupancy", "presence", "person", "motion")
+
+#: Độ sáng chỉ có ích TRONG NHÀ (biết đèn bếp có bật không). Ngoài trời thì
+#: đổi theo mây, không nói gì về hành vi.
+_LUX_NGOAI = ("ban_cong", "san_thuong", "ngoai_troi", "san_vuon",
+              "outdoor", "balcony")
 
 
 def _dang_ghi(entity_id: str) -> bool:
@@ -217,6 +230,8 @@ def _dang_ghi(entity_id: str) -> bool:
     if e.startswith(_GHI_HA):
         return True
     if e.startswith("sensor."):
+        if "illuminance" in e:
+            return not any(k in e for k in _LUX_NGOAI)
         return any(k in e for k in _GHI_SENSOR)
     return False
 

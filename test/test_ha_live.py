@@ -143,5 +143,43 @@ class LifecycleTests(unittest.TestCase):
             self.assertFalse(ha_live.start())
 
 
+class LocGhiLichSuTests(unittest.TestCase):
+    """Chọn lọc thứ ghi vào lịch sử — chỉ giữ tín hiệu NÓI LÊN CÓ NGƯỜI."""
+
+    def test_thiet_bi_dong_ngat_thi_GHI(self) -> None:
+        for e in ("light.bep", "switch.o_cam", "lock.cua_chinh",
+                  "climate.dieu_hoa", "media_player.tivi"):
+            self.assertTrue(ha_live._dang_ghi(e), e)
+
+    def test_cam_bien_HIEN_DIEN_thi_GHI(self) -> None:
+        for e in ("binary_sensor.phong_khach_presence",
+                  "sensor.hien_dien_bep_motion_state",
+                  "sensor.bep_occupancy", "sensor.ban_cong_person_count"):
+            self.assertTrue(ha_live._dang_ghi(e), e)
+
+    def test_APTOMAT_khong_ghi(self) -> None:
+        """Đo thật 10/09/2026: aptomat tổng chiếm 46% số bản ghi mà không nói
+        gì về hành vi người — nó đo cả tủ lạnh, điều hoà tự chạy."""
+        self.assertFalse(ha_live._dang_ghi("sensor.aptomat_tong_power"))
+        self.assertFalse(ha_live._dang_ghi("sensor.aptomat_tong_temperature"))
+
+    def test_nhiet_do_do_am_khong_ghi(self) -> None:
+        """Vẫn đọc được thời gian thực từ bảng `tuoi`; chỉ không lưu lịch sử."""
+        self.assertFalse(ha_live._dang_ghi("sensor.nhiet_am_ban_cong_temperature"))
+        self.assertFalse(ha_live._dang_ghi("sensor.nhiet_am_ban_cong_humidity"))
+
+    def test_LUX_TRONG_NHA_ghi_ngoai_troi_thi_khong(self) -> None:
+        """Độ sáng trong nhà cho biết đèn có bật; ngoài trời chỉ theo mây."""
+        self.assertTrue(ha_live._dang_ghi("sensor.hien_dien_bep_illuminance"))
+        self.assertTrue(ha_live._dang_ghi("sensor.hien_dien_phong_ngu_illuminance"))
+        self.assertFalse(ha_live._dang_ghi("sensor.hien_dien_ban_cong_illuminance"))
+        self.assertFalse(ha_live._dang_ghi("sensor.san_thuong_illuminance"))
+
+    def test_ha_thong_khong_ghi(self) -> None:
+        for e in ("update.ha_core", "automation.den_bep", "sun.sun",
+                  "device_tracker.dien_thoai", "number.do_sang"):
+            self.assertFalse(ha_live._dang_ghi(e), e)
+
+
 if __name__ == "__main__":
     unittest.main()
