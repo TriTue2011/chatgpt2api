@@ -75,6 +75,23 @@ def _active_bot() -> dict:
     return b
 
 
+def bot_theo_id(bot_id: str) -> dict | None:
+    """Bot có id này (phần trước dấu ':' của token), None nếu không có.
+
+    Nhà chủ máy chạy BA bot Zalo cùng lúc, mỗi bot một tệp người nhận riêng.
+    Không nêu đích danh thì mọi tin đi ra bot đầu danh sách — Claude giám sát
+    trên máy chủ vì thế báo nhầm chỗ. Chủ máy chốt 10/09/2026: phần giám sát
+    dùng bot Ben Bắp.
+    """
+    ma = str(bot_id or "").strip()
+    if not ma:
+        return None
+    for b in _bots():
+        if str(b.get("token", "")).split(":")[0] == ma:
+            return b
+    return None
+
+
 def _bot_token() -> str:
     return str(_active_bot().get("token", "")).strip()
 

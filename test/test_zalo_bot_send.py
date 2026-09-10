@@ -34,12 +34,26 @@ def _app():
         return {"ok": True}
 
     def send_message(chat_id, text, rich=True, bot=None):
-        fake.goi.append(("text", chat_id, text, rich))
+        fake.goi.append(("text", chat_id, text, rich, bot))
         return {"ok": True}
 
     fake.send_photo = send_photo
     fake.send_message = send_message
     fake._resolve_admin_delivery = lambda: ("admin-chat-1", None)
+
+    # Bốn bot Zalo, mỗi bot một tệp người nhận riêng — "benbap" cố ý CHƯA có
+    # người nhận, đúng trạng thái thật của bot mới thêm.
+    fake.bots = {"mitbap": {"token": "mitbap:x"}, "benbap": {"token": "benbap:x"}}
+    fake.admins = {"mitbap": ["chat-mitbap"], "benbap": []}
+    fake.bot_theo_id = lambda i: fake.bots.get(str(i))
+    fake._admin_ids_for_bot = lambda b: fake.admins.get(
+        str((b or {}).get("token", "")).split(":")[0], [])
+
+    def _with_bot(bot, fn, *a, **k):
+        fake.goi.append(("with_bot", str((bot or {}).get("token", ""))))
+        return fn(*a, **k)
+
+    fake._with_bot = _with_bot
     fake.process_update = lambda *a, **k: None
     fake.verify_webhook_secret = lambda h: None
     fake.get_webhook_status = lambda: {}
@@ -122,7 +136,7 @@ class TestGuiRa(unittest.TestCase):
     def test_chi_co_chu_thi_gui_text(self):
         r = self.cli.post("/api/zalo-bot/send", data={"text": "Mất điện"})
         self.assertEqual(r.status_code, 200, r.text)
-        kieu, cid, text, rich = self.zb.goi[-1]
+        kieu, cid, text, rich, _bot = self.zb.goi[-1]
         self.assertEqual((kieu, text), ("text", "Mất điện"))
         self.assertFalse(rich, "cảnh báo hệ thống gửi plain, tránh vỡ URL")
         self.assertEqual(cid, "admin-chat-1")
@@ -147,6 +161,48 @@ class TestGuiRa(unittest.TestCase):
         r = self.cli.post("/api/zalo-bot/send", data={"text": "x"})
         self.assertEqual(r.status_code, 400)
         self.assertIn("chat_id", r.text)
+
+    def test_NEU_BOT_CHUA_CO_NGUOI_NHAN_thi_BAO_LOI(self):
+        """Nêu đích danh bot mà bot đó chưa có người nhận → 400, TUYỆT ĐỐI
+        không rơi về admin của bot khác.
+
+        Đo thật 10/09/2026 trên máy chủ: gọi với `bot_id` của Ben Bắp (bot mới
+        thêm, chưa ai nhắn nên chưa có admin) trả về `ok:true` kèm chat_id của
+        Bot Mít Bắp — tin sang bot khác mà bên gọi tưởng đã gửi đúng. Hỏng im
+        lặng, đúng loại tốn nhiều công nhất để tìm ra.
+        """
+        r = self.cli.post("/api/zalo-bot/send",
+                          data={"text": "x", "bot_id": "benbap"})
+        self.assertEqual(r.status_code, 400, r.text)
+        self.assertIn("chưa có người nhận", r.text)
+        self.assertEqual(self.zb.goi, [], "không được gửi đi đâu cả")
+
+    def test_BOT_CO_NGUOI_NHAN_thi_di_dung_chat_va_dung_token(self):
+        r = self.cli.post("/api/zalo-bot/send",
+                          data={"text": "x", "bot_id": "mitbap"})
+        self.assertEqual(r.status_code, 200, r.text)
+        kieu, cid, _, _, bot = self.zb.goi[-1]
+        self.assertEqual((kieu, cid), ("text", "chat-mitbap"))
+        self.assertEqual(bot, self.zb.bots["mitbap"],
+                         "phải truyền bot xuống, kẻo đi bằng token bot[0]")
+
+    def test_ANH_cung_phai_di_dung_token(self):
+        """`send_photo` không nhận tham số `bot` nên phải bọc `_with_bot`."""
+        self.cli.post("/api/zalo-bot/send",
+                      data={"photo_url": "https://x.tld/a.png",
+                            "bot_id": "mitbap"})
+        self.assertIn(("with_bot", "mitbap:x"), self.zb.goi)
+
+    def test_bot_id_la_hoac_thi_400(self):
+        r = self.cli.post("/api/zalo-bot/send",
+                          data={"text": "x", "bot_id": "khong-ton-tai"})
+        self.assertEqual(r.status_code, 400, r.text)
+
+    def test_KHONG_neu_bot_thi_giu_nguyen_hanh_vi_cu(self):
+        """Mọi nơi gọi cũ không truyền `bot_id` — không được đổi hành vi."""
+        r = self.cli.post("/api/zalo-bot/send", data={"text": "Mất điện"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.zb.goi[-1][1], "admin-chat-1")
 
     def test_anh_hong_bao_400_chu_khong_no_500(self):
         r = self.cli.post("/api/zalo-bot/send",

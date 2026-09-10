@@ -55,9 +55,12 @@ if [ "$CHI_DUNG" -eq 0 ]; then
         loi "đang ở nhánh '$NHANH', không phải main — dừng cho chắc"
         exit 1
     fi
-    if [ -n "$(git status --porcelain)" ]; then
+    # Chỉ xét file ĐÃ THEO DÕI. File lạ chưa `git add` không vào commit nên
+    # không ảnh hưởng ảnh sắp dựng — chặn vì chúng là chặn nhầm, và người dùng
+    # sẽ phải xoá thứ không phải của mình để đẩy được code.
+    if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
         loi "còn thay đổi chưa cam kết — cam kết trước rồi chạy lại"
-        git status --short | head -10
+        git status --short --untracked-files=no | head -10
         exit 1
     fi
     if [ -z "$(git log --oneline origin/main..HEAD 2>/dev/null)" ]; then

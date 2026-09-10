@@ -155,6 +155,7 @@ def create_router() -> APIRouter:
         chat_id: str = Form(default=""),
         text: str = Form(default=""),
         photo_url: str = Form(default=""),
+        bot_id: str = Form(default=""),
         photo: UploadFile | None = File(default=None),
         authorization: str | None = Header(default=None),
     ):
@@ -177,7 +178,33 @@ def create_router() -> APIRouter:
                                 detail="Cần ít nhất một trong: text, photo, photo_url")
 
         def _gui() -> dict:
-            cid = (chat_id or "").strip() or zb._resolve_admin_delivery()[0]
+            # `bot_id` nêu ĐÍCH DANH bot gửi. Nhà chủ máy chạy bốn bot Zalo,
+            # mỗi bot một tệp người nhận riêng; không nêu thì tin đi ra bot đầu
+            # danh sách.
+            #
+            # NÊU BOT MÀ BOT ĐÓ CHƯA CÓ NGƯỜI NHẬN THÌ BÁO LỖI, tuyệt đối không
+            # rơi về admin của bot khác. Đo thật 10/09/2026: gọi với
+            # `bot_id=3418113969586575932` (Ben Bắp, chưa ai nhắn nên chưa có
+            # admin) trả về `ok:true` kèm `chat_id` của Bot Mít Bắp — tin đi
+            # sang bot khác mà bên gọi tưởng đã gửi đúng. Hỏng im lặng, đúng
+            # loại lỗi tốn nhiều công nhất để tìm ra.
+            chon = zb.bot_theo_id(bot_id) if bot_id.strip() else None
+            if bot_id.strip() and chon is None:
+                raise HTTPException(status_code=400,
+                                    detail=f"Không có bot Zalo id {bot_id!r}")
+            cid = (chat_id or "").strip()
+            if not cid:
+                if chon is not None:
+                    ds = zb._admin_ids_for_bot(chon)
+                    if not ds:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Bot {bot_id} chưa có người nhận. Nhắn cho "
+                                   "bot đó một câu để nó biết admin là ai, "
+                                   "hoặc truyền thẳng chat_id.")
+                    cid = ds[0]
+                else:
+                    cid = zb._resolve_admin_delivery()[0]
             if not cid:
                 raise HTTPException(
                     status_code=400,
@@ -193,12 +220,22 @@ def create_router() -> APIRouter:
                 # http://172.16.10.38:3030 (địa chỉ LAN), và _ensure_public_photo_url
                 # chỉ viết lại localhost/127.0.0.1 — LAN thì nó giữ nguyên rồi
                 # Zalo im lặng không tải được ảnh.
-                r = zb.send_photo(cid, anh, caption=text.strip())
+                # PHẢI đi đúng token bot đã chọn. `send_photo` không nhận tham
+                # số `bot` (khác `send_message`) nên bọc `_with_bot` — nó đặt
+                # bot hiện hành cho thread rồi khôi phục. Thiếu bước này thì
+                # ảnh bắn ra bot[0] mà vẫn trả ok:true, không cách nào phát
+                # hiện (chính lời cảnh báo trong docstring `_with_bot`).
+                r = (zb._with_bot(chon, zb.send_photo, cid, anh,
+                                  caption=text.strip())
+                     if chon is not None
+                     else zb.send_photo(cid, anh, caption=text.strip()))
                 return {"ok": bool(r.get("ok")), "kieu": "photo",
-                        "chat_id": cid, "ket_qua": r}
-            r = zb.send_message(cid, text.strip(), rich=False)
+                        "chat_id": cid, "bot_id": bot_id.strip(), "ket_qua": r}
+            # `bot=chon` để tin đi đúng token bot được nêu; None thì
+            # `send_message` tự lấy bot đang hoạt động như trước.
+            r = zb.send_message(cid, text.strip(), rich=False, bot=chon)
             return {"ok": bool(r.get("ok")), "kieu": "text",
-                    "chat_id": cid, "ket_qua": r}
+                    "chat_id": cid, "bot_id": bot_id.strip(), "ket_qua": r}
 
         return await asyncio.to_thread(_gui)
 
