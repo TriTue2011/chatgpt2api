@@ -102,7 +102,19 @@ def mua(thang: int) -> str:
     return "nong"
 
 
-def _la_bat(gia_tri: Any) -> bool:
+def _co_mat(gia_tri: Any) -> bool:
+    """Giá trị này có nghĩa CÓ NGƯỜI không.
+
+    Tách hẳn khỏi "thiết bị có đang bật" (`du_doan_nha._la_bat`), dù hai câu
+    hỏi nhìn giống nhau. Cảm biến người ở nhà này ĐẾM SỐ NGƯỜI:
+    `sensor.bep_person_count` = "2" nghĩa là có hai người, nên một con số khác
+    0 ở đây là CÓ. Còn `sensor.entities` = "1080" chỉ là đếm số thực thể
+    trong Home Assistant, không phải ai vừa bật cái gì.
+
+    Dùng chung MỘT hàm cho cả hai câu hỏi chính là lỗi đã khiến bot mời chủ
+    máy "bật" `sensor.entities` và `binary_sensor.ariston_is_heating`
+    (11/09/2026). Hai câu hỏi khác nhau thì phải là hai hàm khác tên.
+    """
     return str(gia_tri or "").strip().lower() not in _LA_TAT
 
 
@@ -244,7 +256,7 @@ def _co_nguoi(luc: float) -> dict[str, dict[str, Any]]:
         if not any(k in tr or k in tb.lower() for k in _TRUONG_NGUOI):
             continue
         ra[_khoa_phong(tb)] = {
-            "gt": _la_bat(r.get("gia_tri")), "tin": 1.0, "nguon": "su_kien"}
+            "gt": _co_mat(r.get("gia_tri")), "tin": 1.0, "nguon": "su_kien"}
     return ra
 
 
@@ -335,6 +347,26 @@ def _bac(gt: float, duoi: float, tren: float, ten: tuple[str, str, str]) -> str:
     return ten[0] if gt <= duoi else (ten[2] if gt >= tren else ten[1])
 
 
+#: Ba phép đo bối cảnh, mỗi dòng: khoá máy, mẫu tên trường trong kho, ba mức
+#: dạng mã, tên cho người đọc, ba mức viết ra tiếng Việt.
+#:
+#: Gộp làm MỘT hằng vì `roi_rac()` sinh ra khoá còn `mo_ta_dieu_kien()` dịch
+#: khoá ngược lại cho chủ máy đọc. Để hai nơi tự giữ bảng riêng thì sớm muộn
+#: lệch nhau, và cái lệch đó tới tay chủ máy dưới dạng tin nhắn không hiểu nổi.
+_DO_DAC = (
+    ("lux", "%illuminance%", ("toi", "nha_nhem", "sang"),
+     "ánh sáng", ("tối", "nhá nhem", "sáng")),
+    ("nhiet_do", "%temperature%", ("lanh", "vua", "nong"),
+     "nhiệt độ", ("lạnh", "vừa", "nóng")),
+    ("do_am", "%humidity%", ("kho", "vua", "am"),
+     "độ ẩm", ("khô", "vừa", "ẩm")),
+)
+
+#: Thứ trong tuần — `datetime.weekday()` đếm từ 0 là thứ Hai.
+_TEN_THU = ("thứ Hai", "thứ Ba", "thứ Tư", "thứ Năm",
+            "thứ Sáu", "thứ Bảy", "Chủ nhật")
+
+
 def roi_rac(bc: dict[str, Any]) -> dict[str, str]:
     """Bối cảnh số → nhãn rời rạc. Tầng xác suất CHỈ ăn nhãn.
 
@@ -348,11 +380,7 @@ def roi_rac(bc: dict[str, Any]) -> dict[str, str]:
         "thu": str(bc.get("thu")),
         "mua": str(bc.get("mua") or ""),
     }
-    for ten, mau, nhan in (
-        ("lux", "%illuminance%", ("toi", "nha_nhem", "sang")),
-        ("nhiet_do", "%temperature%", ("lanh", "vua", "nong")),
-        ("do_am", "%humidity%", ("kho", "vua", "am")),
-    ):
+    for ten, mau, nhan, _, _ in _DO_DAC:
         duoi, tren = _nguong_cache(mau)
         for phong, v in (bc.get(ten) or {}).items():
             b = _bac(float(v["gt"]), duoi, tren, nhan)
@@ -366,6 +394,59 @@ def roi_rac(bc: dict[str, Any]) -> dict[str, str]:
     if bc.get("nguoi"):
         ra["nguoi_trong_nha"] = "co" if co_ai else "khong"
     return ra
+
+
+def _ten_phong(khoa: str) -> str:
+    """Khoá phòng → tên đọc được.
+
+    `khac` là chỗ `_khoa_phong()` xếp thiết bị CHƯA GÁN PHÒNG, không phải một
+    phòng tên là "khác". Trả rỗng để câu văn bỏ hẳn phần phòng đi, chứ viết
+    "nhiệt độ khác đang nóng" thì chủ máy đọc ra một phòng không tồn tại.
+    """
+    return "" if khoa == "khac" else khoa.replace("_", " ")
+
+
+def mo_ta_dieu_kien(khoa: str, gia_tri: str) -> str:
+    """Một điều kiện của mô hình → một mệnh đề tiếng Việt.
+
+    Mô hình đếm bằng khoá máy (`lux_phòng_khách=toi`) vì phải khớp chính xác;
+    chủ máy cần câu chữ ("ánh sáng phòng khách đang tối"). Chỗ dịch đặt ngay
+    cạnh `roi_rac()` — nơi sinh ra khoá — và đọc chung hằng `_DO_DAC`, nên
+    thêm một phép đo mới là thấy ngay phải đặt tên người đọc được cho nó.
+
+    Khoá lạ thì trả RỖNG để tầng trên bỏ hẳn lý do đó. Thà chủ máy đọc được
+    hai lý do còn hơn ba lý do mà một cái là chuỗi máy móc.
+    """
+    k = str(khoa or "").strip()
+    v = str(gia_tri or "").strip()
+    if not k or not v:
+        return ""
+    if k == "buoi":
+        return f"buổi {v}"          # `ten_buoi()` vốn đã trả tiếng Việt
+    if k == "mua":
+        return {"nong": "mùa nóng", "lanh": "mùa lạnh",
+                "chuyen": "lúc giao mùa"}.get(v, "")
+    if k == "thu":
+        try:
+            return _TEN_THU[int(v)]
+        except (ValueError, IndexError):
+            return ""
+    if k == "nguoi_trong_nha":
+        return "trong nhà có người" if v == "co" else "trong nhà không có ai"
+    if k.startswith("nguoi_"):
+        phong = _ten_phong(k[len("nguoi_"):])
+        if not phong:
+            return ""
+        return f"có người ở {phong}" if v == "co" else f"không có ai ở {phong}"
+    for ten, _mau, muc, ten_doc, muc_doc in _DO_DAC:
+        if k != ten and not k.startswith(f"{ten}_"):
+            continue
+        if v not in muc:
+            return ""
+        phong = _ten_phong(k[len(ten) + 1:]) if k != ten else ""
+        phan = (ten_doc, phong, "đang", muc_doc[muc.index(v)])
+        return " ".join(x for x in phan if x)
+    return ""
 
 
 def hien_tai() -> dict[str, Any]:

@@ -167,9 +167,80 @@ def _db() -> sqlite3.Connection:
 
 
 # ── Gom mẫu ─────────────────────────────────────────────────────────────────
+def _la_so(gt: Any) -> bool:
+    try:
+        float(str(gt).strip())
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
 def _la_bat(gt: Any) -> bool:
+    """Giá trị này có nghĩa THIẾT BỊ ĐANG BẬT không.
+
+    MỘT CON SỐ LÀ SỐ ĐO, KHÔNG PHẢI TRẠNG THÁI. `sensor.entities` = "1080" là
+    Home Assistant đang có 1.080 thực thể; nhiệt độ "23.5" là 23,5 độ. Bản cũ
+    dùng danh sách loại trừ — bất cứ gì không nằm trong `_LA_TAT` đều tính là
+    ĐANG BẬT — nên mỗi lần bộ đếm nhảy 979 → 1080 bot ghi sổ "ai đó vừa bật
+    sensor.entities", rồi mời chủ máy bật lại cái đếm ấy.
+
+    Danh sách loại trừ không bao giờ đủ, vì tập "mọi giá trị nghĩa là tắt" là
+    vô hạn. Hỏi "giá trị này có phải số đo không" thì đóng được cả lớp.
+
+    Đo 11/09/2026 trên 11 ngày dữ liệu thật: luật này loại 165/322 thực thể
+    rác mà KHÔNG loại oan cái nào bật được (0 ca).
+
+    Khác `boi_canh_nha._co_mat`: ở đó số là ĐẾM NGƯỜI, "2" nghĩa là có người.
+    """
     from services.boi_canh_nha import _LA_TAT
+
+    if _la_so(gt):
+        return False
     return str(gt or "").strip().lower() not in _LA_TAT
+
+
+def mien_bat_duoc() -> frozenset[str]:
+    """Miền Home Assistant nào có lệnh `turn_on` — HỎI HA, không tự liệt kê.
+
+    `GET /api/services` là sổ đăng ký thật của chính căn nhà này, gồm cả
+    integration tự cài. Nhà thêm loại thiết bị mới thì danh sách tự đúng theo,
+    không ai phải nhớ sửa code — đó là khác biệt giữa sửa theo NGUYÊN TẮC và
+    sửa theo DANH SÁCH.
+
+    Đo 11/09/2026 trên HA thật: 94 miền, 15 miền có `turn_on`. `sensor`,
+    `binary_sensor`, `image`, `event` đều KHÔNG có.
+
+    HA sập thì `get_service_catalog()` trả rỗng → bot im, không gợi ý gì. Im
+    là đúng: thà không nói còn hơn mời bật một cái đồng hồ đo.
+    """
+    from services import ha_client
+
+    cat = ha_client.get_service_catalog()
+    mien = frozenset(d for d, svc in (cat or {}).items()
+                     if "turn_on" in (svc or {}))
+    if not mien:
+        logger.warning({"event": "du_doan_khong_ro_mien_bat_duoc",
+                        "ghi_chu": "HA chua tra ve so dich vu — tam thoi im"})
+    return mien
+
+
+def ten_thiet_bi(ten: str) -> str:
+    """Mã thực thể → tên chủ máy tự đặt trong Home Assistant.
+
+    `light.bep_left` → "Đèn bếp". Mã máy chỉ để mô hình đếm cho khớp; ra tới
+    tin nhắn thì phải là tên người đọc được.
+
+    Đo 11/09/2026: cả 1.046 thực thể của nhà đều có `friendly_name`, nên
+    đường này gần như luôn có tên thật. Tra không ra thì giữ nguyên mã — thà
+    khó đọc còn hơn bịa ra một cái tên.
+    """
+    from services import ha_client
+
+    ma = str(ten or "")
+    for s in ha_client.get_states():
+        if s.get("entity_id") == ma:
+            return str((s.get("attributes") or {}).get("friendly_name") or ma)
+    return ma
 
 
 def _dieu_kien(luc: float, dang_bat: dict[str, float],
@@ -499,11 +570,13 @@ def giai_thich(id_: int) -> str:
     except (ValueError, TypeError):
         nhan = {}
     g = datetime.fromtimestamp(float(r["ts"]), _TZ)
-    dong = [f"{g:%H:%M %d/%m} — {r['ten']} {r['hanh_dong']}, "
+    dong = [f"{g:%H:%M %d/%m} — {ten_thiet_bi(str(r['ten']))} {r['hanh_dong']}, "
             f"em chắc {float(r['p']) * 100:.0f}%"]
     if nhan:
-        dong.append("Lúc đó: " + ", ".join(
-            f"{k}={v}" for k, v in list(nhan.items())[:8]))
+        luc_do = [x for x in (_ly_do(f"{k}={v}")
+                              for k, v in list(nhan.items())[:8]) if x]
+        if luc_do:
+            dong.append("Lúc đó: " + ", ".join(luc_do))
     return "\n".join(dong)
 
 
@@ -515,8 +588,18 @@ def quet(luc: float | None = None) -> list[dict[str, Any]]:
     dụng phụ, phải đi qua cổng riêng của tầng gọi.
     """
     bang = hoc()
+    # Cổng chặn đặt ở ĐÂY chứ không ở `hoc()`: học là phân tích ngoại tuyến,
+    # buộc nó phụ thuộc Home Assistant còn sống là đấu nối sai chỗ. Còn lời đề
+    # nghị thì vốn đã cần HA — không hỏi được HA cái gì bật được thì cũng
+    # không bật được gì, im là đúng.
+    #
+    # Cảm biến vẫn học bình thường để làm bối cảnh; chỉ không được đứng tên
+    # trong câu "anh có muốn em bật không".
+    mien = mien_bat_duoc()
     ra = []
     for ten, b in bang.items():
+        if str(ten).split(".")[0] not in mien:
+            continue
         d = du_doan(ten, luc, bang=b)
         if d["cach"] != "im":
             ra.append(d)
@@ -542,6 +625,20 @@ def _kenh_nhan() -> list[str]:
     return []
 
 
+def _ly_do(dieu_kien: str) -> str:
+    """Một dòng bằng chứng của mô hình → một mệnh đề tiếng Việt.
+
+    Khoá do `boi_canh_nha.roi_rac()` sinh ra nên nhờ chính module đó dịch:
+    một nguồn duy nhất, không có bảng thứ hai để mà lệch.
+
+    Dịch không ra thì trả rỗng và tầng trên bỏ hẳn lý do đó đi.
+    """
+    from services import boi_canh_nha
+
+    khoa, _, gt = str(dieu_kien or "").partition("=")
+    return boi_canh_nha.mo_ta_dieu_kien(khoa, gt) if khoa else ""
+
+
 def soan_tin(ds: list[dict[str, Any]]) -> str:
     """Lời nhắn cho chủ máy — nói cả VÌ SAO, không chỉ đề nghị.
 
@@ -552,11 +649,12 @@ def soan_tin(ds: list[dict[str, Any]]) -> str:
         return ""
     dong = ["🏠 Em để ý nếp nhà, thấy mấy việc này:"]
     for d in ds:
-        vi_sao = ", ".join(
-            str(b["dieu_kien"]).replace("=", " ")
-            for b in (d.get("bang_chung") or [])[:3])
+        vi_sao = ", ".join(x for x in (
+            _ly_do(str(b.get("dieu_kien") or ""))
+            for b in (d.get("bang_chung") or [])[:3]) if x)
         lam = "em bật rồi" if d["cach"] == "tu_lam" else "anh có muốn em bật không"
-        dong.append(f"• {d['ten']} — {lam} (em chắc {d['p'] * 100:.0f}%"
+        dong.append(f"• {ten_thiet_bi(str(d['ten']))} — {lam} "
+                    f"(em chắc {d['p'] * 100:.0f}%"
                     + (f", vì {vi_sao}" if vi_sao else "") + ")")
     return "\n".join(dong)
 
