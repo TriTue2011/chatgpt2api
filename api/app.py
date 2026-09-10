@@ -217,6 +217,15 @@ def create_app() -> FastAPI:
             tuya_local.start()
         except Exception as exc:
             _record_startup_failure("tuya_local", str(exc))
+        # Khoá cửa hỏi nhịp NHANH (15 giây) ở luồng riêng. Heartbeat chung chạy
+        # mỗi 300 giây và nhịp tối thiểu của nó là 60 giây, nên cửa mở xong phải
+        # đợi gần trọn 5 phút mới báo — mà đo được đám mây Tuya nhận sự kiện gần
+        # như tức thì, chỗ chậm là nhịp hỏi chứ không phải Tuya.
+        try:
+            from services import khoa_cua_nha
+            khoa_cua_nha.start()
+        except Exception as exc:
+            _record_startup_failure("khoa_cua_nha", str(exc))
         # Prewarm MCP tools cache in background so the first chat request
         # doesn't pay the cold-start probe (e.g. a dead remote MCP that
         # times out at 5s adds latency to whoever asks first).

@@ -166,12 +166,9 @@ def _parse_tasks() -> list[dict[str, Any]]:
         "text": "Chưng cất hồ sơ người dùng + fact từ hội thoại (mỗi ngày, sau giờ cấu hình)",
         "system": True,
     })
-    tasks.append({
-        "id": "khoa_cua_nha",
-        "intent": "read",
-        "text": "Báo ai mở cửa, hỏi tên người lạ, tóm tắt trước giờ nhà đi ngủ",
-        "system": True,
-    })
+    # khoa_cua_nha KHÔNG còn ở đây: nó có vòng riêng nhịp 15 giây
+    # (`khoa_cua_nha.start`, gọi từ api/app.py). Để cả hai là gọi API Tuya đôi
+    # mà chẳng nhanh thêm — nhịp chung tối thiểu 60 giây vẫn chậm hơn 4 lần.
     tasks.append({
         "id": "tinh_huong_nha",
         "intent": "read",

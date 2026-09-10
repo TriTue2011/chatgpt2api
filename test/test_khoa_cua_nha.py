@@ -221,5 +221,140 @@ class KhoaCuaTest(unittest.TestCase):
         self.assertEqual(self.m.chay_mot_lan()["gui"], 0)
 
 
+class DocTuHomeAssistantTest(unittest.TestCase):
+    """Biết NGAY khi cửa mở, không đợi vòng hỏi Tuya 5 phút một lần."""
+
+    def setUp(self) -> None:
+        import services.khoa_cua_nha as m
+        import services.so_ten_nha as sn
+        self.m, self.sn = m, sn
+        self._tmp = tempfile.mkdtemp()
+        m._FILE = Path(self._tmp) / "kc.json"
+        sn._FILE = Path(self._tmp) / "so_ten.json"
+        sn.config.data.setdefault("mqtt", {})["so_ten"] = {}
+
+    def tearDown(self) -> None:
+        self.m._reset_for_tests()
+        self.sn._reset_for_tests()
+
+    def _su_kien_ha(self, ts: float, cach: str, so: str):
+        """Hai bản ghi ha_live sinh ra cho MỘT lần mở cửa."""
+        e = f"event.smart_lock_unlock_user_{cach}"
+        return [
+            {"ts": ts, "thiet_bi": e, "truong": "event_type",
+             "gia_tri": f"unlock_{cach}"},
+            {"ts": ts, "thiet_bi": e, "truong": "value", "gia_tri": so},
+        ]
+
+    def test_DOC_DUOC_tu_su_kien_HA(self) -> None:
+        """Ca thật 10/09 08:29: event.smart_lock_unlock_user_face, value 17."""
+        from services import lich_su_nha
+        now = time.time() - 300
+        with mock.patch.object(lich_su_nha, "doc_cua_so",
+                               return_value=self._su_kien_ha(now, "face", "17.0")):
+            ra = self.m._tu_ha(2)
+        self.assertEqual(len(ra), 1)
+        self.assertEqual(ra[0]["ma"], "face#17")
+
+    def test_bo_su_kien_thieu_thong_tin(self) -> None:
+        """Chỉ có mốc giờ mà không biết ai thì không dựng bản ghi."""
+        from services import lich_su_nha
+        ds = [{"ts": time.time(), "thiet_bi": "event.smart_lock_unlock_user_face",
+               "truong": "state", "gia_tri": "2026-09-10T01:29:26"}]
+        with mock.patch.object(lich_su_nha, "doc_cua_so", return_value=ds):
+            self.assertEqual(self.m._tu_ha(2), [])
+
+    def test_bo_qua_thuc_the_khong_lien_quan(self) -> None:
+        from services import lich_su_nha
+        ds = [{"ts": time.time(), "thiet_bi": "light.bep",
+               "truong": "state", "gia_tri": "on"}]
+        with mock.patch.object(lich_su_nha, "doc_cua_so", return_value=ds):
+            self.assertEqual(self.m._tu_ha(2), [])
+
+    def test_HAI_NGUON_TRUNG_thi_giu_MOT(self) -> None:
+        """HA và Tuya cùng báo một lần mở cửa, lệch nhau vài giây."""
+        from services import lich_su_nha, tuya_nha
+        now = time.time() - 300
+        with mock.patch.object(lich_su_nha, "doc_cua_so",
+                               return_value=self._su_kien_ha(now, "face", "17.0")), \
+             mock.patch.object(tuya_nha, "danh_sach_thiet_bi",
+                               side_effect=RuntimeError("bỏ qua Tuya")):
+            ra = self.m.doc_nhat_ky(2)
+        self.assertEqual(len(ra), 1, "một lần mở cửa chỉ được một bản ghi")
+
+    def test_HA_HONG_van_chay(self) -> None:
+        """Mất HA thì rơi về Tuya, không được chết cả luồng."""
+        from services import lich_su_nha, tuya_nha
+        with mock.patch.object(lich_su_nha, "doc_cua_so",
+                               side_effect=RuntimeError("mất HA")), \
+             mock.patch.object(tuya_nha, "danh_sach_thiet_bi", return_value=[]):
+            self.assertEqual(self.m.doc_nhat_ky(2), [])
+
+
+class NhipNhanhTest(unittest.TestCase):
+    """Vòng hỏi riêng 15 giây — heartbeat chung 5 phút là quá chậm."""
+
+    def setUp(self) -> None:
+        import services.khoa_cua_nha as m
+        self.m = m
+        self._tmp = tempfile.mkdtemp()
+        m._FILE = Path(self._tmp) / "kc.json"
+        m.config.data.setdefault("mqtt", {})["khoa_cua"] = {"bat": True}
+
+    def tearDown(self) -> None:
+        self.m.stop()
+        self.m._reset_for_tests()
+
+    def test_NHIP_MAC_DINH_15_GIAY(self) -> None:
+        """Chủ máy chốt 15 giây: nhanh gấp 20 lần nhịp heartbeat 300 giây, mà
+        mỗi ngày chỉ thêm ~5.700 lượt gọi API Tuya."""
+        self.assertEqual(self.m._nhip(), 15.0)
+
+    def test_chinh_duoc_nhip(self) -> None:
+        self.m.config.data["mqtt"]["khoa_cua"] = {"bat": True, "nhip_giay": 30}
+        self.assertEqual(self.m._nhip(), 30.0)
+
+    def test_SAN_5_GIAY_khong_cho_thap_hon(self) -> None:
+        """Hỏi dày quá là đốt hạn mức API Tuya mà chẳng nhanh thêm — một lượt
+        gọi đã mất 1,2 giây."""
+        self.m.config.data["mqtt"]["khoa_cua"] = {"bat": True, "nhip_giay": 1}
+        self.assertEqual(self.m._nhip(), 5.0)
+
+    def test_nhip_la_thi_ve_mac_dinh(self) -> None:
+        self.m.config.data["mqtt"]["khoa_cua"] = {"bat": True,
+                                                  "nhip_giay": "không phải số"}
+        self.assertEqual(self.m._nhip(), 15.0)
+
+    def test_TAT_thi_khong_chay_vong(self) -> None:
+        self.m.config.data["mqtt"]["khoa_cua"] = {"bat": False}
+        self.assertFalse(self.m.start())
+
+    def test_start_idempotent(self) -> None:
+        with mock.patch.object(self.m, "chay_mot_lan", return_value={"gui": 0}):
+            self.assertTrue(self.m.start())
+            self.assertTrue(self.m.start(), "gọi lần hai không được dựng luồng mới")
+        self.m.stop()
+
+    def test_KHONG_CON_TRONG_HEARTBEAT(self) -> None:
+        """Để cả hai là gọi API Tuya đôi mà chẳng nhanh thêm — nhịp chung tối
+        thiểu 60 giây vẫn chậm hơn bốn lần."""
+        from services.agent.heartbeat import _parse_tasks
+        self.assertNotIn("khoa_cua_nha", [t["id"] for t in _parse_tasks()])
+
+    def test_MOT_LUOT_HONG_khong_lam_chet_vong(self) -> None:
+        goi = []
+
+        def hong():
+            goi.append(1)
+            raise RuntimeError("Tuya mất mạng")
+
+        with mock.patch.object(self.m, "chay_mot_lan", side_effect=hong), \
+             mock.patch.object(self.m, "_nhip", return_value=0.05):
+            self.m.start()
+            time.sleep(0.3)
+            self.m.stop()
+        self.assertGreater(len(goi), 1, "hỏng một lượt thì lượt sau vẫn phải chạy")
+
+
 if __name__ == "__main__":
     unittest.main()

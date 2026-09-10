@@ -199,18 +199,73 @@ def gio_tom_tat() -> float:
 
 
 # ── Đọc nhật ký khoá ────────────────────────────────────────────────────────
+def _tu_ha(so_ngay: int) -> list[dict[str, Any]]:
+    """Lần mở cửa đọc từ lịch sử Home Assistant — đường ĐẨY, biết NGAY.
+
+    Vì sao có hàm này: bản đầu chỉ hỏi API Tuya, mà heartbeat gọi mỗi 5 phút
+    nên cửa mở xong phải đợi gần trọn 5 phút mới báo. Trong khi HA đã có
+    `event.smart_lock_unlock_user_face` với `value: 17` ngay lúc cửa mở
+    (đo thật 10/09/2026, 08:29:26) — dữ liệu nằm sẵn, chỉ là không ai nối.
+
+    `ha_live` ghi các thực thể `event.` vào `lich_su_nha` ngay khi HA đẩy sang,
+    nên đọc từ đó là gần như tức thì.
+    """
+    from services import lich_su_nha
+
+    tu = time.time() - max(1, int(so_ngay)) * 86400
+    try:
+        ds = lich_su_nha.doc_cua_so(tu, time.time() + 60, tran=3000)
+    except Exception as exc:
+        logger.info({"event": "khoa_cua_ha_loi", "error": str(exc)[:140]})
+        return []
+
+    # Gom theo mốc thời gian: `event_type` và `value` là hai bản ghi riêng của
+    # cùng một lần mở cửa, ha_live ghi liền nhau nên cùng giây.
+    theo_luc: dict[int, dict[str, Any]] = {}
+    for m in ds:
+        e = str(m.get("thiet_bi") or "")
+        if not e.lower().startswith("event.") or "unlock" not in e.lower():
+            continue
+        giay = int(float(m.get("ts") or 0))
+        o = theo_luc.setdefault(giay, {"ts": float(m.get("ts") or 0),
+                                       "thiet_bi": e})
+        truong = str(m.get("truong") or "")
+        if truong in ("event_type", "value"):
+            o[truong] = str(m.get("gia_tri") or "")
+
+    ra: list[dict[str, Any]] = []
+    for o in theo_luc.values():
+        cach = str(o.get("event_type") or "").replace("unlock_", "").strip()
+        so = str(o.get("value") or "").strip().rstrip("0").rstrip(".")
+        if not cach or not so:
+            continue
+        ma = f"{cach}#{so}"
+        ra.append({"ma": ma, "ten": ten_cua(ma), "ts": o["ts"],
+                   "thiet_bi": "khoá cửa"})
+    return ra
+
+
 def doc_nhat_ky(so_ngay: int = 2) -> list[dict[str, Any]]:
-    """Lần mở cửa gần đây, mới nhất trước. Rỗng khi chưa cấu hình Tuya."""
+    """Lần mở cửa gần đây, mới nhất trước.
+
+    Hai nguồn gộp lại: Home Assistant (ĐẨY — biết ngay) và API Tuya (KÉO — đủ
+    lịch sử cũ). Trùng thì giữ một, so theo mã và mốc giây.
+    """
     from services import tuya_nha
 
+    ha = _tu_ha(so_ngay)
+
+    # Tuya hỏng (mất mạng, hết hạn IoT Core) thì VẪN dùng dữ liệu HA — bản
+    # trước `return []` ở đây, tức vứt sạch đường realtime chỉ vì nguồn phụ
+    # không gọi được. Test khoá đúng chỗ này.
     try:
         ds = tuya_nha.danh_sach_thiet_bi()
     except Exception as exc:
         logger.info({"event": "khoa_cua_doc_loi", "error": str(exc)[:140]})
-        return []
+        return sorted(ha, key=lambda x: -x["ts"])
     khoa = [d for d in ds if "khoá" in str(d.get("loai") or "")]
     if not khoa:
-        return []
+        return sorted(ha, key=lambda x: -x["ts"])
 
     now = int(time.time() * 1000)
     tu = now - max(1, int(so_ngay)) * 86400 * 1000
@@ -234,8 +289,16 @@ def doc_nhat_ky(so_ngay: int = 2) -> list[dict[str, Any]]:
                 "ts": float(l.get("time") or l.get("update_time") or 0) / 1000,
                 "thiet_bi": k.get("ten") or "khoá cửa",
             })
-    ra.sort(key=lambda x: -x["ts"])
-    return ra
+    # Gộp: HA trước (mới hơn), Tuya bù phần cũ. Cùng mã trong vòng 5 giây là
+    # một lần mở — hai nguồn ghi lệch nhau chút đỉnh.
+    gop = list(ha)
+    for m in ra:
+        trung = any(x["ma"] == m["ma"] and abs(x["ts"] - m["ts"]) < 5
+                    for x in gop)
+        if not trung:
+            gop.append(m)
+    gop.sort(key=lambda x: -x["ts"])
+    return gop
 
 
 # ── Bất thường ──────────────────────────────────────────────────────────────
@@ -416,3 +479,69 @@ def _reset_for_tests() -> None:
             _FILE.unlink()
         except OSError:
             pass
+
+
+# ── Vòng nhịp nhanh ─────────────────────────────────────────────────────────
+# VÌ SAO CÓ RIÊNG VÒNG NÀY, không dùng heartbeat chung:
+#
+# Heartbeat chạy mỗi 300 giây và nhịp tối thiểu của nó là 60 giây
+# (`heartbeat.tick_seconds`), nên cửa mở xong phải đợi gần trọn 5 phút mới
+# báo. Hạ nhịp chung xuống là kéo theo mọi task khác (chưng cất hồ sơ, quét
+# nhật ký nhóm, cảnh báo thiết bị hỏng) chạy dày lên vô ích.
+#
+# Đo thật 10/09/2026: đám mây Tuya nhận sự kiện gần như TỨC THÌ — bản ghi
+# `unlock_face = 17` có mốc 08:29:26, trùng khít với thứ Home Assistant thấy.
+# Chỗ chậm là nhịp hỏi của bot, không phải Tuya. Một lượt gọi API mất 1,2 giây.
+#
+# Đường LOCAL đã thử và KHÔNG dùng được với khoá này: lúc thiết bị đang thức và
+# trả lời ping, cả 6 cổng đều `Connection refused`, không có quảng bá UDP, và
+# `tinytuya` với `local_key` thật thử đủ 4 phiên bản giao thức đều
+# "Unable to Connect". Khoá T5 chỉ nói chuyện với đám mây Tuya — lựa chọn của
+# hãng, và với khoá cửa thì hợp lý.
+_nhip_luong: threading.Thread | None = None
+_nhip_dung = threading.Event()
+
+#: Giây giữa hai lần hỏi. Chủ máy chốt 15 giây (10/09/2026): nhanh gấp 20 lần
+#: nhịp cũ, mà mỗi ngày chỉ thêm ~5.700 lượt gọi — thấp xa hạn mức Tuya.
+_NHIP_GIAY = 15.0
+
+
+def _nhip() -> float:
+    try:
+        return max(5.0, float(_cfg().get("nhip_giay") or _NHIP_GIAY))
+    except (TypeError, ValueError):
+        return _NHIP_GIAY
+
+
+def _chay_mai() -> None:
+    while not _nhip_dung.is_set():
+        try:
+            if is_enabled():
+                chay_mot_lan()
+        except Exception as exc:
+            logger.info({"event": "khoa_cua_nhip_loi", "loi": str(exc)[:150]})
+        _nhip_dung.wait(_nhip())
+
+
+def start() -> bool:
+    """Vòng hỏi khoá cửa nhịp nhanh. Idempotent; trả True nếu đang/đã chạy."""
+    global _nhip_luong
+    if not is_enabled():
+        return False
+    with _khoa:
+        if _nhip_luong is not None and _nhip_luong.is_alive():
+            return True
+        _nhip_dung.clear()
+        _nhip_luong = threading.Thread(target=_chay_mai, daemon=True,
+                                       name="khoa-cua-nhip")
+        _nhip_luong.start()
+    logger.info({"event": "khoa_cua_nhip_started", "giay": _nhip()})
+    return True
+
+
+def stop() -> None:
+    """Dừng vòng nhịp nhanh. Gọi được nhiều lần."""
+    global _nhip_luong
+    _nhip_dung.set()
+    with _khoa:
+        _nhip_luong = None
