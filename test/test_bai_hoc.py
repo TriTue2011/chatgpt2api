@@ -149,6 +149,19 @@ class VongKhepKinTest(unittest.TestCase):
         self.assertEqual(
             self.m.thong_ke()["bo_do"]["_ha_local_weather"]["dung"], 1)
 
+    def test_LUOT_DIEU_KHIEN_khong_duoc_nhuong_model(self) -> None:
+        """Bản nháp vứt kết quả đường tắt khi có bài học — kể cả lượt ĐÃ BẬT
+        ĐÈN THẬT. `_ha_local_intent` chạy `_exec_local_tool_calls` rồi mới trả
+        về, nên vứt đi là lượt rơi xuống đường model và bật LẦN HAI.
+
+        Khoá bằng cách đọc chính mã nguồn: điều kiện phải có `not fp_control`.
+        """
+        import inspect
+        from services.agent import orchestrator as o
+        src = inspect.getsource(o._orchestrate_locked)
+        self.assertIn("if fp_text and not fp_control:", src,
+                      "lượt điều khiển KHÔNG được nhường model — đèn đã bật rồi")
+
     def test_CAU_THUONG_khong_bi_coi_la_cham_diem(self) -> None:
         """Lượt bình thường phải đi tiếp như cũ, không bị nuốt."""
         for c in ("bật đèn bếp", "mấy giờ rồi", "đúng rồi anh ạ", ""):

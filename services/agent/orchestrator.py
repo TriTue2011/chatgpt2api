@@ -3135,7 +3135,12 @@ def _orchestrate_locked(user_text: str, user_id: str,
         # Câu này từng bị chủ máy đánh dấu SAI, hoặc bộ dò vừa khớp hay sai quá
         # → nhường cho model. Đây là chỗ thay cho việc thêm danh sách từ khoá
         # chặn: bot sai một lần thì tự tránh, không cần ai liệt kê trước.
-        if fp_text:
+        #
+        # KHÔNG áp cho lượt ĐIỀU KHIỂN (`fp_control`): `_ha_local_intent` gọi
+        # `_exec_local_tool_calls` RỒI mới trả về, nên đèn đã bật thật. Vứt kết
+        # quả đi là lượt rơi xuống đường model và bật LẦN HAI — đúng lớp lỗi mà
+        # chú thích `no_smart_home` trong chính nhánh này đã cảnh báo.
+        if fp_text and not fp_control:
             try:
                 from services import bai_hoc
                 if bai_hoc.tra(user_text) or bai_hoc.bo_do_dang_ngo(fp_bo_do):
