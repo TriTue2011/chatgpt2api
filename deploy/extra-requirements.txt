@@ -90,3 +90,17 @@ uvicorn[standard]>=0.44.0
 # build vẫn xanh, và lỗi chỉ hiện ra khi người dùng bấm "Mở noVNC" (màn hình
 # đen, không thông báo). Khai tường minh để việc cần nó được ghi thành ràng buộc.
 websockets>=13.0
+
+# py-spy — dump ngăn xếp Python của một tiến trình ĐANG CHẠY, không cần sửa
+# code và không làm gián đoạn nó.
+#
+# Vì sao thành ràng buộc build: đêm 11/09/2026 c2a treo hẳn sau ~25 phút chạy
+# (uvicorn `R (running)`, CPU 33%, mọi endpoint trả 000, kể cả `/health`).
+# `R` nghĩa là quay vòng bận chứ không phải chờ I/O — biết được chỗ quay là
+# biết ngay thủ phạm. Nhưng ảnh không có py-spy nên không dump được, và cách
+# duy nhất còn lại là `docker restart`: dịch vụ sống lại, chứng cứ mất sạch,
+# nguyên nhân tới giờ vẫn chưa rõ.
+#
+# Lần sau treo, chạy trong container:
+#     py-spy dump --pid $(pgrep -f "uvicorn main:app")
+py-spy>=0.4.0
