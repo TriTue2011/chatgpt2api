@@ -55,15 +55,43 @@ def _kenh() -> str:
 
 
 def _nguoi_nhan() -> list[str]:
+    """Ai nhận cảnh báo. Tìm theo ba tầng, KHÔNG bắt khai lại từ đầu.
+
+    Chủ máy đã khai admin cho từng bot ở tab Kênh chat (`telegram_bots[].
+    admin_thread`, `zalo_bots[].admin_thread`). Bản đầu của hàm này chỉ đọc
+    `agent_heartbeat.admin_user_ids` — khoá đó trống nên MỌI cảnh báo bị nuốt
+    im lặng, kể cả 181 thiết bị đang hỏng. Phải dùng lại đúng chỗ đã khai.
+    """
     raw = _cfg().get("nguoi_nhan")
     if isinstance(raw, list) and raw:
         return [str(x).strip() for x in raw if str(x).strip()]
-    # Không khai riêng thì dùng admin của heartbeat — đỡ phải cấu hình hai chỗ.
+
     try:
         from services.agent import heartbeat
-        return heartbeat.admin_user_ids()
+        ds = heartbeat.admin_user_ids()
+        if ds:
+            return ds
     except Exception:
-        return []
+        pass
+
+    # Tầng cuối: admin đã khai cho từng bot. Tiền tố kênh theo quy ước của
+    # reminders.channel_of — 'zalo_'/'zalop_' hoặc để trần cho Telegram.
+    ra: list[str] = []
+    try:
+        from services import admin_workspace as aw
+        from services.config import config as _c
+        for key, tien_to in (("telegram_bots", ""), ("zalo_bots", "zalo_")):
+            for b in (_c.data.get(key) or []):
+                if not isinstance(b, dict) or not b.get("enabled", True):
+                    continue
+                for cid in aw.admin_thread_ids(b):
+                    # 'chat:thread' → chỉ lấy phần chat, reminders tự lo thread.
+                    x = tien_to + str(cid).split(":")[0]
+                    if x not in ra:
+                        ra.append(x)
+    except Exception as exc:
+        logger.info({"event": "canh_bao_tim_admin_loi", "error": str(exc)[:120]})
+    return ra
 
 
 def _gio_hang_ngay() -> int:

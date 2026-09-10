@@ -918,7 +918,34 @@ def _flow_session_trang_thai(profile: str) -> str:
             # Only an explicit session-expired result from the authenticated
             # solver counts. A bad solver API key is not a Google login failure.
             detail = (r.json() or {}).get("detail")
-            return "mat" if isinstance(detail, dict) and detail.get("code") == "flow_login_required" else "chua_ro"
+            # Solver ném 401 theo HAI dạng khác nhau:
+            #   captcha-solver/src/main.py:775      → dict có code=flow_login_required
+            #   captcha-solver/src/solvers/flow_rpc.py:140 → CHUỖI thuần
+            # Bản cũ chỉ nhận dạng dict, nên đường thứ hai (đường thực tế đang
+            # chạy) rơi vào "chua_ro" — mà chỉ "mat" mới kích hoạt khôi phục.
+            # Hậu quả đo 10/09/2026: cả 4 tài khoản Flow hết phiên mà KHÔNG
+            # cái nào tự đăng nhập lại, người dùng thấy "toàn chạy ChatGPT".
+            if isinstance(detail, dict):
+                return "mat" if detail.get("code") == "flow_login_required" else "chua_ro"
+            thap = str(detail or "").lower()
+            if any(k in thap for k in ("đăng nhập lại", "dang nhap lai",
+                                       "login required", "flow_login_required")):
+                # 401 dạng CHUỖI đến từ hai nguyên nhân KHÁC HẲN nhau, mà lời
+                # nhắn thì y hệt:
+                #   (a) phiên Google chết thật → phải đăng nhập lại
+                #   (b) project_id đã lưu bị Google XOÁ → chỉ cần tạo cái mới
+                # Đo 10/09/2026 (google-mitbap0610): cookie phiên còn đủ, hạn
+                # 398 ngày, mà check-project vẫn 401. Tạo project mới thì HTTP
+                # 200 trong 68 giây, KHÔNG cần đăng nhập lần nào.
+                #
+                # Kết luận nhầm là (a) thì chạy đăng nhập tự động — và mỗi lượt
+                # đó là một lần mời Google bung captcha, tức tự tay đẩy tài
+                # khoản khoẻ vào đúng cái bẫy làm nó không tự chữa được nữa.
+                # Nên: THỬ TẠO PROJECT MỚI TRƯỚC, hỏng mới kết luận mất phiên.
+                if _flow_tao_project_moi(profile):
+                    return "ok"
+                return "mat"
+            return "chua_ro"
         if r.status_code != 200:
             return "chua_ro"
         if (r.json() or {}).get("ready") is True:
@@ -932,6 +959,52 @@ def _flow_session_trang_thai(profile: str) -> str:
         return "chua_ro"
     except Exception:
         return "chua_ro"
+
+
+def _flow_tao_project_moi(profile: str) -> bool:
+    """Xin Google cấp project Flow mới rồi ghi đè vào cấu hình.
+
+    Trả True khi lấy được — nghĩa là phiên Google VẪN SỐNG, chỉ project cũ bị
+    xoá. Đây là đường chữa rẻ nhất: không đụng mật khẩu, không mời captcha.
+    """
+    import requests
+
+    url, api_key = _solver_cfg()
+    if not url:
+        return False
+    try:
+        r = requests.post(
+            f"{url.rstrip('/')}/v1/google/flow/get-or-create-project",
+            headers={"Authorization": f"Bearer {api_key}",
+                     "Content-Type": "application/json"},
+            json={"profile": profile, "headless": True, "timeout": 150},
+            timeout=180)
+    except Exception as exc:
+        logger.info({"event": "flow_tao_project_loi", "profile": profile,
+                     "error": str(exc)[:140]})
+        return False
+    if r.status_code != 200:
+        return False
+    pid = str(((r.json() or {}).get("project_id") or "")).strip()
+    if not pid:
+        return False
+
+    # Ghi lại để lần sau khỏi phải xin nữa.
+    try:
+        from services.config import config as _c
+
+        def _ghi(data: dict) -> None:
+            pr = data.setdefault("providers", {}).setdefault("flow", {})
+            for a in (pr.get("accounts") or []):
+                if isinstance(a, dict) and str(a.get("profile") or "") == profile:
+                    a["project_id"] = pid
+
+        _c.mutate(_ghi)
+    except Exception as exc:
+        logger.warning({"event": "flow_luu_project_loi", "profile": profile,
+                        "error": str(exc)[:140]})
+    logger.info({"event": "flow_project_moi", "profile": profile, "project_id": pid})
+    return True
 
 
 def _flow_project_id(profile: str) -> str:

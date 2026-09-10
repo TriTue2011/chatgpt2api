@@ -192,7 +192,13 @@ class TinhHuongTest(unittest.TestCase):
         self.assertIsNone(self.m.nhan_ra(t))
 
     def test_duyet_roi_thi_nhan_ra(self) -> None:
-        uv = {**self._uv(), "gio_tb": datetime.now(TZ).hour + 0.0}
+        """Đặt nếp ở ĐÚNG giờ-phút hiện tại, không phải đầu giờ.
+
+        Dùng `.hour` trơn thì nếp rơi vào 7h00 trong khi chạy lúc 7h50 — lệch
+        50 phút, quá cửa sổ 45 phút của nhan_ra() nên test hỏng theo giờ chạy.
+        """
+        now = datetime.now(TZ)
+        uv = {**self._uv(), "gio_tb": now.hour + now.minute / 60}
         i = self.m.luu_cho_duyet(uv, "thử nghiệm")
         self.m.duyet(i)
         self.assertIsNotNone(self.m.nhan_ra())
