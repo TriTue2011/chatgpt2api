@@ -1664,6 +1664,10 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
      "tuya_thiet_bi. Hỏi «khoá cửa khoá chưa», «pin khoá còn bao nhiêu», "
      "«ai mở cửa» đều dùng tool này."),
     ("homeassistant", _KW_NHATHONGMINH,
+     "- Khoá cửa: ai mở, lúc nào → khoa_cua_nha. Người dùng cho biết ai là "
+     "ai («vân tay 11 là con trai», «đó là tôi») thì gọi viec='dat_ten' — "
+     "đây là cách bot HỌC tên, đừng bỏ qua."),
+    ("homeassistant", _KW_NHATHONGMINH,
      "- Nếp sinh hoạt bot học được (giờ ăn, buổi sáng, trước khi ngủ) → "
      "tinh_huong_nha. Người dùng đồng ý với tên bot đề xuất thì gọi "
      "viec='duyet', đặt tên khác thì thêm ten_moi."),

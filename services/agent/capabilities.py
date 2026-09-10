@@ -4872,6 +4872,53 @@ def _h_tuya(args: dict, ctx: dict) -> dict:
         return {"text": f"Em hỏi Tuya chưa được ạ: {str(exc)[:160]}"}
 
 
+def _h_khoa_cua(args: dict, ctx: dict) -> dict:
+    """Xem ai mở cửa, và DẠY bot biết mã nào là ai.
+
+    Khoá chỉ báo "vân tay số 11" — không ai xác nhận thì bot mãi không biết đó
+    là ai. Đây là chỗ chủ nhà nói một lần, bot nhớ mãi.
+    """
+    from services import khoa_cua_nha as kc
+
+    viec = str(args.get("viec") or "xem").strip().lower()
+    ma = str(args.get("ma") or "").strip()
+    ten = str(args.get("ten") or "").strip()
+
+    try:
+        if viec in ("dat_ten", "la", "day"):
+            if not ten:
+                return {"text": "Anh/chị cho em biết tên người đó với ạ."}
+            if not ma:
+                # Chưa nêu mã → lấy người chưa biết tên gần đây nhất.
+                chua = [m for m in kc.doc_nhat_ky(3) if not m["ten"]]
+                if not chua:
+                    return {"text": "Em không thấy ai chưa biết tên gần đây ạ."}
+                ma = chua[0]["ma"]
+            kc.dat_ten(ma, ten)
+            return {"text": f"Dạ, em nhớ rồi — {kc._mo_ta_ma(ma)} là **{ten}**. "
+                            "Từ giờ em gọi đúng tên khi báo ạ."}
+
+        if viec in ("tom_tat", "hom_nay"):
+            return {"text": kc.soan_tom_tat() or "Hôm nay chưa ai ra vào ạ."}
+
+        ds = kc.doc_nhat_ky(2)
+        if not ds:
+            return {"text": "Em chưa đọc được nhật ký khoá cửa. Kiểm tra thẻ "
+                            "Tuya trong Cài đặt giúp em ạ."}
+        dong = []
+        for m in ds[:12]:
+            import datetime as _d
+            t = _d.datetime.fromtimestamp(m["ts"], kc._TZ).strftime("%d/%m %H:%M")
+            dong.append(f"  {t} — {m['ten'] or kc._mo_ta_ma(m['ma']) + ' (chưa biết ai)'}")
+        tt = kc.trang_thai()
+        return {"text": "🚪 Ai mở cửa gần đây:\n" + "\n".join(dong)
+                        + f"\n\n(Nhà thường ngủ lúc {tt['gio_di_ngu']}, "
+                          f"em tóm tắt lúc {tt['gio_tom_tat']}.)"}
+    except Exception as exc:
+        logger.warning("khoa_cua lỗi: %s", exc)
+        return {"text": f"Em xem khoá cửa chưa được ạ: {str(exc)[:160]}"}
+
+
 def _h_tinh_huong_nha(args: dict, ctx: dict) -> dict:
     """Xem / duyệt / đổi tên các TÌNH HUỐNG bot học được trong nhà.
 
@@ -6480,6 +6527,25 @@ CAPABILITIES: dict[str, Capability] = {
         workflow=("Tên mập mờ thì tool trả kèm danh sách — HỎI LẠI người dùng, "
                   "TUYỆT ĐỐI không tự đoán rồi gửi lệnh: nhà này có KHOÁ CỬA "
                   "chạy Tuya, mở nhầm là chuyện không sửa lại được.")),
+    "khoa_cua_nha": Capability(
+        name="khoa_cua_nha", risk=READ, handler=_h_khoa_cua,
+        emoji="🚪", label="Khoá cửa — ai mở, lúc nào",
+        description=("Xem ai mở cửa gần đây, hoặc DẠY bot biết mã nào là ai. "
+                     "Người dùng nói «vân tay 11 là con trai», «đó là tôi», "
+                     "«khoá cửa face#17 là mẹ» đều dùng tool này."),
+        parameters={"type": "object", "properties": {
+            "viec": {"type": "string",
+                     "description": "'xem' (mặc định) | 'dat_ten' khi người dùng "
+                                    "cho biết ai là ai | 'tom_tat' xem hôm nay"},
+            "ma": {"type": "string",
+                   "description": "Mã người mở, vd 'fingerprint#11'. Bỏ trống thì "
+                                  "lấy người chưa biết tên gần đây nhất."},
+            "ten": {"type": "string",
+                    "description": "Tên người đó, vd 'con trai', 'mẹ', 'tôi'."}}},
+        workflow=("Bot HỎI tên khi gặp người lạ; người dùng trả lời thì gọi ngay "
+                  "viec='dat_ten'. Họ nói trống không («đó là tôi») thì bỏ trống "
+                  "ma — tool tự lấy người vừa mở cửa. Nhớ rồi thì nói lại cho họ "
+                  "yên tâm là lần sau bot gọi đúng tên.")),
     "tinh_huong_nha": Capability(
         name="tinh_huong_nha", risk=READ, handler=_h_tinh_huong_nha,
         emoji="🕰️", label="Tình huống trong nhà (giờ ăn, buổi sáng…)",
@@ -7508,6 +7574,7 @@ _CAP_GROUP: dict[str, str] = {
     "mqtt_thiet_bi": "homeassistant", "mqtt_dieu_khien": "homeassistant",
     "canh_bao_nha": "homeassistant",
     "tinh_huong_nha": "homeassistant",
+    "khoa_cua_nha": "homeassistant",
     "tuya_thiet_bi": "homeassistant",
     "speak_to_speaker": "tts_speaker",
     "play_music_on_speaker": "tts_speaker",

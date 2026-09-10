@@ -1,0 +1,433 @@
+"""Ai mở cửa, lúc nào — và bot TỰ HỌC tên từng người.
+
+Khoá Tuya chỉ báo mã: "vân tay số 11", "khuôn mặt số 17". Đo trên khoá nhà chủ
+máy 10/09/2026: **5 người, không ai có tên** (trường ``unlock_name`` của Tuya
+rỗng vì chưa ai đặt trong app Smart Life).
+
+Chủ máy hỏi đúng chỗ thiếu: *"liên quan đến tự học mà, nếu không xác nhận làm
+sao biết đó là ai nhỉ"*. Đúng — không ai xác nhận thì bot mãi chỉ biết con số.
+
+BA NGUỒN TÊN, xét theo thứ tự:
+
+1. ``unlock_name`` do Tuya trả — chủ nhà đặt trong app thì mọi nơi cùng hiện
+   đúng tên, khỏi dạy.
+2. Trí nhớ bot — chủ máy đã nói "vân tay 11 là con trai" thì nhớ mãi.
+3. Chưa có gì → **BOT HỎI**, và chỉ hỏi MỘT LẦN cho mỗi mã.
+
+NHỊP BÁO (chủ máy chốt): báo ngay chuyện bất thường, cộng một bản tóm tắt cuối
+ngày. Giờ tóm tắt KHÔNG cố định mà bám nếp ngủ của nhà — đo được nhà này ngủ
+quanh 0h22 ±74 phút, nên gửi lúc 22h là quá sớm, còn 23h30 thì vừa.
+
+THẾ NÀO LÀ BẤT THƯỜNG: người chưa biết tên, mở ngoài khung giờ quen của chính
+người đó (học từ ``thoi_quen_nha``), hoặc mở lúc cả nhà đã ngủ.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import statistics
+import threading
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+from services.config import DATA_DIR, config
+
+logger = logging.getLogger(__name__)
+
+_TZ = timezone(timedelta(hours=7))
+_FILE = Path(DATA_DIR) / "agent" / "khoa_cua_nha.json"
+_khoa = threading.RLock()
+
+#: Mã lệnh mở khoá của Tuya. `unlock_` + cách mở.
+_CACH_MO = {
+    "fingerprint": "vân tay", "face": "khuôn mặt", "password": "mật khẩu",
+    "card": "thẻ từ", "key": "chìa cơ", "temporary": "mã tạm",
+    "dynamic": "mã động", "hand": "vân tay", "finger_vein": "tĩnh mạch ngón",
+    "phone": "điện thoại", "app": "điện thoại",
+}
+
+#: Hỏi tên tối đa ngần này lần cho MỘT mã. Hỏi mãi mà không ai trả lời thì
+#: thôi — nài thêm chỉ làm phiền.
+_HOI_TOI_DA = 3
+#: Nhà ngủ muộn nhất mấy giờ thì vẫn tính là "hôm nay" (giờ thập phân, >24 là
+#: sang hôm sau). Đo nhà chủ máy: tắt đèn cuối quanh 0h22.
+_DEM_TOI_DA = 27.0
+
+
+def _cfg() -> dict[str, Any]:
+    raw = (config.data.get("mqtt") or {}).get("khoa_cua")
+    return raw if isinstance(raw, dict) else {}
+
+
+def is_enabled() -> bool:
+    return bool(_cfg().get("bat", True))
+
+
+# ── Sổ ghi ──────────────────────────────────────────────────────────────────
+def _doc() -> dict[str, Any]:
+    try:
+        with open(_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _ghi(d: dict[str, Any]) -> None:
+    try:
+        _FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _FILE.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+        tmp.replace(_FILE)
+    except OSError as exc:
+        logger.warning({"event": "khoa_cua_ghi_loi", "error": str(exc)[:160]})
+
+
+def _ma(code: str, value: Any) -> str:
+    """Khoá định danh một người: 'fingerprint#11'."""
+    return f"{str(code or '').replace('unlock_', '')}#{value}"
+
+
+def _mo_ta_ma(ma: str) -> str:
+    """'fingerprint#11' → 'vân tay số 11'."""
+    cach, _, so = ma.partition("#")
+    return f"{_CACH_MO.get(cach, cach)} số {so}"
+
+
+# ── Ba nguồn tên ────────────────────────────────────────────────────────────
+def ten_cua(ma: str, ten_tuya: str = "") -> str:
+    """Tên người, tìm theo ba tầng. Rỗng nghĩa là CHƯA BIẾT — bot sẽ hỏi."""
+    if ten_tuya.strip():
+        return ten_tuya.strip()
+
+    with _khoa:
+        so = _doc()
+        t = str((so.get("ten") or {}).get(ma) or "").strip()
+    if t:
+        return t
+
+    # Trí nhớ bot: chủ máy từng nói "vân tay 11 là con trai".
+    try:
+        from services.agent import state
+        for dong in (state.search_memory(_mo_ta_ma(ma)) or [])[:3]:
+            s = str(dong)
+            if ma.split("#")[-1] in s:
+                # Lấy phần sau dấu ']' của mốc thời gian, cắt gọn.
+                return s.split("]")[-1].strip()[:60]
+    except Exception:
+        pass
+    return ""
+
+
+def dat_ten(ma: str, ten: str) -> bool:
+    """Chủ nhà xác nhận ai là ai. Đây là bước 'tự học' của module này."""
+    ten = (ten or "").strip()
+    if not ma or not ten:
+        return False
+    with _khoa:
+        so = _doc()
+        so.setdefault("ten", {})[ma] = ten
+        # Đặt tên rồi thì thôi hỏi nữa.
+        so.setdefault("da_hoi", {}).pop(ma, None)
+        _ghi(so)
+    # Ghi vào trí nhớ chung để chỗ khác cũng dùng được.
+    try:
+        from services.agent import state
+        state.nho_hoac_cap_nhat(
+            f"Trên khoá cửa, {_mo_ta_ma(ma)} là {ten}", who="khoa_cua")
+    except Exception:
+        pass
+    logger.info({"event": "khoa_cua_dat_ten", "ma": ma, "ten": ten})
+    return True
+
+
+def _nen_hoi(ma: str) -> bool:
+    with _khoa:
+        so = _doc()
+        return int((so.get("da_hoi") or {}).get(ma) or 0) < _HOI_TOI_DA
+
+
+def _danh_dau_da_hoi(ma: str) -> None:
+    with _khoa:
+        so = _doc()
+        d = so.setdefault("da_hoi", {})
+        d[ma] = int(d.get(ma) or 0) + 1
+        _ghi(so)
+
+
+# ── Nếp ngủ của nhà ─────────────────────────────────────────────────────────
+def gio_di_ngu(so_ngay: int = 14) -> float | None:
+    """Nhà thường đi ngủ lúc mấy giờ (thập phân, >24 là quá nửa đêm).
+
+    Suy từ lần TẮT đèn cuối cùng mỗi đêm. Đo nhà chủ máy 10/09/2026: trung vị
+    0h22 (=24.37) ±74 phút — nên gửi tóm tắt lúc 22h là quá sớm.
+
+    Trả ``None`` khi chưa đủ dữ liệu; tầng trên tự chọn giờ mặc định.
+    """
+    from services import lich_su_nha
+
+    den = time.time()
+    try:
+        sk = lich_su_nha.doc_cua_so(den - max(1, int(so_ngay)) * 86400, den)
+    except Exception:
+        return None
+
+    dem: dict[Any, list[float]] = {}
+    for r in sk:
+        if str(r.get("gia_tri") or "").lower() != "off":
+            continue
+        tb = str(r.get("thiet_bi") or "").lower()
+        if not tb.startswith(("light.", "switch.")):
+            continue
+        try:
+            t = datetime.fromtimestamp(float(r["ts"]), _TZ)
+        except (TypeError, ValueError, KeyError):
+            continue
+        g = t.hour + t.minute / 60
+        if not (g >= 20 or g < 4):
+            continue
+        # Đêm thuộc về NGÀY HÔM TRƯỚC nếu đã quá nửa đêm.
+        ngay = (t - timedelta(hours=4)).date()
+        dem.setdefault(ngay, []).append(g + 24 if g < 4 else g)
+
+    mocs = [max(v) for v in dem.values() if v]
+    if len(mocs) < 3:
+        return None
+    return round(statistics.median(mocs), 3)
+
+
+def gio_tom_tat() -> float:
+    """Giờ gửi bản tóm tắt cuối ngày — TRƯỚC lúc nhà đi ngủ 45 phút.
+
+    Chủ máy chốt: *"dựa vào thói quen để biết người trong nhà đi ngủ… để báo
+    chứ không cố định giờ"*.
+    """
+    raw = _cfg().get("gio_tom_tat")
+    if raw is not None:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            pass
+    ngu = gio_di_ngu()
+    if ngu is None:
+        return 22.0                     # chưa học được thì lấy giờ hợp lý
+    return max(20.0, ngu - 0.75)
+
+
+# ── Đọc nhật ký khoá ────────────────────────────────────────────────────────
+def doc_nhat_ky(so_ngay: int = 2) -> list[dict[str, Any]]:
+    """Lần mở cửa gần đây, mới nhất trước. Rỗng khi chưa cấu hình Tuya."""
+    from services import tuya_nha
+
+    try:
+        ds = tuya_nha.danh_sach_thiet_bi()
+    except Exception as exc:
+        logger.info({"event": "khoa_cua_doc_loi", "error": str(exc)[:140]})
+        return []
+    khoa = [d for d in ds if "khoá" in str(d.get("loai") or "")]
+    if not khoa:
+        return []
+
+    now = int(time.time() * 1000)
+    tu = now - max(1, int(so_ngay)) * 86400 * 1000
+    ra: list[dict[str, Any]] = []
+    for k in khoa:
+        try:
+            r = tuya_nha.goi_api(
+                f"/v1.0/devices/{k['id']}/door-lock/open-logs"
+                f"?start_time={tu}&end_time={now}&page_no=1&page_size=50")
+        except Exception as exc:
+            logger.info({"event": "khoa_cua_log_loi", "error": str(exc)[:140]})
+            continue
+        for l in (r.get("result") or {}).get("logs") or []:
+            st = l.get("status") or {}
+            ma = _ma(str(st.get("code") or ""), st.get("value"))
+            if ma.startswith("#"):
+                continue
+            ra.append({
+                "ma": ma,
+                "ten": ten_cua(ma, str(l.get("unlock_name") or l.get("nick_name") or "")),
+                "ts": float(l.get("time") or l.get("update_time") or 0) / 1000,
+                "thiet_bi": k.get("ten") or "khoá cửa",
+            })
+    ra.sort(key=lambda x: -x["ts"])
+    return ra
+
+
+# ── Bất thường ──────────────────────────────────────────────────────────────
+def soi_bat_thuong(so_ngay: int = 1) -> list[dict[str, Any]]:
+    """Lần mở cửa nào đáng báo ngay.
+
+    Ba loại: người CHƯA BIẾT TÊN, mở lúc cả nhà đã ngủ, và mở lệch hẳn khung
+    giờ quen của chính người đó (nếu đã học được nếp).
+    """
+    ra = []
+    ngu = gio_di_ngu()
+    for m in doc_nhat_ky(so_ngay):
+        t = datetime.fromtimestamp(m["ts"], _TZ)
+        g = t.hour + t.minute / 60
+        gio_dem = g + 24 if g < 4 else g
+
+        if not m["ten"]:
+            ra.append({**m, "vi_sao": "chưa biết là ai", "muc": "hoi_ten"})
+            continue
+        if ngu is not None and gio_dem > ngu and gio_dem < _DEM_TOI_DA:
+            ra.append({**m, "vi_sao": "mở cửa sau giờ cả nhà đã ngủ",
+                       "muc": "khuya"})
+    return ra
+
+
+def _mo_ta_luc(ts: float) -> str:
+    t = datetime.fromtimestamp(ts, _TZ)
+    return t.strftime("%H:%M")
+
+
+def soan_hoi_ten(m: dict[str, Any]) -> str:
+    """Tin hỏi tên, kèm nút bấm — khuôn ask_choices (<<<ASK>>>…<<<END>>>).
+
+    Chỉ hỏi MỘT LẦN cho mỗi mã, và tối đa _HOI_TOI_DA lần nếu không ai trả lời.
+    """
+    ma = m["ma"]
+    dong = [
+        f"🚪 Có người mở cửa lúc {_mo_ta_luc(m['ts'])} bằng {_mo_ta_ma(ma)}.",
+        "Em chưa biết đây là ai — anh/chị cho em biết tên với ạ?",
+        "<<<ASK>>>",
+        f"Đây là tôi | khoá cửa {ma} là tôi",
+        f"Người nhà | khoá cửa {ma} là người nhà",
+        f"Để sau | thôi đừng hỏi về {ma} nữa",
+        "<<<END>>>",
+    ]
+    return "\n".join(dong)
+
+
+def soan_tom_tat(so_ngay: int = 1) -> str:
+    """Bản tóm tắt cuối ngày: hôm nay ai về lúc mấy giờ."""
+    ds = doc_nhat_ky(so_ngay)
+    if not ds:
+        return ""
+    hom_nay = datetime.now(_TZ).date()
+    theo_nguoi: dict[str, list[float]] = {}
+    for m in ds:
+        t = datetime.fromtimestamp(m["ts"], _TZ)
+        if (t - timedelta(hours=4)).date() != hom_nay:
+            continue
+        ten = m["ten"] or _mo_ta_ma(m["ma"])
+        theo_nguoi.setdefault(ten, []).append(m["ts"])
+    if not theo_nguoi:
+        return ""
+    dong = ["🚪 Hôm nay ai ra vào:"]
+    for ten, ts in sorted(theo_nguoi.items(), key=lambda x: min(x[1])):
+        gio = ", ".join(_mo_ta_luc(x) for x in sorted(ts)[:6])
+        dong.append(f"  - {ten}: {gio}" + (f" (+{len(ts) - 6} lần nữa)"
+                                           if len(ts) > 6 else ""))
+    chua = [t for t in theo_nguoi if "số" in t]
+    if chua:
+        dong.append("")
+        dong.append(f"({len(chua)} người em chưa biết tên — nhắn «khoá cửa … là …» "
+                    "để em nhớ ạ.)")
+    return "\n".join(dong)
+
+
+# ── Chạy định kỳ ────────────────────────────────────────────────────────────
+def chay_mot_lan() -> dict[str, Any]:
+    """Heartbeat gọi mỗi tick. Báo bất thường ngay, tóm tắt đúng giờ đã học."""
+    if not is_enabled():
+        return {"gui": 0, "ly_do": "tắt trong cấu hình"}
+
+    from services import canh_bao_nha
+
+    nguoi = canh_bao_nha._nguoi_nhan()
+    if not nguoi:
+        return {"gui": 0, "ly_do": "chưa khai người nhận"}
+
+    gui = 0
+    # 1. Hỏi tên người lạ — chỉ một mã mỗi lượt, đừng dội một chùm.
+    for m in soi_bat_thuong():
+        if m["muc"] != "hoi_ten" or not _nen_hoi(m["ma"]):
+            continue
+        for uid in nguoi:
+            try:
+                canh_bao_nha._gui(uid, soan_hoi_ten(m))
+                gui += 1
+            except Exception:
+                pass
+        if gui:
+            _danh_dau_da_hoi(m["ma"])
+        break
+
+    # 2. Mở cửa lúc khuya — báo ngay, không chờ tóm tắt.
+    with _khoa:
+        so = _doc()
+        da_bao = set(so.get("da_bao_khuya") or [])
+    moi_khuya = []
+    for m in soi_bat_thuong():
+        if m["muc"] != "khuya":
+            continue
+        khoa_tin = f"{m['ma']}|{int(m['ts'])}"
+        if khoa_tin in da_bao:
+            continue
+        moi_khuya.append((khoa_tin, m))
+    for khoa_tin, m in moi_khuya[:3]:
+        tin = (f"🌙 {m['ten'] or _mo_ta_ma(m['ma'])} mở cửa lúc "
+               f"{_mo_ta_luc(m['ts'])} — sau giờ cả nhà thường đi ngủ.")
+        for uid in nguoi:
+            try:
+                canh_bao_nha._gui(uid, tin)
+                gui += 1
+            except Exception:
+                pass
+        da_bao.add(khoa_tin)
+    if moi_khuya:
+        with _khoa:
+            so = _doc()
+            so["da_bao_khuya"] = sorted(da_bao)[-200:]
+            _ghi(so)
+
+    # 3. Tóm tắt cuối ngày, đúng giờ suy từ nếp ngủ.
+    now = datetime.now(_TZ)
+    g = now.hour + now.minute / 60
+    moc = gio_tom_tat() % 24
+    hom_nay = now.strftime("%Y-%m-%d")
+    with _khoa:
+        da_tom_tat = (_doc().get("tom_tat_ngay") or "") == hom_nay
+    if not da_tom_tat and moc <= g < moc + 0.5:
+        tin = soan_tom_tat()
+        if tin:
+            for uid in nguoi:
+                try:
+                    canh_bao_nha._gui(uid, tin)
+                    gui += 1
+                except Exception:
+                    pass
+        with _khoa:
+            so = _doc()
+            so["tom_tat_ngay"] = hom_nay
+            _ghi(so)
+
+    return {"gui": gui, "gio_tom_tat": round(moc, 2)}
+
+
+def trang_thai() -> dict[str, Any]:
+    with _khoa:
+        so = _doc()
+    ngu = gio_di_ngu()
+    return {
+        "bat": is_enabled(),
+        "da_dat_ten": len(so.get("ten") or {}),
+        "gio_di_ngu": (f"{int(ngu % 24)}h{int(ngu % 1 * 60):02d}"
+                       if ngu is not None else "chưa học được"),
+        "gio_tom_tat": f"{int(gio_tom_tat() % 24)}h{int(gio_tom_tat() % 1 * 60):02d}",
+        "ten": so.get("ten") or {},
+    }
+
+
+def _reset_for_tests() -> None:
+    with _khoa:
+        try:
+            _FILE.unlink()
+        except OSError:
+            pass

@@ -167,6 +167,12 @@ def _parse_tasks() -> list[dict[str, Any]]:
         "system": True,
     })
     tasks.append({
+        "id": "khoa_cua_nha",
+        "intent": "read",
+        "text": "Báo ai mở cửa, hỏi tên người lạ, tóm tắt trước giờ nhà đi ngủ",
+        "system": True,
+    })
+    tasks.append({
         "id": "tinh_huong_nha",
         "intent": "read",
         "text": "Học tình huống trong nhà (giờ ăn, buổi sáng…) rồi xin duyệt tên",
@@ -457,6 +463,24 @@ def _eval_tinh_huong() -> tuple[str, str]:
         return "skip", f"error: {exc}"
 
 
+def _eval_khoa_cua() -> tuple[str, str]:
+    """Báo ai mở cửa + hỏi tên người lạ — services.khoa_cua_nha.
+
+    Tick 5 phút: đủ nhanh để báo người lạ, và bản tóm tắt tự canh giờ theo
+    nếp ngủ của nhà nên không cần hẹn giờ riêng.
+    """
+    try:
+        from services import khoa_cua_nha as kc
+        if not kc.is_enabled():
+            return "skip", "khoá cửa tắt (mqtt.khoa_cua)"
+        kq = kc.chay_mot_lan()
+        if kq.get("gui"):
+            return "act", f"gửi {kq['gui']} tin về khoá cửa"
+        return "skip", kq.get("ly_do") or "không có gì mới"
+    except Exception as exc:
+        return "skip", f"error: {exc}"
+
+
 _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
     "wiki_daily_digest": _eval_wiki_digest,
     "open_goals_nudge": _eval_open_goals,
@@ -464,6 +488,7 @@ _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
     "user_profile_distill": _eval_distill,
     "canh_bao_nha": _eval_canh_bao_nha,
     "tinh_huong_nha": _eval_tinh_huong,
+    "khoa_cua_nha": _eval_khoa_cua,
 }
 
 
