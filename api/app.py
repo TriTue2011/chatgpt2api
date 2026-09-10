@@ -208,6 +208,15 @@ def create_app() -> FastAPI:
             lich_su_nha.start()
         except Exception as exc:
             _record_startup_failure("lich_su_nha", str(exc))
+        # Tuya local — đường THỨ BA để bot biết thiết bị, không qua đám mây và
+        # không cần Home Assistant. Nhà chưa có thiết bị nào nói chuyện local
+        # được thì start() trả False im lặng (đo 10/09/2026: khoá cửa chạy pin
+        # ngủ đông, gateway Zigbee không mở cổng), nên bật sẵn không tốn gì.
+        try:
+            from services import tuya_local
+            tuya_local.start()
+        except Exception as exc:
+            _record_startup_failure("tuya_local", str(exc))
         # Prewarm MCP tools cache in background so the first chat request
         # doesn't pay the cold-start probe (e.g. a dead remote MCP that
         # times out at 5s adds latency to whoever asks first).

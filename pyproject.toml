@@ -6,6 +6,14 @@ description = "Self-hosted AI gateway: OpenAI/Anthropic-compatible API over Chat
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    # Nói chuyện THẲNG với thiết bị Tuya trong mạng nhà, không qua đám mây và
+    # không cần Home Assistant (services/tuya_local.py). Giấy phép MIT nên dùng
+    # được trong dự án đóng — khác localtuya/hass-localtuya/xtend_tuya đều là
+    # GPL-3.0, chép vào là cả repo phải mở mã nguồn.
+    #
+    # Gói thuần Python, ba phụ thuộc (requests, colorama, cryptography) dự án
+    # đã có sẵn nên không kéo thêm gì nặng.
+    "tinytuya>=1.20.0",
     "curl-cffi>=0.15.0",
     # Tải video từ link về để ghép phụ đề / lồng tiếng (services/video_tai.py).
     # Đường phụ đề-sẵn-có của video_dich không cần gói này; chỉ khi người dùng
