@@ -172,3 +172,8 @@ data/mcp_oauth/
 /logs/
 *.log.*
 *.tar.gz
+
+# Ca hỏng đang phân tích — chứa câu chat THẬT của người nhà, tuyệt đối không commit.
+# Do giam_sat.sh trên máy chủ sinh ra; phải nằm trong cây mã nguồn vì sandbox
+# của Claude Code chỉ cho đọc trong thư mục làm việc.
+.ca_dang_xu_ly.json
