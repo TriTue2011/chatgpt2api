@@ -184,6 +184,12 @@ def _parse_tasks() -> list[dict[str, Any]]:
         "text": "Báo thiết bị nhà hỏng/đơ (5p → 30p → 60p → 6h → mỗi ngày)",
         "system": True,
     })
+    tasks.append({
+        "id": "bai_hoc",
+        "intent": "read",
+        "text": "Bản tin «em học được gì» — mặc định TẮT (mqtt.bai_hoc.bao)",
+        "system": True,
+    })
 
     _ensure_heartbeat_md()
     try:
@@ -481,6 +487,23 @@ def _eval_khoa_cua() -> tuple[str, str]:
         return "skip", f"error: {exc}"
 
 
+def _eval_bai_hoc() -> tuple[str, str]:
+    """Bản tin «em học được gì» — services.bai_hoc.
+
+    Mặc định TẮT (`mqtt.bai_hoc.bao`), và bật thì cũng chỉ gửi mỗi 7 ngày, nên
+    hiếm khi tranh suất `max_acts_per_tick`. Chưa học được gì thì im, không
+    nhắn bản tin rỗng.
+    """
+    try:
+        from services import bai_hoc
+        kq = bai_hoc.chay_mot_lan()
+        if kq.get("gui"):
+            return "act", f"báo học tập tới {kq['gui']} người"
+        return "skip", kq.get("ly_do") or "chưa có gì để kể"
+    except Exception as exc:
+        return "skip", f"error: {exc}"
+
+
 _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
     "wiki_daily_digest": _eval_wiki_digest,
     "open_goals_nudge": _eval_open_goals,
@@ -489,6 +512,7 @@ _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
     "canh_bao_nha": _eval_canh_bao_nha,
     "tinh_huong_nha": _eval_tinh_huong,
     "khoa_cua_nha": _eval_khoa_cua,
+    "bai_hoc": _eval_bai_hoc,
 }
 
 

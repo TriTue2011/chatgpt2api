@@ -296,6 +296,91 @@ def nen_hoi_lai(bo_do: str) -> bool:
     return bool(bo_do) and is_enabled() and not da_tin_duoc(bo_do)
 
 
+# ── báo chủ động ────────────────────────────────────────────────────────────
+def _kenh() -> str:
+    """'telegram' | 'zalo' | '' (rỗng = kênh mặc định). Như `canh_bao_nha._kenh`."""
+    return str(_cfg().get("kenh") or "").strip()
+
+
+def _gui(user_id: str, text: str) -> None:
+    """Gửi qua kênh của RIÊNG phần học tập, không mượn kênh của cảnh báo hỏng."""
+    from services.agent import reminders as rem
+
+    channel, chat_id = rem.channel_of(user_id)
+    rem._send(_kenh() or channel, chat_id, text, {})
+
+
+def soan_bao(so_ngay: int = 7) -> str:
+    """Bản tin «em học được gì» — rỗng nếu chưa có gì đáng kể.
+
+    Chỉ kể khi CÓ THAY ĐỔI: chưa học được gì mà vẫn nhắn mỗi tuần là làm phiền.
+    """
+    han = time.time() - max(1, int(so_ngay)) * 86400
+    with _lock:
+        d = _doc()
+        moi = [m for m in (d.get("sai") or []) if float(m.get("ts") or 0) >= han]
+        bd = dict(d.get("bo_do") or {})
+    if not moi and not bd:
+        return ""
+
+    dong = [f"🧠 Em học được gì {so_ngay} ngày qua:"]
+    if moi:
+        dong.append(f"\nCó {len(moi)} câu anh bảo em trả lời chưa đúng — "
+                    "lần sau gặp câu tương tự em sẽ nghĩ kỹ hơn:")
+        for m in sorted(moi, key=lambda x: -float(x.get("ts") or 0))[:5]:
+            dong.append(f"  · {str(m.get('cau_hoi') or '')[:70]}")
+
+    tin = [k for k in bd if da_tin_duoc(k)]
+    ngo = [k for k in bd if bo_do_dang_ngo(k)]
+    if tin:
+        dong.append(f"\n✅ {len(tin)} loại câu em đã trả lời chắc tay, "
+                    "thôi hỏi lại anh nữa.")
+    if ngo:
+        dong.append(f"⚠️ {len(ngo)} loại câu em hay sai — từ giờ em nghĩ kỹ "
+                    "thay vì trả lời nhanh.")
+    return "\n".join(dong)
+
+
+def chay_mot_lan(so_ngay: int = 7) -> dict[str, Any]:
+    """Heartbeat gọi. Gửi bản tin học tập nếu tới hạn và có gì để kể."""
+    if not is_enabled() or not bool(_cfg().get("bao", False)):
+        return {"gui": 0, "ly_do": "chưa bật báo học tập"}
+
+    moi_ngay = max(1, int(_so("bao_moi_ngay", 7)))
+    with _lock:
+        d = _doc()
+        lan_cuoi = float(d.get("bao_lan_cuoi") or 0)
+    if time.time() - lan_cuoi < moi_ngay * 86400:
+        return {"gui": 0, "ly_do": "chưa tới hạn báo"}
+
+    tin = soan_bao(so_ngay)
+    if not tin:
+        return {"gui": 0, "ly_do": "chưa học được gì đáng kể"}
+
+    # Người nhận dùng lại `canh_bao_nha._nguoi_nhan()` — chủ máy đã khai admin
+    # ở tab Kênh chat, không bắt khai lại lần nữa. Nhưng KÊNH thì lấy của
+    # `mqtt.bai_hoc.kenh`: có người muốn nhận cảnh báo hỏng qua Telegram mà
+    # nhận chuyện học tập qua Zalo, hai việc khác nhau.
+    from services import canh_bao_nha
+    nguoi = canh_bao_nha._nguoi_nhan()
+    if not nguoi:
+        return {"gui": 0, "ly_do": "chưa khai người nhận"}
+
+    gui = 0
+    for uid in nguoi:
+        try:
+            _gui(uid, tin)
+            gui += 1
+        except Exception as exc:
+            logger.warning({"event": "bai_hoc_gui_loi", "loi": str(exc)[:150]})
+    if gui:
+        with _lock:
+            d = _doc()
+            d["bao_lan_cuoi"] = time.time()
+            _ghi(d)
+    return {"gui": gui, "so_bai_hoc": len(_doc().get("sai") or [])}
+
+
 def thong_ke() -> dict[str, Any]:
     with _lock:
         d = _doc()

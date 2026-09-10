@@ -160,6 +160,61 @@ class CauHinhTest(unittest.TestCase):
                          "quá hạn 5 ngày thì thôi tính")
 
 
+class BaoChuDongTest(unittest.TestCase):
+    """Bản tin «em học được gì» — mặc định TẮT, bật thì chỉ kể khi có gì."""
+
+    def setUp(self) -> None:
+        import services.bai_hoc as m
+        from services.config import config
+        self.m, self.cfg = m, config
+        self._tmp = Path(tempfile.mkdtemp())
+        m._duong = lambda: self._tmp / "bai_hoc.json"
+        config.data.setdefault("mqtt", {})["bai_hoc"] = {"bao": True}
+
+    def tearDown(self) -> None:
+        self.cfg.data.get("mqtt", {}).pop("bai_hoc", None)
+
+    def test_MAC_DINH_TAT(self) -> None:
+        """Không ai bật mà tự nhắn là làm phiền."""
+        self.cfg.data["mqtt"]["bai_hoc"] = {}
+        self.assertEqual(self.m.chay_mot_lan()["gui"], 0)
+
+    def test_CHUA_HOC_GI_thi_KHONG_nhan(self) -> None:
+        self.assertEqual(self.m.soan_bao(), "", "sổ rỗng thì không soạn tin")
+        self.assertEqual(self.m.chay_mot_lan()["gui"], 0)
+
+    def test_co_bai_hoc_thi_ke(self) -> None:
+        self.m.ghi_sai("fingerprint#2 lần cuối lúc mấy giờ", "…", "_x")
+        t = self.m.soan_bao()
+        self.assertIn("học được gì", t)
+        self.assertIn("fingerprint#2", t)
+
+    def test_ke_ca_loai_da_chac_tay(self) -> None:
+        for _ in range(6):
+            self.m.ghi_dung("thời tiết", "_w")
+        self.assertIn("chắc tay", self.m.soan_bao())
+
+    def test_CHUA_TOI_HAN_thi_khong_nhan_lai(self) -> None:
+        """Kể mỗi 7 ngày, không phải mỗi nhịp heartbeat 5 phút."""
+        self.m.ghi_sai("câu nào đó dài dòng", "…", "_x")
+        d = self.m._doc()
+        d["bao_lan_cuoi"] = time.time()
+        self.m._ghi(d)
+        kq = self.m.chay_mot_lan()
+        self.assertEqual(kq["gui"], 0)
+        self.assertIn("chưa tới hạn", kq["ly_do"])
+
+    def test_TAT_HOC_TAP_thi_cung_khong_bao(self) -> None:
+        self.cfg.data["mqtt"]["bai_hoc"] = {"bat": False, "bao": True}
+        self.assertEqual(self.m.chay_mot_lan()["gui"], 0)
+
+    def test_kenh_rieng_khong_muon_cua_canh_bao(self) -> None:
+        """Có người nhận cảnh báo hỏng qua Telegram mà nhận chuyện học tập
+        qua Zalo — hai việc khác nhau."""
+        self.cfg.data["mqtt"]["bai_hoc"] = {"bao": True, "kenh": "zalo"}
+        self.assertEqual(self.m._kenh(), "zalo")
+
+
 class VongKhepKinTest(unittest.TestCase):
     """Chủ máy bấm nút → bot ghi bài học → lần sau tự tránh đường tắt."""
 

@@ -78,8 +78,10 @@ export function MqttCard() {
   const [hong, setHong] = useState<Hong[] | null>(null);
   const [cb, setCb] = useState<CanhBao>({ bat: true, kenh: "", nguoi_nhan: "", gio_hang_ngay: 8 });
   // Học từ lỗi: bot hỏi lại khi nó KHÔNG CHẮC, sai một lần thì lần sau tự tránh.
-  const [bh, setBh] = useState<{ bat: boolean; du_mau: number; han_ngay: number }>(
-    { bat: true, du_mau: 4, han_ngay: 180 });
+  const [bh, setBh] = useState<{
+    bat: boolean; du_mau: number; han_ngay: number;
+    bao: boolean; kenh: string; bao_moi_ngay: number;
+  }>({ bat: true, du_mau: 4, han_ngay: 180, bao: false, kenh: "", bao_moi_ngay: 7 });
   const [ttCb, setTtCb] = useState<TrangThaiCB | null>(null);
   const [th, setTh] = useState<TinhHuong[]>([]);
 
@@ -110,6 +112,9 @@ export function MqttCard() {
       bat: h.bat !== false,
       du_mau: typeof h.du_mau === "number" ? h.du_mau : 4,
       han_ngay: typeof h.han_ngay === "number" ? h.han_ngay : 180,
+      bao: h.bao === true,
+      kenh: String(h.kenh || ""),
+      bao_moi_ngay: typeof h.bao_moi_ngay === "number" ? h.bao_moi_ngay : 7,
     });
   }, [(config as any)?.mqtt]);
 
@@ -189,6 +194,9 @@ export function MqttCard() {
           bat: bh.bat !== false,
           du_mau: bh.du_mau ?? 4,
           han_ngay: bh.han_ngay ?? 180,
+          bao: bh.bao === true,
+          kenh: (bh.kenh || "").trim(),
+          bao_moi_ngay: bh.bao_moi_ngay ?? 7,
         },
       },
     } as any);
@@ -538,6 +546,47 @@ export function MqttCard() {
                 />
               </div>
             </div>
+            <div className="space-y-2 rounded border border-border/60 p-2">
+              <label className="flex items-center gap-2 text-xs font-semibold">
+                <input
+                  type="checkbox"
+                  checked={bh.bao === true}
+                  onChange={(e) => setBh({ ...bh, bao: e.target.checked })}
+                />
+                📬 Thỉnh thoảng kể cho tôi nghe em học được gì
+              </label>
+              <p className="text-xs text-muted-foreground">
+                Em gộp lại rồi kể một lần: mấy câu anh bảo chưa đúng, loại nào em
+                đã chắc tay, loại nào em còn hay sai. Chưa học được gì thì em im,
+                không nhắn cho có. Người nhận lấy theo admin anh đã khai ở tab
+                Kênh chat.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">Gửi qua kênh</p>
+                  <select
+                    className="h-9 w-full rounded-md border border-border bg-transparent px-2 text-sm"
+                    value={bh.kenh || ""}
+                    onChange={(e) => setBh({ ...bh, kenh: e.target.value })}
+                  >
+                    <option value="">Kênh đang dùng</option>
+                    <option value="telegram">Telegram</option>
+                    <option value="zalo">Zalo</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">Mấy ngày kể một lần</p>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={90}
+                    value={bh.bao_moi_ngay ?? 7}
+                    onChange={(e) => setBh({ ...bh, bao_moi_ngay: Number(e.target.value) })}
+                  />
+                </div>
+              </div>
+            </div>
+
             <Button variant="outline" size="sm" onClick={() => void luuCb()}>
               {saved ? "Đã lưu!" : "Lưu cài đặt học tập"}
             </Button>
