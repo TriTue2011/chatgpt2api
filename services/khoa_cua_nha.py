@@ -152,7 +152,12 @@ def gio_di_ngu(so_ngay: int = 14) -> float | None:
 
     den = time.time()
     try:
-        sk = lich_su_nha.doc_cua_so(den - max(1, int(so_ngay)) * 86400, den)
+        # Lọc ở SQL: hàm này chỉ quan tâm đèn/công tắc tắt đi, mà đó là vài
+        # trăm dòng trong khi cả nhà sinh ~55.000 sự kiện/ngày. Kéo hết về rồi
+        # bỏ 99% là cách bản cũ chạm trần và mất 94,9% dữ liệu (đo 10/09/2026).
+        sk = lich_su_nha.doc_cua_so(
+            den - max(1, int(so_ngay)) * 86400, den,
+            tien_to=("light.", "switch."))
     except Exception:
         return None
 
@@ -214,7 +219,10 @@ def _tu_ha(so_ngay: int) -> list[dict[str, Any]]:
 
     tu = time.time() - max(1, int(so_ngay)) * 86400
     try:
-        ds = lich_su_nha.doc_cua_so(tu, time.time() + 60, tran=3000)
+        # Chỉ cần thực thể `event.` — 7 ngày còn vài trăm dòng thay vì gần
+        # 400.000. Bản cũ đặt tran=3000 rồi lọc sau, nên mọi lần mở cửa của
+        # HÔM NAY đều nằm ngoài phần lấy về (đo 10/09/2026).
+        ds = lich_su_nha.doc_cua_so(tu, time.time() + 60, tien_to=("event.",))
     except Exception as exc:
         logger.info({"event": "khoa_cua_ha_loi", "error": str(exc)[:140]})
         return []

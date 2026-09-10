@@ -173,7 +173,15 @@ def gom_cua_so(so_ngay: int = 14) -> list[dict[str, Any]]:
     den = time.time()
     tu = den - max(1, int(so_ngay)) * 86400
     try:
-        sk = lich_su_nha.doc_cua_so(tu, den)
+        # `bo_do_ai`: tình huống là NẾP CỦA NGƯỜI. Việc bot tự làm không phải
+        # nếp nhà — học nó là tự khẳng định vòng quanh, rồi càng chắc càng làm,
+        # càng làm lại càng thấy chắc.
+        #
+        # Không đặt `tran`: hàm này quét cả nhà nên không lọc tiền tố được, và
+        # trần mặc định nay giữ phần MỚI. Bản cũ để trần 20.000 cắt kiểu cũ nên
+        # 14 ngày chỉ nhận về 13,9 giờ của ngày đầu — tức mọi tình huống học
+        # được đều là của một buổi tối cách đây 11 ngày (đo 10/09/2026).
+        sk = lich_su_nha.doc_cua_so(tu, den, bo_do_ai=True)
     except Exception as exc:
         logger.warning({"event": "tinh_huong_doc_loi", "error": str(exc)[:160]})
         return []

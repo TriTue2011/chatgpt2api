@@ -197,43 +197,43 @@ def _patch_state(new_state: dict[str, Any] | None, entity_id: str,
         pass
 
 
-#: Loại thực thể ĐÁNG ghi — nói lên nếp sinh hoạt. Chủ máy chốt 10/09/2026:
-#: ghi có chọn lọc, không ghi tất. Nhà có 1.068 thực thể, ghi hết thì riêng
-#: 464 cảm biến đo liên tục đã đủ làm phình đĩa.
-_GHI_HA = ("light.", "switch.", "binary_sensor.", "lock.", "climate.",
-           "fan.", "cover.", "media_player.", "vacuum.", "water_heater.")
-
-#: Cảm biến CÓ ghi dù nằm trong `sensor.` — CHỈ thứ nói lên CÓ NGƯỜI hay không.
+#: Thực thể do CHÍNH HỆ THỐNG sinh ra, không phải quan sát về nhà.
 #:
-#: Đo thật 10/09/2026 sau vài giờ chạy: 104/224 bản ghi (46%) là aptomat tổng
-#: (`power` + `temperature`), thêm 59 bản ghi là độ sáng ban công. Cả ba đều
-#: KHÔNG phải hành vi người: aptomat đo dòng điện cả nhà nên phản ánh tủ lạnh,
-#: điều hoà, bình nóng lạnh tự chạy; độ sáng ngoài trời đổi liên tục theo mây.
-#: Với chúng, nhịp ghi là ~24.000 sự kiện/ngày thay vì ~200 như dự tính.
+#: Đây là toàn bộ bộ lọc còn lại ở tầng này, và nó chỉ chặn thứ CHẮC CHẮN
+#: không mang thông tin về nhà. `automation.`/`script.`/`scene.` là việc bot
+#: và HA tự chạy — học từ chúng là học từ chính mình. `update.`/`sun.`/`zone.`
+#: là siêu dữ liệu.
 #:
-#: Nhiệt độ/độ ẩm/công suất VẪN đọc được theo thời gian thực từ `tuoi` khi cần
-#: — bỏ ở đây chỉ là không lưu chuỗi lịch sử để học thói quen.
-_GHI_SENSOR = ("occupancy", "presence", "person", "motion")
-
-#: Độ sáng chỉ có ích TRONG NHÀ (biết đèn bếp có bật không). Ngoài trời thì
-#: đổi theo mây, không nói gì về hành vi.
-_LUX_NGOAI = ("ban_cong", "san_thuong", "ngoai_troi", "san_vuon",
-              "outdoor", "balcony")
+#: Trước 10/09/2026 chỗ này còn hai danh sách nữa: `_GHI_SENSOR` chỉ cho qua
+#: bốn từ khoá hiện diện, và `_LUX_NGOAI` chặn độ sáng ngoài trời. Cả hai đã
+#: bị bỏ vì chúng chặn mất chính những điều kiện cần để học thói quen — chủ
+#: máy nêu bằng bốn sơ đồ: đèn cần LUX, quạt và bình nóng lạnh cần NHIỆT ĐỘ,
+#: thời gian về nhà cần vị trí người. Đo thật: tra ngược 400 lần bật đèn bếp
+#: xem lúc đó bao nhiêu lux → 0/400 lần tra được.
+#:
+#: Lo ngại cũ "aptomat sinh 24.000 sự kiện/ngày" là lo nhầm bảng: số đo vào
+#: `so_do` đã gộp 5 phút nên tối đa 288 dòng/ngày/trường. Việc phân biệt số đo
+#: với rác cấu hình nay do `lich_su_nha._phan_loai_theo_nhip` làm — nó ĐO cách
+#: trường đổi, còn ở đây chỉ ĐOÁN theo tên, mà tên thì không nói lên bản chất.
+_BO_THUC_THE = ("update.", "automation.", "script.", "button.", "input_",
+                "zone.", "sun.", "tts.", "scene.", "number.", "select.")
 
 
 def _dang_ghi(entity_id: str) -> bool:
-    e = entity_id.lower()
-    if e.startswith(("update.", "automation.", "script.", "button.",
-                     "input_", "zone.", "person.", "device_tracker.",
-                     "sun.", "tts.", "scene.", "number.", "select.")):
-        return False
-    if e.startswith(_GHI_HA):
-        return True
-    if e.startswith("sensor."):
-        if "illuminance" in e:
-            return not any(k in e for k in _LUX_NGOAI)
-        return any(k in e for k in _GHI_SENSOR)
-    return False
+    """Có ghi thực thể này không. Mặc định CÓ — lọc rác là việc của tầng dưới.
+
+    `person.` và `device_tracker.` nay ĐƯỢC ghi: sơ đồ "thời gian về nhà" của
+    chủ máy cần đúng chúng.
+    """
+    return not entity_id.lower().startswith(_BO_THUC_THE)
+
+
+#: Thuộc tính của `event.` mang thông tin AI/CÁI GÌ — phải ghi riêng, vì `state`
+#: của nhóm này chỉ là dấu thời gian.
+#: Đo thật: `event.smart_lock_unlock_user_face` có `event_type: "unlock_face"`
+#: và `value: 17.0` — tức khuôn mặt số 17. Chỉ ghi `state` là mất sạch phần
+#: quan trọng nhất, còn lại mỗi cái mốc giờ.
+_THUOC_TINH_EVENT = ("event_type", "value")
 
 
 def _ghi_lich_su(new_state: dict[str, Any] | None, entity_id: str) -> None:
@@ -245,6 +245,13 @@ def _ghi_lich_su(new_state: dict[str, Any] | None, entity_id: str) -> None:
         return
     from services import lich_su_nha
     lich_su_nha.ghi("ha", entity_id, "state", gt)
+
+    if entity_id.lower().startswith("event."):
+        tt = new_state.get("attributes") or {}
+        for k in _THUOC_TINH_EVENT:
+            v = tt.get(k)
+            if v is not None and str(v).lower() not in ("unknown", "none", ""):
+                lich_su_nha.ghi("ha", entity_id, k, v)
 
 
 def _resync(index: dict[str, int]) -> None:

@@ -416,6 +416,202 @@ class PhanBietDieuHoaVaAptomat(unittest.TestCase):
                                side_effect=RuntimeError("HA sập")):
             self.assertIsNone(cap._lan_lon_dieu_hoa("bật điều hòa"))
 
+
+class PhanLoaiTheoNhipTest(unittest.TestCase):
+    """Phân loại trường bằng ĐO cách nó đổi, không bằng TÊN.
+
+    Thay hai danh sách từ khoá lệch nhau (ha_live lọc quá chặt nên mất lux và
+    nhiệt độ; mqtt_nha không lọc nên `so_do` đầy hằng số cấu hình).
+    """
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.m = _nap_module(self._tmp.name)
+        self.m.config.data.setdefault("mqtt", {})["lich_su"] = {"bat": True}
+
+    def tearDown(self) -> None:
+        self.m._reset_for_tests()
+        self._tmp.cleanup()
+
+    def _ghi(self, truong: str, gia_tri, lan: int = 1, tb: str = "aptomat") -> None:
+        moc = time.time()
+        with self.m._khoa_db:
+            conn = self.m._db()
+            for i in range(lan):
+                self.m._ghi_thang(conn, "mqtt", tb, truong, gia_tri, False, moc + i)
+            conn.commit()
+
+    def _dem(self, bang: str, truong: str, tb: str = "aptomat") -> int:
+        with self.m._khoa_db:
+            return self.m._db().execute(
+                f"SELECT COUNT(*) FROM {bang} WHERE thiet_bi=? AND truong=?",
+                (tb, truong)).fetchone()[0]
+
+    def test_HANG_SO_tu_lo_dien_khong_can_biet_ten(self) -> None:
+        """`over_voltage_threshold` ghi 40 lần cùng một giá trị → hằng số.
+
+        Ca thật: `so_do` trên máy chủ đầy `over_voltage_threshold`, `meter_id`,
+        `temperature_threshold` — mỗi thứ 193 bản ghi/ngày mà không đổi bao giờ.
+        """
+        self._ghi("over_voltage_threshold", 260, lan=40)
+        loai = self.m._db().execute(
+            "SELECT loai FROM nhip WHERE truong=?",
+            ("over_voltage_threshold",)).fetchone()["loai"]
+        self.assertEqual(loai, "hang_so")
+        # 30 dòng đầu là phỏng đoán (chấp nhận được), sau đó ngừng hẳn.
+        self.assertLessEqual(self._dem("so_do", "over_voltage_threshold"), 30)
+
+    def test_SO_DO_LIEN_TUC_van_vao_so_do(self) -> None:
+        """Nhiệt độ đổi giá trị → số đo, phải được giữ. Đây là thứ bộ lọc cũ
+        chặn mất, và là điều kiện trong sơ đồ "quạt, bình nóng lạnh"."""
+        moc = time.time()
+        with self.m._khoa_db:
+            conn = self.m._db()
+            for i in range(40):
+                self.m._ghi_thang(conn, "mqtt", "aptomat", "temperature",
+                                  25.0 + i * 0.1, False, moc + i * 400)
+            conn.commit()
+        loai = self.m._db().execute(
+            "SELECT loai FROM nhip WHERE truong='temperature'").fetchone()["loai"]
+        self.assertEqual(loai, "so_do")
+        self.assertGreater(self._dem("so_do", "temperature"), 0)
+
+    def test_HANG_SO_DOI_thi_MO_KHOA_lai(self) -> None:
+        """Chủ máy sửa ngưỡng trong app Tuya là chuyện thật — chốt cứng một
+        lần là mất luôn trường đó."""
+        self._ghi("over_voltage_threshold", 260, lan=40)
+        self._ghi("over_voltage_threshold", 250, lan=1)
+        loai = self.m._db().execute(
+            "SELECT loai FROM nhip WHERE truong=?",
+            ("over_voltage_threshold",)).fetchone()["loai"]
+        self.assertNotEqual(loai, "hang_so", "đổi giá trị thì phải đếm lại")
+
+    def test_TRUONG_LAP_LAI_khong_bao_gio_thanh_hang_so(self) -> None:
+        """`value=17` là "khuôn mặt số 17", lặp lại mãi mà mỗi lần là một lần
+        về nhà. Chốt hằng số ở đây là bot mất sạch lần mở cửa thứ hai."""
+        self._ghi("value", "17", lan=40, tb="event.smart_lock")
+        loai = self.m._db().execute(
+            "SELECT loai FROM nhip WHERE truong='value'").fetchone()["loai"]
+        self.assertEqual(loai, "su_kien")
+        self.assertGreater(self._dem("su_kien", "value", "event.smart_lock"), 30)
+
+    def test_TRANG_THAI_ROI_RAC_van_la_su_kien(self) -> None:
+        moc = time.time()
+        with self.m._khoa_db:
+            conn = self.m._db()
+            for i in range(40):
+                self.m._ghi_thang(conn, "mqtt", "den_bep", "state",
+                                  "on" if i % 2 else "off", False, moc + i)
+            conn.commit()
+        loai = self.m._db().execute(
+            "SELECT loai FROM nhip WHERE truong='state'").fetchone()["loai"]
+        self.assertEqual(loai, "su_kien")
+
+    def test_TUOI_van_tra_loi_duoc_ca_hang_so(self) -> None:
+        """Hằng số ngừng tốn lịch sử nhưng hỏi ra vẫn phải trả lời được."""
+        self._ghi("meter_id", "ABC123", lan=40)
+        r = self.m.doc_tuoi("aptomat")
+        self.assertTrue(any(x["truong"] == "meter_id" for x in r))
+
+
+class TranCatDungDauTest(unittest.TestCase):
+    """Trần phải cắt phần CŨ, giữ phần MỚI — và phải kêu khi cắt.
+
+    Ca thật đo trên máy chủ 10/09/2026: `doc_cua_so` xin 14 ngày (593.395 sự
+    kiện) chỉ trả về 13,9 giờ của ngày ĐẦU TIÊN, mất 96,6% và mất đúng phần
+    mới nhất. Bộ học tình huống vì thế học trên một buổi tối của 11 ngày
+    trước; bộ khoá cửa không thấy lần mở cửa nào của hôm nay.
+
+    Bộ test cũ có ~40 ca mà không ca nào bắt được, vì mọi ca đều dùng dữ liệu
+    nhỏ hơn trần. Lỗi chỉ lộ ra khi dữ liệu VƯỢT trần — nên ca dưới đây cố ý
+    ghi nhiều hơn trần.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.m = _nap_module(self._tmp.name)
+        self.m.config.data.setdefault("mqtt", {})["lich_su"] = {"bat": True}
+        self.m._stats["cham_tran"] = 0
+
+    def tearDown(self) -> None:
+        self.m._reset_for_tests()
+        self._tmp.cleanup()
+
+    def _do_day(self, n: int, moc: float) -> None:
+        """Ghi thẳng xuống DB `n` sự kiện, mỗi cái cách nhau 1 giây."""
+        with self.m._khoa_db:
+            conn = self.m._db()
+            conn.executemany(
+                "INSERT INTO su_kien (ts, nguon, thiet_bi, truong, gia_tri,"
+                " gia_tri_cu, do_ai, gio, thu) VALUES (?,?,?,?,?,?,?,?,?)",
+                [(moc + i, "test", f"den_{i % 3}", "state", str(i), "", 0, 12, 1)
+                 for i in range(n)])
+            conn.commit()
+
+    def test_doc_cua_so_GIU_BAN_GHI_MOI_NHAT(self) -> None:
+        moc = time.time() - 3600
+        self._do_day(300, moc)
+        ra = self.m.doc_cua_so(moc - 10, moc + 4000, tran=100)
+        self.assertEqual(len(ra), 100)
+        # Bản ghi CUỐI CÙNG (mới nhất) phải có mặt — đây là thứ bản cũ làm mất.
+        self.assertEqual(ra[-1]["gia_tri"], "299")
+        # Và bản ghi đầu tiên (cũ nhất) phải là thứ bị cắt.
+        self.assertNotEqual(ra[0]["gia_tri"], "0")
+
+    def test_doc_cua_so_VAN_TANG_DAN(self) -> None:
+        """Đảo lại là bắt buộc: nơi gọi duyệt tuần tự và gộp ô kề nhau."""
+        moc = time.time() - 3600
+        self._do_day(300, moc)
+        ra = self.m.doc_cua_so(moc - 10, moc + 4000, tran=100)
+        ts = [r["ts"] for r in ra]
+        self.assertEqual(ts, sorted(ts), "phải trả về theo ts tăng dần")
+
+    def test_CHAM_TRAN_thi_KEU(self) -> None:
+        """Lớp lỗi là 'vứt dữ liệu trong im lặng', nên cắt thì phải đếm."""
+        moc = time.time() - 3600
+        self._do_day(300, moc)
+        self.m.doc_cua_so(moc - 10, moc + 4000, tran=100)
+        self.assertGreater(self.m.stats()["cham_tran"], 0)
+
+    def test_KHONG_cham_tran_thi_KHONG_keu(self) -> None:
+        moc = time.time() - 3600
+        self._do_day(50, moc)
+        self.m.doc_cua_so(moc - 10, moc + 4000, tran=1000)
+        self.assertEqual(self.m.stats()["cham_tran"], 0)
+
+    def test_doc_su_kien_cung_luat(self) -> None:
+        moc = time.time() - 3600
+        self._do_day(300, moc)
+        ra = self.m.doc_su_kien("den_0", moc - 10, moc + 4000, tran=10)
+        self.assertEqual(len(ra), 10)
+        self.assertEqual(ra[-1]["gia_tri"], "297")   # den_0 = i chia hết cho 3
+        self.assertEqual([r["ts"] for r in ra], sorted(r["ts"] for r in ra))
+
+    def test_loc_TIEN_TO_o_SQL(self) -> None:
+        """Lọc ở SQL để trần gần như không bao giờ chạm tới."""
+        moc = time.time() - 3600
+        self._do_day(300, moc)
+        ra = self.m.doc_cua_so(moc - 10, moc + 4000, tien_to=("den_1",))
+        self.assertEqual(len(ra), 100)
+        self.assertTrue(all(r["thiet_bi"] == "den_1" for r in ra))
+
+    def test_loc_BO_DO_AI(self) -> None:
+        """Học từ việc bot tự làm là tự khẳng định vòng quanh."""
+        moc = time.time() - 3600
+        self._do_day(10, moc)
+        with self.m._khoa_db:
+            conn = self.m._db()
+            conn.execute(
+                "INSERT INTO su_kien (ts, nguon, thiet_bi, truong, gia_tri,"
+                " gia_tri_cu, do_ai, gio, thu) VALUES (?,?,?,?,?,?,?,?,?)",
+                (moc + 20, "test", "den_bot", "state", "on", "", 1, 12, 1))
+            conn.commit()
+        het = self.m.doc_cua_so(moc - 10, moc + 4000)
+        nguoi = self.m.doc_cua_so(moc - 10, moc + 4000, bo_do_ai=True)
+        self.assertEqual(len(het) - len(nguoi), 1)
+        self.assertFalse(any(r["do_ai"] for r in nguoi))
+
+
 if __name__ == "__main__":
     unittest.main()
 

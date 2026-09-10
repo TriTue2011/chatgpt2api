@@ -157,27 +157,42 @@ class LocGhiLichSuTests(unittest.TestCase):
                   "sensor.bep_occupancy", "sensor.ban_cong_person_count"):
             self.assertTrue(ha_live._dang_ghi(e), e)
 
-    def test_APTOMAT_khong_ghi(self) -> None:
-        """Đo thật 10/09/2026: aptomat tổng chiếm 46% số bản ghi mà không nói
-        gì về hành vi người — nó đo cả tủ lạnh, điều hoà tự chạy."""
-        self.assertFalse(ha_live._dang_ghi("sensor.aptomat_tong_power"))
-        self.assertFalse(ha_live._dang_ghi("sensor.aptomat_tong_temperature"))
+    def test_NHIET_DO_DO_AM_PHAI_GHI(self) -> None:
+        """Sơ đồ chủ máy 10/09/2026: quạt và bình nóng lạnh học theo NHIỆT ĐỘ.
 
-    def test_nhiet_do_do_am_khong_ghi(self) -> None:
-        """Vẫn đọc được thời gian thực từ bảng `tuoi`; chỉ không lưu lịch sử."""
-        self.assertFalse(ha_live._dang_ghi("sensor.nhiet_am_ban_cong_temperature"))
-        self.assertFalse(ha_live._dang_ghi("sensor.nhiet_am_ban_cong_humidity"))
+        Hôm 09/09 tôi chặn nhiệt độ vì thấy nó chiếm 46% bản ghi — lo nhầm
+        bảng: số đo vào `so_do` đã gộp 5 phút nên tối đa 288 dòng/ngày/trường.
+        Chặn ở đây là mất luôn điều kiện cần để học.
+        """
+        for e in ("sensor.nhiet_am_ban_cong_temperature",
+                  "sensor.nhiet_am_ban_cong_humidity",
+                  "sensor.aptomat_tong_power"):
+            self.assertTrue(ha_live._dang_ghi(e), e)
 
-    def test_LUX_TRONG_NHA_ghi_ngoai_troi_thi_khong(self) -> None:
-        """Độ sáng trong nhà cho biết đèn có bật; ngoài trời chỉ theo mây."""
-        self.assertTrue(ha_live._dang_ghi("sensor.hien_dien_bep_illuminance"))
-        self.assertTrue(ha_live._dang_ghi("sensor.hien_dien_phong_ngu_illuminance"))
-        self.assertFalse(ha_live._dang_ghi("sensor.hien_dien_ban_cong_illuminance"))
-        self.assertFalse(ha_live._dang_ghi("sensor.san_thuong_illuminance"))
+    def test_LUX_GHI_CA_NGOAI_TROI(self) -> None:
+        """Sơ đồ "Đèn, rèm" cần LUX, và lux ngoài trời cho biết trời tối chưa.
+
+        Đo thật: tra ngược 400 lần bật đèn bếp xem lúc đó bao nhiêu lux →
+        0/400 lần tra được, vì bộ lọc cũ chặn.
+        """
+        for e in ("sensor.hien_dien_bep_illuminance",
+                  "sensor.hien_dien_ban_cong_illuminance",
+                  "sensor.san_thuong_illuminance"):
+            self.assertTrue(ha_live._dang_ghi(e), e)
+
+    def test_VI_TRI_NGUOI_PHAI_GHI(self) -> None:
+        """Sơ đồ "Thời gian về nhà" cần biết người đang ở đâu."""
+        for e in ("device_tracker.dien_thoai", "person.chu_nha"):
+            self.assertTrue(ha_live._dang_ghi(e), e)
 
     def test_ha_thong_khong_ghi(self) -> None:
+        """Chỉ còn chặn thứ do CHÍNH HỆ THỐNG sinh ra.
+
+        `automation.`/`script.`/`scene.` là việc bot và HA tự chạy — học từ
+        chúng là học từ chính mình.
+        """
         for e in ("update.ha_core", "automation.den_bep", "sun.sun",
-                  "device_tracker.dien_thoai", "number.do_sang"):
+                  "number.do_sang", "script.di_ngu", "scene.buoi_toi"):
             self.assertFalse(ha_live._dang_ghi(e), e)
 
 

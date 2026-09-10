@@ -83,6 +83,22 @@ _SAU_TOI_DA = 6
 #: chủ đề; không chặn thì tiến trình phình theo thời gian chạy.
 _TRAN_CHU_DE = 5000
 
+#: Tầng cuối của chủ đề là LỆNH GỬI ĐI, không phải quan sát về nhà.
+#:
+#: Zigbee2MQTT nhận lệnh ở `<thiết bị>/set` và trả trạng thái ở chính chủ đề
+#: thiết bị. Ghi cả hai là đếm mỗi lần bật đèn HAI lần — đo thật 10/09/2026,
+#: cùng một giây có `zigbee2mqtt/Bếp | state_left = ON` và
+#: `zigbee2mqtt/Bếp/left | set = ON`; 211 bản ghi trên 6 thiết bị đều vậy.
+#:
+#: Nặng hơn chuyện đếm đôi: `set` phần lớn do CHÍNH BOT gửi, mà lại ghi với
+#: `do_ai=0` nên trông như người làm. Bot sẽ học từ hành động của mình rồi tự
+#: khẳng định vòng quanh — đúng thứ cột `do_ai` sinh ra để chặn.
+#:
+#: Đây là danh sách tên, và là ngoại lệ có lý do: "lệnh" hay "trạng thái" là
+#: quy ước GIAO THỨC của Zigbee2MQTT, không suy ra được từ dữ liệu. Không có
+#: nguyên tắc đo được nào thay thế; nhịp đổi của `set` giống hệt `state`.
+_CHU_DE_LENH = frozenset({"set", "get"})
+
 #: Quá bao lâu không nhận tin thì coi số liệu là CŨ, không dám khẳng định nữa.
 #: Frigate publish liên tục (đo: 208 tin/40 giây), nên im quá 3 phút là gương
 #: đã rớt chứ không phải nhà yên tĩnh.
@@ -324,7 +340,8 @@ def _nap_tin(chu_de: str, payload: bytes, dang_ky) -> None:
             thiet_bi = "/".join(phan[:-1])
             truong = phan[-1]
             gt = payload.decode("utf-8", "replace").strip()
-            # Payload JSON (Zigbee2MQTT gửi cả cụm) → tách từng trường.
+            # Payload JSON (Zigbee2MQTT gửi cả cụm) → tách từng trường. Tên
+            # thiết bị là CẢ chủ đề: `zigbee2mqtt/Bếp` gửi {"state_left": ...}.
             if gt.startswith("{"):
                 try:
                     for k, v in (json.loads(gt) or {}).items():
@@ -332,7 +349,7 @@ def _nap_tin(chu_de: str, payload: bytes, dang_ky) -> None:
                             lich_su_nha.ghi("mqtt", chu_de, str(k), v)
                 except (ValueError, TypeError):
                     pass
-            elif gt:
+            elif gt and truong not in _CHU_DE_LENH:
                 lich_su_nha.ghi("mqtt", thiet_bi, truong, gt)
     except Exception:
         pass

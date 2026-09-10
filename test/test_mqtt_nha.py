@@ -151,6 +151,27 @@ class BanKhaiTests(unittest.TestCase):
     def test_json_hong_thi_bo_qua(self) -> None:
         self.assertIsNone(mq.doc_ban_khai("homeassistant/switch/x/config", b"{khong-phai-json"))
 
+    def test_KHONG_ghi_chu_de_LENH(self) -> None:
+        """`<thiết bị>/set` là lệnh gửi đi, không phải quan sát về nhà.
+
+        Đo thật 10/09/2026: mỗi lần bật đèn bếp sinh HAI bản ghi cùng giây —
+        `zigbee2mqtt/Bếp | state_left = ON` và `zigbee2mqtt/Bếp/left | set =
+        ON`. Ghi cả hai là đếm đôi mọi lần bật, và tệ hơn: `set` phần lớn do
+        chính bot gửi mà lại mang `do_ai=0` nên trông như người làm.
+        """
+        from services import lich_su_nha
+        with mock.patch.object(lich_su_nha, "ghi") as g:
+            mq._nap_tin("zigbee2mqtt/Bếp/left/set", b"ON", None)
+        g.assert_not_called()
+
+    def test_VAN_ghi_trang_thai_that(self) -> None:
+        from services import lich_su_nha
+        with mock.patch.object(lich_su_nha, "ghi") as g:
+            mq._nap_tin("zigbee2mqtt/Bếp", b'{"state_left": "ON"}', None)
+        g.assert_called_once()
+        self.assertEqual(g.call_args[0][1], "zigbee2mqtt/Bếp")
+        self.assertEqual(g.call_args[0][2], "state_left")
+
     def test_nap_tin_dung_so_thiet_bi(self) -> None:
         khai = {"name": "Left", "command_topic": "zigbee2mqtt/Bếp/left/set",
                 "payload_on": "ON", "payload_off": "OFF",

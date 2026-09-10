@@ -65,6 +65,7 @@ _stats: dict[str, Any] = {
     "bo": 0,         # bỏ vì hàng đợi đầy
     "loi": 0,        # lỗi khi ghi xuống đĩa
     "don_cuoi": 0.0,
+    "cham_tran": 0,  # số lần một hàm đọc bị trần cắt — xem `_cat_tran`
 }
 
 _GOP_GIAY_MAC_DINH = 300  # 5 phút
@@ -79,6 +80,11 @@ _DON_MOI_GIAY = 6 * 3600
 TRUONG_LAP_LAI = frozenset({
     "action", "nguoi_mo", "unlock", "doorbell", "chuong", "su_kien",
     "scene", "event",
+    # Thuộc tính của thực thể `event.` trong Home Assistant: mỗi lần xảy ra là
+    # một sự kiện riêng, kể cả trùng giá trị. Vợ chủ nhà ra rồi vào lại thì
+    # `value` vẫn là 17 cả hai lần — thiếu hai trường này là nuốt mất lần thứ
+    # hai, đúng kiểu 48 lần mở cửa nạp vào còn 35 (đo 09/09/2026).
+    "event_type", "value",
 })
 
 TRUONG_SU_KIEN = frozenset({
@@ -208,6 +214,24 @@ def _db() -> sqlite3.Connection:
             " ts REAL,"
             " PRIMARY KEY (thiet_bi, truong))"
         )
+
+        # Bảng thứ tư: NHỊP ĐỔI của từng trường. Một dòng cho mỗi cặp
+        # (thiết bị × trường) — vài nghìn dòng, không phải dữ liệu lịch sử.
+        # Đây là thứ cho phép phân loại trường bằng ĐO thay vì bằng TÊN, xem
+        # `_phan_loai_theo_nhip`.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS nhip ("
+            " thiet_bi TEXT NOT NULL,"
+            " truong TEXT NOT NULL,"
+            " n INTEGER NOT NULL DEFAULT 0,"        # số lần đã nhận
+            " so_gt INTEGER NOT NULL DEFAULT 0,"    # số giá trị khác nhau đã thấy
+            " gt_dau TEXT,"                         # giá trị đầu tiên
+            " doi_lan INTEGER NOT NULL DEFAULT 0,"  # số lần khác giá trị trước
+            " gt_cuoi TEXT,"
+            " loai TEXT NOT NULL DEFAULT '?',"      # '?'|'su_kien'|'so_do'|'hang_so'
+            " chot_luc REAL,"
+            " PRIMARY KEY (thiet_bi, truong))"
+        )
         conn.commit()
         _conn = conn
     return _conn
@@ -235,10 +259,13 @@ def _bo_qua(thiet_bi: str, truong: str) -> bool:
 
 
 def _loai_truong(truong: str, gia_tri: Any) -> str:
-    """'su_kien' | 'so_do'.
+    """'su_kien' | 'so_do' — phỏng đoán ban đầu, dùng khi chưa đủ mẫu.
 
     Trường lạ KHÔNG bị bỏ — bỏ là mất vĩnh viễn, không lấy lại được. Là số thì
     coi như số đo, còn lại coi như sự kiện.
+
+    Hai danh sách tên dưới đây nay chỉ là MỒI cho nhanh, không còn quyền từ
+    chối: `_phan_loai_theo_nhip` mới là nơi quyết định, và nó ĐO.
     """
     t = truong.lower()
     if t in TRUONG_SU_KIEN:
@@ -248,6 +275,96 @@ def _loai_truong(truong: str, gia_tri: Any) -> str:
     if isinstance(gia_tri, bool):
         return "su_kien"
     return "so_do" if _so(gia_tri) is not None else "su_kien"
+
+
+#: Ghi ngần này lần mà giá trị CHƯA ĐỔI BAO GIỜ → đó là hằng số cấu hình.
+_NGUONG_HANG = 30
+#: Thấy ngần này giá trị số khác nhau → đó là số đo liên tục, không phải cờ.
+_NGUONG_LIEN_TUC = 3
+
+
+def _phan_loai_theo_nhip(conn: sqlite3.Connection, thiet_bi: str, truong: str,
+                         gia_tri: Any) -> str:
+    """'su_kien' | 'so_do' | 'hang_so' — quyết định bằng ĐO, không bằng TÊN.
+
+    Vì sao không dùng danh sách từ khoá: trước 10/09/2026 có HAI danh sách
+    lệch nhau. Đường Home Assistant (`ha_live._GHI_SENSOR`) chỉ cho qua bốn từ
+    "occupancy/presence/person/motion" nên chặn mất nhiệt độ, độ ẩm và lux —
+    đúng những điều kiện chủ máy cần để học thói quen; đo thật: tra ngược 400
+    lần bật đèn bếp xem lúc đó bao nhiêu lux thì được 0/400. Đường MQTT thì
+    ngược lại, không lọc gì, nên `so_do` đầy `over_voltage_threshold`,
+    `meter_id`, `linkquality` — mỗi thứ 193 bản ghi mỗi ngày mà không bao giờ
+    đổi giá trị.
+
+    Danh sách nào cũng thiếu, vì tên không nói lên bản chất. Nhưng CÁCH MỘT
+    TRƯỜNG ĐỔI thì nói:
+
+    * đã nhận ``_NGUONG_HANG`` lần mà chưa đổi lần nào → hằng số cấu hình.
+      `over_voltage_threshold` tự lộ diện, không cần ai biết tên nó.
+    * là số và đã thấy ``_NGUONG_LIEN_TUC`` giá trị khác nhau → số đo liên tục.
+    * còn lại → trạng thái rời rạc.
+
+    Chỉ chỗ này thấy được lịch sử của trường, nên chỉ chỗ này phân loại được.
+    Hai đường ghi kia chỉ đưa dữ liệu vào, không có quyền từ chối.
+
+    TRONG ``_NGUONG_HANG`` LẦN ĐẦU thì KHÔNG kết luận, cứ ghi theo phỏng đoán
+    kiểu dữ liệu. Ghi thừa 30 bản ghi rồi dọn còn hơn bỏ sót vĩnh viễn — cùng
+    nguyên tắc "trường lạ không bị bỏ" của `_loai_truong`.
+
+    Hằng số ĐỔI được thì mở khoá đếm lại: chủ máy sửa ngưỡng trong app Tuya là
+    chuyện thật, chốt cứng một lần là mất luôn trường đó.
+    """
+    gt = str(gia_tri)
+    r = conn.execute(
+        "SELECT n, so_gt, doi_lan, gt_cuoi, loai FROM nhip"
+        " WHERE thiet_bi=? AND truong=?", (thiet_bi, truong)).fetchone()
+
+    if r is None:
+        conn.execute(
+            "INSERT OR IGNORE INTO nhip (thiet_bi, truong, n, so_gt, gt_dau,"
+            " doi_lan, gt_cuoi, loai) VALUES (?,?,1,1,?,0,?,'?')",
+            (thiet_bi, truong, gt, gt))
+        return _loai_truong(truong, gia_tri)
+
+    n = int(r["n"]) + 1
+    doi = int(r["doi_lan"]) + (1 if r["gt_cuoi"] != gt else 0)
+    so_gt = int(r["so_gt"]) + (1 if r["gt_cuoi"] != gt else 0)
+    loai = str(r["loai"] or "?")
+
+    # Đã chốt hằng số mà nay đổi → sai, mở khoá đếm lại từ đầu.
+    if loai == "hang_so" and r["gt_cuoi"] != gt:
+        loai, n, doi, so_gt = "?", 1, 1, 2
+
+    if loai == "?":
+        if doi == 0 and n >= _NGUONG_HANG:
+            loai = "hang_so"
+        elif truong.lower() in TRUONG_LAP_LAI:
+            # Mỗi lần xảy ra là một sự kiện riêng dù giá trị trùng: "khuôn mặt
+            # số 17 mở cửa" hai lần là hai lần về. Không có ngoại lệ này thì
+            # `value` bị chốt hằng số và bot mất sạch lần mở cửa thứ hai.
+            loai = "su_kien"
+        elif _so(gia_tri) is not None and not isinstance(gia_tri, bool):
+            if so_gt >= _NGUONG_LIEN_TUC:
+                loai = "so_do"
+            elif doi >= 1 and n >= _NGUONG_HANG:
+                # Số nhưng chỉ nhận hai giá trị sau 30 lần: đó là CỜ đội lốt
+                # số (0/1, 100/0), không phải số đo. Trung bình của cờ vô
+                # nghĩa; nó thuộc về `su_kien`.
+                loai = "su_kien"
+        elif doi >= 1:
+            # Đổi giá trị mà không phải số → trạng thái rời rạc. Chốt NGAY,
+            # đừng đợi đủ 30 lần: `on`/`off` không bao giờ thành hằng số cũng
+            # không bao giờ thành số đo, để `'?'` là mỗi bản ghi tra lại bảng
+            # `nhip` một lần vô ích.
+            loai = "su_kien"
+
+    conn.execute(
+        "UPDATE nhip SET n=?, so_gt=?, doi_lan=?, gt_cuoi=?, loai=?,"
+        " chot_luc=? WHERE thiet_bi=? AND truong=?",
+        (n, so_gt, doi, gt, loai,
+         time.time() if loai != "?" else None, thiet_bi, truong))
+
+    return loai if loai != "?" else _loai_truong(truong, gia_tri)
 
 
 # ── Ghi ─────────────────────────────────────────────────────────────────────
@@ -282,7 +399,13 @@ def _ghi_thang(conn: sqlite3.Connection, nguon: str, thiet_bi: str, truong: str,
     if _bo_qua(thiet_bi, truong):
         return
     gt = str(gia_tri)
-    loai = _loai_truong(truong, gia_tri)
+    loai = _phan_loai_theo_nhip(conn, thiet_bi, truong, gia_tri)
+
+    # Hằng số cấu hình: vẫn cập nhật `tuoi` ở cuối hàm (hỏi ra vẫn trả lời
+    # được) nhưng không tốn một dòng lịch sử nào. Đây là chỗ `meter_id` và
+    # `over_voltage_threshold` ngừng chiếm chỗ của lux với nhiệt độ.
+    if loai == "hang_so":
+        loai = ""
 
     if loai == "so_do":
         v = _so(gia_tri)
@@ -440,6 +563,41 @@ def stats() -> dict[str, Any]:
 
 
 # ── Đọc ─────────────────────────────────────────────────────────────────────
+#: Trần mặc định cho mọi hàm đọc theo khoảng thời gian. Rộng rãi: nó chỉ để
+#: chặn việc vô tình kéo cả kho vào RAM, KHÔNG phải để lọc bớt dữ liệu.
+_TRAN_MAC_DINH = 200_000
+
+
+def _cat_tran(conn: sqlite3.Connection, sql: str, tham_so: tuple[Any, ...],
+              tran: int, ten: str) -> list[dict[str, Any]]:
+    """Chạy truy vấn có trần, luôn giữ phần MỚI NHẤT, và KÊU khi phải cắt.
+
+    Hai luật ở đây chữa một lớp lỗi đã đo được 10/09/2026 chứ không phải
+    phòng xa:
+
+    1. ``ORDER BY ts DESC ... LIMIT n`` rồi đảo lại. Bản cũ dùng ``ASC`` nên
+       trần cắt mất phần MỚI, giữ phần CŨ — trong khi mọi nơi gọi đều tưởng
+       mình đang xin "dữ liệu gần đây". Đo thật: xin 14 ngày (593.395 sự
+       kiện) chỉ nhận về 13,9 giờ của ngày đầu tiên, mất 96,6%. Bộ học tình
+       huống vì thế học trên một buổi tối của 11 ngày trước, và bộ khoá cửa
+       không hề thấy lần mở cửa nào của hôm nay.
+    2. Chạm trần thì ghi log VÀ đếm vào ``_stats["cham_tran"]``. Lớp lỗi ở
+       đây không phải "trần đặt thấp" — nâng trần lên một triệu vẫn sai nếu
+       cắt nhầm đầu. Lớp lỗi là **vứt dữ liệu trong im lặng**. Nên luật
+       chung cho cả ba hàm đọc là: được phép cắt, không được phép im.
+
+    Trả về theo thứ tự ts TĂNG DẦN — nơi gọi duyệt tuần tự và gộp ô kề nhau
+    (``tinh_huong_nha.gom_cua_so``), trả giảm dần là hỏng âm thầm.
+    """
+    rows = conn.execute(sql, tham_so).fetchall()
+    ra = [dict(r) for r in reversed(rows)]
+    if len(ra) >= tran:
+        _stats["cham_tran"] = _stats.get("cham_tran", 0) + 1
+        logger.warning({"event": "lich_su_cham_tran", "ham": ten,
+                        "tran": tran, "cu_nhat_con_lai": ra[0].get("ts")})
+    return ra
+
+
 def doc_tuoi(thiet_bi: str | None = None) -> list[dict[str, Any]]:
     """Giá trị mới nhất — cho yêu cầu "hỏi phải lấy theo thời gian thực"."""
     with _khoa_db:
@@ -456,48 +614,86 @@ def doc_tuoi(thiet_bi: str | None = None) -> list[dict[str, Any]]:
 
 
 def doc_su_kien(thiet_bi: str, tu_ts: float, den_ts: float,
-                truong: str | None = None) -> list[dict[str, Any]]:
+                truong: str | None = None, *,
+                tran: int = _TRAN_MAC_DINH) -> list[dict[str, Any]]:
+    """Sự kiện của MỘT thiết bị trong khoảng. Trả về theo ts tăng dần.
+
+    Trước 10/09/2026 hàm này KHÔNG có trần — rủi ro ngược với ``doc_cua_so``:
+    ``thoi_quen_nha.hoc(so_ngay=60)`` có thể kéo cả kho vào RAM. Nay cùng một
+    luật với hai hàm đọc kia (xem ``_cat_tran``).
+    """
     with _khoa_db:
         conn = _db()
         if truong:
-            rows = conn.execute(
+            return _cat_tran(
+                conn,
                 "SELECT * FROM su_kien WHERE thiet_bi=? AND truong=? AND ts>=? AND ts<=?"
-                " ORDER BY ts", (thiet_bi, truong, tu_ts, den_ts)).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM su_kien WHERE thiet_bi=? AND ts>=? AND ts<=? ORDER BY ts",
-                (thiet_bi, tu_ts, den_ts)).fetchall()
-    return [dict(r) for r in rows]
+                " ORDER BY ts DESC LIMIT ?",
+                (thiet_bi, truong, tu_ts, den_ts, int(tran)), int(tran), "doc_su_kien")
+        return _cat_tran(
+            conn,
+            "SELECT * FROM su_kien WHERE thiet_bi=? AND ts>=? AND ts<=?"
+            " ORDER BY ts DESC LIMIT ?",
+            (thiet_bi, tu_ts, den_ts, int(tran)), int(tran), "doc_su_kien")
 
 
 def doc_cua_so(tu_ts: float, den_ts: float, *,
-               tran: int = 20000) -> list[dict[str, Any]]:
-    """MỌI sự kiện trong một khoảng, không lọc theo thiết bị.
+               tran: int = _TRAN_MAC_DINH,
+               tien_to: tuple[str, ...] = (),
+               truong: tuple[str, ...] = (),
+               bo_do_ai: bool = False) -> list[dict[str, Any]]:
+    """MỌI sự kiện trong một khoảng, không bắt buộc nêu thiết bị.
 
     ``doc_su_kien`` bắt buộc nêu tên thiết bị nên không trả lời được câu hỏi
     "lúc 19h30 trong nhà có những gì đang xảy ra" — mà đó chính là câu hỏi của
     phần nhận ra tình huống. Dùng ``idx_sk_ts`` đã có nên quét cả nhà vẫn nhanh.
 
-    ``tran`` chặn trường hợp xin cả năm rồi kéo về hàng triệu dòng.
+    LỌC Ở SQL, ĐỪNG LỌC SAU. Ba tham số dưới đây tồn tại để nơi gọi không phải
+    kéo cả nhà về rồi bỏ đi 99%: lọc trong SQL thì trần gần như không bao giờ
+    chạm tới, mà chạm cũng còn đúng phần cần.
+
+    * ``tien_to`` — chỉ lấy thiết bị bắt đầu bằng một trong các tiền tố này.
+      ``khoa_cua_nha`` chỉ cần ``("event.",)`` là 7 ngày còn vài trăm dòng.
+    * ``truong`` — chỉ lấy các trường nêu tên.
+    * ``bo_do_ai`` — bỏ những việc do CHÍNH BOT làm. Bắt buộc bật khi lấy dữ
+      liệu để học, nếu không bot học từ hành động của mình rồi tự khẳng định
+      vòng quanh (xem phần ``do_ai`` ở đầu tệp).
     """
+    dk = ["ts>=?", "ts<=?"]
+    ts: list[Any] = [tu_ts, den_ts]
+    if tien_to:
+        dk.append("(" + " OR ".join("thiet_bi LIKE ?" for _ in tien_to) + ")")
+        ts += [f"{x}%" for x in tien_to]
+    if truong:
+        dk.append("truong IN (" + ",".join("?" for _ in truong) + ")")
+        ts += list(truong)
+    if bo_do_ai:
+        dk.append("do_ai=0")
+    ts.append(int(tran))
     with _khoa_db:
         conn = _db()
-        rows = conn.execute(
-            "SELECT * FROM su_kien WHERE ts>=? AND ts<=? ORDER BY ts LIMIT ?",
-            (tu_ts, den_ts, int(tran))).fetchall()
-    return [dict(r) for r in rows]
+        return _cat_tran(
+            conn,
+            f"SELECT * FROM su_kien WHERE {' AND '.join(dk)} ORDER BY ts DESC LIMIT ?",
+            tuple(ts), int(tran), "doc_cua_so")
 
 
-def doc_so_do(thiet_bi: str, truong: str, tu_ts: float,
-              den_ts: float) -> list[dict[str, Any]]:
+def doc_so_do(thiet_bi: str, truong: str, tu_ts: float, den_ts: float, *,
+              tran: int = _TRAN_MAC_DINH) -> list[dict[str, Any]]:
+    """Số đo đã gộp ô, theo ô tăng dần. Cùng luật trần với hai hàm đọc kia."""
     g = _o_gop_giay()
     with _khoa_db:
         conn = _db()
         rows = conn.execute(
             "SELECT * FROM so_do WHERE thiet_bi=? AND truong=? AND o_5p>=? AND o_5p<=?"
-            " ORDER BY o_5p",
-            (thiet_bi, truong, int(tu_ts // g), int(den_ts // g))).fetchall()
-    return [{**dict(r), "ts": r["o_5p"] * g} for r in rows]
+            " ORDER BY o_5p DESC LIMIT ?",
+            (thiet_bi, truong, int(tu_ts // g), int(den_ts // g), int(tran))).fetchall()
+    ra = [{**dict(r), "ts": r["o_5p"] * g} for r in reversed(rows)]
+    if len(ra) >= tran:
+        _stats["cham_tran"] = _stats.get("cham_tran", 0) + 1
+        logger.warning({"event": "lich_su_cham_tran", "ham": "doc_so_do",
+                        "tran": tran, "thiet_bi": thiet_bi, "truong": truong})
+    return ra
 
 
 def thong_ke() -> dict[str, Any]:
@@ -528,11 +724,19 @@ def don() -> dict[str, Any]:
                          (now - _giu_su_kien_ngay() * 86400,)).rowcount
         b = conn.execute("DELETE FROM so_do WHERE o_5p < ?",
                          (int((now - _giu_so_do_ngay() * 86400) // _o_gop_giay()),)).rowcount
+        # Dọn nốt dấu vết của hằng số cấu hình: 30 dòng "mồi" trước khi
+        # `_phan_loai_theo_nhip` chốt được loại, cộng với những gì bản cũ đã
+        # ghi khi chưa có luật này. Không cần biết tên trường nào — bảng
+        # `nhip` đã đo ra chúng.
+        c = conn.execute(
+            "DELETE FROM so_do WHERE (thiet_bi, truong) IN"
+            " (SELECT thiet_bi, truong FROM nhip WHERE loai='hang_so')").rowcount
         conn.commit()
     _stats["don_cuoi"] = now
-    if a or b:
-        logger.info({"event": "lich_su_don", "su_kien": a, "so_do": b})
-    return {"su_kien": a, "so_do": b}
+    if a or b or c:
+        logger.info({"event": "lich_su_don", "su_kien": a, "so_do": b,
+                     "hang_so": c})
+    return {"su_kien": a, "so_do": b, "hang_so": c}
 
 
 # ── Nạp lịch sử Home Assistant ──────────────────────────────────────────────
