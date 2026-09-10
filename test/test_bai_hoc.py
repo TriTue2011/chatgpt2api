@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 class BaiHocTest(unittest.TestCase):
@@ -208,11 +209,25 @@ class BaoChuDongTest(unittest.TestCase):
         self.cfg.data["mqtt"]["bai_hoc"] = {"bat": False, "bao": True}
         self.assertEqual(self.m.chay_mot_lan()["gui"], 0)
 
-    def test_kenh_rieng_khong_muon_cua_canh_bao(self) -> None:
-        """Có người nhận cảnh báo hỏng qua Telegram mà nhận chuyện học tập
-        qua Zalo — hai việc khác nhau."""
-        self.cfg.data["mqtt"]["bai_hoc"] = {"bao": True, "kenh": "zalo"}
-        self.assertEqual(self.m._kenh(), "zalo")
+    def test_CHON_KENH_DICH_DANH(self) -> None:
+        """Nhà có nhiều tài khoản Zalo và nhiều nhóm — chọn mỗi "zalo" thì
+        không biết là Zalo nào. Phải là khoá `plat:bot:chat` như «Lọc thread»."""
+        self.cfg.data["mqtt"]["bai_hoc"] = {
+            "bao": True, "kenh_nhan": ["zalop:4757:66427", "tg:8446:1003"]}
+        self.assertEqual(self.m._kenh_nhan(), ["zalop:4757:66427", "tg:8446:1003"])
+
+    def test_chua_chon_kenh_thi_rong(self) -> None:
+        self.assertEqual(self.m._kenh_nhan(), [])
+
+    def test_gui_dung_kenh_da_chon(self) -> None:
+        from services import digest
+        self.m.ghi_sai("câu nào đó dài dòng lắm", "…", "_x")
+        self.cfg.data["mqtt"]["bai_hoc"] = {
+            "bao": True, "kenh_nhan": ["zalop:4757:66427"]}
+        with mock.patch.object(digest, "send_targets", return_value=1) as g:
+            kq = self.m.chay_mot_lan()
+        self.assertEqual(kq["gui"], 1)
+        self.assertEqual(g.call_args[0][0], ["zalop:4757:66427"])
 
 
 class VongKhepKinTest(unittest.TestCase):

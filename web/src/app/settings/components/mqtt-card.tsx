@@ -67,6 +67,14 @@ const NHAN_NGUON: Record<string, string> = {
 
 export function MqttCard() {
   const config = useSettingsStore((s) => s.config);
+  // Danh sách kênh THẬT — cùng nguồn với «Gửi tóm tắt tới kênh» của email/lịch
+  // (`email-calendar-card.tsx`). Ô chọn "telegram | zalo" là không đủ: nhà có
+  // nhiều tài khoản Zalo và nhiều nhóm, chọn mỗi "zalo" thì không biết Zalo nào.
+  const tf = (config as any)?.thread_filter as Record<string, unknown> | undefined;
+  const tfMeta = (config as any)?.thread_filter_meta as
+    Record<string, { name?: string }> | undefined;
+  const kenhOptions: { value: string; label: string }[] = Object.keys(tf || {})
+    .map((k) => ({ value: k, label: (tfMeta?.[k]?.name ? `${tfMeta[k].name} · ` : "") + k }));
   const saveConfig = useSettingsStore((s) => s.saveConfig);
 
   const [may, setMay] = useState<MayChu>({ ...RONG });
@@ -80,8 +88,8 @@ export function MqttCard() {
   // Học từ lỗi: bot hỏi lại khi nó KHÔNG CHẮC, sai một lần thì lần sau tự tránh.
   const [bh, setBh] = useState<{
     bat: boolean; du_mau: number; han_ngay: number;
-    bao: boolean; kenh: string; bao_moi_ngay: number;
-  }>({ bat: true, du_mau: 4, han_ngay: 180, bao: false, kenh: "", bao_moi_ngay: 7 });
+    bao: boolean; kenh_nhan: string[]; bao_moi_ngay: number;
+  }>({ bat: true, du_mau: 4, han_ngay: 180, bao: false, kenh_nhan: [], bao_moi_ngay: 7 });
   const [ttCb, setTtCb] = useState<TrangThaiCB | null>(null);
   const [th, setTh] = useState<TinhHuong[]>([]);
 
@@ -113,7 +121,7 @@ export function MqttCard() {
       du_mau: typeof h.du_mau === "number" ? h.du_mau : 4,
       han_ngay: typeof h.han_ngay === "number" ? h.han_ngay : 180,
       bao: h.bao === true,
-      kenh: String(h.kenh || ""),
+      kenh_nhan: Array.isArray(h.kenh_nhan) ? h.kenh_nhan.map((x: unknown) => String(x)) : [],
       bao_moi_ngay: typeof h.bao_moi_ngay === "number" ? h.bao_moi_ngay : 7,
     });
   }, [(config as any)?.mqtt]);
@@ -195,7 +203,7 @@ export function MqttCard() {
           du_mau: bh.du_mau ?? 4,
           han_ngay: bh.han_ngay ?? 180,
           bao: bh.bao === true,
-          kenh: (bh.kenh || "").trim(),
+          kenh_nhan: bh.kenh_nhan || [],
           bao_moi_ngay: bh.bao_moi_ngay ?? 7,
         },
       },
@@ -561,29 +569,43 @@ export function MqttCard() {
                 không nhắn cho có. Người nhận lấy theo admin anh đã khai ở tab
                 Kênh chat.
               </p>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">Gửi qua kênh</p>
-                  <select
-                    className="h-9 w-full rounded-md border border-border bg-transparent px-2 text-sm"
-                    value={bh.kenh || ""}
-                    onChange={(e) => setBh({ ...bh, kenh: e.target.value })}
-                  >
-                    <option value="">Kênh đang dùng</option>
-                    <option value="telegram">Telegram</option>
-                    <option value="zalo">Zalo</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">Mấy ngày kể một lần</p>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={90}
-                    value={bh.bao_moi_ngay ?? 7}
-                    onChange={(e) => setBh({ ...bh, bao_moi_ngay: Number(e.target.value) })}
-                  />
-                </div>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Kể cho ai nghe</p>
+                {kenhOptions.length === 0 ? (
+                  <p className="text-[11px] text-amber-600">
+                    Chưa có kênh nào — vào Kênh chat → Lọc thread thêm trước, rồi
+                    quay lại chọn. Để trống thì em nhắn cho admin mặc định.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-x-3 gap-y-1">
+                    {kenhOptions.map((o) => (
+                      <label key={o.value}
+                        className="flex cursor-pointer select-none items-center gap-1 text-[11px] text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          checked={(bh.kenh_nhan || []).includes(o.value)}
+                          onChange={() => setBh({
+                            ...bh,
+                            kenh_nhan: (bh.kenh_nhan || []).includes(o.value)
+                              ? (bh.kenh_nhan || []).filter((x) => x !== o.value)
+                              : [...(bh.kenh_nhan || []), o.value],
+                          })}
+                        />
+                        {o.label}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="space-y-1 sm:max-w-[240px]">
+                <p className="text-xs text-muted-foreground">Mấy ngày kể một lần</p>
+                <Input
+                  type="number"
+                  min={1}
+                  max={90}
+                  value={bh.bao_moi_ngay ?? 7}
+                  onChange={(e) => setBh({ ...bh, bao_moi_ngay: Number(e.target.value) })}
+                />
               </div>
             </div>
 

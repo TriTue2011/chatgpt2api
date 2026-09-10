@@ -297,17 +297,28 @@ def nen_hoi_lai(bo_do: str) -> bool:
 
 
 # ── báo chủ động ────────────────────────────────────────────────────────────
-def _kenh() -> str:
-    """'telegram' | 'zalo' | '' (rỗng = kênh mặc định). Như `canh_bao_nha._kenh`."""
-    return str(_cfg().get("kenh") or "").strip()
+def _kenh_nhan() -> list[str]:
+    """Các kênh nhận bản tin — khoá dạng ``plat:bot:chat`` như «Lọc thread».
+
+    Rỗng = chưa chọn, rơi về admin mặc định của `canh_bao_nha._nguoi_nhan()`.
+
+    Dùng ĐÚNG danh sách mà «Gửi tóm tắt tới kênh» của email/lịch đang dùng
+    (`config.thread_filter` + `thread_filter_meta`), chứ không phải một ô chọn
+    "telegram | zalo": nhà có nhiều tài khoản Zalo và nhiều nhóm, chọn mỗi
+    "zalo" thì không biết là Zalo nào.
+    """
+    raw = _cfg().get("kenh_nhan")
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    return []
 
 
 def _gui(user_id: str, text: str) -> None:
-    """Gửi qua kênh của RIÊNG phần học tập, không mượn kênh của cảnh báo hỏng."""
+    """Gửi cho một người theo kênh mặc định của họ (đường của reminders)."""
     from services.agent import reminders as rem
 
     channel, chat_id = rem.channel_of(user_id)
-    rem._send(_kenh() or channel, chat_id, text, {})
+    rem._send(channel, chat_id, text, {})
 
 
 def soan_bao(so_ngay: int = 7) -> str:
@@ -357,22 +368,28 @@ def chay_mot_lan(so_ngay: int = 7) -> dict[str, Any]:
     if not tin:
         return {"gui": 0, "ly_do": "chưa học được gì đáng kể"}
 
-    # Người nhận dùng lại `canh_bao_nha._nguoi_nhan()` — chủ máy đã khai admin
-    # ở tab Kênh chat, không bắt khai lại lần nữa. Nhưng KÊNH thì lấy của
-    # `mqtt.bai_hoc.kenh`: có người muốn nhận cảnh báo hỏng qua Telegram mà
-    # nhận chuyện học tập qua Zalo, hai việc khác nhau.
-    from services import canh_bao_nha
-    nguoi = canh_bao_nha._nguoi_nhan()
-    if not nguoi:
-        return {"gui": 0, "ly_do": "chưa khai người nhận"}
-
+    # Chủ máy chọn kênh đích danh thì gửi đúng đó — dùng lại `digest.send_targets`
+    # mà email/lịch đang dùng, cùng định dạng khoá `plat:bot:chat`.
     gui = 0
-    for uid in nguoi:
+    kenh = _kenh_nhan()
+    if kenh:
         try:
-            _gui(uid, tin)
-            gui += 1
+            from services import digest
+            gui = digest.send_targets(kenh, tin)
         except Exception as exc:
             logger.warning({"event": "bai_hoc_gui_loi", "loi": str(exc)[:150]})
+    else:
+        # Chưa chọn kênh → admin mặc định, chủ máy đã khai ở tab Kênh chat.
+        from services import canh_bao_nha
+        nguoi = canh_bao_nha._nguoi_nhan()
+        if not nguoi:
+            return {"gui": 0, "ly_do": "chưa chọn kênh nhận"}
+        for uid in nguoi:
+            try:
+                _gui(uid, tin)
+                gui += 1
+            except Exception as exc:
+                logger.warning({"event": "bai_hoc_gui_loi", "loi": str(exc)[:150]})
     if gui:
         with _lock:
             d = _doc()
