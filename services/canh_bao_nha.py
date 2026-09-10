@@ -54,6 +54,22 @@ def _kenh() -> str:
     return str(_cfg().get("kenh") or "").strip()
 
 
+def _kenh_nhan() -> list[str]:
+    """Kênh nhận ĐÍCH DANH — khoá ``plat:bot:chat`` như «Lọc thread».
+
+    Chủ máy chốt 10/09/2026: muốn tự đặt kênh cho cảnh báo hỏng, tách khỏi
+    kênh của phần học tập. Ô chọn "telegram | zalo" cũ không đủ vì nhà có
+    nhiều tài khoản Zalo và nhiều nhóm.
+
+    Rỗng = giữ nguyên đường cũ (`_nguoi_nhan` ba tầng), nên bật tính năng này
+    không làm hỏng cảnh báo đang chạy.
+    """
+    raw = _cfg().get("kenh_nhan")
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    return []
+
+
 def _nguoi_nhan() -> list[str]:
     """Ai nhận cảnh báo. Tìm theo ba tầng, KHÔNG bắt khai lại từ đầu.
 
@@ -313,20 +329,30 @@ def chay_mot_lan(so_ngay: int = 7) -> dict[str, Any]:
         return {"gui": 0, "tong_hong": kq.get("tong_hong", 0),
                 "dang_im": kq.get("dang_im", 0)}
 
-    nguoi = _nguoi_nhan()
-    if not nguoi:
-        return {"gui": 0, "ly_do": "chưa khai người nhận (canh_bao.nguoi_nhan "
-                                   "hoặc agent_heartbeat.admin_user_ids)"}
-
     tin = _soan_tin(can, int(kq.get("tong_hong") or len(can)))
     gui = 0
-    for uid in nguoi:
+
+    # Chủ máy chọn kênh ĐÍCH DANH thì gửi đúng đó — dùng lại `digest.send_targets`
+    # mà email/lịch và bản tin học tập đang dùng, cùng khoá `plat:bot:chat`.
+    kenh = _kenh_nhan()
+    if kenh:
         try:
-            _gui(uid, tin)
-            gui += 1
+            from services import digest
+            gui = digest.send_targets(kenh, tin)
         except Exception as exc:
-            logger.info({"event": "canh_bao_gui_loi", "user": uid,
-                         "error": str(exc)[:160]})
+            logger.info({"event": "canh_bao_gui_loi", "error": str(exc)[:160]})
+    else:
+        # Chưa chọn → đường cũ ba tầng, giữ nguyên hành vi đang chạy.
+        nguoi = _nguoi_nhan()
+        if not nguoi:
+            return {"gui": 0, "ly_do": "chưa chọn kênh nhận"}
+        for uid in nguoi:
+            try:
+                _gui(uid, tin)
+                gui += 1
+            except Exception as exc:
+                logger.info({"event": "canh_bao_gui_loi", "user": uid,
+                             "error": str(exc)[:160]})
 
     if gui:
         _len_bac(kq.get("khoa") or [])

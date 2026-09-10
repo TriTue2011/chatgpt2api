@@ -85,6 +85,8 @@ export function MqttCard() {
   const [tk, setTk] = useState<ThongKe | null>(null);
   const [hong, setHong] = useState<Hong[] | null>(null);
   const [cb, setCb] = useState<CanhBao>({ bat: true, kenh: "", nguoi_nhan: "", gio_hang_ngay: 8 });
+  // Kênh ĐÍCH DANH cho cảnh báo hỏng — tách khỏi kênh của phần học tập.
+  const [cbKenh, setCbKenh] = useState<string[]>([]);
   // Học từ lỗi: bot hỏi lại khi nó KHÔNG CHẮC, sai một lần thì lần sau tự tránh.
   const [bh, setBh] = useState<{
     bat: boolean; du_mau: number; han_ngay: number;
@@ -115,6 +117,7 @@ export function MqttCard() {
       nguoi_nhan: Array.isArray(q.nguoi_nhan) ? q.nguoi_nhan.join(", ") : "",
       gio_hang_ngay: typeof q.gio_hang_ngay === "number" ? q.gio_hang_ngay : 8,
     });
+    setCbKenh(Array.isArray(q.kenh_nhan) ? q.kenh_nhan.map((x: unknown) => String(x)) : []);
     const h = ((config as any)?.mqtt?.bai_hoc as any) || {};
     setBh({
       bat: h.bat !== false,
@@ -197,6 +200,7 @@ export function MqttCard() {
           kenh: (cb.kenh || "").trim(),
           nguoi_nhan: nguoi,
           gio_hang_ngay: cb.gio_hang_ngay ?? 8,
+          kenh_nhan: cbKenh,
         },
         bai_hoc: {
           bat: bh.bat !== false,
@@ -465,19 +469,33 @@ export function MqttCard() {
               rồi mỗi ngày một lần. Nhắn «tôi biết rồi» là thôi nhắc lỗi đó — nhưng
               sửa xong mà hỏng lại thì vẫn báo.
             </p>
-            <div className="grid gap-2 sm:grid-cols-3">
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Gửi qua kênh</p>
-                <select
-                  className="h-9 w-full rounded-md border border-border bg-transparent px-2 text-sm"
-                  value={cb.kenh || ""}
-                  onChange={(e) => setCb({ ...cb, kenh: e.target.value })}
-                >
-                  <option value="">Kênh đang dùng</option>
-                  <option value="telegram">Telegram</option>
-                  <option value="zalo">Zalo</option>
-                </select>
-              </div>
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">Báo cho ai</p>
+              {kenhOptions.length === 0 ? (
+                <p className="text-[11px] text-amber-600">
+                  Chưa có kênh nào — vào Kênh chat → Lọc thread thêm trước. Để
+                  trống thì em báo cho admin mặc định.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                  {kenhOptions.map((o) => (
+                    <label key={o.value}
+                      className="flex cursor-pointer select-none items-center gap-1 text-[11px] text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={cbKenh.includes(o.value)}
+                        onChange={() => setCbKenh(
+                          cbKenh.includes(o.value)
+                            ? cbKenh.filter((x) => x !== o.value)
+                            : [...cbKenh, o.value])}
+                      />
+                      {o.label}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Gửi cho ai (id, cách nhau dấu phẩy)</p>
                 <Input

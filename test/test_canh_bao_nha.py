@@ -157,7 +157,31 @@ class CanhBaoTest(unittest.TestCase):
              mock.patch.object(self.m, "_nguoi_nhan", return_value=[]):
             kq = self.m.chay_mot_lan()
         self.assertEqual(kq["gui"], 0)
-        self.assertIn("người nhận", kq.get("ly_do", ""))
+        self.assertIn("kênh nhận", kq.get("ly_do", ""))
+
+    def test_CHON_KENH_DICH_DANH_thi_gui_dung_do(self) -> None:
+        """Chủ máy chốt 10/09: muốn tự đặt kênh cho cảnh báo hỏng, tách khỏi
+        kênh của phần học tập."""
+        from services import digest, lich_su_nha
+        self.m.config.data["mqtt"]["canh_bao"] = {
+            "bat": True, "kenh_nhan": ["zalop:4757:66427"]}
+        with mock.patch.object(lich_su_nha, "soi_hong", return_value=self._hong()), \
+             mock.patch.object(digest, "send_targets", return_value=1) as g:
+            kq = self.m.chay_mot_lan()
+        self.assertEqual(kq["gui"], 1)
+        self.assertEqual(g.call_args[0][0], ["zalop:4757:66427"])
+
+    def test_CHUA_CHON_KENH_thi_giu_duong_cu(self) -> None:
+        """Không được phá cảnh báo đang chạy thật với 181 lỗi đang theo dõi."""
+        from services import lich_su_nha
+        self.m.config.data["mqtt"]["canh_bao"] = {"bat": True}
+        self.assertEqual(self.m._kenh_nhan(), [])
+        with mock.patch.object(lich_su_nha, "soi_hong", return_value=self._hong()), \
+             mock.patch.object(self.m, "_nguoi_nhan", return_value=["u1", "u2"]), \
+             mock.patch.object(self.m, "_gui") as g:
+            kq = self.m.chay_mot_lan()
+        self.assertEqual(kq["gui"], 2)
+        self.assertEqual(g.call_count, 2)
 
     def test_gui_toi_tung_nguoi_nhan(self) -> None:
         from services import lich_su_nha
