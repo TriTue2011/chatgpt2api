@@ -2023,6 +2023,19 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
     # Admin workspace (đặt tên bot / lưu người lạ) — độc lập từng admin thread.
     # Đây là đường SỬA CẤU HÌNH nên xét NGƯỜI GỬI, không chỉ chat.
     if chat_id and text and _is_admin_chat(chat_id, user_id, is_group=is_group):
+        # Trả lời câu hỏi của phiên Claude giám sát chạy NGOÀI container. Đặt
+        # trước admin_workspace vì tiền tố "cl "/"claude " hẹp hơn hẳn, không
+        # đụng lệnh nào của workspace. Cùng hợp đồng: None = không phải việc
+        # của nó, tin đi tiếp như câu chat thường.
+        try:
+            from services import hoi_giam_sat
+            _hr = hoi_giam_sat.tra_loi(text)
+            if _hr:
+                send_message(chat_id, _hr)
+                return
+        except Exception as exc:
+            logger.warning("zalo hoi_giam_sat: %s", exc)
+
         try:
             from services.admin_workspace import handle_admin_text
             _ar = handle_admin_text("zalo", chat_id, text)
