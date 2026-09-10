@@ -420,11 +420,23 @@ class LoiDuyetPhaiNganTests(unittest.TestCase):
 
 
 def _nap_ham(nguon: pathlib.Path, ten: str):
-    """Nạp RIÊNG một hàm — import cả module sẽ kéo theo config/DB/model."""
+    """Nạp RIÊNG một hàm — import cả module sẽ kéo theo config/DB/model.
+
+    Kéo theo cả các HẰNG SỐ cấp module (gán tên = giá trị hằng): hàm nạp lẻ mà
+    tham chiếu một hằng ở ngoài thì chạy là NameError, và lỗi đó chỉ hiện lúc
+    chạy test chứ không phải lúc nạp.
+    """
     src = nguon.read_text("utf-8")
-    for n in ast.parse(src).body:
+    cay = ast.parse(src)
+    ns: dict = {}
+    for n in cay.body:
+        if isinstance(n, ast.Assign):
+            try:
+                exec(ast.get_source_segment(src, n), ns)
+            except Exception:
+                pass          # hằng cần import khác — bỏ qua, hàm có thể không dùng
+    for n in cay.body:
         if isinstance(n, ast.FunctionDef) and n.name == ten:
-            ns: dict = {}
             exec(ast.get_source_segment(src, n), ns)
             return ns[ten]
     raise AssertionError(f"không thấy hàm {ten} trong {nguon}")
@@ -460,6 +472,22 @@ class HoiGioChuKhongPhaiDanDoTests(unittest.TestCase):
         for cau in ("mấy giờ rồi", "bây giờ là mấy giờ", "bây giờ",
                     "anh ơi cho em hỏi bây giờ là mấy giờ rồi ạ", "giờ rồi em"):
             self.assertTrue(_LA_CAU_HOI_GIO(_bo_dau(cau)), cau)
+
+    def test_HOI_THOI_DIEM_SU_KIEN_khong_phai_hoi_gio(self):
+        """Đo thật 10/09 11:53 — "fingerprint#2 lần cuối lúc mấy giờ" nhận lại
+        "Hiện tại là 11 giờ 53 phút": hỏi một đằng trả lời một nẻo.
+
+        Bản vá 04/08 chỉ thu hẹp "bay gio", để nguyên "may gio" vì cho rằng
+        "tự nó đã là câu hỏi". Ca này bác bỏ: "mấy giờ" hỏi giờ hiện tại khác
+        hẳn "mấy giờ" hỏi thời điểm một sự kiện đã xảy ra.
+        """
+        for cau in ("fingerprint#2 lần cuối lúc mấy giờ",
+                    "con trai về nhà lúc mấy giờ",
+                    "ai mở cửa lúc mấy giờ",
+                    "hôm qua mấy giờ anh về",
+                    "đèn bếp bật lúc mấy giờ",
+                    "gần nhất là mấy giờ"):
+            self.assertFalse(_LA_CAU_HOI_GIO(_bo_dau(cau)), cau)
 
 
 

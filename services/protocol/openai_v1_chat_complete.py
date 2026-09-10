@@ -2476,12 +2476,30 @@ def _la_cau_hoi_gio(fd: str) -> bool:
     "từ bây giờ" mở đầu một lời DẶN chứ không hỏi giờ, nhưng đường tắt cũ chỉ tìm
     chuỗi con "bay gio" nên cướp luôn lượt đó.
 
-    "may gio" / "gio roi" thì tự nó đã là câu hỏi, dài ngắn gì cũng nhận. Riêng
-    "bay gio" chỉ nhận khi câu ngắn gọn đúng bằng chữ đó.
+    Bản vá 04/08 chỉ thu hẹp "bay gio" và để nguyên "may gio" với lý do "tự nó
+    đã là câu hỏi". Đo thật 10/09 bác bỏ điều đó: "fingerprint#2 LẦN CUỐI lúc
+    mấy giờ" bị cướp lượt và bot đáp "Hiện tại là 11 giờ 53 phút" — hỏi một
+    đằng trả lời một nẻo, mà nhật ký ghi `ha_fastpath` nên nhìn như chạy đúng.
+
+    "mấy giờ" hỏi GIỜ HIỆN TẠI khác hẳn "mấy giờ" hỏi THỜI ĐIỂM MỘT SỰ KIỆN
+    ("lần cuối lúc mấy giờ", "về nhà lúc mấy giờ", "mở cửa lúc mấy giờ"). Câu
+    thứ hai cần tra dữ liệu, không phải xem đồng hồ.
     """
+    if any(t in fd for t in _HOI_VE_SU_KIEN):
+        return False
     if "may gio" in fd or "gio roi" in fd:
         return True
     return "bay gio" in fd and len(fd.split()) <= 3
+
+
+#: Dấu hiệu câu đang hỏi THỜI ĐIỂM CỦA MỘT SỰ KIỆN chứ không hỏi giờ hiện tại.
+#: Chữ đã bỏ dấu (đ→d) để khớp cùng dạng với `fd`.
+_HOI_VE_SU_KIEN = (
+    "lan cuoi", "lan truoc", "gan nhat", "moi nhat", "vua roi",
+    "hom qua", "hom kia", "hom nay luc", "sang nay luc", "toi qua",
+    "ve nha luc", "ve luc", "di luc", "den luc", "mo cua luc",
+    "bat luc", "tat luc", "xay ra luc", "bat dau luc", "ket thuc luc",
+)
 
 
 def _ha_local_lunar(messages: list[dict[str, Any]]) -> str | None:
