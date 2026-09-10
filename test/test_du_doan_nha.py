@@ -270,6 +270,98 @@ class DuDoanNhaTest(unittest.TestCase):
         self.ls.config.data["mqtt"]["du_doan"] = {"bat": False}
         self.assertIn("bo_qua", self.dd.chay_mot_lan())
 
+    # ── chỉ gợi ý thứ BẬT ĐƯỢC (11/09/2026) ────────────────────────────────
+    def test_SO_DO_khong_phai_TRANG_THAI_bat(self) -> None:
+        """`sensor.entities` = "1080" là đếm số thực thể trong Home Assistant,
+        không phải ai vừa bật cái gì. Danh sách loại trừ cũ coi mọi giá trị lạ
+        là ĐANG BẬT nên mỗi lần bộ đếm nhảy là một lượt "vừa bật"."""
+        for so in ("1080", "979", "464", "23.5", "0", "-1"):
+            self.assertFalse(self.dd._la_bat(so), f"{so!r} là số đo")
+        for tt in ("on", "open", "home", "playing", "heat"):
+            self.assertTrue(self.dd._la_bat(tt), f"{tt!r} là trạng thái bật")
+
+    def test_DEM_NGUOI_van_tinh_la_CO_NGUOI(self) -> None:
+        """Luật "số là số đo" KHÔNG được lan sang cảm biến người:
+        `sensor.bep_person_count` = "2" nghĩa là có hai người trong bếp."""
+        self.assertTrue(self.bc._co_mat("2"))
+        self.assertTrue(self.bc._co_mat("1"))
+        self.assertFalse(self.bc._co_mat("0"))
+
+    def test_KHONG_GOI_Y_thu_khong_bat_duoc(self) -> None:
+        """`binary_sensor.ariston_is_heating` báo bình nóng lạnh CÓ đang đun.
+        Nó có nếp rõ ràng, học được — nhưng không ai bật được nó."""
+        from services import ha_client
+
+        self._nep_toi()
+        from datetime import datetime, timedelta
+        now = datetime.now(self.bc._TZ).replace(
+            hour=19, minute=0, second=0, microsecond=0)
+        for i in range(14):
+            d = now - timedelta(days=i)
+            self._sk("binary_sensor.ariston_is_heating", "on", d.timestamp())
+
+        # Học vẫn phải học được nó — cổng chặn nằm ở lúc ĐỀ NGHỊ, không ở
+        # lúc học, nếu không thì Home Assistant chớp là bot quên sạch nếp nhà.
+        self.assertIn("binary_sensor.ariston_is_heating",
+                      self.dd.hoc(so_ngay=30))
+
+        so_dich_vu = {"light": {"turn_on": {}}, "switch": {"turn_on": {}},
+                      "binary_sensor": {}, "sensor": {}}
+        with mock.patch.object(ha_client, "get_service_catalog",
+                               return_value=so_dich_vu):
+            ten = {d["ten"] for d in self.dd.quet(luc=now.timestamp())}
+        self.assertNotIn("binary_sensor.ariston_is_heating", ten,
+                         "không được mời chủ máy bật một cảm biến")
+
+    def test_HA_IM_thi_KHONG_goi_y_bua(self) -> None:
+        """Không hỏi được HA cái gì bật được thì cũng không bật được gì. Im
+        còn hơn mời bật một cái đồng hồ đo."""
+        from services import ha_client
+
+        self._nep_toi()
+        with mock.patch.object(ha_client, "get_service_catalog",
+                               return_value={}):
+            self.assertEqual(self.dd.quet(), [])
+
+    # ── tin nhắn viết bằng tiếng người (11/09/2026) ────────────────────────
+    def test_TIN_NHAN_khong_con_MA_MAY(self) -> None:
+        """Chủ máy nhận "binarysensor.aristonisheating … vì nhietdokhac nong"
+        rồi bảo "lỗi font chữ rồi nói tôi chả hiểu gì".
+
+        Không còn dấu gạch dưới cũng là một yêu cầu THẬT, không phải cho đẹp:
+        Zalo gửi ở `parse_mode=markdown` và markdown ăn dấu gạch dưới làm ký
+        hiệu in nghiêng, nên `lux_phòng_khách` tới nơi thành `luxphòngkhách`.
+        """
+        from services import ha_client
+
+        ds = [{"ten": "light.bep_left", "p": 0.82, "cach": "goi_y",
+               "bang_chung": [{"dieu_kien": "lux_bếp=toi"},
+                              {"dieu_kien": "buoi=tối"},
+                              {"dieu_kien": "nguoi_bếp=co"}]}]
+        trang_thai = [{"entity_id": "light.bep_left",
+                       "attributes": {"friendly_name": "Đèn bếp"}}]
+        with mock.patch.object(ha_client, "get_states",
+                               return_value=trang_thai):
+            tin = self.dd.soan_tin(ds)
+        self.assertIn("Đèn bếp", tin)
+        self.assertIn("ánh sáng bếp đang tối", tin)
+        self.assertIn("có người ở bếp", tin)
+        self.assertNotIn("light.bep_left", tin)
+        self.assertNotIn("_", tin, "Zalo sẽ ăn mất dấu gạch dưới")
+
+    def test_LY_DO_KHONG_DICH_DUOC_thi_bo_han(self) -> None:
+        """Thà chủ máy đọc được hai lý do còn hơn ba lý do mà một cái là
+        chuỗi máy móc."""
+        from services import ha_client
+
+        ds = [{"ten": "light.x", "p": 0.8, "cach": "goi_y",
+               "bang_chung": [{"dieu_kien": "khoa_la_hoac=gi_do"},
+                              {"dieu_kien": "buoi=tối"}]}]
+        with mock.patch.object(ha_client, "get_states", return_value=[]):
+            tin = self.dd.soan_tin(ds)
+        self.assertIn("buổi tối", tin)
+        self.assertNotIn("khoa", tin)
+
 
 if __name__ == "__main__":
     unittest.main()

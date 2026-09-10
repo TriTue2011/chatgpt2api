@@ -644,6 +644,17 @@ def soan_tin(ds: list[dict[str, Any]]) -> str:
 
     Không giải thích được thì chủ máy không có cách nào sửa bot, mà sửa được
     bot chính là lý do chọn Naive Bayes thay vì mô hình mạnh hơn.
+
+    VIẾT BẰNG TIẾNG NGƯỜI. Bản cũ in thẳng khoá máy, nên chủ máy nhận được
+    "binary_sensor.ariston_is_heating … vì nhiet_do_khac nong" rồi trả lời
+    "lỗi font chữ rồi nói tôi chả hiểu gì" (11/09/2026). Mã thực thể và nhãn
+    điều kiện chỉ để mô hình ĐẾM cho khớp; ra tới tin nhắn thì phải là tên
+    chủ máy đặt trong Home Assistant (`ten_thiet_bi`) và câu chữ tiếng Việt
+    (`_ly_do`).
+
+    Còn một lý do nữa phải bỏ mã máy: Zalo gửi tin ở `parse_mode=markdown`,
+    mà markdown ăn dấu gạch dưới làm ký hiệu in nghiêng. `lux_phòng_khách`
+    tới tay chủ máy thành `luxphòngkhách`.
     """
     if not ds:
         return ""
