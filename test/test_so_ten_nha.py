@@ -202,5 +202,67 @@ class SoTenTest(unittest.TestCase):
         self.assertEqual(t["chua_biet"], 1)
 
 
+class TraTriNhoTheoPhamViTest(unittest.TestCase):
+    """Hai lỗi thật đo 10/09/2026: dạy tên lúc 08h33, 11h32 vẫn hỏi lại."""
+
+    def setUp(self) -> None:
+        import services.so_ten_nha as m
+        self.m = m
+        self._tmp = tempfile.mkdtemp()
+        m._FILE = Path(self._tmp) / "so_ten.json"
+        m.config.data.setdefault("mqtt", {})["so_ten"] = {}
+
+    def tearDown(self) -> None:
+        self.m._reset_for_tests()
+
+    def test_KHOP_CAU_TIENG_VIET_khong_phai_ma_may(self) -> None:
+        """Bot ghi 'Khuôn mặt số 17 … là vợ của anh'; bản cũ tra chuỗi
+        'face 17' nên không bao giờ khớp."""
+        from services.agent import state
+        dong = ("- [2026-09-10 08:34] (zalo_x) Khuôn mặt số 17 trên hệ thống "
+                "khóa cửa là vợ của anh.")
+        with mock.patch.object(state, "search_memory", return_value=[dong]):
+            self.assertIn("vợ", self.m.ten_cua("tuya", "face", "17"))
+
+    def test_QUET_CA_KHO_RIENG_cua_nguoi_da_day(self) -> None:
+        """Bot ghi vào kho RIÊNG của người dạy, bản cũ chỉ tra kho chung."""
+        from services.agent import state
+        goi: list[str] = []
+
+        def gia_lap(q, **kw):
+            pv = kw.get("pham_vi") or ""
+            goi.append(pv)
+            if pv == "kho_cua_anh":
+                return ["- [10/09] khuôn mặt 17 là vợ của anh"]
+            return []
+
+        with mock.patch.object(state, "nho_hoac_cap_nhat"), \
+             mock.patch("services.agent.scope.khoa_du_lieu",
+                        return_value="kho_cua_anh"):
+            self.m.dat_ten("tuya", "face", "17", "vợ", user_id="zalo_x")
+        # Xoá MỤC tên (giữ nguyên sổ) để buộc đi tới tầng trí nhớ — danh sách
+        # phạm vi đã dạy nằm cùng file, đổi file là mất luôn nó.
+        so = self.m._doc()
+        so["muc"] = {}
+        self.m._ghi(so)
+        with mock.patch.object(state, "search_memory", side_effect=gia_lap):
+            t = self.m.ten_cua("tuya", "face", "17")
+        self.assertIn("vợ", t)
+        self.assertIn("kho_cua_anh", goi, "phải quét kho của người đã dạy")
+
+    def test_KHONG_KHOP_NHAM_SO_KHAC(self) -> None:
+        from services.agent import state
+        dong = "- [10/09] khuôn mặt 1 là con trai"
+        with mock.patch.object(state, "search_memory", return_value=[dong]):
+            self.assertEqual(self.m.ten_cua("tuya", "face", "17"), "")
+
+    def test_kho_chung_van_tra_duoc(self) -> None:
+        from services.agent import state
+        with mock.patch.object(
+                state, "search_memory",
+                return_value=["- [10/09] vân tay 11 là anh Việt"]):
+            self.assertIn("Việt", self.m.ten_cua("tuya", "fingerprint", "11"))
+
+
 if __name__ == "__main__":
     unittest.main()

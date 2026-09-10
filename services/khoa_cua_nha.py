@@ -119,13 +119,14 @@ def ten_cua(ma: str, ten_tuya: str = "") -> str:
     return so_ten_nha.ten_cua(_NGUON, cach or "unlock", so or ma, ten_tuya)
 
 
-def dat_ten(ma: str, ten: str) -> bool:
+def dat_ten(ma: str, ten: str, *, user_id: str = "") -> bool:
     """Chủ nhà xác nhận ai là ai — bước TỰ HỌC."""
     from services import so_ten_nha
     if not ma:
         return False
     cach, _, so = ma.partition("#")
-    return so_ten_nha.dat_ten(_NGUON, cach or "unlock", so or ma, ten)
+    return so_ten_nha.dat_ten(_NGUON, cach or "unlock", so or ma, ten,
+                              user_id=user_id)
 
 
 def _nen_hoi(ma: str) -> bool:

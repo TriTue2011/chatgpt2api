@@ -4894,7 +4894,11 @@ def _h_khoa_cua(args: dict, ctx: dict) -> dict:
                 if not chua:
                     return {"text": "Em không thấy ai chưa biết tên gần đây ạ."}
                 ma = chua[0]["ma"]
-            kc.dat_ten(ma, ten)
+            # Truyền user_id để câu "khuôn mặt 17 là vợ" ghi vào ĐÚNG kho trí
+            # nhớ riêng của người dạy — cùng kho bot ghi khi học qua chat.
+            # Thiếu nó thì ghi kho chung, lượt sau tra kho riêng không thấy và
+            # bot hỏi lại dù vừa nói "em nhớ rồi" (đo thật 10/09/2026).
+            kc.dat_ten(ma, ten, user_id=str((ctx or {}).get("user_id") or ""))
             return {"text": f"Dạ, em nhớ rồi — {kc._mo_ta_ma(ma)} là **{ten}**. "
                             "Từ giờ em gọi đúng tên khi báo ạ."}
 

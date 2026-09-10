@@ -44,6 +44,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -144,7 +145,8 @@ def ten_may_moc(ten: str) -> bool:
 
 
 # ── Ba tầng tra tên ─────────────────────────────────────────────────────────
-def ten_cua(nguon: str, loai: str, ma: str, ten_goc: str = "") -> str:
+def ten_cua(nguon: str, loai: str, ma: str, ten_goc: str = "",
+            *, user_id: str = "") -> str:
     """Tên người đọc hiểu. Rỗng = CHƯA BIẾT, tầng trên sẽ hỏi.
 
     Ba tầng: tên nhà sản xuất trả về → sổ này → trí nhớ chung.
@@ -158,26 +160,93 @@ def ten_cua(nguon: str, loai: str, ma: str, ten_goc: str = "") -> str:
     if t:
         return t
 
-    # Tầng cuối: chủ máy từng nói trong chat. Tra bằng CẢ khoá lẫn mô tả —
-    # tra bằng riêng con số thì "ngày 11", "11 giờ" cũng khớp.
+    # Tầng cuối: chủ máy từng nói trong chat.
+    #
+    # Hai lỗi thật ở bản trước, đo 10/09/2026 khi chủ máy dạy "mặt số 17 là vợ
+    # tôi" lúc 08h33 mà 11h32 bot vẫn hỏi lại:
+    #
+    #   1. Không truyền `pham_vi` nên chỉ tra kho CHUNG, trong khi bot ghi vào
+    #      kho RIÊNG của người dạy (`data/agent/memory/<băm>.md`). Câu đã ghi
+    #      đúng, chỉ là không ai đọc tới.
+    #   2. Lọc bằng `f"{loai} {ma}"` tức chuỗi "face 17", nhưng câu tiếng Việt
+    #      bot ghi là "Khuôn mặt số 17…" — không bao giờ khớp.
+    #
+    # Nay tra bằng MÔ TẢ TIẾNG VIỆT ("khuôn mặt 17"), và quét cả kho riêng của
+    # từng người đã dạy: sổ tên là của CẢ NHÀ, ai dạy cũng phải dùng được.
+    mo = mo_ta(k)
     try:
         from services.agent import state
-        for dong in (state.search_memory(f"{loai} {ma}") or [])[:3]:
-            s = str(dong)
-            if f"{loai} {ma}" in s.lower() or k in s:
-                phan = s.split(" là ")
-                if len(phan) >= 2:
-                    return phan[-1].strip().rstrip(".")[:60]
+        for pv in _pham_vi_tra(user_id):
+            for dong in (state.search_memory(mo, pham_vi=pv) or [])[:5]:
+                t = _tach_ten(str(dong), mo, k, ma)
+                if t:
+                    return t
     except Exception:
         pass
     return ""
 
 
-def dat_ten(nguon: str, loai: str, ma: str, ten: str) -> bool:
+def _pham_vi_tra(user_id: str = "") -> list[str]:
+    """Các kho trí nhớ cần quét, kho chung trước rồi tới kho của người dạy.
+
+    Rỗng ("") là kho chung. Không có `user_id` thì quét thêm mọi kho riêng đã
+    từng ghi tên — sổ tên dùng chung cả nhà nên người này dạy, người kia hỏi
+    vẫn phải ra.
+    """
+    ra: list[str] = [""]
+    if user_id:
+        try:
+            from services.agent import scope
+            for pv in [scope.khoa_du_lieu(user_id),
+                       *(scope.pham_vi_doc_them(user_id) or [])]:
+                if pv and pv not in ra:
+                    ra.append(pv)
+        except Exception:
+            pass
+    with _khoa:
+        for pv in (_doc().get("pham_vi_da_day") or []):
+            if pv and pv not in ra:
+                ra.append(pv)
+    return ra
+
+
+def loai_cua(k: str) -> str:
+    """Khoá → phần LOẠI ('tuya:face#17' → 'face')."""
+    return _tach(k)[1]
+
+
+def _tach_ten(dong: str, mo: str, k: str, ma: str) -> str:
+    """Lấy tên người từ một dòng trí nhớ, hoặc rỗng nếu dòng không nói về nó.
+
+    Khớp theo TỪ chứ không theo chuỗi liền: mô tả sinh ra là "khuôn mặt 17"
+    nhưng câu bot ghi là "Khuôn mặt SỐ 17…" — chèn đúng một chữ "số" là chuỗi
+    liền trượt, mà đó lại là cách bot viết tự nhiên nhất.
+    """
+    low = dong.lower()
+    if k not in dong:
+        # Mọi từ của mô tả phải có mặt, không cần liền nhau. Chấp nhận CẢ hai
+        # cách viết: tiếng Việt ("khuôn mặt số 17" — cách bot ghi thật) và mã
+        # máy ("face 17" — trí nhớ cũ, hoặc chỗ khác trong bot ghi).
+        hop = [mo.lower().split(), [loai_cua(k).lower(), str(ma).lower()]]
+        if not any(all(w in low for w in bo) for bo in hop if all(bo)):
+            return ""
+    # Phải có ĐÚNG con số này, tách bạch: "17" không được khớp "170" hay "1".
+    if ma and not re.search(rf"(?<!\d){re.escape(str(ma))}(?!\d)", dong):
+        return ""
+    phan = dong.split(" là ")
+    if len(phan) < 2:
+        return ""
+    return phan[-1].strip().rstrip(".")[:60]
+
+
+def dat_ten(nguon: str, loai: str, ma: str, ten: str,
+            *, user_id: str = "") -> bool:
     """Chủ nhà xác nhận. Đây là bước TỰ HỌC của cả hệ.
 
-    Lưu vào sổ, thôi hỏi, và phát một câu tiếng Việt vào trí nhớ chung để chỗ
-    khác trong bot cũng dùng được.
+    Lưu vào sổ, thôi hỏi, và phát một câu tiếng Việt vào trí nhớ để chỗ khác
+    trong bot cũng dùng được. Có `user_id` thì ghi vào ĐÚNG kho riêng của
+    người đó — cùng kho mà bot ghi khi học qua chat — và nhớ phạm vi ấy lại
+    để `ten_cua` biết đường quét.
     """
     ten = (ten or "").strip()
     if not ma or not ten:
@@ -192,11 +261,26 @@ def dat_ten(nguon: str, loai: str, ma: str, ten: str) -> bool:
         m["so_lan_hoi"] = 0          # đặt tên rồi thì bộ đếm hết ý nghĩa
         _ghi(so)
 
+    pv = ""
+    if user_id:
+        try:
+            from services.agent import scope
+            pv = scope.khoa_du_lieu(str(user_id))
+        except Exception:
+            pv = ""
     try:
         from services.agent import state
-        state.nho_hoac_cap_nhat(f"{mo_ta(k)} là {ten}", who="so_ten_nha")
+        state.nho_hoac_cap_nhat(f"{mo_ta(k)} là {ten}", who="so_ten_nha",
+                                pham_vi=pv)
     except Exception:
         pass
+    if pv:
+        with _khoa:
+            so = _doc()
+            ds = so.setdefault("pham_vi_da_day", [])
+            if pv not in ds:
+                ds.append(pv)
+                _ghi(so)
     logger.info({"event": "so_ten_dat", "khoa": k, "ten": ten})
     return True
 
