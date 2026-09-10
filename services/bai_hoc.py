@@ -175,6 +175,70 @@ def do_giong(a: str, b: str) -> float:
     return len(ta & tb) / len(ta | tb)
 
 
+#: KHÔNG có ngưỡng dưới. Đo thật 10/09/2026: cặp CÙNG Ý và cặp KHÁC HẲN đều
+#: ra 0.00 như nhau —
+#:   0.00  "fingerprint#2 lần cuối lúc mấy giờ" / "vân tay số 2 mở cửa hồi nào"
+#:   0.00  "bật đèn bếp"                        / "giá vàng hôm nay"
+#: nên không có mức nào tách được hai nhóm. Đành hỏi AI cho mọi câu chưa vượt
+#: ngưỡng đếm từ, và chặn chi phí bằng TRẦN SỐ LẦN HỎI mỗi lượt thay vì bằng
+#: ngưỡng điểm.
+#:
+#: Chi phí thực tế thấp: chỉ so với các BÀI HỌC ĐÃ CÓ (sổ rỗng thì không hỏi
+#: lần nào), và mỗi lượt tối đa `_AI_TOI_DA` lần.
+_AI_TOI_DA = 3
+
+
+def dung_ai() -> bool:
+    """Có nhờ AI so ý khi đếm từ không kết luận nổi không. Mặc định BẬT.
+
+    VÌ SAO CẦN — đo thật 10/09/2026, bốn cặp câu CÙNG MỘT Ý:
+
+        0.00  "fingerprint#2 lần cuối lúc mấy giờ" / "vân tay số 2 mở cửa hồi nào"
+        0.00  "bật đèn bếp"                        / "làm sáng chỗ nấu ăn"
+        0.20  "thời tiết hôm nay"                  / "trời hôm nay thế nào"
+
+    Đếm từ không nhận ra cái nào, vì chúng không chung từ nào. Bot học được
+    bài học từ câu này thì lần sau chủ máy hỏi cách khác là nó lại sai.
+    """
+    return bool(_cfg().get("dung_ai", True))
+
+
+def _ai_cung_y(a: str, b: str) -> bool | None:
+    """Hai câu có cùng một ý không — hỏi model.
+
+    Trả None khi không kết luận được (model hỏng, tắt, trả lời lạ) → caller
+    giữ nguyên kết quả đếm từ, KHÔNG đoán bừa.
+    """
+    if not dung_ai():
+        return None
+    try:
+        from services.agent.orchestrator import _main_model
+        from services.agent.runtime import call_model
+    except Exception:
+        return None
+    try:
+        r = call_model(
+            _main_model("burst"),
+            [{"role": "system", "content":
+              "Hai câu dưới đây có hỏi/yêu cầu CÙNG MỘT VIỆC không? "
+              "Chỉ trả đúng một từ: CO hoặc KHONG. Không giải thích."},
+             {"role": "user", "content": f"Câu 1: {a[:200]}\nCâu 2: {b[:200]}"}],
+            timeout=15, max_tokens=5, no_smart_home=True,
+            allowed_groups=set())
+        if r.get("error"):
+            return None
+        noi = str((r.get("choices") or [{}])[0]
+                  .get("message", {}).get("content") or "").strip().upper()
+    except Exception as exc:
+        logger.info({"event": "bai_hoc_ai_loi", "loi": str(exc)[:120]})
+        return None
+    if noi.startswith("CO"):
+        return True
+    if noi.startswith("KHONG"):
+        return False
+    return None
+
+
 # ── ghi ─────────────────────────────────────────────────────────────────────
 def ghi_sai(cau_hoi: str, tra_loi: str, bo_do: str = "",
             user_id: str = "") -> bool:
@@ -235,14 +299,24 @@ def tra(cau_hoi: str, *, nguong: float | None = None) -> list[dict]:
         return []
     han = time.time() - _so("han_ngay", _HAN_NGAY) * 86400
     ra: list[dict] = []
+    da_hoi = 0          # trần số lần nhờ AI trong MỘT lượt tra
     with _lock:
         for m in (_doc().get("sai") or []):
             if float(m.get("ts") or 0) < han:
                 continue
-            g = do_giong(m.get("cau_hoi") or "", ch)
-            if g >= (nguong if nguong is not None
-                     else _so("giong_toi_thieu", _GIONG_TOI_THIEU)):
+            cu = m.get("cau_hoi") or ""
+            g = do_giong(cu, ch)
+            ng = (nguong if nguong is not None
+                  else _so("giong_toi_thieu", _GIONG_TOI_THIEU))
+            if g >= ng:
                 ra.append({**m, "giong": round(g, 3)})
+                continue
+            # Đếm từ nói "khác nhau", nhưng ở vùng KHÔNG CHẮC thì hỏi AI —
+            # hai câu cùng ý mà khác hẳn từ ngữ chỉ AI mới nhận ra.
+            if da_hoi < _AI_TOI_DA:
+                da_hoi += 1
+                if _ai_cung_y(cu, ch):
+                    ra.append({**m, "giong": round(g, 3), "ai_xac_nhan": True})
     ra.sort(key=lambda x: x["giong"], reverse=True)
     return ra
 

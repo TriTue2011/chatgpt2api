@@ -161,6 +161,75 @@ class CauHinhTest(unittest.TestCase):
                          "quá hạn 5 ngày thì thôi tính")
 
 
+class TangAITest(unittest.TestCase):
+    """Đếm từ không nhận ra hai câu cùng ý mà khác hẳn từ ngữ — AI mới nhận."""
+
+    def setUp(self) -> None:
+        import services.bai_hoc as m
+        from services.config import config
+        self.m, self.cfg = m, config
+        self._tmp = Path(tempfile.mkdtemp())
+        m._duong = lambda: self._tmp / "bai_hoc.json"
+        config.data.setdefault("mqtt", {})["bai_hoc"] = {}
+
+    def tearDown(self) -> None:
+        self.cfg.data.get("mqtt", {}).pop("bai_hoc", None)
+
+    def test_GIOI_HAN_CUA_DEM_TU(self) -> None:
+        """Đo thật 10/09/2026 — bốn cặp CÙNG MỘT Ý mà đếm từ ra gần 0."""
+        for a, b in [("fingerprint#2 lần cuối lúc mấy giờ",
+                      "vân tay số 2 mở cửa hồi nào"),
+                     ("bật đèn bếp", "làm sáng chỗ nấu ăn")]:
+            self.assertLess(self.m.do_giong(a, b), self.m._GIONG_TOI_THIEU,
+                            "đếm từ KHÔNG nhận ra — đây là lý do cần AI")
+
+    def test_AI_NHAN_RA_thi_tra_duoc(self) -> None:
+        self.m.ghi_sai("fingerprint#2 lần cuối lúc mấy giờ", "…", "_x")
+        with mock.patch.object(self.m, "_ai_cung_y", return_value=True):
+            ra = self.m.tra("vân tay số 2 mở cửa hồi nào")
+        self.assertEqual(len(ra), 1)
+        self.assertTrue(ra[0].get("ai_xac_nhan"))
+
+    def test_AI_NOI_KHONG_thi_khong_tra(self) -> None:
+        self.m.ghi_sai("bật đèn bếp", "…", "_x")
+        with mock.patch.object(self.m, "_ai_cung_y", return_value=False):
+            self.assertEqual(self.m.tra("giá vàng hôm nay"), [])
+
+    def test_AI_HONG_thi_giu_ket_qua_dem_tu(self) -> None:
+        """Model hỏng/tắt → None → không đoán bừa."""
+        self.m.ghi_sai("bật đèn bếp", "…", "_x")
+        with mock.patch.object(self.m, "_ai_cung_y", return_value=None):
+            self.assertEqual(self.m.tra("làm sáng chỗ nấu ăn"), [])
+
+    def test_TAT_AI_thi_khong_goi_model(self) -> None:
+        self.cfg.data["mqtt"]["bai_hoc"] = {"dung_ai": False}
+        self.assertFalse(self.m.dung_ai())
+        self.assertIsNone(self.m._ai_cung_y("a", "b"))
+
+    def test_TRAN_SO_LAN_HOI_moi_luot(self) -> None:
+        """Sổ nhiều bài học thì không được hỏi model cho từng cái."""
+        for i in range(8):
+            self.m.ghi_sai(f"câu số {i} hoàn toàn riêng biệt khác nhau", "…", "_x")
+        dem = []
+        with mock.patch.object(self.m, "_ai_cung_y",
+                               side_effect=lambda a, b: dem.append(1) or False):
+            self.m.tra("một câu chẳng liên quan gì")
+        self.assertLessEqual(len(dem), self.m._AI_TOI_DA)
+
+    def test_DEM_TU_DU_CHAC_thi_khong_ton_AI(self) -> None:
+        """Đã chung nhiều từ thì khỏi hỏi model."""
+        self.m.ghi_sai("fingerprint#2 lần cuối lúc mấy giờ", "…", "_x")
+        with mock.patch.object(self.m, "_ai_cung_y") as ai:
+            ra = self.m.tra("fingerprint#2 lần cuối lúc mấy giờ")
+        self.assertEqual(len(ra), 1)
+        ai.assert_not_called()
+
+    def test_SO_RONG_thi_khong_goi_AI_lan_nao(self) -> None:
+        with mock.patch.object(self.m, "_ai_cung_y") as ai:
+            self.assertEqual(self.m.tra("bất cứ câu gì"), [])
+        ai.assert_not_called()
+
+
 class BaoChuDongTest(unittest.TestCase):
     """Bản tin «em học được gì» — mặc định TẮT, bật thì chỉ kể khi có gì."""
 

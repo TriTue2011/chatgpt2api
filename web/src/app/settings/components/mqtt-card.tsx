@@ -70,7 +70,9 @@ export function MqttCard() {
   // Danh sách kênh THẬT — cùng nguồn với «Gửi tóm tắt tới kênh» của email/lịch
   // (`email-calendar-card.tsx`). Ô chọn "telegram | zalo" là không đủ: nhà có
   // nhiều tài khoản Zalo và nhiều nhóm, chọn mỗi "zalo" thì không biết Zalo nào.
-  const tf = (config as any)?.thread_filter as Record<string, unknown> | undefined;
+  // `thread_filterS` — SỐ NHIỀU. Gõ số ít thì rỗng và danh sách kênh trống
+  // trơn, đúng lỗi chủ máy gặp 10/09/2026. Xem `email-calendar-card.tsx:71`.
+  const tf = (config as any)?.thread_filters as Record<string, unknown> | undefined;
   const tfMeta = (config as any)?.thread_filter_meta as
     Record<string, { name?: string }> | undefined;
   const kenhOptions: { value: string; label: string }[] = Object.keys(tf || {})
@@ -90,8 +92,9 @@ export function MqttCard() {
   // Học từ lỗi: bot hỏi lại khi nó KHÔNG CHẮC, sai một lần thì lần sau tự tránh.
   const [bh, setBh] = useState<{
     bat: boolean; du_mau: number; han_ngay: number;
-    bao: boolean; kenh_nhan: string[]; bao_moi_ngay: number;
-  }>({ bat: true, du_mau: 4, han_ngay: 180, bao: false, kenh_nhan: [], bao_moi_ngay: 7 });
+    bao: boolean; kenh_nhan: string[]; bao_moi_ngay: number; dung_ai: boolean;
+  }>({ bat: true, du_mau: 4, han_ngay: 180, bao: false, kenh_nhan: [],
+       bao_moi_ngay: 7, dung_ai: true });
   const [ttCb, setTtCb] = useState<TrangThaiCB | null>(null);
   const [th, setTh] = useState<TinhHuong[]>([]);
 
@@ -126,6 +129,7 @@ export function MqttCard() {
       bao: h.bao === true,
       kenh_nhan: Array.isArray(h.kenh_nhan) ? h.kenh_nhan.map((x: unknown) => String(x)) : [],
       bao_moi_ngay: typeof h.bao_moi_ngay === "number" ? h.bao_moi_ngay : 7,
+      dung_ai: h.dung_ai !== false,
     });
   }, [(config as any)?.mqtt]);
 
@@ -209,6 +213,7 @@ export function MqttCard() {
           bao: bh.bao === true,
           kenh_nhan: bh.kenh_nhan || [],
           bao_moi_ngay: bh.bao_moi_ngay ?? 7,
+          dung_ai: bh.dung_ai !== false,
         },
       },
     } as any);
@@ -546,6 +551,24 @@ export function MqttCard() {
               tương tự em sẽ nghĩ kỹ thay vì đoán. Em hỏi đúng loại câu em chưa
               chắc, và loại nào anh xác nhận đúng đủ nhiều lần thì em thôi hỏi.
             </p>
+            <label className="flex items-start gap-2 text-xs">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={bh.dung_ai !== false}
+                onChange={(e) => setBh({ ...bh, dung_ai: e.target.checked })}
+              />
+              <span>
+                🤖 Cho em nhờ AI hiểu ý câu hỏi
+                <span className="block text-muted-foreground">
+                  Không có AI thì em chỉ so được chữ: anh hỏi «vân tay số 2 mở
+                  cửa hồi nào» là em không nhận ra nó cùng ý với câu anh từng
+                  bảo em sai. Có AI thì em hiểu được ý, dù anh nói cách nào.
+                  Em chỉ hỏi AI khi so chữ không kết luận nổi.
+                </span>
+              </span>
+            </label>
+
             <div className="grid gap-2 sm:grid-cols-2">
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">
