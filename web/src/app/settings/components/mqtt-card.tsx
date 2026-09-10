@@ -77,6 +77,9 @@ export function MqttCard() {
   const [tk, setTk] = useState<ThongKe | null>(null);
   const [hong, setHong] = useState<Hong[] | null>(null);
   const [cb, setCb] = useState<CanhBao>({ bat: true, kenh: "", nguoi_nhan: "", gio_hang_ngay: 8 });
+  // Học từ lỗi: bot hỏi lại khi nó KHÔNG CHẮC, sai một lần thì lần sau tự tránh.
+  const [bh, setBh] = useState<{ bat: boolean; du_mau: number; han_ngay: number }>(
+    { bat: true, du_mau: 4, han_ngay: 180 });
   const [ttCb, setTtCb] = useState<TrangThaiCB | null>(null);
   const [th, setTh] = useState<TinhHuong[]>([]);
 
@@ -101,6 +104,12 @@ export function MqttCard() {
       kenh: String(q.kenh || ""),
       nguoi_nhan: Array.isArray(q.nguoi_nhan) ? q.nguoi_nhan.join(", ") : "",
       gio_hang_ngay: typeof q.gio_hang_ngay === "number" ? q.gio_hang_ngay : 8,
+    });
+    const h = ((config as any)?.mqtt?.bai_hoc as any) || {};
+    setBh({
+      bat: h.bat !== false,
+      du_mau: typeof h.du_mau === "number" ? h.du_mau : 4,
+      han_ngay: typeof h.han_ngay === "number" ? h.han_ngay : 180,
     });
   }, [(config as any)?.mqtt]);
 
@@ -175,6 +184,11 @@ export function MqttCard() {
           kenh: (cb.kenh || "").trim(),
           nguoi_nhan: nguoi,
           gio_hang_ngay: cb.gio_hang_ngay ?? 8,
+        },
+        bai_hoc: {
+          bat: bh.bat !== false,
+          du_mau: bh.du_mau ?? 4,
+          han_ngay: bh.han_ngay ?? 180,
         },
       },
     } as any);
@@ -479,6 +493,54 @@ export function MqttCard() {
                 </span>
               ) : null}
             </div>
+          </div>
+
+          {/* ── Học từ lỗi ────────────────────────────────────────────── */}
+          <div className="mt-2 space-y-2 rounded border border-border p-2">
+            <label className="flex items-center gap-2 text-xs font-semibold">
+              <input
+                type="checkbox"
+                checked={bh.bat !== false}
+                onChange={(e) => setBh({ ...bh, bat: e.target.checked })}
+              />
+              🧠 Cho em học từ lỗi
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Có những câu em trả lời nhanh bằng cách đoán ý, không nghĩ kỹ — và
+              đó là chỗ em hay sai. Những lúc như vậy em kèm hai nút «Đúng rồi /
+              Chưa đúng». Anh bấm «Chưa đúng» một lần thôi, lần sau gặp câu hỏi
+              tương tự em sẽ nghĩ kỹ thay vì đoán. Em hỏi đúng loại câu em chưa
+              chắc, và loại nào anh xác nhận đúng đủ nhiều lần thì em thôi hỏi.
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">
+                  Đúng bao nhiêu lần thì thôi hỏi
+                </p>
+                <Input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={bh.du_mau ?? 4}
+                  onChange={(e) => setBh({ ...bh, du_mau: Number(e.target.value) })}
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">
+                  Nhớ bài học trong bao nhiêu ngày
+                </p>
+                <Input
+                  type="number"
+                  min={1}
+                  max={730}
+                  value={bh.han_ngay ?? 180}
+                  onChange={(e) => setBh({ ...bh, han_ngay: Number(e.target.value) })}
+                />
+              </div>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => void luuCb()}>
+              {saved ? "Đã lưu!" : "Lưu cài đặt học tập"}
+            </Button>
           </div>
 
           {hong && hong.length ? (

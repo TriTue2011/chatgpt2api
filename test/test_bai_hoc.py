@@ -115,6 +115,51 @@ class BaiHocTest(unittest.TestCase):
         self.assertEqual(t["bo_do"]["_b"]["dung"], 1)
 
 
+class CauHinhTest(unittest.TestCase):
+    """Chủ máy phải tắt/chỉnh được — không được bật cứng trong mã."""
+
+    def setUp(self) -> None:
+        import services.bai_hoc as m
+        from services.config import config
+        self.m, self.cfg = m, config
+        self._tmp = Path(tempfile.mkdtemp())
+        m._duong = lambda: self._tmp / "bai_hoc.json"
+        config.data.setdefault("mqtt", {})["bai_hoc"] = {}
+
+    def tearDown(self) -> None:
+        self.cfg.data.get("mqtt", {}).pop("bai_hoc", None)
+
+    def test_mac_dinh_la_BAT(self) -> None:
+        self.assertTrue(self.m.is_enabled())
+
+    def test_TAT_thi_khong_hoi_va_khong_tra(self) -> None:
+        """Tắt rồi thì bot chạy y như trước khi có tính năng này."""
+        self.m.ghi_sai("fingerprint#2 lần cuối lúc mấy giờ", "…", "x")
+        self.cfg.data["mqtt"]["bai_hoc"] = {"bat": False}
+        self.assertFalse(self.m.is_enabled())
+        self.assertEqual(self.m.tra("fingerprint#2 lần cuối lúc mấy giờ"), [],
+                         "tắt thì không được chặn đường tắt")
+        self.assertFalse(self.m.nen_hoi_lai("_bo_do_moi"),
+                         "tắt thì không được gắn nút hỏi")
+
+    def test_chinh_duoc_nguong_tin(self) -> None:
+        """Chủ máy thấy bị hỏi nhiều thì hạ ngưỡng cho bot sớm tin."""
+        self.cfg.data["mqtt"]["bai_hoc"] = {"du_mau": 2, "diem_tin": 0.6}
+        for _ in range(2):
+            self.m.ghi_dung("thời tiết", "_w")
+        self.assertTrue(self.m.da_tin_duoc("_w"),
+                        "2 lần đúng với ngưỡng đã hạ là đủ tin")
+
+    def test_chinh_duoc_han_bai_hoc(self) -> None:
+        self.m.ghi_sai("câu nào đó dài dòng", "…", "x")
+        d = self.m._doc()
+        d["sai"][0]["ts"] = time.time() - 10 * 86400
+        self.m._ghi(d)
+        self.cfg.data["mqtt"]["bai_hoc"] = {"han_ngay": 5}
+        self.assertEqual(self.m.tra("câu nào đó dài dòng"), [],
+                         "quá hạn 5 ngày thì thôi tính")
+
+
 class VongKhepKinTest(unittest.TestCase):
     """Chủ máy bấm nút → bot ghi bài học → lần sau tự tránh đường tắt."""
 

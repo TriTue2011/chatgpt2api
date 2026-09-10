@@ -46,6 +46,33 @@ from utils.log import logger
 
 _lock = threading.RLock()
 
+
+def _cfg() -> dict:
+    """Cấu hình dưới ``mqtt.bai_hoc`` — cùng chỗ với `khoa_cua`, `canh_bao`.
+
+    Đặt chung một nơi để chủ máy chỉnh mọi thứ liên quan tới nhà ở một trang,
+    không phải đi tìm từng chỗ.
+    """
+    try:
+        from services.config import config
+        raw = (config.data.get("mqtt") or {}).get("bai_hoc")
+        return raw if isinstance(raw, dict) else {}
+    except Exception:
+        return {}
+
+
+def is_enabled() -> bool:
+    """Tắt thì bot chạy y như trước: không hỏi lại, không tra bài học."""
+    return bool(_cfg().get("bat", True))
+
+
+def _so(khoa: str, mac_dinh: float) -> float:
+    try:
+        v = _cfg().get(khoa)
+        return float(v) if v is not None else mac_dinh
+    except (TypeError, ValueError):
+        return mac_dinh
+
 #: Đủ mẫu mới dám kết luận một bộ dò là dở. Chưa dùng lần nào KHÁC với dùng
 #: nhiều mà hay sai — cùng ngưỡng `skill_quality._DU_MAU`.
 _DU_MAU = 4
@@ -196,7 +223,7 @@ def _cham(d: dict, bo_do: str, *, dung: bool) -> None:
 
 
 # ── tra ─────────────────────────────────────────────────────────────────────
-def tra(cau_hoi: str, *, nguong: float = _GIONG_TOI_THIEU) -> list[dict]:
+def tra(cau_hoi: str, *, nguong: float | None = None) -> list[dict]:
     """Câu tương tự đã từng sai chưa. Rỗng = chưa có bài học nào.
 
     Trả list sắp theo độ giống giảm dần, mỗi mục thêm khoá ``giong``.
@@ -204,17 +231,24 @@ def tra(cau_hoi: str, *, nguong: float = _GIONG_TOI_THIEU) -> list[dict]:
     ch = (cau_hoi or "").strip()
     if not ch:
         return []
-    han = time.time() - _HAN_NGAY * 86400
+    if not is_enabled():
+        return []
+    han = time.time() - _so("han_ngay", _HAN_NGAY) * 86400
     ra: list[dict] = []
     with _lock:
         for m in (_doc().get("sai") or []):
             if float(m.get("ts") or 0) < han:
                 continue
             g = do_giong(m.get("cau_hoi") or "", ch)
-            if g >= nguong:
+            if g >= (nguong if nguong is not None
+                     else _so("giong_toi_thieu", _GIONG_TOI_THIEU)):
                 ra.append({**m, "giong": round(g, 3)})
     ra.sort(key=lambda x: x["giong"], reverse=True)
     return ra
+
+
+def _du_mau() -> int:
+    return max(1, int(_so("du_mau", _DU_MAU)))
 
 
 def diem(bo_do: str) -> float:
@@ -241,9 +275,9 @@ def bo_do_dang_ngo(bo_do: str) -> bool:
         m = (_doc().get("bo_do") or {}).get(bo_do) or {}
     dung = int(m.get("dung") or 0)
     sai = int(m.get("sai") or 0)
-    if dung + sai < _DU_MAU:
+    if dung + sai < _du_mau():
         return False
-    return diem(bo_do) < _DIEM_TOI
+    return diem(bo_do) < _so("diem_toi", _DIEM_TOI)
 
 
 def da_tin_duoc(bo_do: str) -> bool:
@@ -254,12 +288,12 @@ def da_tin_duoc(bo_do: str) -> bool:
         m = (_doc().get("bo_do") or {}).get(bo_do) or {}
     dung = int(m.get("dung") or 0)
     sai = int(m.get("sai") or 0)
-    return dung + sai >= _DU_MAU and diem(bo_do) >= 0.8
+    return dung + sai >= _du_mau() and diem(bo_do) >= _so("diem_tin", 0.8)
 
 
 def nen_hoi_lai(bo_do: str) -> bool:
     """Có nên gắn nút «đúng ý anh chưa?» cho lượt này không."""
-    return bool(bo_do) and not da_tin_duoc(bo_do)
+    return bool(bo_do) and is_enabled() and not da_tin_duoc(bo_do)
 
 
 def thong_ke() -> dict[str, Any]:
