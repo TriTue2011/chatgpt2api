@@ -104,7 +104,11 @@ def _id_muc(muc: dict) -> str:
     co = str(muc.get("id") or "").strip()
     if co:
         return co
-    return sha1(str(muc.get("ref") or "").encode("utf-8")).hexdigest()[:12]
+    # usedforsecurity=False: băm ở đây chỉ để sinh mã định danh ổn định cho
+    # bản ghi cũ chưa có ``id``, không dùng cho mục đích an ninh nào. Thiếu cờ
+    # này thì bandit -lll báo HIGH và chặn cả cổng an ninh trên CI.
+    return sha1(str(muc.get("ref") or "").encode("utf-8"),
+                usedforsecurity=False).hexdigest()[:12]
 
 
 def _ban_sao(muc: dict) -> dict:
