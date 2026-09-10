@@ -55,9 +55,23 @@ class HoiGiamSatTest(unittest.TestCase):
         self.assertIn("chưa hiểu", r.lower())
         self.assertEqual(self.m.doc_tra_loi(), {}, "không được ghi bừa")
 
-    def test_chua_hoi_ma_tra_loi(self) -> None:
-        r = self.m.tra_loi("cl 1")
-        self.assertIn("không có câu hỏi", r.lower())
+    def test_CHUA_HOI_ma_tra_loi_thi_IM(self) -> None:
+        """Chưa xin ý thì module này không nhận — trả None, KHÔNG đáp lại.
+
+        Chủ máy chốt 10/09/2026: *"chỉ nhận yêu cầu và phản hồi của tôi nếu
+        trước đó Claude gửi xin, không phải tôi nhắn tin nào cũng nhận"*. Bản
+        cũ đáp "hiện không có câu hỏi nào" — tức bot tự lên tiếng ở kênh chủ
+        máy cố ý để im.
+        """
+        self.assertIsNone(self.m.tra_loi("cl 1"))
+        self.assertIsNone(self.m.tra_loi("claude 2"))
+
+    def test_da_tra_loi_roi_thi_thoi_khong_nhan_nua(self) -> None:
+        """Trả lời xong là hộp thư hết việc; gõ `cl` lần nữa phải im."""
+        self.m.dat_cau_hoi("Sửa file cấm?", ["Cho sửa", "Đừng sửa"])
+        self.assertIn("ghi nhận", str(self.m.tra_loi("cl 1")).lower())
+        self.m.xoa()
+        self.assertIsNone(self.m.tra_loi("cl 1"))
 
     # ── quá hạn ────────────────────────────────────────────────────────────
     def test_QUA_HAN_thi_bo(self) -> None:

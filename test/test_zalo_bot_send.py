@@ -211,5 +211,55 @@ class TestGuiRa(unittest.TestCase):
         self.assertEqual(self.zb.goi, [], "không được gửi gì khi ảnh hỏng")
 
 
+class TestTokenTheoBot(unittest.TestCase):
+    """`send_message(bot=...)` phải đi đúng TOKEN của bot đó.
+
+    Đo thật 10/09/2026: bản cũ chỉ dùng `bot` để DỰNG PAYLOAD, còn `_api_call`
+    lấy token từ thread-local `_current.bot` nên tin bắn ra bot[0]. Zalo trả
+    `410 "The chat_id is invaild"` — chat của Ben Bắp không tồn tại với Bot Mít
+    Bắp. Cùng chat_id đó gọi thẳng API bằng token Ben Bắp thì `ok:true`, nên
+    lỗi nằm ở dự án chứ không phải ở Zalo.
+
+    Lớp riêng, KHÔNG dùng `_app()`: hàm đó cắm module GIẢ vào `sys.modules`,
+    mà ở đây phải kiểm chính module thật.
+    """
+
+    def test_gui_bang_token_bot_duoc_neu(self):
+        import services.zalo_bot as zb
+
+        goi: list[tuple[str, str]] = []
+        cu_api, cu_bots = zb._api_call, zb._bots
+        try:
+            zb._bots = lambda: [{"token": "botA:x"}, {"token": "botB:y"}]
+            zb._api_call = lambda m, d=None, **k: (
+                goi.append((zb._bot_token(), str((d or {}).get("chat_id"))))
+                or {"ok": True})
+            zb.send_message("chat-cua-B", "xin chào", rich=False,
+                            bot={"token": "botB:y"})
+        finally:
+            zb._api_call, zb._bots = cu_api, cu_bots
+
+        self.assertTrue(goi, "phải có lời gọi API")
+        self.assertEqual(goi[-1][0], "botB:y",
+                         "phải gửi bằng token bot được nêu, không phải bot[0]")
+        self.assertEqual(goi[-1][1], "chat-cua-B")
+
+    def test_khong_neu_bot_thi_dung_bot_dau(self):
+        """Không nêu `bot` thì giữ nguyên hành vi cũ — bot đang hoạt động."""
+        import services.zalo_bot as zb
+
+        goi: list[str] = []
+        cu_api, cu_bots = zb._api_call, zb._bots
+        try:
+            zb._bots = lambda: [{"token": "botA:x"}, {"token": "botB:y"}]
+            zb._api_call = lambda m, d=None, **k: (
+                goi.append(zb._bot_token()) or {"ok": True})
+            zb.send_message("chat", "xin chào", rich=False)
+        finally:
+            zb._api_call, zb._bots = cu_api, cu_bots
+
+        self.assertEqual(goi[-1], "botA:x")
+
+
 if __name__ == "__main__":
     unittest.main()

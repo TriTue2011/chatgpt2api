@@ -116,7 +116,16 @@ def tra_loi(text: str) -> Optional[str]:
     d = _doc()
     ds = [str(x) for x in (d.get("lua_chon") or [])]
     if not ds:
-        return "Hiện không có câu hỏi nào của Claude đang chờ."
+        # CHỈ nhận khi Claude đã xin ý. Chủ máy chốt 10/09/2026: *"chỉ nhận yêu
+        # cầu và phản hồi của tôi nếu trước đó Claude gửi xin, không phải tôi
+        # nhắn tin nào cũng nhận"*.
+        #
+        # Trả None chứ không đáp "hiện không có câu hỏi nào": `None` là hợp
+        # đồng "không phải việc của module này", nên tin đi tiếp như câu chat
+        # thường và các cổng lọc phía sau quyết định. Đáp một câu ở đây là bot
+        # tự ý lên tiếng ở kênh chủ máy cố ý để im — đúng thứ chủ máy vừa bảo
+        # đừng làm.
+        return None
     if time.time() - float(d.get("ts") or 0) > _HAN:
         return ("Câu hỏi đã quá hạn (hơn 6 giờ) nên em bỏ rồi — "
                 "Claude sẽ hỏi lại nếu còn cần.")

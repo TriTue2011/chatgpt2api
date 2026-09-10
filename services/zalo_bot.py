@@ -989,6 +989,18 @@ def send_message(chat_id: str, text: str, *, rich: bool = True,
     """
     from services.zalo_bot_format import build_send_message_payload
     active = bot if isinstance(bot, dict) else _active_bot()
+    # `bot` PHẢI đi cả vào lời gọi mạng, không chỉ vào việc dựng payload.
+    # `_api_call` lấy token từ thread-local `_current.bot`, nên nêu `bot=` mà
+    # không bọc `_with_bot` thì tin bắn ra token bot[0]. Đo thật 10/09/2026:
+    # gửi cho chat của Ben Bắp trả `410 "The chat_id is invaild"` (chat đó
+    # không tồn tại với bot Mít Bắp), trong khi cùng chat_id gọi thẳng API Zalo
+    # bằng token Ben Bắp thì `ok:true`. Đúng lời cảnh báo trong docstring
+    # `_with_bot`: sai bot mà vẫn trả ok, không cách nào phát hiện.
+    if isinstance(bot, dict) and bot is not _cur_bot():
+        # `lambda` chứ không truyền thẳng: tham số `bot` của `send_message`
+        # trùng tên tham số đầu của `_with_bot`, đưa thẳng là va tên.
+        return _with_bot(bot, lambda: send_message(
+            chat_id, text, rich=rich, all_chunks=all_chunks))
     payloads = build_send_message_payload(
         str(chat_id), text or "...", bot=active, rich=rich, max_len=_MAX_LEN,
         max_chunks=None if all_chunks else 6,
@@ -1075,6 +1087,10 @@ def send_photo(chat_id: str, photo_url: str, caption: str = "") -> dict:
 
     Docs: POST /bot{token}/sendPhoto  {chat_id, photo, caption?}
     Platform tải URL → hiển thị ảnh trong chat (không phải tin text link).
+
+    KHÔNG có tham số `bot` (khác `send_message`): nhà nhiều bot thì gọi trong
+    `_with_bot(bot, send_photo, ...)`, kẻo ảnh bắn ra token bot[0] và trả về
+    `410 "The chat_id is invaild"` — chat của bot này không tồn tại với bot kia.
     """
     url = _ensure_public_photo_url(photo_url)
     if not url:

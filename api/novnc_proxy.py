@@ -41,7 +41,7 @@ import asyncio
 import os
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Header, HTTPException, Request, WebSocket
 from fastapi.responses import Response
 
 from api.support import require_admin
@@ -123,11 +123,38 @@ def create_router() -> APIRouter:
                 ping_interval=None,     # để noVNC tự lo nhịp giữ kết nối
             ) as up:
                 async def _len():
-                    """Trình duyệt → websockify."""
+                    """Trình duyệt → websockify.
+
+                    Dùng `receive()` thô chứ KHÔNG `receive_bytes()`: RFB là
+                    giao thức SERVER NÓI TRƯỚC, nên ngay sau bắt tay trình
+                    duyệt chưa gửi byte nào, còn Starlette vẫn có thể giao
+                    khung `text` hoặc sự kiện `websocket.disconnect`.
+                    `receive_bytes()` gặp hai thứ đó thì ném `KeyError` —
+                    KHÔNG nằm trong `(WebSocketDisconnect, RuntimeError)` mà
+                    bản cũ bắt, nên ngoại lệ thoát ra, `asyncio.wait` thấy
+                    FIRST_COMPLETED và đóng cả phiên.
+
+                    Đo thật 10/09/2026: log đi đúng thứ tự `connection open →
+                    connection closed` RỒI websockify mới ghi nhận kết nối —
+                    tức proxy đã đóng phía trình duyệt trước khi kịp bơm
+                    `RFB 003.008` xuống. Người dùng thấy "Connecting..." rồi
+                    noVNC thử lại mãi (17 lần trong 20 phút).
+                    """
                     try:
                         while True:
-                            await up.send(await ws.receive_bytes())
-                    except (WebSocketDisconnect, RuntimeError):
+                            tin = await ws.receive()
+                            if tin.get("type") == "websocket.disconnect":
+                                return
+                            goi = tin.get("bytes")
+                            if goi is None:
+                                chu = tin.get("text")
+                                if chu is None:
+                                    continue
+                                goi = chu.encode()
+                            await up.send(goi)
+                    except Exception:
+                        # Bắt RỘNG có chủ đích: chiều này đứt kiểu gì cũng chỉ
+                        # có một cách xử lý — kết thúc để chiều kia được dọn.
                         pass
 
                 async def _xuong():
