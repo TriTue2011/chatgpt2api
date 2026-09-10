@@ -91,7 +91,11 @@ class LoiDanToiDuocLuotDienDatDuongTat(unittest.TestCase):
             thay["kw"] = kw
             return {"choices": [{"message": {"content": "câu đã diễn đạt lại"}}]}
 
-        with patch.object(api, "ha_local_fastpath_answer", return_value=(self.FP, False)), \
+        # Orchestrator gọi bản CHI TIẾT (trả thêm tên bộ dò) — xem
+        # `ha_local_fastpath_chi_tiet`. Vá bản gọn thì nhánh diễn đạt không
+        # chạy tới và `kw` rỗng.
+        with patch.object(api, "ha_local_fastpath_chi_tiet",
+                          return_value=(self.FP, False, "_ha_local_weather")), \
              patch.object(orch, "call_model", side_effect=_bat), \
              patch.object(orch, "_persist_history", lambda *a, **k: None), \
              patch.object(state, "load_memory", return_value=mem):

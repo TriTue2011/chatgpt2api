@@ -3,6 +3,37 @@
 - Khi không chắc chắn về yêu cầu, hỏi lại thay vì đoán.
 - Thay đổi lớn luôn lên kế hoạch và xem xét các vấn đề trước khi code.
 
+## Sửa LỚP LỖI, không vá triệu chứng
+
+Chủ máy chốt 10/09/2026: *"như bây giờ khác gì tôi soát lỗi, cần bạn để làm
+gì"*. Áp cho mọi phiên làm việc trên repo này, kể cả Claude giám sát trên máy
+chủ.
+
+**Trước khi sửa, trả lời ba câu — viết vào commit:**
+
+1. Lỗi này thuộc **lớp** nào? (khớp chuỗi bắt nhầm / đọc sai kho dữ liệu /
+   không kiểm chứng kết quả / …)
+2. Còn chỗ nào cùng lớp? **Đo bằng `grep`, đừng đoán.**
+3. Sửa theo **nguyên tắc** hay theo **danh sách**?
+
+**Thêm một danh sách từ khoá là thất bại, không phải giải pháp.** Danh sách
+luôn thiếu; mỗi lần thiếu là một lần chủ máy phải làm người soát lỗi. Riêng
+`services/` đã có 52 file làm vậy. Chỉ chấp nhận khi đã nêu rõ vì sao không
+nguyên tắc nào thay được.
+
+**Tự sinh trường hợp TRƯỚC khi viết code.** Liệt kê các tình huống có thể xảy
+ra từ **dữ liệu thật** (`runs.sqlite`, log máy chủ), không từ trí tưởng tượng.
+
+**Đo trên dữ liệu thật trước khi tin bản sửa.** Một bộ dò lỗi từng đạt 13/13
+test nhưng bắt 0 ca thật — test chỉ chứng minh code chạy đúng như mình nghĩ,
+không chứng minh mình nghĩ đúng.
+
+**Ba lỗi cùng một lớp đã xảy ra trong một buổi sáng** (10/09/2026), cả ba đều
+là *khớp chuỗi rồi không ai kiểm chứng kết quả*: bộ lọc cảm biến khớp `power`,
+sổ tên khớp `face 17`, đường tắt khớp `mấy giờ`. Cách chữa đúng là
+`services/bai_hoc.py` — bot sai một lần thì tự tránh, không cần ai liệt kê
+trước.
+
 # Bắt buộc tích hợp & sử dụng (khi phù hợp với dự án)
 
 ## 1. Documentation & context (MỌI project)

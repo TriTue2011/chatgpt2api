@@ -2800,12 +2800,29 @@ def _exec_local_tool_calls(local_tcs: list[dict[str, Any]]) -> None:
 
 
 def ha_local_fastpath_answer(user_text: str) -> tuple[str | None, bool]:
+    """Bản gọn của `ha_local_fastpath_chi_tiet` — bỏ tên bộ dò.
+
+    Giữ nguyên chữ ký cũ cho caller chỉ cần biết CÓ khớp hay không
+    (`reminders.py:951`). Ai cần biết bộ dò nào thắng thì gọi bản chi tiết.
+    """
+    a, b, _ = ha_local_fastpath_chi_tiet(user_text)
+    return a, b
+
+
+def ha_local_fastpath_chi_tiet(user_text: str) -> tuple[str | None, bool, str]:
     """Fast-path HA cho kênh chat bot (Telegram/Zalo — orchestrator gọi TRƯỚC
     khi đụng model): chạy trên MỘT câu người dùng, KHÔNG cần provider AI nào.
     Lệnh điều khiển rõ ràng được THỰC THI ngay (call_service thẳng tới HA);
     câu hỏi giá trị cảm biến / trạng thái on-off / âm lịch / thời tiết trả lời
-    từ dữ liệu thật. Trả (văn mẫu, đã_điều_khiển); (None, False) khi không
-    fast-path nào khớp → caller đi đường model như cũ."""
+    từ dữ liệu thật. Trả (văn mẫu, đã_điều_khiển, TÊN BỘ DÒ đã khớp);
+    (None, False, "") khi không fast-path nào khớp → caller đi đường model.
+
+    VÌ SAO PHẢI TRẢ TÊN BỘ DÒ: chín bộ dò dưới đây xếp hàng, cái nào khớp
+    trước thì thắng, và trước đây KHÔNG ghi lại cái nào. Nên khi bot trả lời
+    sai thì không có cách nào biết bộ dò nào gây ra — ca 11h53 ngày 10/09/2026
+    ("fingerprint#2 lần cuối lúc mấy giờ" bị `_la_cau_hoi_gio` cướp, trả về
+    giờ hiện tại) phải truy bằng tay. Có tên rồi thì `services/bai_hoc.py`
+    chấm điểm được, và bộ dò hay sai tự nhường cho model."""
     # Câu có ĐƯỜNG LINK thì KHÔNG phải lệnh nhà — chặn ngay ở cửa, trước mọi
     # bộ dò.
     #
@@ -2820,7 +2837,7 @@ def ha_local_fastpath_answer(user_text: str) -> tuple[str | None, bool]:
     # đã bỏ dấu nên đều dính cùng kiểu, và không lệnh nhà thật nào cần URL.
     _u = str(user_text or "")
     if "http://" in _u or "https://" in _u or "www." in _u:
-        return None, False
+        return None, False, ""
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": _u}]
     try:
@@ -2829,7 +2846,7 @@ def ha_local_fastpath_answer(user_text: str) -> tuple[str | None, bool]:
         level = None
         logger.warning({"event": "ha_local_level_error", "error": str(exc)[:150]})
     if level:
-        return level, True
+        return level, True, "_ha_local_level"
     try:
         tcs = _ha_local_intent(messages)
     except Exception as exc:
@@ -2842,7 +2859,8 @@ def ha_local_fastpath_answer(user_text: str) -> tuple[str | None, bool]:
             # Lệnh không chạy được (HA down…) → nhả cho đường model xử lý tiếp.
             logger.warning({"event": "ha_canonical_exec_failed", "error": str(exc)})
         else:
-            return "Đã thực hiện xong lệnh điều khiển thiết bị.", True
+            return ("Đã thực hiện xong lệnh điều khiển thiết bị.", True,
+                    "_ha_local_intent")
     # _ha_local_entity_state đứng ĐẦU: câu nhắc entity_id tường minh là truy
     # vấn tất định — trả từ dữ liệu HA thật, không để model phán quyền rồi
     # [BLOCKED] oan (đo 2026-07-28).
@@ -2855,7 +2873,7 @@ def ha_local_fastpath_answer(user_text: str) -> tuple[str | None, bool]:
             logger.warning({"event": "ha_bot_fastpath_error",
                             "fn": fn.__name__, "error": str(exc)[:150]})
         if r and isinstance(r, str) and r.strip():
-            return r.strip(), False
+            return r.strip(), False, fn.__name__
     # Bot chat (Tele/Zalo): giữ °C/% — HA Assist giọng nói dùng RT1 + :tts riêng.
     try:
         r = _ha_local_weather(messages, keep_units=True)
@@ -2864,8 +2882,8 @@ def ha_local_fastpath_answer(user_text: str) -> tuple[str | None, bool]:
         logger.warning({"event": "ha_bot_fastpath_error",
                         "fn": "_ha_local_weather", "error": str(exc)[:150]})
     if r and isinstance(r, str) and r.strip():
-        return r.strip(), False
-    return None, False
+        return r.strip(), False, "_ha_local_weather"
+    return None, False, ""
 
 
 def _collect_fastpath_facts(messages: list[dict[str, Any]]) -> str:

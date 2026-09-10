@@ -356,7 +356,10 @@ def danh_sach(nguon: str = "") -> list[dict[str, Any]]:
         ra.append({"khoa": k, "nguon": n, "loai": l, "ma": ma,
                    "ten": m.get("ten") or "", "da_biet": bool(m.get("da_biet")),
                    "so_lan_hoi": int(m.get("so_lan_hoi") or 0),
-                   "thoi_hoi": bool(m.get("thoi_hoi"))})
+                   "thoi_hoi": bool(m.get("thoi_hoi")),
+                   # Lộ ra để `soi_loi_ngam` đối chiếu được: bot nói "em nhớ
+                   # rồi" lúc nào thì sổ phải có mục đặt đúng lúc đó.
+                   "dat_luc": float(m.get("dat_luc") or 0)})
     ra.sort(key=lambda x: (not x["da_biet"], x["nguon"], x["ma"]))
     return ra
 

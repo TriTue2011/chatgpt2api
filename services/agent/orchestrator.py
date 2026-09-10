@@ -2350,6 +2350,65 @@ def orchestrate(user_text: str, user_id: str,
         pool.shutdown(wait=False)
 
 
+#: Câu chủ máy gửi lại khi bấm nút chấm điểm ở lượt đường tắt. Sinh ra bởi
+#: chính bot (xem chỗ gắn `<<<ASK>>>` sau fast-path), nên đây KHÔNG phải danh
+#: sách đoán ý người dùng — hai chuỗi này cố định, bot viết ra thì bot nhận lại.
+_TRA_LOI_DUNG = "dạ đúng rồi"
+_TRA_LOI_SAI = "bot trả lời chưa đúng: "
+
+
+def _cham_diem_tra_loi(user_text: str, user_id: str) -> str:
+    """Chủ máy vừa bấm «Đúng rồi» / «Chưa đúng». Trả câu xác nhận, hoặc rỗng.
+
+    Rỗng nghĩa là lượt này không phải chấm điểm → xử lý bình thường.
+    """
+    t = (user_text or "").strip()
+    if not t:
+        return ""
+    try:
+        from services import bai_hoc
+        from services.agent import session as _sess
+    except Exception:
+        return ""
+
+    def _cau_hoi_truoc() -> tuple[str, str]:
+        """(câu hỏi gốc, bộ dò) của lượt đường tắt vừa rồi."""
+        try:
+            for m in reversed(_sess.load_history(user_id) or []):
+                if m.get("role") == "user":
+                    return str(m.get("content") or ""), ""
+        except Exception:
+            pass
+        return "", ""
+
+    if t.lower() == _TRA_LOI_DUNG:
+        ch, bd = _cau_hoi_truoc()
+        try:
+            bai_hoc.ghi_dung(ch, bd or _bo_do_gan_nhat(user_id))
+        except Exception:
+            pass
+        return "Dạ vâng ạ 🙂"
+
+    if t.lower().startswith(_TRA_LOI_SAI):
+        ch = t[len(_TRA_LOI_SAI):].strip()
+        try:
+            bai_hoc.ghi_sai(ch, "", _bo_do_gan_nhat(user_id), user_id=user_id)
+        except Exception:
+            pass
+        return ("Dạ em xin lỗi ạ. Em ghi lại rồi — lần sau gặp câu tương tự "
+                "em sẽ nghĩ kỹ thay vì trả lời nhanh.")
+    return ""
+
+
+#: Bộ dò của lượt đường tắt gần nhất, theo người dùng. Trong RAM: mất khi khởi
+#: động lại thì chỉ lỡ một lượt chấm điểm, không hỏng dữ liệu nào.
+_bo_do_cuoi: dict[str, str] = {}
+
+
+def _bo_do_gan_nhat(user_id: str) -> str:
+    return _bo_do_cuoi.get(str(user_id or ""), "")
+
+
 def _orchestrate_locked(user_text: str, user_id: str,
                         allow: set[str] | None = None,
                         ha_fastpath: bool = True,
@@ -2506,6 +2565,14 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 _ml.clear_pending(user_id)
             except Exception:
                 pass
+
+    # 0-) Chủ máy chấm điểm câu trả lời vừa rồi. Đặt TRƯỚC ask_choices vì hai
+    # câu này do chính bot sinh ra ở lượt đường tắt, không phải câu người dùng
+    # muốn bot xử lý — để lọt xuống dưới là bot đi tra cứu "dạ đúng rồi".
+    _cham = _cham_diem_tra_loi(user_text, user_id)
+    if _cham:
+        _journal(_cham, status="cham_diem")
+        return {"text": _cham}
 
     # 0) Resolve a pending ask-choice (user tapped button or replied 1/2/…)
     if not _co_trich_dan:
@@ -3057,12 +3124,26 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # nào. Phần trả lời: thử nhờ model diễn đạt tự nhiên; không có provider /
     # lỗi → dùng luôn văn mẫu của fast-path.
     if ha_fastpath and (allow is None or "homeassistant" in allow):
-        fp_text, fp_control = None, False
+        fp_text, fp_control, fp_bo_do = None, False, ""
         try:
-            from services.protocol.openai_v1_chat_complete import ha_local_fastpath_answer
-            fp_text, fp_control = ha_local_fastpath_answer(user_text)
+            from services.protocol.openai_v1_chat_complete import (
+                ha_local_fastpath_chi_tiet)
+            fp_text, fp_control, fp_bo_do = ha_local_fastpath_chi_tiet(user_text)
         except Exception as exc:
             logger.warning("agent: ha fastpath error: %s", exc)
+
+        # Câu này từng bị chủ máy đánh dấu SAI, hoặc bộ dò vừa khớp hay sai quá
+        # → nhường cho model. Đây là chỗ thay cho việc thêm danh sách từ khoá
+        # chặn: bot sai một lần thì tự tránh, không cần ai liệt kê trước.
+        if fp_text:
+            try:
+                from services import bai_hoc
+                if bai_hoc.tra(user_text) or bai_hoc.bo_do_dang_ngo(fp_bo_do):
+                    logger.info({"event": "fastpath_nhuong_model",
+                                 "bo_do": fp_bo_do})
+                    fp_text, fp_control, fp_bo_do = None, False, ""
+            except Exception as exc:
+                logger.warning("agent: bai_hoc error: %s", exc)
         # Optional: gate HA control through approval (default off — instant lights).
         if (
             fp_text and fp_control
@@ -3142,6 +3223,27 @@ def _orchestrate_locked(user_text: str, user_id: str,
             # KHÔNG `ap_loi_dan` ở đây: lượt diễn đạt ngay trên đã mang lời dặn
             # theo rồi. Bày lại lần hai là gọi model thêm một lượt cho cùng một
             # câu, và mỗi lần viết lại là một lần nữa có thể rơi mất chi tiết.
+
+            # Hỏi lại khi bot KHÔNG CHẮC. Đường tắt là chỗ khớp chuỗi, không
+            # qua model — đo 30 ngày: 59 lượt (~2/ngày), và là nơi cả hai lỗi
+            # ngày 10/09/2026 xảy ra. Bộ dò đã chứng minh đúng đủ nhiều lần thì
+            # thôi hỏi, nên số lần làm phiền giảm dần theo thời gian.
+            #
+            # KHÔNG hỏi ở lượt ĐIỀU KHIỂN: đèn đã bật rồi, hỏi "đúng ý anh
+            # chưa" chẳng để làm gì — chủ máy nhìn cái đèn là biết.
+            if not fp_control and fp_bo_do:
+                try:
+                    from services import bai_hoc
+                    _bo_do_cuoi[str(user_id or "")] = fp_bo_do
+                    if bai_hoc.nen_hoi_lai(fp_bo_do):
+                        reply += (
+                            "\n\n<<<ASK>>>\n"
+                            f"Đúng rồi | dạ đúng rồi\n"
+                            f"Chưa đúng | bot trả lời chưa đúng: {user_text}\n"
+                            "<<<END>>>")
+                except Exception as exc:
+                    logger.warning("agent: bai_hoc hoi lai: %s", exc)
+
             out = _finalize(user_id, {"text": reply})
             hist.append({"role": "assistant", "content": out.get("text") or reply})
             _persist_history(user_id, hist)
