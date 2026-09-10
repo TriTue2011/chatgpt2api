@@ -307,8 +307,20 @@ def _nap_tin(chu_de: str, payload: bytes, dang_ky) -> None:
     # ghi đó, TUYỆT ĐỐI không được làm chết gương MQTT.
     try:
         from services import lich_su_nha
+        # Sự kiện Frigate: ghi_frigate() đã viết và đã test từ lâu nhưng CHƯA
+        # AI GỌI — đây là chỗ nối. Nó chỉ giữ lúc bắt đầu/kết thúc, bỏ 'update'
+        # (Frigate phát 208 tin/40 giây, phần lớn là update của cùng sự kiện).
+        if chu_de == "frigate/events":
+            try:
+                lich_su_nha.ghi_frigate(json.loads(
+                    payload.decode("utf-8", "replace")))
+            except (ValueError, TypeError):
+                pass
+
         phan = chu_de.split("/")
-        if len(phan) >= 2 and goc != "homeassistant":
+        # KHÔNG `return` sau nhánh Frigate: `return` ở đây thoát khỏi cả hàm
+        # nên bỏ luôn phần dựng sổ thiết bị phía dưới.
+        if chu_de != "frigate/events" and len(phan) >= 2 and goc != "homeassistant":
             thiet_bi = "/".join(phan[:-1])
             truong = phan[-1]
             gt = payload.decode("utf-8", "replace").strip()

@@ -183,6 +183,54 @@ def _patch_state(new_state: dict[str, Any] | None, entity_id: str,
             cache.append(new_state)
         hc._state_cache_ts = time.time()
 
+    # Ghi vào lịch sử để bot học nếp nhà. TRƯỚC ĐÂY KHÔNG CÓ MÓC NÀY: bảng
+    # su_kien chỉ có dữ liệu MQTT (2.073 bản ghi) cộng một lần nạp tay từ HA,
+    # nên `khoa_cua_nha.gio_di_ngu()` tìm thiết bị tên kiểu HA (`light.`,
+    # `switch.`) mà bảng chỉ có tên kiểu MQTT — hai đầu không khớp, tính năng
+    # "tóm tắt theo giờ ngủ" âm thầm rơi về mặc định 22h.
+    #
+    # Bọc kín như mqtt_nha.py:309 — ghi hỏng thì mất bản ghi đó, TUYỆT ĐỐI
+    # không được làm chết gương HA.
+    try:
+        _ghi_lich_su(new_state, entity_id)
+    except Exception:
+        pass
+
+
+#: Loại thực thể ĐÁNG ghi — nói lên nếp sinh hoạt. Chủ máy chốt 10/09/2026:
+#: ghi có chọn lọc, không ghi tất. Nhà có 1.068 thực thể, ghi hết thì riêng
+#: 464 cảm biến đo liên tục đã đủ làm phình đĩa.
+_GHI_HA = ("light.", "switch.", "binary_sensor.", "lock.", "climate.",
+           "fan.", "cover.", "media_player.", "vacuum.", "water_heater.")
+
+#: Cảm biến CÓ ghi dù nằm trong `sensor.` — thứ nói lên nếp sinh hoạt.
+_GHI_SENSOR = ("illuminance", "occupancy", "presence", "person", "motion",
+               "temperature", "humidity", "power")
+
+
+def _dang_ghi(entity_id: str) -> bool:
+    e = entity_id.lower()
+    if e.startswith(("update.", "automation.", "script.", "button.",
+                     "input_", "zone.", "person.", "device_tracker.",
+                     "sun.", "tts.", "scene.", "number.", "select.")):
+        return False
+    if e.startswith(_GHI_HA):
+        return True
+    if e.startswith("sensor."):
+        return any(k in e for k in _GHI_SENSOR)
+    return False
+
+
+def _ghi_lich_su(new_state: dict[str, Any] | None, entity_id: str) -> None:
+    """Đẩy một thay đổi trạng thái HA vào `lich_su_nha`."""
+    if new_state is None or not _dang_ghi(entity_id):
+        return
+    gt = new_state.get("state")
+    if gt is None or str(gt).lower() in ("unavailable", "unknown", ""):
+        return
+    from services import lich_su_nha
+    lich_su_nha.ghi("ha", entity_id, "state", gt)
+
 
 def _resync(index: dict[str, int]) -> None:
     """Nạp lại TOÀN BỘ states qua REST (nguồn sự thật khi vừa (re)connect)."""

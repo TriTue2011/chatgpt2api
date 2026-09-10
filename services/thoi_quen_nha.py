@@ -265,12 +265,16 @@ def _ten_nguoi(ma: str) -> str:
     chưa đặt tên trong app Smart Life. Đặt tên ở đó thì khỏi phải dạy bot, và
     mọi nơi khác (app, HA) cũng hiện đúng tên.
     """
+    # Uỷ cho SỔ DÙNG CHUNG. Bản cũ tự tra trí nhớ theo cách riêng nên KHÔNG
+    # thấy tên chủ máy đã dạy qua khoá cửa — dạy "vân tay 11 là con trai" xong
+    # mà báo cáo thói quen vẫn gọi "vân tay số 11". Đó là lỗi thật.
     try:
-        from services.agent import state
-        kq = state.search_memory(f"khoá cửa {ma}") or []
-        for dong in kq[:3]:
-            if ma in str(dong):
-                return f"{ma} ({str(dong).split(']')[-1].strip()[:60]})"
+        from services import so_ten_nha
+        loai, _, so = str(ma).partition("#")
+        for nguon in ("tuya", "frigate", "mqtt", "ha"):
+            t = so_ten_nha.ten_cua(nguon, loai or "unlock", so or ma)
+            if t:
+                return t
     except Exception:
         pass
     return ma

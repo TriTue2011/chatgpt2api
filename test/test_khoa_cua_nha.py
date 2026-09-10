@@ -15,13 +15,20 @@ TZ = timezone(timedelta(hours=7))
 class KhoaCuaTest(unittest.TestCase):
     def setUp(self) -> None:
         import services.khoa_cua_nha as m
+        import services.so_ten_nha as sn
         self.m = m
+        self.sn = sn
         self._tmp = tempfile.mkdtemp()
         m._FILE = Path(self._tmp) / "kc.json"
+        # Tên người giờ nằm ở SỔ DÙNG CHUNG, không phải sổ riêng của khoá cửa
+        # — đó là điều kiện để thoi_quen_nha đọc được tên chủ máy đã dạy.
+        sn._FILE = Path(self._tmp) / "so_ten.json"
+        sn.config.data.setdefault("mqtt", {})["so_ten"] = {}
         m.config.data.setdefault("mqtt", {})["khoa_cua"] = {"bat": True}
 
     def tearDown(self) -> None:
         self.m._reset_for_tests()
+        self.sn._reset_for_tests()
 
     # ── ba nguồn tên ───────────────────────────────────────────────────────
     def test_uu_tien_ten_tu_TUYA(self) -> None:
@@ -52,8 +59,9 @@ class KhoaCuaTest(unittest.TestCase):
     def test_doc_duoc_ten_tu_TRI_NHO(self) -> None:
         """Chủ máy từng nói trong chat thì bot nhớ, khỏi hỏi lại."""
         from services.agent import state
-        with mock.patch.object(state, "search_memory",
-                               return_value=["- [2026-09-09 22:52] (x) vân tay số 11 là bố"]):
+        with mock.patch.object(
+                state, "search_memory",
+                return_value=["- [2026-09-09 22:52] (x) fingerprint 11 là bố"]):
             self.assertIn("bố", self.m.ten_cua("fingerprint#11"))
 
     def test_ten_rong_khong_luu(self) -> None:
@@ -77,11 +85,14 @@ class KhoaCuaTest(unittest.TestCase):
         self.assertFalse(self.m._nen_hoi("face#9"))
 
     def test_dat_ten_roi_thi_THOI_HOI(self) -> None:
+        """Biết tên rồi thì KHÔNG hỏi nữa — dù trước đó đã hỏi hay chưa."""
         self.m._danh_dau_da_hoi("face#9")
         from services.agent import state
         with mock.patch.object(state, "nho_hoac_cap_nhat"):
             self.m.dat_ten("face#9", "khách")
-        self.assertTrue(self.m._nen_hoi("face#9"), "đặt tên xong thì bộ đếm phải reset")
+        self.assertFalse(self.m._nen_hoi("face#9"),
+                         "đã biết tên thì thôi hỏi")
+        self.assertTrue(self.sn.da_biet(self.m._khoa_so("face#9")))
 
     def test_tin_hoi_ten_co_nut_bam(self) -> None:
         t = self.m.soan_hoi_ten({"ma": "fingerprint#11", "ts": time.time(), "ten": ""})

@@ -98,65 +98,44 @@ def _mo_ta_ma(ma: str) -> str:
     return f"{_CACH_MO.get(cach, cach)} số {so}"
 
 
-# ── Ba nguồn tên ────────────────────────────────────────────────────────────
+# ── Tên người: uỷ cho SỔ DÙNG CHUNG ─────────────────────────────────────────
+# Trước đây module này giữ sổ tên RIÊNG, và đó là lỗi thật: `thoi_quen_nha`
+# không đọc được sổ đó, nên chủ máy dạy "vân tay 11 là con trai" xong mà báo
+# cáo thói quen vẫn gọi "vân tay số 11". Giờ mọi nguồn dùng chung một sổ.
+_NGUON = "tuya"
+
+
+def _khoa_so(ma: str) -> str:
+    """'fingerprint#11' → khoá sổ chung có nguồn."""
+    from services import so_ten_nha
+    cach, _, so = ma.partition("#")
+    return so_ten_nha.khoa(_NGUON, cach or "unlock", so or ma)
+
+
 def ten_cua(ma: str, ten_tuya: str = "") -> str:
-    """Tên người, tìm theo ba tầng. Rỗng nghĩa là CHƯA BIẾT — bot sẽ hỏi."""
-    if ten_tuya.strip():
-        return ten_tuya.strip()
-
-    with _khoa:
-        so = _doc()
-        t = str((so.get("ten") or {}).get(ma) or "").strip()
-    if t:
-        return t
-
-    # Trí nhớ bot: chủ máy từng nói "vân tay 11 là con trai".
-    try:
-        from services.agent import state
-        for dong in (state.search_memory(_mo_ta_ma(ma)) or [])[:3]:
-            s = str(dong)
-            if ma.split("#")[-1] in s:
-                # Lấy phần sau dấu ']' của mốc thời gian, cắt gọn.
-                return s.split("]")[-1].strip()[:60]
-    except Exception:
-        pass
-    return ""
+    """Tên người. Rỗng nghĩa là CHƯA BIẾT — bot sẽ hỏi."""
+    from services import so_ten_nha
+    cach, _, so = ma.partition("#")
+    return so_ten_nha.ten_cua(_NGUON, cach or "unlock", so or ma, ten_tuya)
 
 
 def dat_ten(ma: str, ten: str) -> bool:
-    """Chủ nhà xác nhận ai là ai. Đây là bước 'tự học' của module này."""
-    ten = (ten or "").strip()
-    if not ma or not ten:
+    """Chủ nhà xác nhận ai là ai — bước TỰ HỌC."""
+    from services import so_ten_nha
+    if not ma:
         return False
-    with _khoa:
-        so = _doc()
-        so.setdefault("ten", {})[ma] = ten
-        # Đặt tên rồi thì thôi hỏi nữa.
-        so.setdefault("da_hoi", {}).pop(ma, None)
-        _ghi(so)
-    # Ghi vào trí nhớ chung để chỗ khác cũng dùng được.
-    try:
-        from services.agent import state
-        state.nho_hoac_cap_nhat(
-            f"Trên khoá cửa, {_mo_ta_ma(ma)} là {ten}", who="khoa_cua")
-    except Exception:
-        pass
-    logger.info({"event": "khoa_cua_dat_ten", "ma": ma, "ten": ten})
-    return True
+    cach, _, so = ma.partition("#")
+    return so_ten_nha.dat_ten(_NGUON, cach or "unlock", so or ma, ten)
 
 
 def _nen_hoi(ma: str) -> bool:
-    with _khoa:
-        so = _doc()
-        return int((so.get("da_hoi") or {}).get(ma) or 0) < _HOI_TOI_DA
+    from services import so_ten_nha
+    return so_ten_nha.nen_hoi(_khoa_so(ma))
 
 
 def _danh_dau_da_hoi(ma: str) -> None:
-    with _khoa:
-        so = _doc()
-        d = so.setdefault("da_hoi", {})
-        d[ma] = int(d.get(ma) or 0) + 1
-        _ghi(so)
+    from services import so_ten_nha
+    so_ten_nha.danh_dau_da_hoi(_khoa_so(ma))
 
 
 # ── Nếp ngủ của nhà ─────────────────────────────────────────────────────────
@@ -311,11 +290,14 @@ def soan_tom_tat(so_ngay: int = 1) -> str:
         return ""
     hom_nay = datetime.now(_TZ).date()
     theo_nguoi: dict[str, list[float]] = {}
+    chua_biet_ten: set[str] = set()
     for m in ds:
         t = datetime.fromtimestamp(m["ts"], _TZ)
         if (t - timedelta(hours=4)).date() != hom_nay:
             continue
         ten = m["ten"] or _mo_ta_ma(m["ma"])
+        if not m["ten"]:
+            chua_biet_ten.add(ten)
         theo_nguoi.setdefault(ten, []).append(m["ts"])
     if not theo_nguoi:
         return ""
@@ -324,7 +306,9 @@ def soan_tom_tat(so_ngay: int = 1) -> str:
         gio = ", ".join(_mo_ta_luc(x) for x in sorted(ts)[:6])
         dong.append(f"  - {ten}: {gio}" + (f" (+{len(ts) - 6} lần nữa)"
                                            if len(ts) > 6 else ""))
-    chua = [t for t in theo_nguoi if "số" in t]
+    # Nhận diện bằng CỜ, không phải bằng chữ "số" trong tên. Bản cũ dùng
+    # `"số" in t` nên tên thật chứa chữ "số" bị đếm nhầm là chưa biết.
+    chua = [t for t in theo_nguoi if t in chua_biet_ten]
     if chua:
         dong.append("")
         dong.append(f"({len(chua)} người em chưa biết tên — nhắn «khoá cửa … là …» "
