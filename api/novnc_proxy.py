@@ -134,9 +134,25 @@ def create_router() -> APIRouter:
     async def novnc_ws(ws: WebSocket):
         """Kênh RFB: nối trình duyệt ⟷ websockify, chuyển byte thô hai chiều.
 
-        `subprotocols=["binary"]` là bắt buộc — noVNC đề nghị đúng giao thức con
-        đó, không đáp lại thì nó đóng kết nối ngay và người dùng thấy màn hình
-        đen không rõ lý do.
+        CHỈ ĐÁP LẠI giao thức con mà khách ĐÃ ĐỀ NGHỊ. RFC 6455 cấm máy chủ
+        trả một subprotocol khách không xin, và Chrome thi hành nghiêm: nó
+        đóng kết nối NGAY, sạch sẽ, không báo lỗi gì.
+
+        Bản cũ `accept(subprotocol="binary")` vô điều kiện. Chú thích cũ bảo
+        "noVNC đề nghị binary" — ĐÚNG với noVNC đời cũ, SAI với bản 1.6.0 đang
+        đóng trong ảnh này: `core/rfb.js:559` truyền `this._wsProtocols` và cả
+        tệp không còn chuỗi "binary" nào.
+
+        Đo 11/09/2026, cùng một proxy, ba kiểu khách:
+
+          khách KHÔNG đề nghị  → máy chủ trả ['binary']   ← VI PHẠM
+          khách đề nghị binary → máy chủ trả ['binary']
+          khách đề nghị chat   → máy chủ trả ['binary']   ← VI PHẠM
+
+        Nên trình duyệt thật chết sau 29ms: `connection open` → tự ngắt →
+        `_len()` thoát ÊM vì gặp `websocket.disconnect`, KHÔNG ngoại lệ nào
+        được ném, `novnc_kenh_dut` đếm 0. Còn socket thô của tôi thì sống 8
+        giây, vì nó không thi hành luật này.
         """
         # Trình duyệt TỰ gửi cookie khi mở WebSocket cùng gốc — nên kênh này
         # kiểm được danh tính, thứ mà header không làm được. Từ chối trước khi
@@ -149,11 +165,23 @@ def create_router() -> APIRouter:
         except ImportError:
             await ws.close(code=1011)
             return
-        await ws.accept(subprotocol="binary")
+        # CHỈ đáp lại thứ khách đã đề nghị. Khách không xin gì thì trả None —
+        # `accept(subprotocol=None)` không phát header Sec-WebSocket-Protocol,
+        # đúng luật và Chrome không đóng nữa.
+        de_nghi = list(ws.scope.get("subprotocols") or [])
+        chon = "binary" if "binary" in de_nghi else None
+        logger.info({
+            "event": "novnc_bat_tay",
+            "khach_de_nghi": de_nghi,
+            "may_chu_tra": chon,
+        })
+        await ws.accept(subprotocol=chon)
         try:
             async with websockets.connect(
                 f"{_NOVNC_WS}/websockify",
-                subprotocols=["binary"],
+                # Giữ ĐÚNG thứ đã thoả thuận với trình duyệt. Ép "binary" khi
+                # phía dưới không dùng nó là tự tạo lệch giữa hai đầu ống.
+                subprotocols=[chon] if chon else None,
                 max_size=None,          # khung ảnh có thể rất lớn
                 ping_interval=None,     # để noVNC tự lo nhịp giữ kết nối
             ) as up:
@@ -209,10 +237,21 @@ def create_router() -> APIRouter:
                         _ghi_dut("xuong", exc)
 
                 # Một chiều đứt là coi như xong; huỷ chiều kia để không treo.
+                t_len = asyncio.create_task(_len(), name="len")
+                t_xuong = asyncio.create_task(_xuong(), name="xuong")
                 _xong, con_lai = await asyncio.wait(
-                    {asyncio.create_task(_len()), asyncio.create_task(_xuong())},
-                    return_when=asyncio.FIRST_COMPLETED,
+                    {t_len, t_xuong}, return_when=asyncio.FIRST_COMPLETED,
                 )
+                # GHI CẢ LỐI THOÁT ÊM. Lần trước tôi chỉ gắn log vào các nhánh
+                # NGOẠI LỆ, nên khi trình duyệt tự ngắt (thoát bình thường,
+                # không ném gì) thì log vẫn trắng — `novnc_kenh_dut` đếm 0 và
+                # tôi mất thêm một lượt đoán mò. Bên nào về trước cũng là dữ
+                # kiện: "len" về trước = trình duyệt ngắt, "xuong" về trước =
+                # websockify ngắt.
+                logger.info({
+                    "event": "novnc_kenh_ket_thuc",
+                    "ben_ve_truoc": ", ".join(sorted(t.get_name() for t in _xong)),
+                })
                 for t in con_lai:
                     t.cancel()
         except Exception as exc:
