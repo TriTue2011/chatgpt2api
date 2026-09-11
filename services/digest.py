@@ -154,11 +154,18 @@ def forget(source: str) -> None:
 # ── Gửi tới kênh ─────────────────────────────────────────────────────────────
 def _zalop_thread_type(account: str, thread_id: str) -> int:
     """Zalo Cá Nhân cần biết thread là nhóm (1) hay cá nhân (0). Tra danh bạ kênh;
-    không thấy thì đoán cá nhân (0) — an toàn hơn gửi sai vào nhóm."""
+    không thấy thì đoán cá nhân (0) — an toàn hơn gửi sai vào nhóm.
+
+    Đọc ĐÚNG trường `channel_contacts.upsert` ghi: ``kind`` = "group"/"user".
+    Bản cũ đọc ``is_group`` — trường danh bạ không hề có — nên MỌI nhóm bị gửi
+    như tin cá nhân tới một mã không tồn tại. Zalo vẫn trả msgId nên không ai
+    thấy lỗi: đo 11/09/2026, cảnh báo nhà, bản tin học hỏi và gợi ý thiết bị gửi
+    vào nhóm "AI học hỏi" từ sáng không tới tin nào (log tin tự báo lại ghi
+    ``_threadType: 0``)."""
     try:
         from services import channel_contacts as cc
         rec = cc.get(cc.contact_key("zalop", account, thread_id))
-        if rec and rec.get("is_group"):
+        if rec and rec.get("kind") == "group":
             return 1
     except Exception:
         pass
