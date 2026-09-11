@@ -141,6 +141,33 @@ def _claude_notify(key: str, text: str) -> None:
     except Exception:
         pass
 
+
+# Session lấy từ lượt đăng nhập lại mà CHƯA chứng minh dùng được: session_key →
+# profile. "✅ Khôi phục xong" chỉ gửi khi session đó trả lời xong một câu thật.
+# 12/09/2026 chủ máy nhận liền hai tin trái ngược cho google-benbap115: ✅ gửi
+# ngay khi solver trả một session — mà đó là đúng session claude.ai vừa từ chối —
+# rồi ❌ ở cuối chính lượt ấy.
+_cho_xac_nhan: dict[str, str] = {}
+
+
+def _bao_khoi_phuc_that(session_key: str) -> None:
+    """Session từ lượt đăng nhập lại vừa trả lời được một câu → giờ mới báo ✅."""
+    profile = _cho_xac_nhan.pop(session_key, "")
+    if profile:
+        _claude_notify(f"ok:{profile}",
+                       f"✅ Claude — {profile}\nKhôi phục xong: đăng nhập lại Google, "
+                       "session mới đã trả lời được.")
+
+
+def _bao_khi_chay_duoc(gen: Iterator[dict[str, Any]], session_key: str) -> Iterator[dict[str, Any]]:
+    """Stream: yêu cầu thật chỉ gửi khi đọc chunk đầu — báo ✅ lúc đó, không sớm hơn."""
+    da_bao = False
+    for chunk in gen:
+        if not da_bao:
+            da_bao = True
+            _bao_khoi_phuc_that(session_key)
+        yield chunk
+
 # ── Lỗi quota Claude → ánh xạ sang loại hạn mức ─────────────────────────────
 _QUOTA_PATTERNS: list[tuple[str, str]] = [
     ("rate limit",              "text_limit"),
@@ -261,14 +288,23 @@ def _fetch_session_key_from_solver(cfg: dict[str, Any], excluded_keys: set[str] 
                     if key:
                         _solver_key_cache[profile] = (time.time(), key)
                         _profile_by_session[key] = profile
+                        if key in excluded:
+                            # Đăng nhập lại mà solver vẫn trả ĐÚNG session vừa bị
+                            # claude.ai từ chối — chưa khôi phục được gì cả.
+                            ly_do["cuoi"] = "session_cu"
+                            _logger().warning({"event": "claude_solver_relogin_session_cu",
+                                               "profile": profile})
+                            return ""
                         _logger().info({"event": "claude_solver_relogin_ok", "profile": profile})
-                        _claude_notify(f"ok:{profile}",
-                            f"✅ Claude — {profile}\nKhôi phục xong (đăng nhập lại Google + lấy session).")
-                        return key if key not in excluded else ""
+                        # CHƯA báo ✅ — chờ session này trả lời được một câu thật
+                        # (`_bao_khoi_phuc_that`).
+                        _cho_xac_nhan[key] = profile
+                        return key
             except Exception:
                 pass
         return ""
 
+    ly_do = {"cuoi": ""}   # vì sao lượt đăng nhập lại gần nhất không ra session dùng được
     da_thu = ""        # profile THỰC SỰ được thử lượt này (chỉ một — xem break dưới)
     so_nghi = 0        # số profile bị bỏ qua vì đang trong thời gian nghỉ
     for profile in profiles:
@@ -312,9 +348,14 @@ def _fetch_session_key_from_solver(cfg: dict[str, Any], excluded_keys: set[str] 
             them += f"\n{so_nghi} tài khoản khác đang trong thời gian nghỉ, chưa thử."
         if con_lai > 0:
             them += f"\n{con_lai} tài khoản khác sẽ được thử ở lượt sau."
+        if ly_do["cuoi"] == "session_cu":
+            vi_sao = ("Đăng nhập lại Google chỉ lấy lại đúng session vừa bị claude.ai "
+                      "từ chối — có thể hết phiên, bị chặn, hoặc chỉ tạm hết hạn mức")
+        else:
+            vi_sao = ("Không lấy được session (đăng nhập lại Google cũng không xong) — "
+                      "có thể hết phiên hoặc bị chặn")
         _claude_notify(f"fail:{da_thu}",
-            f"❌ Claude — {da_thu}\nKhông lấy được session (đăng nhập lại Google "
-            f"cũng không xong). Có thể hết phiên/bị chặn — cần xử lý tay "
+            f"❌ Claude — {da_thu}\n{vi_sao}. Lượt sau vẫn báo thì cần xử lý tay "
             f"(noVNC cổng 6080).{them}")
     elif so_nghi:
         # Chưa thử được tài khoản đang nghỉ; tài khoản bận cũng không phải lỗi.
@@ -880,9 +921,10 @@ def handle_claude_chat(
         try:
             if stream:
                 _mark_claude_ok(session_key)
-                return keyed.chat(messages, model)
+                return _bao_khi_chay_duoc(keyed.chat(messages, model), session_key)
             content = _collect_text(keyed.chat(messages, model))
             _mark_claude_ok(session_key)
+            _bao_khoi_phuc_that(session_key)
             return {
                 "id": f"chatcmpl-{uuid.uuid4().hex}",
                 "object": "chat.completion",
