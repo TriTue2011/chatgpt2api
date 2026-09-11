@@ -54,6 +54,9 @@ export async function moNoVNC(dacTa?: string): Promise<Window | null> {
     const { request } = await import("@/lib/request");
     const res = await request.post("/api/novnc/ve");
     const ve = (res.data as { ticket?: string })?.ticket || "";
+    // Máy chủ trả 200 nhưng không có vé thì đi tiếp cũng chỉ ra trang trắng —
+    // dừng ngay ở đây để người dùng biết lý do, thay vì nhìn cửa sổ trống.
+    if (!ve) throw new Error("Máy chủ không cấp được vé mở noVNC");
     // `path` phải là đường TUYỆT ĐỐI (có `/` đầu). noVNC ghép `path` vào GỐC
     // TRANG, mà trang nằm ở `/novnc/vnc.html`, nên viết `novnc/websockify`
     // (không dấu `/`) cho ra `/novnc/novnc/websockify` — hai lần "novnc".
@@ -66,7 +69,27 @@ export async function moNoVNC(dacTa?: string): Promise<Window | null> {
     else window.location.href = dich;  // bị chặn pop-up → đi thẳng
     return tab;
   } catch (e) {
-    tab?.close();
+    // Mọi nơi gọi đều dùng `void moNoVNC(...)` (10 chỗ), nên lỗi ném ra không
+    // ai bắt: người dùng chỉ thấy một cửa sổ `about:blank` trắng trơn rồi
+    // không có gì xảy ra nữa — không biết hỏng ở đâu, cũng không biết phải
+    // làm gì. Tự báo ở đây là cách duy nhất thông tin tới được họ.
+    const loi = e instanceof Error ? e.message : String(e);
+    try {
+      const { toast } = await import("sonner");
+      toast.error(`Không mở được noVNC: ${loi}`);
+    } catch { /* không có toast thì thôi, vẫn còn cửa sổ báo bên dưới */ }
+    // Chrome thường TỪ CHỐI `close()` cửa sổ mở bằng script trong nhịp khác,
+    // nên cửa sổ trắng vẫn nằm đó. Ghi thẳng lý do vào chính nó thì người
+    // dùng đọc được, kể cả khi toast ở tab kia bị bỏ lỡ.
+    try {
+      if (tab && !tab.closed) {
+        tab.document.write(
+          `<pre style="font:14px/1.5 system-ui;padding:24px;white-space:pre-wrap">` +
+          `Không mở được noVNC.\n\n${loi}\n\n` +
+          `Thường là do phiên đăng nhập đã hết hạn — đăng nhập lại rồi thử lại.</pre>`);
+        tab.document.close();
+      }
+    } catch { tab?.close(); }
     throw e;
   }
 }
