@@ -64,7 +64,26 @@ export async function moNoVNC(dacTa?: string): Promise<Window | null> {
     // Đo thật 10/09/2026 trên log máy chủ: 9/9 lần nối đều gọi đúng đường sai
     // đó và bị trả 403, không lần nào chạm được endpoint thật. Chủ máy thấy
     // "Failed to connect to server".
-    const dich = `/novnc/vnc.html?autoconnect=1&path=/novnc/websockify&ve=${encodeURIComponent(ve)}`;
+    // KHÔNG dùng `autoconnect=1`. Màn hình :99 có đặt mật khẩu VNC
+    // (`VNC_PASSWORD` → x11vnc `-passwd`), nên RFB chào đúng một kiểu bảo mật
+    // là số 2 = VNC password. Đo 11/09/2026 bằng cách nói RFB thật qua chính
+    // proxy này: server chào `RFB 003.008`, kiểu bảo mật `[1, 2]`, chọn 2 thì
+    // nhận đủ thách thức DES 16 byte — tức đường ống THÔNG tới tận bước hỏi
+    // mật khẩu.
+    //
+    // Nhưng `autoconnect=1` bảo noVNC nối NGAY và bỏ qua bảng nhập, mà URL lại
+    // không có mật khẩu → nó nối xong rồi treo ở "Connecting..." chờ một thứ
+    // không bao giờ tới. Đúng ảnh chủ máy gửi.
+    //
+    // Bỏ `autoconnect` thì noVNC hiện bảng nhập của chính nó
+    // (`app/ui.js`: "Show the connect panel on first load unless
+    // autoconnecting") — đúng màn hình gõ mật khẩu mà chủ máy vẫn quen dùng.
+    //
+    // CỐ Ý KHÔNG nhét `?password=` vào URL, dù noVNC có đọc tham số đó: mật
+    // khẩu sẽ nằm lại trong lịch sử trình duyệt, thanh địa chỉ và header
+    // `Referer`. Cả cơ chế vé một-lần ở trên sinh ra chính là để tránh đưa bí
+    // mật vào URL, nhét mật khẩu VNC vào đó là phá bỏ công sức ấy.
+    const dich = `/novnc/vnc.html?path=/novnc/websockify&ve=${encodeURIComponent(ve)}`;
     if (tab) tab.location.href = dich;
     else window.location.href = dich;  // bị chặn pop-up → đi thẳng
     return tab;

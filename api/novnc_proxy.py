@@ -38,7 +38,6 @@ WebSocket cùng gốc, thứ mà header không làm được.
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 
 import httpx
@@ -62,7 +61,20 @@ _DROP_RESP = {"content-encoding", "transfer-encoding", "content-length", "connec
 # Cookie phiên noVNC. Đặt path=/novnc nên không lẫn với cookie phiên chính.
 TEN_COOKIE = "c2a_novnc"
 
-logger = logging.getLogger(__name__)
+# DÙNG logger CỦA DỰ ÁN, không phải `logging.getLogger(__name__)`.
+#
+# App này không gọi `basicConfig`/`dictConfig` ở đâu cả: root logger không có
+# handler và mức hiệu lực là WARNING. Nên mọi `logger.info(...)` qua
+# `getLogger(__name__)` đều bị nuốt sạch — đo 11/09/2026 trong container:
+#
+#   api.novnc_proxy level hiệu lực: WARNING · root handlers: []
+#   số dòng novnc_bat_tay trong toàn bộ log: 0
+#
+# Tức lần trước tôi thêm log để hết mù, rồi chính cái log ấy cũng vô hình, và
+# tôi lại mất một lượt nữa mới nhận ra. `utils.log.logger` tự gắn
+# StreamHandler ở mức DEBUG và `propagate=False`, đúng thứ các module khác
+# (api/app.py, api/accounts.py) đang dùng để log hiện được ra `docker logs`.
+from utils.log import logger
 
 
 def _la_https(request: Request) -> bool:
