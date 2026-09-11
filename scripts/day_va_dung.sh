@@ -174,6 +174,27 @@ else
     done
 fi
 docker image prune -f >/dev/null 2>&1 || true   # chỉ lớp mồ côi, KHÔNG dùng -a
+
+# ── 6. Ghìm build cache ─────────────────────────────────────────────────────
+# Build cache KHÔNG nằm trong diện dọn của `docker image prune` nên nó phình
+# lặng lẽ: đo 11/09/2026, ngay sau khi dọn tay còn 5,6 GB thì dựng ĐÚNG MỘT
+# lần đã lên 16,44 GB. Không ghìm thì mỗi lần dựng lại ăn thêm chục GB.
+#
+# GHÌM chứ không XOÁ SẠCH: cache là thứ làm lần dựng sau nhanh hơn, `prune -f`
+# trắng tay biến mọi lần dựng thành dựng từ đầu. `--max-used-space` giữ lại
+# phần mới nhất trong hạn mức và chỉ bỏ phần cũ vượt ra — cùng tinh thần với
+# `_GIU_LAI` ở trên: dọn để khỏi đầy đĩa, không phải để trống đĩa.
+#
+# Docker 29 đổi tên cờ: `--keep-storage` cũ nay là `--max-used-space`. Thử cờ
+# mới trước, hỏng thì lùi về cờ cũ, hỏng nữa thì thôi — không để việc dọn dẹp
+# làm hỏng một lần dựng đã thành công.
+_CACHE_TOI_DA=${CACHE_TOI_DA:-10GB}
+noi "ghìm build cache ở $_CACHE_TOI_DA"
+docker builder prune -f --max-used-space "$_CACHE_TOI_DA" >/dev/null 2>&1 \
+    || docker builder prune -f --keep-storage "$_CACHE_TOI_DA" >/dev/null 2>&1 \
+    || noi "  (không ghìm được cache — bỏ qua)"
+noi "build cache còn: $(docker system df --format '{{.Type}}\t{{.Size}}' 2>/dev/null | awk -F'\t' '/Build Cache/{print $2}')"
+
 noi "đĩa còn trống: $(df -h / | awk 'NR==2{print $4}')"
 
 noi "xong. $ANH:latest = $SHA"
