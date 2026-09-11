@@ -621,7 +621,7 @@ def handle_admin_text(platform: str, admin_chat_id: str, text: str) -> Optional[
                     f"   → **{gn or '(trống)'}**\n"
                     "3. Tự đặt — gõ thẳng (VD: `Nhóm A - Anh B`)\n"
                     "4. `bỏ` — không lưu\n"
-                    "Trả lời `1` / `2` / gõ tên / `bỏ`."
+                    "Trả lời `1`, `2`, `4`, hoặc gõ thẳng tên muốn đặt."
                 )
             return (
                 "Lưu tên nào?\n"
@@ -629,7 +629,7 @@ def handle_admin_text(platform: str, admin_chat_id: str, text: str) -> Optional[
                 f"   → **{dn or '(trống)'}**\n"
                 "2. Tự đặt — gõ thẳng (VD: `Anh A`)\n"
                 "3. `bỏ` — không lưu\n"
-                "Trả lời `1` / gõ tên / `bỏ`."
+                "Trả lời `1`, `3`, hoặc gõ thẳng tên muốn đặt."
             )
         # Câu KHÁC (hỏi việc, chat thường…) → nhả xuống agent trả lời bình
         # thường; pending vẫn chờ trong TTL — admin trả lời `có`/`không` sau.
