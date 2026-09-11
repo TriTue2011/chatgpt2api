@@ -193,6 +193,12 @@ def _parse_tasks() -> list[dict[str, Any]]:
         "text": "Bản tin «em học được gì» — mặc định TẮT (mqtt.bai_hoc.bao)",
         "system": True,
     })
+    tasks.append({
+        "id": "hieu_thiet_bi_nha",
+        "intent": "read",
+        "text": "Bot học hỏi tự hiểu thiết bị nhà (mã nào là một, cái nào nên học) rồi báo nhóm học hỏi",
+        "system": True,
+    })
 
     _ensure_heartbeat_md()
     try:
@@ -534,7 +540,33 @@ def _eval_du_doan_nha() -> tuple[str, str]:
         return "skip", f"error: {exc}"
 
 
+def _eval_hieu_thiet_bi_nha() -> tuple[str, str]:
+    """Bot học hỏi tự hiểu thiết bị nhà — services.hieu_thiet_bi_nha.
+
+    Mỗi NGÀY một lần: thiết bị nhà không đổi từng giờ, còn mỗi lượt là một lời
+    gọi model. Chạy nền vì phải đo hồ sơ cả tháng rồi chờ model trả lời. Khuôn
+    theo `_eval_du_doan_nha`: ghi mốc TRƯỚC khi chạy nền để tick sau không
+    chạy đúp.
+    """
+    try:
+        from services import hieu_thiet_bi_nha as ht
+        if not ht.is_enabled():
+            return "skip", "đang tắt (mqtt.hieu_thiet_bi.bat)"
+        import time as _t
+        moc = _t.strftime("%Y-%m-%d")
+        if _state.get("hieu_thiet_bi_ngay") == moc:
+            return "skip", "hôm nay đã xem rồi"
+        _state["hieu_thiet_bi_ngay"] = moc
+        _save_state()
+        threading.Thread(target=ht.chay_mot_lan, name="hieu-thiet-bi-nha",
+                         daemon=True).start()
+        return "act", "bot học hỏi tự hiểu thiết bị nhà (chạy nền)"
+    except Exception as exc:
+        return "skip", f"error: {exc}"
+
+
 _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
+    "hieu_thiet_bi_nha": _eval_hieu_thiet_bi_nha,
     "wiki_daily_digest": _eval_wiki_digest,
     "open_goals_nudge": _eval_open_goals,
     "chatlog_nhac_scan": _eval_chatlog_nhac,

@@ -264,51 +264,63 @@ def _dieu_kien(luc: float, dang_bat: dict[str, float],
 
 
 def hoc(so_ngay: int | None = None) -> dict[str, Any]:
-    """Đếm mẫu dương và mẫu âm cho mọi thiết bị, trả bảng đếm.
+    """Đếm mẫu dương và mẫu âm cho các thiết bị ĐƯỢC HỌC, trả bảng đếm.
 
     Trả ``{ten: {"n_bat", "n_khong", "dk": {nhãn: {"bat": k, "khong": k}}}}``.
+
+    HỌC CÁI GÌ DO BOT HỌC HỎI KẾT LUẬN (`hieu_thiet_bi_nha.thiet_bi_hoc`),
+    không do code liệt kê. Chủ máy chốt 11/09/2026: *"Việc học hỏi nên học
+    theo các thiết bị bật tắt được chứ các thiết bị trạng thái học làm gì"* —
+    và Claude chỉ soạn hướng dẫn cho bot tự giải rồi chấm. Bot chưa kết luận
+    gì thì BỎ LƯỢT: học rỗng hay học bừa đều tệ hơn im.
+
+    CHỈ ĐỌC THIẾT BỊ ĐƯỢC HỌC, lọc ngay trong SQL. Bản trước kéo mọi sự kiện về
+    rồi tự bỏ: đo kho thật 11/09/2026, 30 ngày có 609.089 sự kiện mà trần đọc
+    là 200.000 — tầng học chỉ thấy 4,5 ngày gần nhất.
 
     Đọc với ``bo_do_ai=True``: học từ hành động của chính bot là tự khẳng định
     vòng quanh.
     """
-    from services import lich_su_nha
+    from services import hieu_thiet_bi_nha, lich_su_nha
 
+    duoc_hoc = set(hieu_thiet_bi_nha.thiet_bi_hoc())
+    if not duoc_hoc:
+        logger.info({"event": "du_doan_bo_luot",
+                     "ly_do": "bot học hỏi chưa kết luận thiết bị nào được học"})
+        return {}
     ngay = so_ngay if so_ngay else _so_ngay_hoc()
     den = time.time()
     tu = den - max(1, int(ngay)) * 86400
     try:
-        sk = lich_su_nha.doc_cua_so(tu, den, bo_do_ai=True)
+        sk = lich_su_nha.doc_trang_thai(tu, den, tien_to=tuple(sorted(duoc_hoc)),
+                                        bo_do_ai=True)
+        # Mẫu âm lấy từ MỌI ô có dữ liệu, kể cả ô chỉ có cảm biến — y như khi
+        # còn đọc cả nhà. Chỉ lấy ô có thiết bị được học thì còn 192/535 ô (đo
+        # 11/09/2026) và xác suất phồng lên. Ô nhà vắng hoàn toàn không nói lên
+        # "chủ máy chọn không bật" nên vẫn không tính.
+        o_moc = lich_su_nha.o_co_su_kien(tu, den, _O_PHUT * 60, bo_do_ai=True)
     except Exception as exc:
         logger.warning({"event": "du_doan_doc_loi", "error": str(exc)[:160]})
         return {}
 
-    # Lượt BẬT của từng thiết bị, và trạng thái đang bật theo thời gian.
+    # Lượt BẬT của từng thiết bị, và thiết bị nào đổi trong từng ô.
     bat_luc: dict[str, list[float]] = {}
-    dang_bat: dict[str, float] = {}
-    vua_lam: dict[str, float] = {}
-    moc_o: dict[int, dict[str, Any]] = {}
+    doi_trong_o: dict[int, set[str]] = {}
 
     for r in sk:
         tb = str(r.get("thiet_bi") or "")
-        tr = str(r.get("truong") or "").lower()
-        if not tb or not tr.startswith("state"):
+        # Tiền tố trong SQL là LIKE: `switch.bep_left` khớp cả `switch.bep_left_2`.
+        if tb not in duoc_hoc or str(r.get("truong") or "") != "state":
             continue
         ts = float(r.get("ts") or 0)
         if _la_bat(r.get("gia_tri")):
             bat_luc.setdefault(tb, []).append(ts)
-            dang_bat[tb] = ts
-        else:
-            dang_bat.pop(tb, None)
-        vua_lam[tb] = ts
-        o = int(ts // (_O_PHUT * 60))
-        moc_o.setdefault(o, {"ts": ts, "bat": set()})["bat"].add(tb)
+        doi_trong_o.setdefault(int(ts // (_O_PHUT * 60)), set()).add(tb)
 
     if not bat_luc:
         return {}
 
-    # Ô thời gian có mặt trong dữ liệu — mẫu âm chỉ lấy từ ô CÓ hoạt động, vì
-    # ô nhà vắng hoàn toàn không nói lên "chủ máy chọn không bật".
-    o_ds = sorted(moc_o)
+    o_ds = sorted(o_moc)
 
     # DỰNG BỐI CẢNH MỘT LẦN CHO MỖI Ô, rồi mọi thiết bị dùng chung.
     #
@@ -326,7 +338,7 @@ def hoc(so_ngay: int | None = None) -> dict[str, Any]:
     # nhãn `bat_<tên>` của chính nó, mà nhãn đó thêm ở vòng dưới. Nên tách ra
     # được, và chi phí còn 1.440 lần thay vì 596.160 lần: **nhanh gấp 414**.
     nhan_o: dict[int, dict[str, str]] = {
-        o: _dieu_kien(moc_o[o]["ts"], {}, {}) for o in o_ds
+        o: _dieu_kien(o_moc[o], {}, {}) for o in o_ds
     }
 
     ra: dict[str, Any] = {}
@@ -342,7 +354,7 @@ def hoc(so_ngay: int | None = None) -> dict[str, Any]:
             # bị, sửa thẳng vào `nhan_o[o]` là rò sang thiết bị kế tiếp.
             nhan = dict(nhan_o[o])
             # Trạng thái thiết bị khác tại ô này (mở rộng 1 và 2).
-            for khac in moc_o[o]["bat"]:
+            for khac in doi_trong_o.get(o, ()):
                 if khac != tb:
                     nhan[f"bat_{khac}"] = "co"
             if co:
@@ -608,19 +620,15 @@ def quet(luc: float | None = None) -> list[dict[str, Any]]:
     KHÔNG tự bật gì trong hàm này — nó chỉ trả về danh sách. Việc bật là tác
     dụng phụ, phải đi qua cổng riêng của tầng gọi.
     """
-    bang = hoc()
-    # Cổng chặn đặt ở ĐÂY chứ không ở `hoc()`: học là phân tích ngoại tuyến,
-    # buộc nó phụ thuộc Home Assistant còn sống là đấu nối sai chỗ. Còn lời đề
-    # nghị thì vốn đã cần HA — không hỏi được HA cái gì bật được thì cũng
-    # không bật được gì, im là đúng.
-    #
-    # Cảm biến vẫn học bình thường để làm bối cảnh; chỉ không được đứng tên
-    # trong câu "anh có muốn em bật không".
-    mien = mien_bat_duoc()
+    # Không hỏi được HA cái gì bật được thì cũng không bật được gì — im là
+    # đúng, và khỏi tốn một lượt `hoc()`.
+    if not mien_bat_duoc():
+        return []
+    # Không lọc lại theo miền ở đây: `hoc()` chỉ học thứ bot học hỏi đã kết
+    # luận là bật được (`hieu_thiet_bi_nha._kiem` loại mọi `ma_hoc` không có
+    # lệnh bật). Hai nơi giữ cùng một luật thì sớm muộn sẽ lệch nhau.
     ra = []
-    for ten, b in bang.items():
-        if str(ten).split(".")[0] not in mien:
-            continue
+    for ten, b in hoc().items():
         d = du_doan(ten, luc, bang=b)
         if d["cach"] != "im":
             ra.append(d)

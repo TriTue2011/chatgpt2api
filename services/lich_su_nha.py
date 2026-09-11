@@ -678,6 +678,75 @@ def doc_cua_so(tu_ts: float, den_ts: float, *,
             tuple(ts), int(tran), "doc_cua_so")
 
 
+#: Nguồn nào là Home Assistant: ``ha`` do ``ha_live`` ghi trực tiếp, ``ha_nhap``
+#: do ``nap_tu_ha`` nạp lại quá khứ. Chính module này đặt tên nguồn trong cột
+#: ``nguon``, nên định nghĩa nằm ở đây — nơi đọc không phải tự đoán.
+NGUON_HA = ("ha", "ha_nhap")
+
+
+def doc_trang_thai(tu_ts: float, den_ts: float, *,
+                   tien_to: tuple[str, ...] = (),
+                   ngoai_ha: bool = False,
+                   bo_do_ai: bool = False,
+                   tran: int = _TRAN_MAC_DINH) -> list[dict[str, Any]]:
+    """Chỉ những lần đổi TRẠNG THÁI (trường ``state…``) trong một khoảng.
+
+    ``doc_cua_so`` lọc được theo tên trường nhưng phải nêu đúng từng tên, mà
+    công tắc nhiều nút của zigbee2mqtt ghi mỗi nút một trường (``state_left``,
+    ``state_l1``…). Tầng học trước 11/09/2026 vì thế kéo MỌI sự kiện về rồi tự
+    bỏ: đo kho thật, 30 ngày có 609.089 sự kiện, 581.668 là cảm biến — chạm
+    trần 200.000 và chỉ còn học được 4,5 ngày gần nhất.
+
+    * ``tien_to`` — chỉ lấy thiết bị bắt đầu bằng một trong các tiền tố này.
+      Là ``LIKE`` nên ``_`` khớp mọi ký tự: nơi gọi cần mã chính xác thì tự so
+      lại.
+    * ``ngoai_ha`` — chỉ lấy nguồn KHÔNG phải Home Assistant (MQTT, Tuya…).
+      Cùng một công tắc thường hiện ra ở cả hai phía, và phía nào báo trước là
+      thứ tầng hiểu thiết bị cần đo.
+    * ``bo_do_ai`` — bỏ việc do chính bot làm.
+
+    Cùng luật trần với các hàm đọc khác (xem ``_cat_tran``).
+    """
+    dk = ["ts>=?", "ts<=?", "truong LIKE 'state%'"]
+    ts: list[Any] = [tu_ts, den_ts]
+    if tien_to:
+        dk.append("(" + " OR ".join("thiet_bi LIKE ?" for _ in tien_to) + ")")
+        ts += [f"{x}%" for x in tien_to]
+    if ngoai_ha:
+        dk.append("nguon NOT IN (" + ",".join("?" for _ in NGUON_HA) + ")")
+        ts += list(NGUON_HA)
+    if bo_do_ai:
+        dk.append("do_ai=0")
+    ts.append(int(tran))
+    with _khoa_db:
+        conn = _db()
+        return _cat_tran(
+            conn,
+            f"SELECT * FROM su_kien WHERE {' AND '.join(dk)} ORDER BY ts DESC LIMIT ?",
+            tuple(ts), int(tran), "doc_trang_thai")
+
+
+def o_co_su_kien(tu_ts: float, den_ts: float, o_giay: int, *,
+                 bo_do_ai: bool = False) -> dict[int, float]:
+    """Ô thời gian nào có ít nhất một sự kiện, kèm mốc ĐẦU TIÊN của ô.
+
+    Tầng học lấy mẫu âm từ những ô này. Trước 11/09/2026 nó suy ra ô bằng cách
+    kéo mọi sự kiện về, và vì cảm biến báo đều nên gần như ô nào cũng có. Nay
+    nó chỉ đọc thiết bị cần học nên phải hỏi riêng — đo kho thật: tính theo mọi
+    sự kiện có 535 ô 30 phút, chỉ tính thiết bị bật tắt thì còn 192, mẫu âm hụt
+    gần ba phần tư và xác suất phồng lên.
+
+    Không cần trần: mỗi ô một dòng, 30 ngày ô 30 phút cũng chỉ 1.440 dòng.
+    """
+    dk = "ts>=? AND ts<=?" + (" AND do_ai=0" if bo_do_ai else "")
+    with _khoa_db:
+        conn = _db()
+        rows = conn.execute(
+            f"SELECT CAST(ts / ? AS INTEGER) AS o, MIN(ts) FROM su_kien WHERE {dk}"
+            " GROUP BY o", (int(o_giay), tu_ts, den_ts)).fetchall()
+    return {int(r[0]): float(r[1]) for r in rows}
+
+
 def doc_so_do(thiet_bi: str, truong: str, tu_ts: float, den_ts: float, *,
               tran: int = _TRAN_MAC_DINH) -> list[dict[str, Any]]:
     """Số đo đã gộp ô, theo ô tăng dần. Cùng luật trần với hai hàm đọc kia."""

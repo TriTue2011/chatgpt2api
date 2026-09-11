@@ -29,13 +29,25 @@ def _nap(thu_muc: str):
 
 class DuDoanNhaTest(unittest.TestCase):
     def setUp(self) -> None:
+        from services import ha_client, hieu_thiet_bi_nha
+
         self._tmp = TemporaryDirectory()
         self.dd, self.bc, self.ls = _nap(self._tmp.name)
         self.ls.config.data.setdefault("mqtt", {})["lich_su"] = {"bat": True}
         self.ls.config.data["mqtt"]["du_doan"] = {"bat": True}
-        self._p = mock.patch.object(self.bc, "phong_cua", return_value="Bếp")
-        self._p.start()
-        self.addCleanup(self._p.stop)
+        # Học CÁI GÌ là việc của bot học hỏi (`hieu_thiet_bi_nha`, có test
+        # riêng). Ở đây giả như bot đã kết luận các thiết bị này được học.
+        self.duoc_hoc = {"light.bep", "light.phong_khach", "light.bot_lam",
+                         "light.hiem", "light.la_hoac", "switch.binh_nong_lanh"}
+        for p in (mock.patch.object(self.bc, "phong_cua", return_value="Bếp"),
+                  mock.patch.object(hieu_thiet_bi_nha, "thiet_bi_hoc",
+                                    side_effect=lambda: sorted(self.duoc_hoc)),
+                  # HA thật của nhà: đèn và công tắc bật được, cảm biến thì không.
+                  mock.patch.object(ha_client, "get_service_catalog", return_value={
+                      "light": {"turn_on": {}}, "switch": {"turn_on": {}},
+                      "binary_sensor": {}, "sensor": {}})):
+            p.start()
+            self.addCleanup(p.stop)
 
     def tearDown(self) -> None:
         self.dd._reset_for_tests()
@@ -239,7 +251,7 @@ class DuDoanNhaTest(unittest.TestCase):
 
     # ── không kéo sập ──────────────────────────────────────────────────────
     def test_KHO_HONG_thi_tra_RONG_khong_nem_loi(self) -> None:
-        with mock.patch.object(self.ls, "doc_cua_so",
+        with mock.patch.object(self.ls, "doc_trang_thai",
                                side_effect=RuntimeError("đĩa hỏng")):
             self.assertEqual(self.dd.hoc(so_ngay=7), {})
 
@@ -314,9 +326,11 @@ class DuDoanNhaTest(unittest.TestCase):
 
     def test_KHONG_GOI_Y_thu_khong_bat_duoc(self) -> None:
         """`binary_sensor.ariston_is_heating` báo bình nóng lạnh CÓ đang đun.
-        Nó có nếp rõ ràng, học được — nhưng không ai bật được nó."""
-        from services import ha_client
+        Nó có nếp rõ ràng — nhưng không ai bật được nó.
 
+        Chủ máy chốt 11/09/2026: "các thiết bị trạng thái học làm gì". Nên nó
+        không còn được học; học gì do bot học hỏi kết luận, và bot không được
+        nhận một cảm biến làm thứ để học (`hieu_thiet_bi_nha._kiem`)."""
         self._nep_toi()
         from datetime import datetime, timedelta
         now = datetime.now(self.bc._TZ).replace(
@@ -325,16 +339,9 @@ class DuDoanNhaTest(unittest.TestCase):
             d = now - timedelta(days=i)
             self._sk("binary_sensor.ariston_is_heating", "on", d.timestamp())
 
-        # Học vẫn phải học được nó — cổng chặn nằm ở lúc ĐỀ NGHỊ, không ở
-        # lúc học, nếu không thì Home Assistant chớp là bot quên sạch nếp nhà.
-        self.assertIn("binary_sensor.ariston_is_heating",
-                      self.dd.hoc(so_ngay=30))
-
-        so_dich_vu = {"light": {"turn_on": {}}, "switch": {"turn_on": {}},
-                      "binary_sensor": {}, "sensor": {}}
-        with mock.patch.object(ha_client, "get_service_catalog",
-                               return_value=so_dich_vu):
-            ten = {d["ten"] for d in self.dd.quet(luc=now.timestamp())}
+        self.assertNotIn("binary_sensor.ariston_is_heating",
+                         self.dd.hoc(so_ngay=30))
+        ten = {d["ten"] for d in self.dd.quet(luc=now.timestamp())}
         self.assertNotIn("binary_sensor.ariston_is_heating", ten,
                          "không được mời chủ máy bật một cảm biến")
 
@@ -347,6 +354,52 @@ class DuDoanNhaTest(unittest.TestCase):
         with mock.patch.object(ha_client, "get_service_catalog",
                                return_value={}):
             self.assertEqual(self.dd.quet(), [])
+
+    # ── học gì, đọc bao nhiêu (11/09/2026) ─────────────────────────────────
+    def test_BOT_CHUA_KET_LUAN_GI_thi_BO_LUOT(self) -> None:
+        """Học rỗng hay học bừa đều tệ hơn im — và khỏi đọc kho vô ích."""
+        self._nep_toi()
+        self.duoc_hoc = set()
+        with mock.patch.object(self.ls, "doc_trang_thai") as doc:
+            self.assertEqual(self.dd.hoc(so_ngay=30), {})
+        doc.assert_not_called()
+
+    def test_CHI_HOC_thu_BOT_CHON(self) -> None:
+        self._nep_toi()
+        now = time.time()
+        for i in range(14):
+            self._sk("light.phong_khach", "on", now - i * 86400 - 600)
+        self.duoc_hoc = {"light.bep"}
+        self.assertEqual(set(self.dd.hoc(so_ngay=30)), {"light.bep"})
+
+    def test_CAM_BIEN_DON_DAP_khong_DAY_MAT_du_lieu_cu(self) -> None:
+        """Đo kho thật 11/09/2026: 30 ngày có 609.089 sự kiện mà trần đọc là
+        200.000, bản cũ chỉ học được 4,5 ngày gần nhất. Ép trần xuống 40 để
+        tái hiện: cảm biến báo dồn dập không được đẩy mất lượt bật cũ."""
+        goc = (int(time.time()) // 1800 - 48) * 1800
+        for i in range(10):
+            self._sk("light.bep", "on", goc - i * 86400)
+        for k in range(60):
+            self._sk("sensor.cong_suat", str(k), goc + 60 + k)
+        that = self.ls.doc_trang_thai
+        with mock.patch.object(self.ls, "doc_trang_thai",
+                               side_effect=lambda *a, **k: that(*a, **{**k, "tran": 40})):
+            b = self.dd.hoc(so_ngay=30).get("light.bep")
+        self.assertIsNotNone(b)
+        self.assertEqual(b["n_bat"], 10)
+
+    def test_MAU_AM_tinh_ca_O_CHI_CO_CAM_BIEN(self) -> None:
+        """Mẫu âm lấy từ mọi ô có dữ liệu, y như khi còn đọc cả nhà. Chỉ lấy ô
+        có thiết bị được học thì còn 192/535 ô (đo 11/09/2026), xác suất phồng."""
+        goc = (int(time.time()) // 1800 - 48) * 1800
+        for i in range(10):
+            ngay = goc - i * 86400
+            self._sk("light.bep", "on", ngay)
+            self._sk("light.bep", "off", ngay + 3 * 3600)
+            self._sk("binary_sensor.bep_occupancy", "on", ngay - 11 * 3600)
+        b = self.dd.hoc(so_ngay=30)["light.bep"]
+        self.assertEqual(b["n_bat"], 10)
+        self.assertEqual(b["n_bat"] + b["n_khong"], 30)
 
     # ── tin nhắn viết bằng tiếng người (11/09/2026) ────────────────────────
     def test_TIN_NHAN_khong_con_MA_MAY(self) -> None:
