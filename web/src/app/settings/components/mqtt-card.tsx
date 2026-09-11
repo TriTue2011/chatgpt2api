@@ -19,6 +19,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { CollapsibleSection } from "@/components/collapsible-section";
 import { useSettingsStore } from "../store";
 import { request } from "@/lib/request";
 
@@ -427,9 +428,10 @@ export function MqttCard() {
 
         {msg ? <p className="text-xs text-muted-foreground">{msg}</p> : null}
 
-        {/* ── Lịch sử nhà ──────────────────────────────────────────────── */}
-        <div className="rounded-md border border-border p-3 space-y-2">
-          <p className="text-xs font-semibold">🗂️ Lịch sử nhà (c2a tự lưu)</p>
+        {/* ── Lịch sử nhà — THU GỌN, đây là phần dài nhất của thẻ ───────── */}
+        <CollapsibleSection title="🗂️ Lịch sử nhà & phần bot tự học"
+          className="rounded-md border border-border p-3">
+        <div className="space-y-2">
           <p className="text-xs text-muted-foreground">
             Ghi lại nhà có gì thay đổi để sau này bot học được nếp sinh hoạt. Lưu
             ở đây chứ không phải trên Home Assistant, nên tắt Home Assistant cũng
@@ -455,8 +457,9 @@ export function MqttCard() {
 
           {/* ── Tình huống đã học ─────────────────────────────────────── */}
           {th.length ? (
-            <div className="mt-2 space-y-2 rounded border border-border p-2">
-              <p className="text-xs font-semibold">🕰️ Nếp sinh hoạt bot học được</p>
+            <CollapsibleSection title={<span className="text-xs">🕰️ Nếp sinh hoạt bot học được</span>}
+              className="mt-2 rounded border border-border p-2">
+            <div className="space-y-2">
               <p className="text-xs text-muted-foreground">
                 Nhận ra bằng <b>cảm biến có người</b>, không phải đèn nào bật — nên
                 hôm nào ăn ở phòng khách thay vì bếp thì vẫn nhận ra.
@@ -497,17 +500,20 @@ export function MqttCard() {
                 ))}
               </div>
             </div>
+            </CollapsibleSection>
           ) : null}
 
           {/* ── Thông báo lỗi ─────────────────────────────────────────── */}
-          <div className="mt-2 space-y-2 rounded border border-border p-2">
+          <CollapsibleSection title={<span className="text-xs">🔔 Báo khi thiết bị hỏng</span>}
+            className="mt-2 rounded border border-border p-2">
+          <div className="space-y-2">
             <label className="flex items-center gap-2 text-xs font-semibold">
               <input
                 type="checkbox"
                 checked={cb.bat !== false}
                 onChange={(e) => setCb({ ...cb, bat: e.target.checked })}
               />
-              🔔 Báo cho tôi khi thiết bị hỏng
+              Bật
             </label>
             <p className="text-xs text-muted-foreground">
               Báo lần đầu ngay, rồi thưa dần: sau 5 phút, 30 phút, 1 tiếng, 6 tiếng,
@@ -573,16 +579,19 @@ export function MqttCard() {
               ) : null}
             </div>
           </div>
+          </CollapsibleSection>
 
           {/* ── Học thói quen theo bối cảnh ───────────────────────────── */}
-          <div className="mt-2 space-y-2 rounded border border-border p-2">
+          <CollapsibleSection title={<span className="text-xs">🏠 Học nếp nhà theo hoàn cảnh</span>}
+            className="mt-2 rounded border border-border p-2">
+          <div className="space-y-2">
             <label className="flex items-center gap-2 text-xs font-semibold">
               <input
                 type="checkbox"
                 checked={dd.bat !== false}
                 onChange={(e) => setDd({ ...dd, bat: e.target.checked })}
               />
-              🏠 Cho em học nếp nhà theo hoàn cảnh
+              Bật
             </label>
             <p className="text-xs text-muted-foreground">
               Em không chỉ nhớ «7 giờ tối hay bật đèn bếp», mà nhớ cả hoàn cảnh
@@ -621,16 +630,19 @@ export function MqttCard() {
               chọn kênh nào thì em nhắn cho admin mặc định.
             </p>
           </div>
+          </CollapsibleSection>
 
           {/* ── Học từ lỗi ────────────────────────────────────────────── */}
-          <div className="mt-2 space-y-2 rounded border border-border p-2">
+          <CollapsibleSection title={<span className="text-xs">🧠 Học từ lỗi</span>}
+            className="mt-2 rounded border border-border p-2">
+          <div className="space-y-2">
             <label className="flex items-center gap-2 text-xs font-semibold">
               <input
                 type="checkbox"
                 checked={bh.bat !== false}
                 onChange={(e) => setBh({ ...bh, bat: e.target.checked })}
               />
-              🧠 Cho em học từ lỗi
+              Bật
             </label>
             <p className="text-xs text-muted-foreground">
               Có những câu em trả lời nhanh bằng cách đoán ý, không nghĩ kỹ — và
@@ -772,6 +784,7 @@ export function MqttCard() {
               {saved ? "Đã lưu!" : "Lưu cài đặt học tập"}
             </Button>
           </div>
+          </CollapsibleSection>
 
           {hong && hong.length ? (
             <div className="space-y-1 pt-1">
@@ -797,6 +810,7 @@ export function MqttCard() {
             </div>
           ) : null}
         </div>
+        </CollapsibleSection>
 
         {/* ── Danh sách thiết bị — MẶC ĐỊNH THU ────────────────────────── */}
         <div className="rounded-md border border-border">
