@@ -100,7 +100,10 @@ class BaiHocTest(unittest.TestCase):
 
     # ── không bao giờ ném lỗi ──────────────────────────────────────────────
     def test_ghi_hong_khong_raise(self) -> None:
-        self.m._duong = lambda: Path("/khong/ton/tai/bai_hoc.json")
+        # Thư mục cha là một TỆP có sẵn: không ai tạo được thư mục ở đó, kể cả
+        # root. Bản cũ dùng "/khong/ton/tai/" — chạy test bằng root thì tạo
+        # được, ghi được, và test hỏng oan (đo 11/09/2026 trên máy chủ).
+        self.m._duong = lambda: Path(__file__) / "bai_hoc.json"
         try:
             self.m.ghi_sai("câu gì đó", "…", "x")
             self.assertEqual(self.m.tra("câu gì đó"), [])

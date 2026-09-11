@@ -105,7 +105,10 @@ class HoiGiamSatTest(unittest.TestCase):
 
     # ── không bao giờ ném lỗi ──────────────────────────────────────────────
     def test_ghi_hong_khong_raise(self) -> None:
-        self.m._duong = lambda: Path("/khong/ton/tai/hoi.json")
+        # Thư mục cha là một TỆP có sẵn: kể cả root cũng không tạo được thư mục
+        # ở đó. "/khong/ton/tai/" thì root tạo được, nên nhánh ghi hỏng không hề
+        # được thử (đo 11/09/2026: tệp hoi.json nằm sẵn ở đó trên máy chủ).
+        self.m._duong = lambda: Path(__file__) / "hoi.json"
         try:
             self.m.dat_cau_hoi("Sửa?", ["A", "B"])
             self.m.tra_loi("cl 1")

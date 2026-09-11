@@ -183,7 +183,10 @@ class SoTenTest(unittest.TestCase):
 
     # ── không bao giờ raise ────────────────────────────────────────────────
     def test_ghi_hong_khong_raise(self) -> None:
-        self.m._FILE = Path("/khong/ton/tai/so.json")
+        # Thư mục cha là một TỆP có sẵn: kể cả root cũng không tạo được thư mục
+        # ở đó. "/khong/ton/tai/" thì root tạo được, nên nhánh ghi hỏng không hề
+        # được thử khi chạy test bằng root (máy chủ, 11/09/2026).
+        self.m._FILE = Path(__file__) / "so.json"
         try:
             self.m.dat_ten("x", "y", "1", "z")
         except Exception as exc:
