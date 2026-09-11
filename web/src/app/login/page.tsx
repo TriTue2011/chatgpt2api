@@ -119,7 +119,7 @@ export default function LoginPage() {
                 onClick={() => setShowKey((v) => !v)}
                 aria-label={showKey ? "Ẩn mã khóa" : "Hiện mã khóa"}
                 title={showKey ? "Ẩn mã khóa" : "Hiện mã khóa"}
-                className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+                className="absolute right-3 top-1/2 -translate-y-1/2 before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
               >
                 {showKey ? <EyeOff className="size-[18px]" /> : <Eye className="size-[18px]" />}
               </button>

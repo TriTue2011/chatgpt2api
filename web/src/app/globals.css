@@ -580,7 +580,6 @@ body > * { position: relative; z-index: 1; }
   border: none;
   font-weight: 700;
   box-shadow: 0 2px 14px var(--gold-glow);
-  animation: goldShimmer 3s ease infinite;
   border-radius: 10px;
   cursor: pointer;
   transition: all 0.25s ease;
@@ -589,11 +588,19 @@ body > * { position: relative; z-index: 1; }
   box-shadow: 0 4px 22px rgba(212, 175, 55, 0.5);
   filter: brightness(1.08);
   transform: translateY(-1px);
+  /* Shimmer CHỈ khi rê chuột. Trước đây chạy `infinite` ngay từ lúc tải trang:
+     nền gradient 200% trượt qua lại không ngừng dưới chữ đen, nhìn như chữ
+     "Đăng nhập" nhấp nháy liên tục. Nút đứng yên thì không có lý do gì phải
+     động — hiệu ứng để phản hồi thao tác, không phải để tự chạy. */
+  animation: goldShimmer 3s ease infinite;
 }
 @keyframes goldShimmer {
   0%   { background-position: 0% 50%; }
   50%  { background-position: 100% 50%; }
   100% { background-position: 0% 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-gold:hover { animation: none; }
 }
 
 /* ═══ Display typography ═══ */
