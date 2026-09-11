@@ -3037,6 +3037,39 @@ def _skey_zalop(thread_id, thread_type, sender_id) -> str:
     return skey
 
 
+def _nhom_hoc_hoi(ev: dict, thread_id: str, text: str) -> str | None:
+    """Nhóm nhận bản tin học hỏi là nơi chủ máy DẠY bot. Trả câu đáp, hoặc None.
+
+    Chủ máy nhắn 11/09/2026 hai tin dạy bot vào nhóm "AI học hỏi" mà bot không
+    học được chữ nào: câu chấm «hh 11, 32 đúng, …» hỏng vì dấu phẩy, còn tin
+    dạy thường bị cổng tag bỏ vì không gọi tên bot. Nên trong ĐÚNG nhóm này:
+
+    * «hh …» là câu chấm (`hieu_thiet_bi_nha.tra_loi`);
+    * tin KHÔNG tag bot là dữ kiện, ghi vào sổ học;
+    * tin CÓ tag bot vẫn đi đường chat bình thường — chủ máy vẫn hỏi bot được.
+
+    Chỉ nhận trong kênh nhận bản tin học hỏi: câu hỏi chỉ gửi tới đó, nên câu
+    chấm và lời dạy cũng chỉ có nghĩa ở đó.
+    """
+    from services import du_doan_nha, hieu_thiet_bi_nha
+    from services.agent import capabilities as _caps
+
+    acc = str(ev.get("account_id") or "")
+    if not text or f"zalop:{acc}:{thread_id}" not in du_doan_nha._kenh_nhan():
+        return None
+    nguoi = str(ev.get("display_name") or ev.get("sender_id") or "")
+    dap = hieu_thiet_bi_nha.tra_loi(text, nguoi=nguoi)
+    if dap is not None:
+        return dap
+    try:
+        _, kw = _caps.mention_required_for("zalop", acc, thread_id)
+    except Exception:
+        kw = ""
+    if is_bot_tagged(ev, kw):
+        return None
+    return hieu_thiet_bi_nha.nhan_du_kien(text, nguoi=nguoi)
+
+
 def _process_ai(ev: dict) -> None:
     """Trả lời AI cho 1 tin — CHỈ thread được cấp phép (an toàn tài khoản cá nhân)."""
     thread_id = str(ev.get("thread_id") or "").strip()
@@ -3221,18 +3254,14 @@ def _process_ai(ev: dict) -> None:
             send_message(thread_id, _hd.mo(pkey), thread_type, co_nut_chon=True)
             return
 
-    # Chủ máy CHẤM bot học hỏi («hh 12 đúng»). Chỉ nhận trong kênh nhận bản tin
-    # học hỏi: câu hỏi chỉ được gửi tới đó, nên câu chấm cũng chỉ có nghĩa ở đó.
-    # Đứng trước cổng tag để trong nhóm gõ câu chấm là chạy, không phải gọi tên bot.
+    # Nhóm học hỏi: câu chấm «hh …» và lời chủ máy dạy bot (`_nhom_hoc_hoi`).
+    # Đứng trước cổng tag để trong nhóm gõ là chạy, không phải gọi tên bot.
     if text:
-        from services import du_doan_nha as _ddn
-        if f"zalop:{ev.get('account_id')}:{thread_id}" in _ddn._kenh_nhan():
-            from services import hieu_thiet_bi_nha as _htb
-            _cham_hh = _htb.tra_loi(text)
-            if _cham_hh:
-                send_message(thread_id, _cham_hh, thread_type,
-                             account=str(ev.get("account_id") or ""))
-                return
+        _dap_hh = _nhom_hoc_hoi(ev, thread_id, text)
+        if _dap_hh:
+            send_message(thread_id, _dap_hh, thread_type,
+                         account=str(ev.get("account_id") or ""))
+            return
 
     # Lệnh /stt và /tts. Cùng sổ chờ với /dich (services/dich_cho.py) nên một
     # khoá phiên chỉ có MỘT menu đang mở — hai sổ riêng thì người dùng nhắn "2"

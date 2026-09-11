@@ -370,6 +370,115 @@ class HieuThietBiNhaTest(unittest.TestCase):
         self.assertNotEqual(ban, ban2)
         self.assertIn("Thêm một luật.", noi2, "không được ghi đè bản giáo viên đã sửa")
 
+    # ── chủ máy DẠY bot (11/09/2026) ───────────────────────────────────────
+    def test_HH_HIEU_DAU_PHAY_va_GHI_PHAN_DAY_THEM(self) -> None:
+        """Chủ máy nhắn «hh 11, 32 đúng, aptomat …»: bản cũ trả "Anh gõ giúp
+        em…" vì "11," có dấu phẩy, và phần dạy phía sau bị vứt."""
+        ids = [d["id"] for d in self._luu(self._nhom_bep())["moi"]]
+        dap = self.ht.tra_loi(f"hh {ids[0]}, {ids[1]} đúng, aptomat và điều hòa "
+                              "link với nhau qua automation", nguoi="Việt")
+        theo = {d["id"]: d for d in self.ht.dang_hieu_luc()}
+        self.assertEqual((theo[ids[0]]["ket_qua"], theo[ids[1]]["ket_qua"]),
+                         ("dung", "dung"))
+        self.assertEqual(theo[ids[0]]["cham_boi"], "chu_may")
+        self.assertIn("dữ kiện #", dap)
+        self.assertEqual([x["noi_dung"] for x in self.ht.du_kien_gan_day()],
+                         ["aptomat và điều hòa link với nhau qua automation"])
+
+    def test_CHU_MAY_CHAM_LAI_de_len_diem_CLAUDE(self) -> None:
+        """Claude chấm "đúng" cho việc học cảm biến phòng khách; chủ máy nói đó
+        là cảm biến. Điểm, thành tích và thứ được học phải đổi theo chủ máy."""
+        hoc = next(d for d in self._luu(self._nhom_bep())["moi"]
+                   if d["loai_cau_hoi"] == "hoc")
+        self.ht.cham(hoc["id"], True, cham_boi="claude")
+        self.assertEqual(self.ht._thanh_tich("hoc"), (1, 0))
+        self.ht.tra_loi(f"hh {hoc['id']} sai vì là cảm biến")
+        self.assertEqual(self.ht._thanh_tich("hoc"), (0, 1))
+        self.assertEqual(self.ht.thiet_bi_hoc(), [])
+
+    def test_CHAM_LAI_CAU_LAP_LAI_khong_tru_oan(self) -> None:
+        """Câu lặp lại mang chữ "sai" nhưng chưa từng được cộng vào thành tích."""
+        hoc = next(d for d in self._luu(self._nhom_bep())["moi"]
+                   if d["loai_cau_hoi"] == "hoc")
+        self.ht.cham(hoc["id"], False, cham_boi="claude")
+        self._luu(self._nhom_bep(hoc=False, ma_hoc="", loai="khong_ro"))
+        lap = self._luu(self._nhom_bep())["lap_lai"][0]
+        self.assertEqual(self.ht._thanh_tich("hoc"), (0, 1))
+        self.assertTrue(self.ht.sua_cham(lap["id"], True, cham_boi="chu_may"))
+        self.assertEqual(self.ht._thanh_tich("hoc"), (1, 1))
+
+    def test_TIN_DAY_THUONG_la_DU_KIEN_va_GIAI_LAI_NGAY(self) -> None:
+        """Chủ máy dạy xong là muốn xem bot hiểu ra sao, không phải chờ tới mai."""
+        self.assertFalse(self.ht.co_du_kien_moi())
+        dap = self.ht.nhan_du_kien("Cảm biến phòng khách là cảm biến", nguoi="Việt")
+        self.assertIn("dữ kiện #", dap)
+        self.assertTrue(self.ht.co_du_kien_moi())
+        self.ht._ghi_lan("v", "m", 1, 1, 0, 0, "")
+        self.assertFalse(self.ht.co_du_kien_moi())
+        self.assertIsNone(self.ht.nhan_du_kien("   "))
+
+    def test_DU_KIEN_VAO_DE_cua_bot(self) -> None:
+        """Chủ máy biết cái gì nối bằng automation; số đo thì không."""
+        self._den_bep()
+        self.ht.ghi_du_kien("aptomat và điều hòa là hai thiết bị", nguoi="Việt")
+        de_nhan: list[dict] = []
+
+        def bot(model, huong, de):
+            de_nhan.append(json.loads(de))
+            return {"choices": [{"message": {"content": '{"nhom": []}'}}]}
+
+        with mock.patch.object(self.ht, "_goi_model", side_effect=bot), \
+             mock.patch.object(self.ht, "_model", return_value="m"), \
+             mock.patch.object(self.ht, "bao_nhom", return_value=1):
+            self.ht.chay_mot_lan()
+        self.assertEqual([x["noi_dung"] for x in de_nhan[0]["du_kien_chu_may"]],
+                         ["aptomat và điều hòa là hai thiết bị"])
+
+    def test_HO_SO_do_DO_LECH_MS(self) -> None:
+        """Đo 11/09/2026: hai mã của cùng bóng lệch 0–3 ms, hai thiết bị nối bằng
+        automation lệch 29–60 ms — mà tỉ lệ trùng thì như nhau."""
+        self._den_bep()
+        theo = {x["ma"]: x for x in self.ht.ho_so(so_ngay=30)["thiet_bi"]}
+        kem = {k["ma"]: k for k in theo["switch.bep_left"]["doi_cung_luc"]}
+        self.assertEqual(kem["light.bep_left"]["lech_ms"], 50)
+        self.assertEqual(kem["zigbee2mqtt/Bếp#state_left"]["lech_ms"], 3)
+
+    def test_KIEM_BIEN_nhan_LOAI_CAM_BIEN(self) -> None:
+        phan = [{"ma": "switch.x", "ha_bat_duoc": True}]
+        nhom, _ = self.ht._kiem({"nhom": [{"ma": ["switch.x"], "hoc": False,
+                                          "ma_hoc": "", "loai": "cam_bien",
+                                          "chac": 0.9}]}, phan)
+        self.assertEqual(nhom[0]["loai"], "cam_bien")
+
+    def test_HAI_LUOT_GIAI_khong_CHONG_NHAU(self) -> None:
+        """Dữ kiện mới làm heartbeat gọi lại mỗi tick; lượt cũ chưa xong thì bỏ."""
+        with self.ht._dang_giai:
+            self.assertIn("bo_qua", self.ht.chay_mot_lan())
+
+    # ── cổng nhóm học hỏi trong Zalo Cá Nhân ───────────────────────────────
+    def _cong(self, text: str, *, thread: str = "nhom", tag: bool = False):
+        import services.zalo_personal as zp
+
+        ev = {"account_id": "acc", "thread_id": thread, "sender_id": "u1",
+              "display_name": "Việt", "text": text, "thread_type": 1, "mentions": []}
+        with mock.patch("services.agent.capabilities.mention_required_for",
+                        return_value=(True, "@bot")), \
+             mock.patch.object(zp, "is_bot_tagged", return_value=tag):
+            return zp._nhom_hoc_hoi(ev, thread, text)
+
+    def test_CONG_NHOM_HOC_HOI_nhan_CAU_CHAM_va_DU_KIEN(self) -> None:
+        """Tin dạy không tag bot từng bị cổng tag bỏ im lặng."""
+        ids = [d["id"] for d in self._luu(self._nhom_bep())["moi"]]
+        self.assertIn("Em ghi rồi", self._cong(f"hh {ids[0]} đúng"))
+        self.assertIn("dữ kiện #", self._cong("Dàn âm thanh bật theo công tắc mini"))
+        self.assertEqual(len(self.ht.du_kien_gan_day()), 1)
+
+    def test_CONG_NHOM_HOC_HOI_de_TIN_TAG_BOT_va_NHOM_KHAC_di_tiep(self) -> None:
+        """Tag bot là muốn trò chuyện; nhóm khác không phải nơi dạy bot."""
+        self.assertIsNone(self._cong("@bot bật đèn bếp", tag=True))
+        self.assertIsNone(self._cong("chào cả nhà", thread="nhom_khac"))
+        self.assertEqual(self.ht.du_kien_gan_day(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

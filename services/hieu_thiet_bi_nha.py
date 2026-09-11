@@ -9,18 +9,21 @@ Chủ máy chốt 11/09/2026, nguyên văn:
     "bạn chỉ như là giáo viên tạo hướng dẫn để bot của tôi giải bài toán,
     sau đó xem lại giải đúng không"
 
-Nên việc chia làm bốn phần, và KHÔNG phần nào là danh sách lọc cài cứng:
+Nên việc chia làm năm phần, và KHÔNG phần nào là danh sách lọc cài cứng:
 
-1. CODE CHỈ ĐO (`ho_so`). Mã nào đổi cùng lúc với mã nào, ai đổi trước, mỗi
-   lần đổi có bao nhiêu mã khác đổi theo, HA có lệnh bật không. Code không
-   phán thiết bị nào là rác.
+1. CODE CHỈ ĐO (`ho_so`). Mã nào đổi cùng lúc với mã nào, lệch nhau bao nhiêu
+   mili-giây, ai đổi trước, mỗi lần đổi có bao nhiêu mã khác đổi theo, HA có
+   lệnh bật không. Code không phán thiết bị nào là rác.
 2. BOT GIẢI (`giai`). Một lời gọi model mà system prompt CHỈ có hướng dẫn
    (`huong_dan()`) — không persona, không skill, không tool — để khỏi nhiễu.
-3. NGƯỜI CHẤM (`cham`, `tra_loi`). Hiện Claude chấm bằng số đo thật
-   (`scripts/cham_hieu_thiet_bi.py`), sau này chủ máy chấm trong nhóm Zalo
-   "AI học hỏi". Chấm đúng đủ nhiều thì bot thôi hỏi — cùng thang với
-   `du_doan_nha.cap`.
-4. GIÁO VIÊN SỬA HƯỚNG DẪN. Bản chạy thật nằm trong DATA_DIR để sửa được mà
+3. NGƯỜI CHẤM (`cham`, `sua_cham`, `tra_loi`). Claude chấm bằng số đo thật
+   (`scripts/cham_hieu_thiet_bi.py`), chủ máy chấm trong nhóm Zalo "AI học
+   hỏi" và là người chấm cuối cùng. Chấm đúng đủ nhiều thì bot thôi hỏi — cùng
+   thang với `du_doan_nha.cap`.
+4. CHỦ MÁY DẠY (`ghi_du_kien`, `nhan_du_kien`). Lời chủ máy nhắn vào nhóm học
+   hỏi được ghi vào sổ dữ kiện và đưa vào đề ở lượt giải kế tiếp — lượt đó
+   chạy ngay tick sau chứ không chờ sang ngày.
+5. GIÁO VIÊN SỬA HƯỚNG DẪN. Bản chạy thật nằm trong DATA_DIR để sửa được mà
    không dựng lại ảnh; mỗi lượt giải ghi phiên bản hướng dẫn, để biết điểm
    chấm thuộc bản nào.
 
@@ -32,8 +35,11 @@ Số đo làm đề (kho thật 11/09/2026) — để người sau hiểu vì sa
 trường, KHÔNG phải để code dùng:
 
 * 6 cặp `light.X`/`switch.X` đổi cùng lúc 88–100% cả hai chiều, `switch` đổi
-  trước 98–100%; cặp kế tiếp chỉ trùng 9,5%.
+  trước 98–100%, lệch trung vị 0 ms; cặp kế tiếp chỉ trùng 9,5%.
 * MQTT (zigbee2mqtt) báo trước HA trực tiếp 86–100% số lần, sớm 2–3 ms.
+* Điều hòa ↔ Aptomat điều hòa và Công tắc mini ↔ Dàn âm thanh cũng trùng gần
+  100% hai chiều, nhưng lệch 29 ms và 60 ms — chủ máy xác nhận là HAI thiết bị
+  nối bằng automation. Tỉ lệ trùng một mình không phân biệt được hai chuyện đó.
 * 30 công tắc cấu hình Frigate: lần nào đổi cũng có 25–29 mã khác đổi cùng
   giây — hệ thống nạp lại, không phải người bật.
 """
@@ -43,11 +49,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import shutil
 import sqlite3
 import statistics
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -55,15 +63,20 @@ from services.config import DATA_DIR, config
 
 logger = logging.getLogger(__name__)
 
+_TZ = timezone(timedelta(hours=7))
 _DB_PATH = Path(DATA_DIR) / "agent" / "hieu_thiet_bi_nha.sqlite"
 _HUONG_DAN_GOC = Path(__file__).with_name("huong_dan_hoc") / "hieu_thiet_bi.md"
 _conn: Optional[sqlite3.Connection] = None
 _khoa = threading.Lock()
 
+#: Một lượt giải tốn vài phút gọi model, mà dữ kiện mới làm heartbeat gọi lại
+#: mỗi tick 5 phút — không chặn thì hai lượt chồng nhau ghi đè kết luận của nhau.
+_dang_giai = threading.Lock()
+
 #: Hai lần đổi cách nhau không quá ngần này giây thì coi là CÙNG LÚC. Đo
-#: 11/09/2026: đèn và công tắc của cùng một bóng lệch trung vị 0–60 ms, MQTT
-#: với HA lệch 2–3 ms. Một giây rộng gấp chục lần mà vẫn ngắn hơn một lần người
-#: bấm hai công tắc liền nhau.
+#: 11/09/2026: hai mã của cùng một bóng lệch 0–3 ms, hai thiết bị nối bằng
+#: automation lệch vài chục ms. Một giây rộng hơn cả hai mà vẫn ngắn hơn một lần
+#: người bấm hai công tắc liền nhau.
 _CUNG_LUC_GIAY = 1.0
 
 #: Hồ sơ chỉ kể các mã trùng từ 10% số lần đổi trở lên (một trong hai chiều),
@@ -77,9 +90,13 @@ _TOI_DA_KE = 5
 #: các mã trùng nhau luôn nằm chung một lượt.
 _TOI_DA_MOI_LUOT = 40
 
-_LOAI = ("bat_tat", "rac", "khong_ro")
+#: Đề đưa kèm tối đa ngần này dữ kiện gần nhất của chủ máy.
+_TOI_DA_DU_KIEN = 40
+
+_LOAI = ("bat_tat", "cam_bien", "rac", "khong_ro")
 
 _LOAI_DOC = {"rac": "đổi đồng loạt, không phải người bật",
+             "cam_bien": "là cảm biến, dùng làm điều kiện",
              "khong_ro": "chưa rõ là gì",
              "bat_tat": "chưa đủ lần bật"}
 
@@ -139,6 +156,14 @@ def _db() -> sqlite3.Connection:
             " loai_cau_hoi TEXT PRIMARY KEY,"
             " dung INTEGER NOT NULL DEFAULT 0,"
             " sai INTEGER NOT NULL DEFAULT 0)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS du_kien ("
+            " id INTEGER PRIMARY KEY,"
+            " ts REAL NOT NULL,"
+            " nguoi TEXT NOT NULL DEFAULT '',"
+            " noi_dung TEXT NOT NULL,"
+            " nguon TEXT NOT NULL DEFAULT 'nhom')"   # nhom | hh
         )
         conn.commit()
         _conn = conn
@@ -220,13 +245,15 @@ def ho_so(so_ngay: int | None = None, *, den: float | None = None) -> dict[str, 
     xet = ung_vien | (set(su_kien) - la_ha)
 
     # Đổi cùng lúc: với mỗi lần đổi, mã khác nào đổi trong ±1 giây (lấy lần
-    # gần nhất của mỗi mã), và ai đổi trước. Chia theo giây để khỏi so từng cặp.
+    # gần nhất của mỗi mã), lệch nhau bao lâu, và ai đổi trước. Chia theo giây
+    # để khỏi so từng cặp.
     theo_giay: dict[int, list[tuple[float, str]]] = {}
     for ma in xet:
         for t, _, _ in su_kien[ma]:
             theo_giay.setdefault(int(t), []).append((t, ma))
     trung: dict[str, dict[str, int]] = {ma: {} for ma in xet}
     truoc: dict[str, dict[str, int]] = {ma: {} for ma in xet}
+    lech: dict[str, dict[str, list[float]]] = {ma: {} for ma in xet}
     so_kem: dict[str, list[int]] = {ma: [] for ma in xet}
     for ma in xet:
         for t, _, _ in su_kien[ma]:
@@ -240,6 +267,7 @@ def ho_so(so_ngay: int | None = None, *, den: float | None = None) -> dict[str, 
             so_kem[ma].append(len(gan))
             for khac, t2 in gan.items():
                 trung[ma][khac] = trung[ma].get(khac, 0) + 1
+                lech[ma].setdefault(khac, []).append(abs(t2 - t))
                 if t < t2:
                     truoc[ma][khac] = truoc[ma].get(khac, 0) + 1
 
@@ -278,7 +306,10 @@ def ho_so(so_ngay: int | None = None, *, den: float | None = None) -> dict[str, 
                      key=lambda x: (-min(x[0], x[1]), -max(x[0], x[1]), x[2]))
         doi_cung[ma] = [
             {"ma": b, "ty_le_minh": round(minh, 3), "ty_le_ban": round(ban, 3),
-             "minh_doi_truoc": round(truoc[ma].get(b, 0) / trung[ma][b], 3)}
+             "minh_doi_truoc": round(truoc[ma].get(b, 0) / trung[ma][b], 3),
+             # Tỉ lệ trùng không tách được "một thiết bị hiện hai mã" với "hai
+             # thiết bị nối bằng automation" — độ lệch thì tách được (xem đầu tệp).
+             "lech_ms": round(statistics.median(lech[ma][b]) * 1000)}
             for minh, ban, b in xep[:_TOI_DA_KE]]
 
     # Đề gồm mã bật tắt được, cộng mã ngoài HA đổi cùng lúc với chúng — bản MQTT
@@ -316,6 +347,65 @@ def ho_so(so_ngay: int | None = None, *, den: float | None = None) -> dict[str, 
                 "lon_nhat": max(so_kem[ma], default=0)},
         })
     return {"so_ngay": ngay, "thiet_bi": ra}
+
+
+# ── Sổ dữ kiện của chủ máy ──────────────────────────────────────────────────
+def ghi_du_kien(noi_dung: str, *, nguoi: str = "", nguon: str = "nhom",
+                ts: float | None = None) -> int:
+    """Ghi MỘT dữ kiện chủ máy dạy bot. Trả id; nội dung rỗng thì 0.
+
+    Chủ máy nhắn 11/09/2026 vào nhóm "AI học hỏi" hai tin dạy bot — aptomat và
+    điều hòa phòng ngủ là hai thiết bị nối bằng automation, cảm biến phòng
+    khách là cảm biến… — và bot không học được chữ nào: ngoài hai chữ đúng/sai,
+    không có chỗ nào nhận lời chủ máy. Sổ này là chỗ đó.
+    """
+    noi = (noi_dung or "").strip()
+    if not noi:
+        return 0
+    with _khoa:
+        conn = _db()
+        cur = conn.execute(
+            "INSERT INTO du_kien (ts, nguoi, noi_dung, nguon) VALUES (?,?,?,?)",
+            (float(ts or time.time()), (nguoi or "")[:80], noi[:2000], nguon))
+        conn.commit()
+        return int(cur.lastrowid or 0)
+
+
+def du_kien_gan_day(toi_da: int = _TOI_DA_DU_KIEN) -> list[dict[str, Any]]:
+    """Dữ kiện mới nhất, xếp cũ → mới, để đưa vào đề của bot."""
+    with _khoa:
+        rows = _db().execute(
+            "SELECT id, ts, noi_dung FROM du_kien ORDER BY ts DESC, id DESC LIMIT ?",
+            (int(toi_da),)).fetchall()
+    return [{"id": int(r["id"]),
+             "luc": datetime.fromtimestamp(float(r["ts"]), _TZ).strftime("%d/%m/%Y %H:%M"),
+             "noi_dung": r["noi_dung"]} for r in reversed(rows)]
+
+
+def co_du_kien_moi() -> bool:
+    """Có dữ kiện ghi SAU lượt giải gần nhất không.
+
+    Có thì heartbeat cho giải lại ngay tick sau — chủ máy dạy xong là muốn xem
+    bot hiểu ra sao ("tôi vừa đưa 2 dữ kiện xem bot học sao"), không phải chờ
+    tới mai.
+    """
+    with _khoa:
+        conn = _db()
+        dk = conn.execute("SELECT MAX(ts) FROM du_kien").fetchone()[0]
+        lg = conn.execute("SELECT MAX(ts) FROM lan_giai").fetchone()[0]
+    return dk is not None and (lg is None or float(dk) > float(lg))
+
+
+def nhan_du_kien(text: str, *, nguoi: str = "") -> Optional[str]:
+    """Tin dạy thường (không phải câu chấm) trong nhóm học hỏi → dữ kiện.
+
+    Trả câu báo đã nhận; tin rỗng thì None để tin đi tiếp như thường.
+    """
+    id_ = ghi_du_kien(text, nguoi=nguoi, nguon="nhom")
+    if not id_:
+        return None
+    return (f"📝 Em ghi dữ kiện #{id_} vào sổ học. Vài phút nữa em xem lại thiết bị "
+            "có dùng dữ kiện này, rồi báo anh em hiểu ra sao.")
 
 
 # ── Bot giải ────────────────────────────────────────────────────────────────
@@ -445,18 +535,22 @@ def _ghi_lan(phien_ban: str, model: str, so_ho_so: int, so_nhom: int,
 def giai(hs: dict[str, Any]) -> dict[str, Any]:
     """Bot đọc đề theo hướng dẫn, trả các nhóm đã kiểm ở biên.
 
+    Đề gồm hồ sơ đo được VÀ sổ dữ kiện của chủ máy — chủ máy biết nhà mình, số
+    đo không biết cái gì nối bằng automation.
+
     Một phần đề hỏng (model lỗi, JSON không đọc được) là CẢ LƯỢT hỏng: lưu nửa
     đề thì các mã ở nửa kia bị coi là bỏ sót, và kết luận hai nửa lệch phiên.
     """
     huong, ban = huong_dan()
     model = _model()
+    du_kien = du_kien_gan_day()
     ho = list(hs.get("thiet_bi") or [])
     nhom: list[dict[str, Any]] = []
     loai_bo = 0
     loi = ""
     for phan in _chia(ho):
-        de = json.dumps({"so_ngay": hs.get("so_ngay"), "thiet_bi": phan},
-                        ensure_ascii=False)
+        de = json.dumps({"so_ngay": hs.get("so_ngay"), "du_kien_chu_may": du_kien,
+                         "thiet_bi": phan}, ensure_ascii=False)
         r = _goi_model(model, huong, de)
         if r.get("error"):
             loi = f"model lỗi: {str(r['error'])[:160]}"
@@ -604,6 +698,39 @@ def cham(id_: int, dung: bool, *, cham_boi: str, ghi_chu: str = "") -> bool:
     return True
 
 
+def sua_cham(id_: int, dung: bool, *, cham_boi: str, ghi_chu: str = "") -> bool:
+    """Chấm, hoặc CHẤM LẠI, một kết luận. Trả False nếu không có kết luận đó.
+
+    Chủ máy là người chấm cuối cùng. 11/09/2026 Claude chấm "đúng" cho việc học
+    công tắc "cảm biến phòng khách living room"; chủ máy nói đó là cảm biến.
+    Điểm sai phải sửa được, và thành tích phải chuyển theo — không thì thang tin
+    cậy đứng trên một con số đã biết là sai.
+    """
+    kq = "dung" if dung else "sai"
+    with _khoa:
+        conn = _db()
+        r = conn.execute(
+            "SELECT loai_cau_hoi, ket_qua, cham_boi FROM quyet_dinh WHERE id=?",
+            (int(id_),)).fetchone()
+        if not r:
+            return False
+        # Câu `lap_lai` mang chữ "sai" nhưng chưa từng được cộng vào thành tích.
+        cu = "cho" if r["cham_boi"] == "lap_lai" else r["ket_qua"]
+        conn.execute(
+            "UPDATE quyet_dinh SET ket_qua=?, cham_boi=?, ghi_chu=?, cham_luc=?"
+            " WHERE id=?", (kq, cham_boi, (ghi_chu or "")[:300], time.time(), int(id_)))
+        if cu != kq:
+            if cu in ("dung", "sai"):
+                conn.execute(f"UPDATE thanh_tich SET {cu}=MAX(0, {cu}-1)"
+                             " WHERE loai_cau_hoi=?", (r["loai_cau_hoi"],))
+            conn.execute(
+                f"INSERT INTO thanh_tich (loai_cau_hoi, {kq}) VALUES (?,1)"
+                f" ON CONFLICT(loai_cau_hoi) DO UPDATE SET {kq}={kq}+1",
+                (r["loai_cau_hoi"],))
+        conn.commit()
+    return True
+
+
 def _thanh_tich(loai: str) -> tuple[int, int]:
     with _khoa:
         r = _db().execute("SELECT dung, sai FROM thanh_tich WHERE loai_cau_hoi=?",
@@ -717,7 +844,8 @@ def soan_bao(kq: dict[str, Any], moi: list[dict[str, Any]],
     if hoi:
         cuoi = ["", f"Anh chấm giúp em ngay trong nhóm này ({len(hoi)} câu): "
                     f"gõ «hh {hoi[0]} đúng» hoặc «hh {hoi[0]} sai vì …». "
-                    "Nhiều câu cùng đúng thì gõ liền số: «hh 12 13 14 đúng»."]
+                    "Nhiều câu cùng đúng: «hh 12, 13, 14 đúng». Điều gì khác muốn "
+                    "dạy em thì cứ nhắn thẳng vào nhóm, không cần tag."]
     tin: list[str] = []
     hien = dau + [""]
     for x in dong:
@@ -746,62 +874,84 @@ def bao_nhom(tin: str | list[str]) -> int:
     return sum(digest.send_targets(kenh, t) for t in ds if t)
 
 
-def tra_loi(text: str) -> Optional[str]:
-    """Câu chấm trong nhóm học hỏi: «hh 12 đúng», «hh 12 13 sai vì là quạt».
+#: Câu chấm: «hh 12 đúng», «hh 11, 32 đúng, ghi chú…», «hh #12 và 13 sai vì …».
+#: Hai chữ đúng/sai và tiền tố `hh` do CHÍNH bot in ra trong tin hỏi.
+_CAU_CHAM = re.compile(
+    r"\s*hh\s*[:,]?\s*(?P<so>#?\d+(?:\s*(?:,|;|&|và|va)?\s*#?\d+)*)\s*[,:;.\-]?\s*"
+    r"(?P<chu>đúng|dung|sai)\b[\s,.:;\-]*(?P<con>.*)",
+    re.IGNORECASE | re.DOTALL)
+
+
+def tra_loi(text: str, *, nguoi: str = "") -> Optional[str]:
+    """Câu chấm trong nhóm học hỏi. Trả câu đáp; None = không phải câu chấm.
 
     Tiền tố `hh` và hai chữ đúng/sai do CHÍNH bot in ra trong tin hỏi, nên đây
     không phải danh sách đoán ý người dùng — cùng lý do với
-    `orchestrator._TRA_LOI_DUNG`. So sau khi bỏ dấu: chủ máy gõ trên điện
-    thoại, "dung" và "đúng" là một chữ.
+    `orchestrator._TRA_LOI_DUNG`. So không phân biệt hoa thường và nhận cả chữ
+    không dấu: chủ máy gõ trên điện thoại.
 
-    Trả None = không phải câu chấm, tin đi tiếp như thường.
+    Chủ máy nhắn 11/09/2026 «hh 11, 32 đúng, aptomat … là 1 thiết bị, …» và bot
+    trả lời "Anh gõ giúp em…" — bản cũ chỉ tách theo dấu cách nên "11," không
+    phải số, và phần dạy phía sau bị vứt. Nay số cách nhau bằng dấu cách, dấu
+    phẩy hay chữ "và" đều nhận; phần chữ sau đúng/sai vừa là ghi chú của câu
+    chấm, vừa được ghi vào sổ dữ kiện để lượt giải sau dùng.
+
+    Chủ máy là người chấm cuối cùng nên câu đã chấm (kể cả do Claude) vẫn chấm
+    lại được (`sua_cham`).
     """
     from services.boi_canh_nha import _khong_dau
 
     phan = (text or "").split()
-    if not phan or _khong_dau(phan[0]) != "hh":
+    if not phan or _khong_dau(phan[0]).strip(":,") != "hh":
         return None
-    so: list[int] = []
-    i = 1
-    while i < len(phan) and phan[i].lstrip("#").isdigit():
-        so.append(int(phan[i].lstrip("#")))
-        i += 1
-    chu = _khong_dau(phan[i]) if i < len(phan) else ""
-    if not so or chu not in ("dung", "sai"):
-        return "Anh gõ giúp em: «hh <số> đúng» hoặc «hh <số> sai vì …»."
-    ghi_chu = " ".join(phan[i + 1:])
-    duoc = [x for x in so if cham(x, chu == "dung", cham_boi="chu_may", ghi_chu=ghi_chu)]
+    m = _CAU_CHAM.match(text or "")
+    if not m:
+        return ("Anh gõ giúp em: «hh <số> đúng» hoặc «hh <số> sai vì …» — nhiều số "
+                "thì cách nhau bằng dấu cách hoặc dấu phẩy.")
+    so = list(dict.fromkeys(int(x) for x in re.findall(r"\d+", m.group("so"))))
+    dung = _khong_dau(m.group("chu")) == "dung"
+    con = m.group("con").strip()
+    duoc = [x for x in so if sua_cham(x, dung, cham_boi="chu_may", ghi_chu=con)]
     khong = [x for x in so if x not in duoc]
+    id_dk = ghi_du_kien(con, nguoi=nguoi, nguon="hh") if con else 0
     dong = []
     if duoc:
         dong.append(f"Em ghi rồi: {', '.join(f'#{x}' for x in duoc)} "
-                    f"{'đúng' if chu == 'dung' else 'sai'}.")
-        if chu == "sai":
+                    f"{'đúng' if dung else 'sai'}.")
+        if not dung:
             dong.append("Câu sai em thôi dùng ngay; Claude sẽ xem để sửa hướng dẫn cho em.")
+    if id_dk:
+        dong.append(f"Phần anh dặn thêm em ghi thành dữ kiện #{id_dk}, "
+                    "lượt xem lại tới em dùng luôn.")
     if khong:
-        dong.append(f"Không thấy câu đang chờ chấm: {', '.join(f'#{x}' for x in khong)}.")
+        dong.append(f"Không thấy câu nào số: {', '.join(f'#{x}' for x in khong)}.")
     return " ".join(dong)
 
 
 # ── Vòng chạy ───────────────────────────────────────────────────────────────
 def chay_mot_lan() -> dict[str, Any]:
-    """Heartbeat gọi mỗi ngày: đo đề → bot giải → lưu → báo nhóm học hỏi."""
+    """Heartbeat gọi: đo đề → bot giải → lưu → báo nhóm học hỏi."""
     if not is_enabled():
         return {"bo_qua": "đang tắt"}
-    hs = ho_so()
-    if not hs:
-        return {"bo_qua": "HA chưa trả sổ dịch vụ — giữ kết luận cũ"}
-    if not hs["thiet_bi"]:
-        return {"bo_qua": "chưa có thiết bị bật tắt nào có lịch sử"}
-    kq = giai(hs)
-    ghi = (ghi_ket_qua(kq["lan_giai"], kq["nhom"]) if not kq["loi"]
-           else {"moi": [], "lap_lai": []})
-    ten = {x["ma"]: x["ten"] for x in hs["thiet_bi"] if x.get("ten")}
-    tin = soan_bao(kq, ghi["moi"], ghi["lap_lai"], ten)
-    gui = bao_nhom(tin) if tin else 0
-    return {"lan_giai": kq["lan_giai"], "phien_ban": kq["phien_ban"],
-            "nhom": len(kq["nhom"]), "moi": len(ghi["moi"]),
-            "lap_lai": len(ghi["lap_lai"]), "gui": gui, "loi": kq["loi"]}
+    if not _dang_giai.acquire(blocking=False):
+        return {"bo_qua": "lượt giải trước chưa xong"}
+    try:
+        hs = ho_so()
+        if not hs:
+            return {"bo_qua": "HA chưa trả sổ dịch vụ — giữ kết luận cũ"}
+        if not hs["thiet_bi"]:
+            return {"bo_qua": "chưa có thiết bị bật tắt nào có lịch sử"}
+        kq = giai(hs)
+        ghi = (ghi_ket_qua(kq["lan_giai"], kq["nhom"]) if not kq["loi"]
+               else {"moi": [], "lap_lai": []})
+        ten = {x["ma"]: x["ten"] for x in hs["thiet_bi"] if x.get("ten")}
+        tin = soan_bao(kq, ghi["moi"], ghi["lap_lai"], ten)
+        gui = bao_nhom(tin) if tin else 0
+        return {"lan_giai": kq["lan_giai"], "phien_ban": kq["phien_ban"],
+                "nhom": len(kq["nhom"]), "moi": len(ghi["moi"]),
+                "lap_lai": len(ghi["lap_lai"]), "gui": gui, "loi": kq["loi"]}
+    finally:
+        _dang_giai.release()
 
 
 def _reset_for_tests() -> None:

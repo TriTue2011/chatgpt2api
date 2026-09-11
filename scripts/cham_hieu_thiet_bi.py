@@ -8,7 +8,9 @@ luật của giáo viên, so với kết luận bot đang dùng, in từng chỗ
 để giáo viên sửa HƯỚNG DẪN — không sửa code, không sửa kết luận hộ bot.
 
 Luật của giáo viên chỉ chấm khi CHẮC. Ca lưng chừng in "chưa chấm": chấm bừa
-là làm hỏng thang lên cấp của chính bot.
+là làm hỏng thang lên cấp của chính bot. Câu chủ máy đã chấm thì không đụng:
+chủ máy là người chấm cuối cùng, và luật số đo không đọc được dữ kiện chủ máy
+dạy (cái gì là cảm biến, cái gì nối bằng automation).
 
 Chạy trong container (đọc đúng kho, ghi điểm đúng chỗ):
     docker exec c2a /app/.venv/bin/python /app/scripts/cham_hieu_thiet_bi.py
@@ -27,9 +29,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-#: Cả hai chiều trùng từ ngần này: chắc là MỘT thiết bị. Cặp thật đo 11/09/2026
-#: trùng 88–100%, cặp kế tiếp chỉ 9,5% — khoảng trống rộng, nên ngưỡng chấm đặt
-#: xa cả hai phía.
+#: Cả hai chiều trùng từ ngần này: đủ điều kiện xét là MỘT thiết bị. Cặp thật
+#: đo 11/09/2026 trùng 88–100%, cặp kế tiếp chỉ 9,5%.
 _CHAC_TRUNG = 0.8
 #: Cả hai chiều trùng không quá ngần này: chắc là HAI thứ.
 _CHAC_KHAC = 0.2
@@ -38,23 +39,38 @@ _CHAC_TRUOC = 0.8
 #: Trung vị số mã khác đổi cùng giây từ ngần này: chắc là hệ thống đổi. Đo
 #: 11/09/2026: công tắc cấu hình Frigate 25–29, đèn thật 1–2.
 _DONG_LOAT = 10
+#: Lệch không quá ngần này mili-giây: một thiết bị hiện hai mã. Đo 11/09/2026:
+#: light/switch của cùng bóng 0 ms, MQTT với HA 2–3 ms.
+_LECH_MOT_THIET_BI = 10
+#: Lệch từ ngần này mili-giây: hai thiết bị nối bằng automation. Đo 11/09/2026:
+#: điều hòa ↔ aptomat 29 ms, công tắc mini ↔ dàn âm thanh 60 ms — chủ máy xác
+#: nhận cả hai cặp là HAI thiết bị. Giữa hai ngưỡng thì chưa chấm.
+_LECH_HAI_THIET_BI = 20
 
 
 def _quan_he(ho: dict[str, dict[str, Any]], a: str, b: str) -> tuple | None:
-    """(trùng a→b, trùng b→a, phần a đổi trước) theo đề; None = đề không nói.
+    """(trùng a→b, trùng b→a, phần a đổi trước, lệch ms) theo đề; None = đề không nói.
 
     Đề chỉ kể tối đa 5 mã trùng từ 10%. Nên mã không được kể mà danh sách của
     CẢ HAI bên còn dưới 5 mã nghĩa là trùng dưới 10% — chắc là khác.
     """
     for x in ho[a]["doi_cung_luc"]:
         if x["ma"] == b:
-            return x["ty_le_minh"], x["ty_le_ban"], x["minh_doi_truoc"]
+            return x["ty_le_minh"], x["ty_le_ban"], x["minh_doi_truoc"], x.get("lech_ms")
     for x in ho[b]["doi_cung_luc"]:
         if x["ma"] == a:
-            return x["ty_le_ban"], x["ty_le_minh"], round(1 - x["minh_doi_truoc"], 3)
+            return (x["ty_le_ban"], x["ty_le_minh"], round(1 - x["minh_doi_truoc"], 3),
+                    x.get("lech_ms"))
     if len(ho[a]["doi_cung_luc"]) < 5 and len(ho[b]["doi_cung_luc"]) < 5:
-        return 0.0, 0.0, None
+        return 0.0, 0.0, None, None
     return None
+
+
+def _mot_thiet_bi(x: dict[str, Any]) -> bool:
+    """Mã kèm này có phải CÙNG thiết bị không — trùng mạnh hai chiều VÀ lệch ít."""
+    lech = x.get("lech_ms")
+    return (min(x["ty_le_minh"], x["ty_le_ban"]) >= _CHAC_TRUNG
+            and lech is not None and lech <= _LECH_MOT_THIET_BI)
 
 
 def _cham_cung_thiet_bi(ma: list[str], ho: dict) -> tuple[bool | None, str]:
@@ -65,14 +81,19 @@ def _cham_cung_thiet_bi(ma: list[str], ho: dict) -> tuple[bool | None, str]:
                 return None, f"đề không kể quan hệ {a} – {b}"
             if max(q[0], q[1]) <= _CHAC_KHAC:
                 return False, f"{a} và {b} chỉ trùng {q[0]:.0%}/{q[1]:.0%} — hai thứ khác nhau"
+            if q[3] is not None and q[3] >= _LECH_HAI_THIET_BI:
+                return False, (f"{a} và {b} lệch {q[3]} ms — hai thiết bị nối bằng "
+                               "automation, không phải một")
             if min(q[0], q[1]) < _CHAC_TRUNG:
                 return None, f"{a} – {b} trùng {q[0]:.0%}/{q[1]:.0%}, lưng chừng"
+            if q[3] is None or q[3] > _LECH_MOT_THIET_BI:
+                return None, f"{a} – {b} lệch {q[3]} ms, lưng chừng"
     for a in ma:
         for x in ho[a]["doi_cung_luc"]:
-            if x["ma"] not in ma and min(x["ty_le_minh"], x["ty_le_ban"]) >= _CHAC_TRUNG:
+            if x["ma"] not in ma and _mot_thiet_bi(x):
                 return False, (f"thiếu {x['ma']}: trùng với {a} "
-                               f"{x['ty_le_minh']:.0%}/{x['ty_le_ban']:.0%}")
-    return True, "mọi cặp trùng từ 80% cả hai chiều, không sót mã nào"
+                               f"{x['ty_le_minh']:.0%}/{x['ty_le_ban']:.0%}, lệch {x['lech_ms']} ms")
+    return True, "mọi cặp trùng từ 80% cả hai chiều và lệch không quá 10 ms, không sót mã nào"
 
 
 def _cham_nguon_nhanh(nhanh: str, ma: list[str], ho: dict) -> tuple[bool | None, str]:
@@ -107,8 +128,7 @@ def _cham_hoc(khoa: str, gt: dict, ho: dict) -> tuple[bool | None, str]:
         return False, f"chỉ {p['so_lan_bat']} lần bật mà vẫn học"
     for x in p["doi_cung_luc"]:
         khac = ho.get(x["ma"])
-        if not (khac and khac["ha_bat_duoc"]
-                and min(x["ty_le_minh"], x["ty_le_ban"]) >= _CHAC_TRUNG):
+        if not (khac and khac["ha_bat_duoc"] and _mot_thiet_bi(x)):
             continue
         if x["minh_doi_truoc"] <= 1 - _CHAC_TRUOC:
             return False, (f"{x['ma']} cùng thiết bị mà đổi trước "
@@ -174,7 +194,7 @@ def main(argv: list[str]) -> int:
     dem = {True: 0, False: 0, None: 0}
     sai: list[tuple[dict, str]] = []
     for d in ds:
-        if d.get("cham_boi") == "lap_lai":
+        if d.get("cham_boi") in ("lap_lai", "chu_may"):
             continue
         ket, vi_sao = cham_mot(d, ho)
         dem[ket] += 1

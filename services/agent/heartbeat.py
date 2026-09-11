@@ -554,8 +554,10 @@ def _eval_hieu_thiet_bi_nha() -> tuple[str, str]:
             return "skip", "đang tắt (mqtt.hieu_thiet_bi.bat)"
         import time as _t
         moc = _t.strftime("%Y-%m-%d")
-        if _state.get("hieu_thiet_bi_ngay") == moc:
-            return "skip", "hôm nay đã xem rồi"
+        # Chủ máy vừa dạy dữ kiện mới thì xem lại NGAY tick này, đừng bắt chờ tới
+        # mai mới thấy bot hiểu ra sao ("tôi vừa đưa 2 dữ kiện xem bot học sao").
+        if _state.get("hieu_thiet_bi_ngay") == moc and not ht.co_du_kien_moi():
+            return "skip", "hôm nay đã xem rồi, chưa có dữ kiện mới"
         _state["hieu_thiet_bi_ngay"] = moc
         _save_state()
         threading.Thread(target=ht.chay_mot_lan, name="hieu-thiet-bi-nha",
