@@ -436,6 +436,13 @@ class GeminiGrounding(SearchBackend):
             if proxy:
                 kwargs["proxies"] = {"http": proxy, "https": proxy}
 
+            # Gửi THẲNG tới model Gemini, không qua cổng — nên tự che bí mật. Câu
+            # tìm kiếm là tham số tool mà model soạn, và tầng chạy tool mở mã két
+            # `⟦…⟧` ra chữ thật trước khi gọi tới đây (`privacy_gate`).
+            # Chỉ che mật khẩu, KHÔNG che số điện thoại/email: tra một số điện
+            # thoại là việc tìm kiếm bình thường, che đi là tìm sai.
+            from services.privacy_gate import redact_text
+            query = redact_text(query, session_id="gemini_search", redact_pii=False)
             resp = requests.post(
                 f"{_gemini_search_base()}/models/{self._get_model()}:generateContent?key={api_key}",
                 headers={"Content-Type": "application/json", "x-goog-api-key": api_key},

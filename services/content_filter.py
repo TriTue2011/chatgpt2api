@@ -53,7 +53,11 @@ def check_request(text: str) -> None:
     if not base_url or not api_key or not model:
         raise HTTPException(status_code=400, detail={"error": "ai review config is incomplete"})
     prompt = str(review.get("prompt") or DEFAULT_REVIEW_PROMPT).strip()
-    content = f"{prompt}\n\nYêu cầu người dùng:\n{text}\n\nCHỈ trả lời ALLOW hoặc REJECT."
+    # Gửi THẲNG ra dịch vụ kiểm duyệt bên ngoài, không qua cổng — nên phải tự che
+    # bí mật, cùng luật không đưa mật khẩu cho model (`privacy_gate`).
+    from services.privacy_gate import redact_text
+    an_toan = redact_text(text, session_id="content_filter")
+    content = f"{prompt}\n\nYêu cầu người dùng:\n{an_toan}\n\nCHỈ trả lời ALLOW hoặc REJECT."
     try:
         response = requests.post(
             f"{base_url}/v1/chat/completions",

@@ -115,6 +115,13 @@ def _handle_adapter_image(route, body: dict[str, Any]) -> dict[str, Any] | Itera
         except Exception:
             adapter._use_img2img = False
 
+    # Lời nhắc vẽ đi THẲNG tới model tạo ảnh bên ngoài, không qua `_dispatch` —
+    # tự che mật khẩu. Không che số điện thoại/email: người ta hay in chúng lên
+    # ảnh (tờ rơi, danh thiếp), che thì hỏng ảnh.
+    from services.privacy_gate import redact_text
+    body = {**body, "prompt": redact_text(str(body.get("prompt") or ""),
+                                          session_id="image", redact_pii=False)}
+
     # Generate n images
     all_data: list[dict[str, Any]] = []
     stream_outputs: list[ImageOutput] = []

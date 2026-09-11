@@ -33,11 +33,16 @@ from utils.log import logger
 
 # ── Patterns (order matters: secrets before generic PII) ────────────────────
 
-# Labeled secrets: "mk: xxx", "password = yyy", "mật khẩu là zzz"
+# Labeled secrets: "mk: xxx", "password = yyy"
+#
+# MỌI mẫu dưới đây bỏ qua chữ nằm trong mã két `⟦…⟧`: tin nhắn bị che HAI lần
+# (cửa vào `apply_to_body` và cửa ra `_dispatch`), mà mã két `⟦PWD:1:abc⟧` có
+# chữ "PWD:" — không chặn thì lần hai che lồng lên mã két và tool không mở lại
+# được mật khẩu. Che hai lần phải ra y như che một lần.
 _LABELED_SECRET = re.compile(
-    r"(?i)(?:\b(?:mk|mat\s*khau|mật\s*khẩu|password|passwd|pwd|secret|api[_-]?key|"
+    r"(?i)(?:(?<!⟦)\b(?:mk|mat\s*khau|mật\s*khẩu|password|passwd|pwd|secret|api[_-]?key|"
     r"token|session[_-]?key|totp|otp)\b\s*[:=\s]\s*)"
-    r"([^\s,;]{4,128})"
+    r"([^\s,;⟦⟧]{4,128})"
 )
 
 # JWT
@@ -52,6 +57,28 @@ _BEARER = re.compile(r"(?i)\bBearer\s+([A-Za-z0-9._\-]{20,})")
 
 # Google cookie fragments (partial — full cookies rarely pasted)
 _PSID = re.compile(r"(?i)(?:__Secure-)?1PSID[TS]?\s*[:=]\s*([^\s;]{12,})")
+
+# Tài khoản:mật khẩu nằm trong đường dẫn — `rtsp://tk:mk@máy/…`. Nhận theo
+# DẠNG, không theo tên thiết bị. Mật khẩu được phép chứa "@", nên phần trước tên
+# máy kéo tới "@" CUỐI CÙNG của cụm địa chỉ. Đo 11/09/2026: 4 camera go2rtc của
+# nhà mang đúng dạng này trong tên Home Assistant, và đi thẳng tới model.
+_URL_USERINFO = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^\s/@⟦⟧]+:[^\s/⟦⟧]*)@")
+
+# Cặp khoá–giá trị có TÊN KHOÁ là bí mật: JSON (`"password": "…"`), cấu hình hay
+# tham số URL (`?token=…`). Tên khoá dùng CHUNG danh sách với phần che cài đặt
+# (`settings_secrets.la_truong_bi_mat`) — một danh sách, không có bản thứ hai để
+# lệch nhau. Kết quả tool và thuộc tính Home Assistant đều là JSON, mà
+# `_LABELED_SECRET` không đọc được dấu ngoặc kép.
+_KV_NGOAC = re.compile(r"""(["'])([A-Za-z0-9_\-]{2,48})\1\s*:\s*(["'])([^"'\n⟦⟧]{4,512})\3""")
+_KV_TRAN = re.compile(
+    r"(?<![A-Za-z0-9_\-⟦])([A-Za-z][A-Za-z0-9_\-]{1,47})\s*[:=]\s*([^\s,;\"'&<>⟦⟧]{4,256})")
+
+# "mật khẩu wifi nhà là Abc123" — nhãn tiếng Việt, vài chữ rồi "là". Một chuỗi
+# mật khẩu không có hình dạng đo được; nhãn đi kèm là dấu hiệu duy nhất, nên đây
+# là danh sách nhãn có lý do — cùng loại ngoại lệ `boi_canh_nha._TRUONG_NGUOI`.
+_LA_SECRET = re.compile(
+    r"(?i)\b(?:mật\s*khẩu|mat\s*khau|mk|password|pass)(?:\s+[^\s,;:=]+){0,3}?"
+    r"\s+(?:là|la|is)\s+([^\s,;⟦⟧]{4,128})")
 
 # Long hex / base64-ish secrets (conservative: only with keyword nearby handled by labeled)
 
@@ -213,6 +240,30 @@ def redact_text(
     do_pii = bool(cfg.get("redact_pii", True)) if redact_pii is None else redact_pii
     ttl = _ttl()
     out = text
+
+    def _sub_nhom(nhom: int, kind: str = "password"):
+        """Thay đúng nhóm `nhom` của mẫu bằng mã két, giữ nguyên phần còn lại."""
+        def _fn(m: re.Match[str]) -> str:
+            ref = _vault.put(session_id, kind, m.group(nhom), ttl=ttl) or "[REDACTED]"
+            a, b = m.start(nhom) - m.start(0), m.end(nhom) - m.start(0)
+            return m.group(0)[:a] + ref + m.group(0)[b:]
+        return _fn
+
+    def _sub_kv(nhom_khoa: int, nhom_gt: int):
+        """Chỉ che khi TÊN KHOÁ là bí mật — danh sách chung `settings_secrets`."""
+        from services.settings_secrets import la_truong_bi_mat
+        che = _sub_nhom(nhom_gt)
+
+        def _fn(m: re.Match[str]) -> str:
+            return che(m) if la_truong_bi_mat(m.group(nhom_khoa)) else m.group(0)
+        return _fn
+
+    # DẠNG trước, nhãn sau: URL mang tài khoản:mật khẩu trông giống email, và
+    # tên khoá JSON rõ ràng hơn mọi nhãn trong câu nói.
+    out = _URL_USERINFO.sub(_sub_nhom(2), out)
+    out = _KV_NGOAC.sub(_sub_kv(2, 4), out)
+    out = _KV_TRAN.sub(_sub_kv(1, 2), out)
+    out = _LA_SECRET.sub(_sub_nhom(1), out)
 
     def _sub_labeled(m: re.Match[str]) -> str:
         raw = m.group(1)

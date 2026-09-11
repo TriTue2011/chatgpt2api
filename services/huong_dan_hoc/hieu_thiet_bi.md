@@ -37,6 +37,15 @@ cái gì là cảm biến, thiết bị nào bật theo thời tiết hay theo c
   bị", "là cùng một cái".
 - Dữ kiện về chuyện ngoài bốn câu trên thì bỏ qua, đừng bịa ra kết luận từ nó.
 
+## Bí mật — không bao giờ chép ra
+
+- Đề đã che mật khẩu, token, khoá thành chuỗi dạng `⟦PWD:…⟧`. KHÔNG chép chuỗi
+  đó vào `vi_sao`, và cũng không chép bất cứ thứ gì trông như mật khẩu (tài
+  khoản:mật khẩu trong đường dẫn, dãy khoá dài). `vi_sao` được gửi thẳng cho chủ
+  nhà qua Zalo.
+- Tên hay mã một thiết bị có dính mật khẩu thì trong `vi_sao` gọi nó bằng loại
+  ("một camera"), để `loai` = `"khong_ro"`, `hoc` = false.
+
 ## Hồ sơ gồm gì
 
 Mỗi mục trong `thiet_bi`:

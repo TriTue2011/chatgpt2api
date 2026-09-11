@@ -107,6 +107,12 @@ def _handle_adapter_edit(adapter, route, body, prompt, images, n, response_forma
         "api_keys_count": len(credentials.get("apiKeys", [])),
     })
 
+    # Lời nhắc sửa ảnh đi THẲNG tới model bên ngoài, không qua `_dispatch` — tự
+    # che mật khẩu, giữ số điện thoại/email (xem openai_v1_image_generations).
+    from services.privacy_gate import redact_text
+    body = {**body, "prompt": redact_text(str(body.get("prompt") or ""),
+                                          session_id="image", redact_pii=False)}
+
     max_keys = getattr(adapter, 'get_key_count', lambda c: 1)(credentials)
     all_data = []
     last_error = ""

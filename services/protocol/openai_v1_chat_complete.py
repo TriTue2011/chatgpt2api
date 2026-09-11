@@ -4684,7 +4684,23 @@ def _dispatch(route, messages, tools, tool_choice, body):
     là chỗ duy nhất dịch được sang tiếng Anh mà không tắt mất chúng — xem
     ``services/translate_pivot``. Trục tắt (mặc định) thì hàm này chỉ là một lần
     gọi hàm thẳng, không tốn gì.
+
+    CHE BÍ MẬT Ở ĐÂY, cửa cuối — sau mọi tầng đã chèn thêm nội dung (ngữ cảnh
+    nhà, ký ức, kết quả tool) và TRƯỚC trục dịch (trục dịch cũng gọi một model).
+    `handle()` che ở cửa VÀO từ trước, nhưng ngữ cảnh Home Assistant chèn SAU đó:
+    11–12/09/2026 tên 4 camera go2rtc mang `rtsp://tài khoản:mật khẩu@…` đi
+    thẳng tới model mỗi lượt chat. Không bọc try: che hỏng thì lượt này hỏng,
+    còn hơn gửi bản chưa che.
     """
+    from services.privacy_gate import redact_messages, session_id_from_body
+    da_che = redact_messages(messages, session_id=str(
+        (body or {}).get("_privacy_session") or session_id_from_body(body)))
+    so_che = sum(1 for a, b in zip(messages or [], da_che or []) if a != b)
+    if so_che:
+        # Ghi lại để kiểm được TRÊN TIẾN TRÌNH PHỤC VỤ rằng cửa ra đang che —
+        # 12/09/2026 kiểm bằng một tiến trình mới đã cho kết luận sai.
+        logger.info({"event": "privacy_dispatch_redacted", "msgs_touched": so_che})
+    messages = da_che
     truc = None
     try:
         from services import translate_pivot as _tp

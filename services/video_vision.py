@@ -237,7 +237,11 @@ def phan_tich_khung(jpeg: bytes, moc_giay: float, loi_thoai: str = "") -> str:
         "người nổi tiếng nếu hình không đủ chắc; không bịa lời thoại."
     )
     if loi_thoai.strip():
-        prompt += " Lời thoại cùng cảnh (chỉ để đối chiếu, không dịch lại): " + loi_thoai[:700]
+        # Lời thoại là lời NGƯỜI nói trong video, gửi thẳng tới model trên máy GPU,
+        # không qua cổng — nên tự che bí mật như mọi đường tới model (`privacy_gate`).
+        from services.privacy_gate import redact_text
+        prompt += (" Lời thoại cùng cảnh (chỉ để đối chiếu, không dịch lại): "
+                   + redact_text(loi_thoai[:700], session_id="video_vision"))
     try:
         r = requests.post(
             url_gpu() + "/v1/chat/completions",
