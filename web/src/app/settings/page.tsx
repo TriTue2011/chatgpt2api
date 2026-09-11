@@ -10,10 +10,7 @@ import { BoLocCaiDat } from "@/components/settings-filter";
 import { BackupSettingsCard } from "./components/backup-settings-card";
 import { RcloneCard } from "./components/rclone-card";
 import { LuuTruOnlineCard } from "./components/luu-tru-online-card";
-import { HACard } from "./components/ha-card";
-import { CameraCard } from "./components/camera-card";
-import { MqttCard } from "./components/mqtt-card";
-import { TuyaCard } from "./components/tuya-card";
+import { HomeAssistantTabs } from "./components/ha-tabs";
 import { FacebookCard } from "./components/facebook-card";
 import { EmailCalendarCard } from "./components/email-calendar-card";
 import { VoiceSpeakersCard } from "./components/voice-speakers-card";
@@ -178,10 +175,7 @@ function SettingsPageContent() {
           description="Kết nối HA để AI biết trạng thái nhà và điều khiển thiết bị"
           icon={<Archive className="size-5" />}
         >
-          <HACard />
-          <CameraCard />
-          <MqttCard />
-          <TuyaCard />
+          <HomeAssistantTabs />
         </SettingsSection>
 
         <SettingsSection

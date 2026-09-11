@@ -465,7 +465,7 @@ export const SO_TRA: MucTinhNang[] = [
     canGi: "Camera đã có trong Home Assistant hoặc địa chỉ RTSP.",
     mucDo: "tuy-chon",
     thuTu: 33,
-    duong: "/settings?tim=home%20assistant",
+    duong: "/settings?tim=home%20assistant&tab=camera",
     nhom: "Nhà thông minh",
     tuKhoa: ["camera", "rtsp", "hình ảnh", "giám sát", "quan sát"],
     daXong: (tt) => coPhanTu(lay(tt.config, "cameras")),
@@ -480,7 +480,7 @@ export const SO_TRA: MucTinhNang[] = [
     canGi: "Một máy chủ MQTT đang chạy (EMQX, Mosquitto…) và địa chỉ của nó.",
     mucDo: "tuy-chon",
     thuTu: 34,
-    duong: "/settings?tim=home%20assistant",
+    duong: "/settings?tim=home%20assistant&tab=mqtt",
     nhom: "Nhà thông minh",
     tuKhoa: ["mqtt", "emqx", "mosquitto", "zigbee", "thiết bị", "broker"],
     // lay() chỉ đọc khoá PHẲNG (xem định nghĩa ở trên), nên "mqtt.host" luôn
