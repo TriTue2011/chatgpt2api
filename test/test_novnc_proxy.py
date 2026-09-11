@@ -143,5 +143,61 @@ class HopDongProxyTest(unittest.TestCase):
                          "mã sống không được dùng receive_bytes — xem docstring")
 
 
+class ChanTrinhDuyetNhoMatKhauTest(unittest.TestCase):
+    """Chủ máy không muốn mật khẩu VNC nằm trong kho mật khẩu trình duyệt.
+
+    `vnc.html` của noVNC đặt ô mật khẩu trong `<form>` có nút submit mà KHÔNG
+    khai `autocomplete` — đúng hình dạng Chrome nhận là form đăng nhập, nên nó
+    hỏi lưu rồi tự điền theo tên miền ở lần sau (đo 11/09/2026).
+
+    Khoá HÀNH VI: HTML phục vụ ra phải mang `autocomplete`. Không khoá cách
+    viết — thay `replace` bằng regex hay parser đều được, miễn kết quả đúng.
+    """
+
+    # Nguyên văn từ gói Debian novnc 1.6.0, đã đối chiếu bằng `cat -A`.
+    THAT = (
+        b'<div id="noVNC_credentials_dlg" class="noVNC_panel"><form>\n'
+        b'        <div id="noVNC_username_block">\n'
+        b'            <input id="noVNC_username_input">\n'
+        b'        </div>\n'
+        b'        <div id="noVNC_password_block">\n'
+        b'            <input id="noVNC_password_input" type="password">\n'
+        b'        </div>\n'
+        b'    </form></div>\n'
+    )
+
+    def test_O_MAT_KHAU_duoc_khai_autocomplete(self):
+        from api.novnc_proxy import _chan_trinh_duyet_nho_mat_khau
+
+        ra = _chan_trinh_duyet_nho_mat_khau(self.THAT)
+        self.assertIn(b'id="noVNC_password_input"', ra)
+        self.assertIn(b'autocomplete="new-password"', ra,
+                      "ô mật khẩu phải khai autocomplete để Chrome thôi tự điền")
+
+    def test_O_TEN_cung_phai_khai_vi_Chrome_ghep_cap(self):
+        """Chrome ghép tên+mật khẩu mới coi là form đăng nhập — khai thiếu một
+        nửa thì nó vẫn lưu."""
+        from api.novnc_proxy import _chan_trinh_duyet_nho_mat_khau
+
+        ra = _chan_trinh_duyet_nho_mat_khau(self.THAT)
+        self.assertIn(b'id="noVNC_username_input" autocomplete="off"', ra)
+
+    def test_KHONG_con_o_nhap_tran_trui(self):
+        """Chốt chặn: sau khi sửa, không còn ô nào thiếu `autocomplete`."""
+        from api.novnc_proxy import _chan_trinh_duyet_nho_mat_khau
+
+        ra = _chan_trinh_duyet_nho_mat_khau(self.THAT)
+        self.assertNotIn(b'<input id="noVNC_password_input" type="password">', ra)
+        self.assertNotIn(b'<input id="noVNC_username_input">', ra)
+
+    def test_HTML_LA_di_qua_nguyen_xi(self):
+        """noVNC đổi markup thì bản vá mất tác dụng — nhưng KHÔNG được làm hỏng
+        trang. Tệp không chứa ô nào thì trả lại y nguyên."""
+        from api.novnc_proxy import _chan_trinh_duyet_nho_mat_khau
+
+        goc = b"<html><body>khong co o nhap nao</body></html>"
+        self.assertEqual(goc, _chan_trinh_duyet_nho_mat_khau(goc))
+
+
 if __name__ == "__main__":
     unittest.main()

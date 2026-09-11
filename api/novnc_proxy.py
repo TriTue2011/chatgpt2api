@@ -109,6 +109,41 @@ def _ghi_dut(cho: str, exc: BaseException) -> None:
     })
 
 
+# Ô nhập của noVNC (vnc.html) — lấy nguyên văn từ gói Debian `novnc` 1.6.0,
+# đã đối chiếu từng byte bằng `cat -A` nên khớp đúng cả khoảng trắng đầu dòng.
+_O_MAT_KHAU = b'<input id="noVNC_password_input" type="password">'
+_O_MAT_KHAU_MOI = b'<input id="noVNC_password_input" type="password" autocomplete="new-password">'
+_O_TEN = b'<input id="noVNC_username_input">'
+_O_TEN_MOI = b'<input id="noVNC_username_input" autocomplete="off">'
+
+
+def _chan_trinh_duyet_nho_mat_khau(html: bytes) -> bytes:
+    """Thêm `autocomplete` vào ô nhập của noVNC để trình duyệt thôi ghi nhớ.
+
+    VÌ SAO. `vnc.html` đặt ô mật khẩu trong một `<form>` có nút submit và
+    KHÔNG khai `autocomplete`. Đó đúng hình dạng mà Chrome nhận ra là "form
+    đăng nhập": nó hỏi lưu, rồi lần sau tự điền theo tên miền. Chủ máy không
+    muốn mật khẩu VNC nằm trong kho mật khẩu trình duyệt (11/09/2026).
+
+    Sửa ở proxy chứ không vá tệp trong ảnh: `vnc.html` thuộc gói Debian
+    `novnc`, vá trong Dockerfile là sửa tệp của gói và sẽ mất khi gói nâng cấp.
+    `_chuyen_tiep` vốn đã đọc trọn thân phản hồi vào bộ nhớ, và `_DROP_RESP` đã
+    bỏ `content-length`, nên đổi độ dài ở đây là an toàn.
+
+    Dùng `new-password` cho ô mật khẩu: Chrome tôn trọng giá trị này chắc tay
+    hơn `off` khi quyết định KHÔNG tự điền. Ô tên đi kèm cũng phải khai `off`,
+    vì Chrome ghép cặp tên+mật khẩu mới coi là form đăng nhập.
+
+    Không khớp thì trả nguyên xi — noVNC đổi markup thì mất tác dụng chứ không
+    làm hỏng trang.
+    """
+    if _O_MAT_KHAU in html:
+        html = html.replace(_O_MAT_KHAU, _O_MAT_KHAU_MOI)
+    if _O_TEN in html:
+        html = html.replace(_O_TEN, _O_TEN_MOI)
+    return html
+
+
 async def _chuyen_tiep(path: str, request: Request) -> Response:
     """Lấy một tệp của noVNC từ cổng 6080 nội bộ và trả nguyên về cho trình duyệt."""
     url = f"{NOVNC_URL}/{path}"
@@ -135,6 +170,8 @@ async def _chuyen_tiep(path: str, request: Request) -> Response:
     except httpx.RequestError as exc:
         raise HTTPException(status_code=502,
                             detail={"error": f"noVNC không phản hồi: {str(exc)[:120]}"})
+    if ctype and "text/html" in ctype.lower():
+        payload = _chan_trinh_duyet_nho_mat_khau(payload)
     return Response(content=payload, status_code=status,
                     headers=headers, media_type=ctype)
 
