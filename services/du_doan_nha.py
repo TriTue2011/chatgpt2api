@@ -309,6 +309,26 @@ def hoc(so_ngay: int | None = None) -> dict[str, Any]:
     # Ô thời gian có mặt trong dữ liệu — mẫu âm chỉ lấy từ ô CÓ hoạt động, vì
     # ô nhà vắng hoàn toàn không nói lên "chủ máy chọn không bật".
     o_ds = sorted(moc_o)
+
+    # DỰNG BỐI CẢNH MỘT LẦN CHO MỖI Ô, rồi mọi thiết bị dùng chung.
+    #
+    # Bản đầu gọi `_dieu_kien()` NGAY TRONG vòng lặp thiết bị, nên cùng một ô
+    # thời gian bị dựng lại một lần cho mỗi thiết bị. Đo trên máy chủ thật
+    # 11/09/2026: `boi_canh()` mất 26ms mỗi lần (nó chạy vài truy vấn SQLite),
+    # 30 ngày có 1.440 ô, nhà có 414 thiết bị từng đổi trạng thái:
+    #
+    #     414 thiết bị × 1.440 ô × 26ms  ≈  262 PHÚT cho một lượt `hoc()`
+    #
+    # Mà `hoc()` gọi từ heartbeat. Đó gần như chắc chắn là thủ phạm làm c2a
+    # treo hẳn đêm 11/09 (uvicorn `R (running)`, CPU cao, mọi endpoint trả 000).
+    #
+    # Bối cảnh của một ô KHÔNG phụ thuộc thiết bị đang xét — `tru=tb` chỉ bỏ
+    # nhãn `bat_<tên>` của chính nó, mà nhãn đó thêm ở vòng dưới. Nên tách ra
+    # được, và chi phí còn 1.440 lần thay vì 596.160 lần: **nhanh gấp 414**.
+    nhan_o: dict[int, dict[str, str]] = {
+        o: _dieu_kien(moc_o[o]["ts"], {}, {}) for o in o_ds
+    }
+
     ra: dict[str, Any] = {}
     for tb, moc in bat_luc.items():
         if len(moc) < _TOI_THIEU_DIEU_KIEN:
@@ -318,8 +338,9 @@ def hoc(so_ngay: int | None = None) -> dict[str, Any]:
         n_bat = n_khong = 0
         for o in o_ds:
             co = o in o_bat
-            t = moc_o[o]["ts"]
-            nhan = _dieu_kien(t, {}, {}, tru=tb)
+            # Bản sao nông: vòng dưới thêm nhãn `bat_*` riêng cho từng thiết
+            # bị, sửa thẳng vào `nhan_o[o]` là rò sang thiết bị kế tiếp.
+            nhan = dict(nhan_o[o])
             # Trạng thái thiết bị khác tại ô này (mở rộng 1 và 2).
             for khac in moc_o[o]["bat"]:
                 if khac != tb:

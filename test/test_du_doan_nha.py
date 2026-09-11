@@ -87,6 +87,31 @@ class DuDoanNhaTest(unittest.TestCase):
         self._sk("light.hiem", "on", now - 3600)
         self.assertNotIn("light.hiem", self.dd.hoc(so_ngay=30))
 
+    def test_MOI_O_chi_dung_BOI_CANH_MOT_LAN(self) -> None:
+        """Bối cảnh của một ô không phụ thuộc thiết bị đang xét, nên phải dựng
+        một lần rồi dùng chung.
+
+        Bản đầu gọi `boi_canh()` NGAY TRONG vòng lặp thiết bị. Đo trên máy chủ
+        thật 11/09/2026: 26ms mỗi lần × 1.440 ô × 414 thiết bị ≈ **262 PHÚT**
+        cho một lượt `hoc()`, mà `hoc()` chạy từ heartbeat — gần như chắc chắn
+        là thủ phạm làm c2a treo hẳn đêm đó.
+        """
+        self._nep_toi()
+        now = time.time()
+        for i in range(14):          # thiết bị thứ hai, để lộ chuyện gọi lặp
+            self._sk("light.phong_khach", "on", now - i * 86400 - 600)
+
+        goi: list[float] = []
+        that = self.bc.boi_canh
+        with mock.patch.object(
+                self.bc, "boi_canh",
+                side_effect=lambda luc=None, **k: (goi.append(luc), that(luc, **k))[1]):
+            bang = self.dd.hoc(so_ngay=30)
+
+        self.assertGreaterEqual(len(bang), 2, "phải học được từ hai thiết bị")
+        self.assertEqual(len(goi), len(set(goi)),
+                         "mỗi mốc thời gian chỉ được dựng bối cảnh MỘT lần")
+
     # ── phân cấp / nội suy lùi ─────────────────────────────────────────────
     def test_MUC_HEP_khong_co_mau_thi_NHUONG_muc_rong(self) -> None:
         """Với 11 ngày dữ liệu, mức riêng nhất thường n=0 và phải nhường hẳn."""
