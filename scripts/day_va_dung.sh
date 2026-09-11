@@ -170,8 +170,32 @@ else
         # `:latest` và ảnh đang chạy trỏ cùng một ID với một trong các thẻ này,
         # nên `docker rmi` chỉ gỡ THẺ chứ không xoá mất ảnh đang dùng — Docker
         # tự từ chối xoá lớp còn container tham chiếu.
+        #
+        # Nhưng đừng chỉ dựa vào lời từ chối đó: nó đi qua `|| true` nên hỏng
+        # thành công đều im như nhau. Hỏi thẳng xem có container nào đang giữ
+        # ID này không rồi hãy đụng vào — đo 11/09/2026, thẻ local-841511c
+        # (bản CŨ) mới là thứ container c2a đang chạy, còn :latest vừa dựng thì
+        # chưa ai dùng. Watchtower đảo hai vai đó sau ≤600 giây, nên "cũ theo
+        # ngày tháng" KHÔNG đồng nghĩa "không ai dùng".
+        ID=$(docker image inspect "$ANH:$t" --format '{{.Id}}' 2>/dev/null)
+        if [ -n "$ID" ] && [ "$(docker ps -a -q --filter "ancestor=$ID" 2>/dev/null | wc -l)" -gt 0 ]; then
+            noi "  giữ thẻ $t — còn container đang dùng"
+            continue
+        fi
         docker rmi "$ANH:$t" >/dev/null 2>&1 && noi "  bỏ thẻ $t" || true
     done
+fi
+
+# Ảnh mồ côi (không thẻ, không container) — thứ DUY NHẤT xoá được vô điều kiện.
+#
+# ĐỪNG thêm luật kiểu "xoá ảnh không container nào dùng": đo 11/09/2026, cả 8
+# ảnh trên máy chủ đều có container giữ, trừ đúng ảnh VỪA DỰNG XONG (watchtower
+# chưa kéo). Luật đó sẽ xoá ngay bản mới vừa dựng, và sau khi watchtower đổi
+# sang bản mới thì lần chạy sau nó xoá nốt bản cũ — mất sạch đường lùi.
+# Phần thừa thật sự chỉ có lớp mồ côi và build cache (mục 6).
+MO_COI=$(docker images -f "dangling=true" -q | wc -l | tr -d ' ')
+if [ "$MO_COI" -gt 0 ]; then
+    noi "dọn $MO_COI ảnh mồ côi (không thẻ, không container)"
 fi
 docker image prune -f >/dev/null 2>&1 || true   # chỉ lớp mồ côi, KHÔNG dùng -a
 
