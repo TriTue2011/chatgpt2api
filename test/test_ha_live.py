@@ -70,6 +70,24 @@ class PatchStateTests(unittest.TestCase):
                          "entity khác không được bị ghi đè")
         self.assertEqual(hc._state_cache[-1]["state"], "9")
 
+    def test_TEN_MANG_MAT_KHAU_khong_vao_guong_va_khong_ghi_lich_su(self) -> None:
+        """12/09/2026: gương chèn lại thực thể `get_states` đã ẩn — tiến trình
+        chính vẫn thấy 4 camera go2rtc mang mật khẩu trong tên, dù kiểm bằng một
+        tiến trình mới (không có gương) thì sạch."""
+        from unittest import mock
+
+        lo = {"entity_id": "camera.cua_sub", "state": "idle",
+              "attributes": {"friendly_name": "go2rtc rtsp://u:p@h/cua"}}
+        with mock.patch("services.lich_su_nha.ghi") as ghi:
+            ha_live._patch_state(lo, "camera.cua_sub", self.index)
+        self.assertNotIn("camera.cua_sub", [s["entity_id"] for s in hc._state_cache])
+        ghi.assert_not_called()
+        # Đã nằm sẵn trong gương (nạp trước bản sửa) thì sự kiện kế tiếp gỡ nó ra.
+        hc._state_cache.append(dict(lo))
+        self.index["camera.cua_sub"] = len(hc._state_cache) - 1
+        ha_live._patch_state(lo, "camera.cua_sub", self.index)
+        self.assertNotIn("camera.cua_sub", [s["entity_id"] for s in hc._state_cache])
+
 
 def _frame(opcode: int, payload: bytes, fin: bool = True) -> bytes:
     """Frame server→client (KHÔNG mask) như HA gửi."""
