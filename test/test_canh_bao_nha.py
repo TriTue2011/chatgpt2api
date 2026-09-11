@@ -32,6 +32,21 @@ class CanhBaoTest(unittest.TestCase):
         with mock.patch.object(lich_su_nha, "soi_hong", return_value=hong):
             return self.m.quet(7)
 
+    def test_MA_HA_KHONG_CON_TRONG_HA_thi_KHONG_BAO(self) -> None:
+        """Tin cảnh báo in thẳng mã. Đo 11/09/2026: mã camera go2rtc mang mật
+        khẩu dạng slug, `ha_client.get_states` ẩn chúng — không được lọt qua
+        đường cảnh báo. Mã MQTT (có "/") không phải của HA nên vẫn báo."""
+        from services import ha_client
+
+        hong = (self._hong("camera.go2rtc_rtsp_u_p_cua_sub", "chet", "state")
+                + self._hong("light.bep", "chet", "state")
+                + self._hong("zigbee2mqtt/Nhiệt ẩm bếp", "do", "temperature"))
+        with mock.patch.object(ha_client, "get_states",
+                               return_value=[{"entity_id": "light.bep"}]):
+            kq = self._quet(hong)
+        self.assertEqual(sorted(h["thiet_bi"] for h in kq["can_bao"]),
+                         ["light.bep", "zigbee2mqtt/Nhiệt ẩm bếp"])
+
     # ── nhịp báo lại ───────────────────────────────────────────────────────
     def test_lan_dau_bao_ngay(self) -> None:
         kq = self._quet(self._hong())

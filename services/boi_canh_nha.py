@@ -449,6 +449,85 @@ def mo_ta_dieu_kien(khoa: str, gia_tri: str) -> str:
     return ""
 
 
+def ten_dieu_kien(khoa: str) -> str:
+    """Tên một ĐIỀU KIỆN, chưa kèm giá trị — "ánh sáng phòng khách".
+
+    `mo_ta_dieu_kien` dịch điều kiện đang mang giá trị ("… đang tối"); chỗ này
+    dịch cái bot học hỏi CHỌN làm điều kiện cho một thiết bị, để tin báo nhóm
+    đọc được. Đọc chung hằng `_DO_DAC` nên hai chỗ dịch không lệch nhau. Khoá
+    lạ thì trả nguyên khoá bỏ gạch dưới — không bịa tên.
+    """
+    k = str(khoa or "").strip()
+    co_dinh = {"buoi": "buổi trong ngày", "thu": "thứ trong tuần", "mua": "mùa",
+               "nguoi_trong_nha": "có người trong nhà"}
+    if k in co_dinh:
+        return co_dinh[k]
+    if k.startswith("nguoi_") and _ten_phong(k[len("nguoi_"):]):
+        return f"có người ở {_ten_phong(k[len('nguoi_'):])}"
+    for ten, _mau, _muc, ten_doc, _ in _DO_DAC:
+        if k.startswith(f"{ten}_") and _ten_phong(k[len(ten) + 1:]):
+            return f"{ten_doc} {_ten_phong(k[len(ten) + 1:])}"
+    return k.replace("_", " ")
+
+
+def thuc_don_dieu_kien(so_ngay: int = 30) -> list[dict[str, Any]]:
+    """Mọi điều kiện `roi_rac()` sinh ra được trong `so_ngay` qua — ĐỀ để bot học
+    hỏi chọn điều kiện cho TỪNG thiết bị.
+
+    Chủ máy 11/09/2026 nhận gợi ý bật Dàn âm thanh phòng khách "vì nhiệt độ
+    phòng học đang lạnh" và hỏi: *"AI không phân tích trước khi học hỏi à, khu
+    vực đang khác nhau nữa"*. Tầng xác suất khi đó lấy mọi cảm biến cả nhà làm
+    điều kiện cho mọi thiết bị. Chọn điều kiện nào là PHÂN TÍCH — việc của bot
+    theo hướng dẫn; code chỉ bày ra có những điều kiện gì, ở phòng nào, đo bằng
+    thiết bị nào.
+
+    Dựng bằng ĐÚNG luật đặt khoá của `boi_canh()` + `roi_rac()` (`_DO_DAC`,
+    `_TRUONG_NGUOI`, `_khoa_phong`): một nguồn, không có bảng khoá thứ hai.
+
+    KHÔNG LỌC GÌ Ở ĐÂY, kể cả khoá phòng không rõ (`…_khac`). Chủ máy chốt:
+    Claude là giáo viên, không phải người loại bỏ hộ — *"bot tôi phải làm chứ
+    không phải bạn"*. Khoá `khac` gộp mọi cảm biến chưa gán phòng (đo
+    11/09/2026: `nhiet_do_khac` là nhiệt độ bên trong aptomat tổng), nên
+    `do_bang` kể rõ từng thiết bị đo để bot tự thấy mà bỏ theo hướng dẫn.
+
+    Mỗi mục ``{"khoa", "ten", "loai", "phong", "do_bang"}``; ``loai`` là
+    ``thoi_gian`` | ``lux`` | ``nhiet_do`` | ``do_am`` | ``nguoi``; ``phong`` rỗng
+    là của cả nhà (thời gian) hoặc chưa rõ phòng (khoá `…_khac`).
+    """
+    from services import lich_su_nha
+
+    cat = time.time() - max(1, int(so_ngay)) * 86400
+    theo_loai: dict[str, set[str]] = {}
+    try:
+        with lich_su_nha._khoa_db:
+            conn = lich_su_nha._db()
+            for ten, mau, *_ in _DO_DAC:
+                theo_loai[ten] = {str(r[0]) for r in conn.execute(
+                    "SELECT DISTINCT thiet_bi FROM so_do WHERE truong LIKE ? AND o_5p>=?",
+                    (mau, int(cat // 300)))}
+            dk = " OR ".join("truong LIKE ? OR thiet_bi LIKE ?" for _ in _TRUONG_NGUOI)
+            theo_loai["nguoi"] = {str(r[0]) for r in conn.execute(
+                f"SELECT DISTINCT thiet_bi FROM su_kien WHERE ts>=? AND ({dk})",
+                (cat, *[f"%{k}%" for k in _TRUONG_NGUOI for _ in (0, 1)]))}
+    except Exception as exc:
+        logger.info({"event": "boi_canh_thuc_don_loi", "error": str(exc)[:120]})
+
+    ra: dict[str, dict[str, Any]] = {
+        k: {"khoa": k, "ten": ten_dieu_kien(k), "loai": "thoi_gian",
+            "phong": "", "do_bang": []} for k in ("buoi", "thu", "mua")}
+    for loai in (*(x[0] for x in _DO_DAC), "nguoi"):
+        for tb in sorted(theo_loai.get(loai) or ()):
+            k = f"{loai}_{_khoa_phong(tb)}"
+            muc = ra.setdefault(k, {"khoa": k, "ten": ten_dieu_kien(k), "loai": loai,
+                                    "phong": phong_cua(tb), "do_bang": []})
+            muc["do_bang"].append(tb)
+    if theo_loai.get("nguoi"):
+        ra["nguoi_trong_nha"] = {"khoa": "nguoi_trong_nha", "loai": "nguoi",
+                                 "ten": ten_dieu_kien("nguoi_trong_nha"),
+                                 "phong": "", "do_bang": []}
+    return list(ra.values())
+
+
 def hien_tai() -> dict[str, Any]:
     """Bối cảnh BÂY GIỜ — được phép dùng bảng `tuoi` vì không có tương lai.
 

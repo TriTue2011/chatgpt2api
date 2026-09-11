@@ -101,8 +101,13 @@ _LOAI_DOC = {"rac": "đổi đồng loạt, không phải người bật",
              "bat_tat": "chưa đủ lần bật"}
 
 #: Loại câu hỏi được chấm và lên cấp RIÊNG: bot giỏi nhận ra thiết bị trùng
-#: chưa chắc đã giỏi chọn nguồn nhanh.
-LOAI_CAU_HOI = ("cung_thiet_bi", "nguon_nhanh", "hoc")
+#: chưa chắc đã giỏi chọn nguồn nhanh, càng chưa chắc giỏi chọn điều kiện.
+LOAI_CAU_HOI = ("cung_thiet_bi", "nguon_nhanh", "hoc", "dieu_kien")
+
+#: Một thiết bị học theo tối đa ngần này điều kiện. Naive Bayes cộng các điều
+#: kiện như thể độc lập; ánh sáng bốn phòng cùng "tối" lúc đêm là MỘT chuyện bị
+#: đếm bốn lần — đó là một nửa lý do gợi ý 11/09/2026 ra "chắc 100%".
+_TOI_DA_DIEU_KIEN = 5
 
 
 def _cfg() -> dict[str, Any]:
@@ -147,8 +152,12 @@ def _db() -> sqlite3.Connection:
             " ket_qua TEXT NOT NULL DEFAULT 'cho',"   # cho | dung | sai
             " cham_boi TEXT NOT NULL DEFAULT '',"     # claude | chu_may | lap_lai
             " ghi_chu TEXT NOT NULL DEFAULT '',"
-            " cham_luc REAL)"
+            " cham_luc REAL,"
+            " hoi_luc REAL)"                  # lúc câu này được gửi hỏi chủ máy
         )
+        # Sổ tạo trước 11/09/2026 chưa có cột `hoi_luc` (hỏi lần lượt từng câu).
+        if "hoi_luc" not in {r[1] for r in conn.execute("PRAGMA table_info(quyet_dinh)")}:
+            conn.execute("ALTER TABLE quyet_dinh ADD COLUMN hoi_luc REAL")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_qd_khoa"
                      " ON quyet_dinh(loai_cau_hoi, khoa, hieu_luc)")
         conn.execute(
@@ -239,6 +248,18 @@ def ho_so(so_ngay: int | None = None, *, den: float | None = None) -> dict[str, 
 
     nguon_ha = set(lich_su_nha.NGUON_HA)
     la_ha = {ma for ma, ds in su_kien.items() if any(n in nguon_ha for _, _, n in ds)}
+    # Mã HA KHÔNG CÒN trong HA thì không ra đề: thiết bị đã đổi tên hay đã xoá
+    # không còn để học, mà mã cũ còn nằm trong lịch sử 30 ngày. Đo 11/09/2026:
+    # 4 camera go2rtc mang mật khẩu ngay trong mã; `ha_client.get_states` ẩn
+    # chúng, nhưng đọc mã từ lịch sử mà không đối chiếu thì mật khẩu vẫn vào đề
+    # gửi model.
+    trang_thai = ha_client.get_states() or []
+    con_trong_ha = {str(s.get("entity_id") or "") for s in trang_thai}
+    if not con_trong_ha:
+        return {}
+    for ma in la_ha - con_trong_ha:
+        del su_kien[ma]
+    la_ha &= con_trong_ha
     ung_vien = {ma for ma in la_ha
                 if ma.split(".")[0] in mien
                 and any(du_doan_nha._la_bat(g) for _, g, _ in su_kien[ma])}
@@ -320,7 +341,7 @@ def ho_so(so_ngay: int | None = None, *, den: float | None = None) -> dict[str, 
 
     ten = {str(s.get("entity_id") or ""):
            str((s.get("attributes") or {}).get("friendly_name") or "")
-           for s in (ha_client.get_states() or [])}
+           for s in trang_thai}
     ra: list[dict[str, Any]] = []
     for ma in sorted(ho):
         ds = su_kien[ma]
@@ -346,7 +367,14 @@ def ho_so(so_ngay: int | None = None, *, den: float | None = None) -> dict[str, 
                 "trung_vi": statistics.median(so_kem[ma]) if so_kem[ma] else 0,
                 "lon_nhat": max(so_kem[ma], default=0)},
         })
-    return {"so_ngay": ngay, "thiet_bi": ra}
+    # Thực đơn điều kiện: mọi điều kiện đo được, cộng "thiết bị khác vừa bật hay
+    # tắt" cho từng mã HA bật được trong đề — mở rộng "thiết bị là điều kiện của
+    # nhau" của `du_doan_nha`. Chọn cái nào là việc của bot.
+    thuc_don = boi_canh_nha.thuc_don_dieu_kien(ngay) + [
+        {"khoa": f"bat_{x['ma']}", "ten": f"{x['ten'] or x['ma']} vừa bật hoặc tắt",
+         "loai": "thiet_bi", "phong": x["phong"], "do_bang": [x["ma"]]}
+        for x in ra if x["ha_bat_duoc"]]
+    return {"so_ngay": ngay, "thiet_bi": ra, "thuc_don_dieu_kien": thuc_don}
 
 
 # ── Sổ dữ kiện của chủ máy ──────────────────────────────────────────────────
@@ -478,14 +506,21 @@ def _doc_json(tho: str) -> Any:
         return None
 
 
-def _kiem(data: Any, phan: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+def _kiem(data: Any, phan: list[dict[str, Any]],
+          thuc_don: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
     """Kiểm câu trả lời của model NGAY TẠI BIÊN. Trả (nhóm hợp lệ, số nhóm loại).
 
     Model là nguồn ngoài: có thể bịa mã, xếp một mã vào hai nhóm, hoặc bảo học
     một cái cảm biến. Nhóm phạm luật cứng của hướng dẫn thì LOẠI hẳn — sửa hộ
     là giáo viên làm bài thay học trò, và lỗi đó sẽ không bao giờ lộ ra để sửa
     hướng dẫn.
+
+    Nhóm được học phải kèm 1–`_TOI_DA_DIEU_KIEN` khoá `dieu_kien` CÓ trong thực
+    đơn. Khoá bịa thì tầng xác suất không bao giờ gặp, thiết bị âm thầm học
+    không theo điều kiện nào — lỗi không ai thấy. Code chỉ kiểm khoá CÓ THẬT;
+    khoá nào hợp lẽ với thiết bị là việc của bot và người chấm.
     """
+    trong_don = {str(x.get("khoa") or "") for x in thuc_don}
     hop_le = {x["ma"] for x in phan}
     bat_duoc = {x["ma"] for x in phan if x.get("ha_bat_duoc")}
     ds = data.get("nhom") if isinstance(data, dict) else None
@@ -505,6 +540,12 @@ def _kiem(data: Any, phan: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], 
         if not ma or (hoc and (ma_hoc not in ma or ma_hoc not in bat_duoc)):
             loai_bo += 1
             continue
+        dk = g.get("dieu_kien") if hoc else []
+        if hoc and not (isinstance(dk, list) and all(isinstance(k, str) for k in dk)
+                        and 0 < len(set(dk)) <= _TOI_DA_DIEU_KIEN
+                        and set(dk) <= trong_don and f"bat_{ma_hoc}" not in dk):
+            loai_bo += 1
+            continue
         da_co.update(ma)
         nhanh = str(g.get("nguon_nhanh") or "")
         loai = str(g.get("loai") or "")
@@ -513,6 +554,7 @@ def _kiem(data: Any, phan: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], 
         except (TypeError, ValueError):
             chac = 0.0
         ra.append({"ma": ma, "ma_hoc": ma_hoc if hoc else "",
+                   "dieu_kien": sorted(set(dk)),
                    "nguon_nhanh": nhanh if nhanh in ma else "",
                    "loai": loai if loai in _LOAI else "khong_ro",
                    "hoc": hoc, "chac": round(chac, 2),
@@ -544,13 +586,15 @@ def giai(hs: dict[str, Any]) -> dict[str, Any]:
     huong, ban = huong_dan()
     model = _model()
     du_kien = du_kien_gan_day()
+    thuc_don = list(hs.get("thuc_don_dieu_kien") or [])
     ho = list(hs.get("thiet_bi") or [])
     nhom: list[dict[str, Any]] = []
     loai_bo = 0
     loi = ""
     for phan in _chia(ho):
         de = json.dumps({"so_ngay": hs.get("so_ngay"), "du_kien_chu_may": du_kien,
-                         "thiet_bi": phan}, ensure_ascii=False)
+                         "thuc_don_dieu_kien": thuc_don, "thiet_bi": phan},
+                        ensure_ascii=False)
         r = _goi_model(model, huong, de)
         if r.get("error"):
             loi = f"model lỗi: {str(r['error'])[:160]}"
@@ -560,7 +604,7 @@ def giai(hs: dict[str, Any]) -> dict[str, Any]:
         if data is None:
             loi = f"không đọc được JSON: {tho[:120]}"
             break
-        hop_le, bo = _kiem(data, phan)
+        hop_le, bo = _kiem(data, phan, thuc_don)
         nhom += hop_le
         loai_bo += bo
     if loi:
@@ -589,6 +633,11 @@ def _cau_hoi(g: dict[str, Any]) -> list[tuple[str, str, dict[str, Any]]]:
             ra.append(("nguon_nhanh", khoa_nhom, {"nguon_nhanh": g["nguon_nhanh"]}))
     ra.append(("hoc", g["ma_hoc"] or sorted(g["ma"])[0],
                {"hoc": g["hoc"], "loai": g["loai"]}))
+    if g["hoc"]:
+        # Chấm RIÊNG: học đúng thiết bị mà chọn sai điều kiện (cảm biến phòng
+        # khác) vẫn là bài sai — đúng lỗi chủ máy bắt được 11/09/2026.
+        ra.append(("dieu_kien", g["ma_hoc"],
+                   {"dieu_kien": sorted(g.get("dieu_kien") or [])}))
     return ra
 
 
@@ -674,6 +723,21 @@ def thiet_bi_hoc() -> list[str]:
         if d["loai_cau_hoi"] == "hoc" and d["ket_qua"] != "sai"
         and d["gia_tri"].get("hoc")
         and "|".join(sorted(d["nhom"].get("ma") or [])) not in nhom_sai)
+
+
+def dieu_kien_hoc() -> dict[str, list[str]]:
+    """Điều kiện bot chọn cho từng mã được học — bỏ kết luận bị chấm sai.
+
+    Mã được học mà chưa có kết luận điều kiện (sổ trước 11/09/2026, hoặc câu
+    điều kiện vừa bị chấm sai) thì KHÔNG có mục ở đây: tầng xác suất học nó
+    không kèm điều kiện nào, chỉ còn tỉ lệ nền — không bao giờ đủ để gợi ý.
+    Thiếu kết luận thì im, không rơi về "mọi cảm biến cả nhà" như bản cũ.
+    """
+    hoc = set(thiet_bi_hoc())
+    return {d["khoa"]: list(d["gia_tri"].get("dieu_kien") or [])
+            for d in dang_hieu_luc()
+            if d["loai_cau_hoi"] == "dieu_kien" and d["ket_qua"] != "sai"
+            and d["khoa"] in hoc}
 
 
 # ── Chấm và thang tin cậy ───────────────────────────────────────────────────
@@ -796,65 +860,103 @@ def _cau_doc(d: dict[str, Any], ten: dict[str, str]) -> str:
         chinh = g.get("ma_hoc") or sorted(g["ma"])[0]
         return (f"{_nhan(chinh, ten)}: báo tin nhanh nhất qua "
                 f"{_nhan(gt['nguon_nhanh'], ten)}")
+    if d["loai_cau_hoi"] == "dieu_kien":
+        from services import boi_canh_nha
+
+        ds = [f"{_nhan(k[len('bat_'):], ten)} vừa bật hoặc tắt" if k.startswith("bat_")
+              else boi_canh_nha.ten_dieu_kien(k) for k in gt.get("dieu_kien") or []]
+        return (f"Học {_nhan(d['khoa'], ten)} theo: "
+                + (", ".join(ds) if ds else "không điều kiện nào"))
     if gt.get("hoc"):
         return f"Học thói quen {_nhan(d['khoa'], ten)}"
     return (f"Không học {_nhan(d['khoa'], ten)} "
             f"({_LOAI_DOC.get(gt.get('loai'), 'chưa rõ là gì')})")
 
 
+def _ten_ha() -> dict[str, str]:
+    """Mã HA → tên chủ nhà đặt, để câu hỏi viết bằng tên người đọc được."""
+    from services import ha_client
+
+    return {str(s.get("entity_id") or ""): str((s.get("attributes") or {}).get("friendly_name"))
+            for s in (ha_client.get_states() or [])
+            if (s.get("attributes") or {}).get("friendly_name")}
+
+
+#: Câu đã gửi mà quá ngần này chưa được trả lời thì thôi chờ, hỏi lại đúng câu
+#: đó — tin có thể đã trôi trong nhóm.
+_CHO_TRA_LOI_GIAY = 24 * 3600
+
+
+def cau_hoi_tiep(ten: dict[str, str] | None = None) -> tuple[str, int]:
+    """MỘT câu xác minh kế tiếp cho chủ máy: (lời hỏi, id). ("", 0) = không hỏi.
+
+    Chủ máy chốt 11/09/2026: *"tin gửi để tôi xác minh đang dài quá. Tôi muốn nó
+    xác minh lần lượt, khi tôi phản hồi xong thì mới gửi xác minh tiếp"*. Nên:
+
+    * câu trước còn chờ trả lời (chưa quá `_CHO_TRA_LOI_GIAY`) thì không hỏi thêm;
+    * chỉ hỏi câu CHƯA ai chấm — câu Claude đã chấm chắc thì chủ máy khỏi đọc;
+    * loại câu bot đã đủ tin (`can_hoi` = False) thì không hỏi.
+
+    Không tự đánh dấu đã hỏi: nơi GỬI đánh dấu sau khi gửi được
+    (`danh_dau_da_hoi`), để câu gửi hỏng không chặn các câu sau.
+    """
+    now = time.time()
+    cho = [d for d in dang_hieu_luc() if d["ket_qua"] == "cho"]
+    if any(d.get("hoi_luc") and now - float(d["hoi_luc"]) < _CHO_TRA_LOI_GIAY for d in cho):
+        return "", 0
+    cho = [d for d in cho if can_hoi(d["loai_cau_hoi"])]
+    if not cho:
+        return "", 0
+    d, g = cho[0], cho[0]["nhom"]
+    ten = _ten_ha() if ten is None else ten
+    vi_sao = f"\nVì sao: {g['vi_sao']}" if g.get("vi_sao") else ""
+    con = len(cho) - 1
+    loi = (f"❓ Câu #{d['id']}: {_cau_doc(d, ten)} — em chắc "
+           f"{round(float(g.get('chac') or 0) * 100)}%.{vi_sao}\n"
+           f"Anh gõ «hh {d['id']} đúng» hoặc «hh {d['id']} sai vì …»"
+           + (f" — còn {con} câu, anh trả lời xong em hỏi tiếp." if con else "."))
+    return loi.replace("_", " "), int(d["id"])
+
+
+def danh_dau_da_hoi(id_: int) -> None:
+    """Câu này đã tới tay chủ máy — chờ trả lời rồi mới hỏi câu sau."""
+    with _khoa:
+        conn = _db()
+        conn.execute("UPDATE quyet_dinh SET hoi_luc=? WHERE id=?", (time.time(), int(id_)))
+        conn.commit()
+
+
 def soan_bao(kq: dict[str, Any], moi: list[dict[str, Any]],
-             lap_lai: list[dict[str, Any]], ten: dict[str, str]) -> list[str]:
-    """Tin cho nhóm "AI học hỏi": bot nghĩ gì, và câu nào cần người chấm.
+             lap_lai: list[dict[str, Any]], ten: dict[str, str]) -> tuple[str, int]:
+    """Tin cho nhóm "AI học hỏi" sau một lượt giải: MỘT dòng tóm tắt, MỘT câu hỏi.
 
-    Chủ máy chốt: gửi để "tôi biết bot nghĩ gì và bạn xử lý cái gì, để tôi cũng
-    học bạn và sửa chữa nếu lỗi". Nên mỗi kết luận kèm VÌ SAO và độ chắc.
+    Bản đầu kể mọi kết luận trong một lượt — 11/09/2026 lúc 19:20 là bốn tin
+    dài — và chủ máy bảo "dài quá … xác minh lần lượt". Kết luận nào cũng còn
+    trong sổ; tin chỉ nói bot vừa làm gì rồi hỏi đúng một câu (`cau_hoi_tiep`).
+    Câu kế tiếp đi kèm câu đáp khi chủ máy chấm xong (`tra_loi`).
 
-    Không có gì mới thì không nhắn — nhắn "vẫn thế" là làm phiền. Viết bằng
-    tên người đọc được, và bỏ hết dấu gạch dưới: Zalo gửi ở markdown, gạch dưới
-    bị ăn làm in nghiêng (bài học `test_TIN_NHAN_khong_con_MA_MAY`).
-
-    Trả danh sách tin, mỗi tin không quá ~1.800 ký tự.
+    Trả (tin, id câu hỏi kèm theo — 0 nếu không có). Không có gì mới thì
+    ("", 0): nhắn "vẫn thế" là làm phiền. Bỏ gạch dưới: Zalo gửi ở markdown.
     """
     if kq.get("loi"):
-        return [f"🧠 Bot học hỏi — lượt hiểu thiết bị chưa xong: {kq['loi']}. "
-                "Em giữ nguyên các kết luận cũ.".replace("_", " ")]
+        return (f"🧠 Bot học hỏi — lượt hiểu thiết bị chưa xong: {kq['loi']}. "
+                "Em giữ nguyên các kết luận cũ.").replace("_", " "), 0
     if not moi and not lap_lai:
-        return []
-    dau = [f"🧠 Bot học hỏi — em vừa xem lại thiết bị nhà "
-           f"(hướng dẫn bản {kq.get('phien_ban', '')})"]
+        return "", 0
+    phan = [f"{len(moi)} kết luận mới hoặc vừa đổi"]
+    tu_quyet = sum(1 for d in moi if not can_hoi(d["loai_cau_hoi"]))
+    if tu_quyet:
+        phan.append(f"{tu_quyet} câu em đủ tin để tự quyết")
+    if lap_lai:
+        phan.append(f"{len(lap_lai)} câu em lặp lại điều từng bị chấm sai nên không dùng")
     if kq.get("bo_sot"):
-        dau.append(f"Em còn bỏ sót {kq['bo_sot']} mã chưa xếp được.")
-    if kq.get("loai_bo"):
-        dau.append(f"{kq['loai_bo']} nhóm em trả sai luật nên bị loại.")
-    phai_hoi = {loai: can_hoi(loai) for loai in LOAI_CAU_HOI}
-    dong: list[str] = []
-    hoi: list[int] = []
-    for d in moi:
-        g = d["nhom"]
-        vi_sao = f" — {g['vi_sao']}" if g.get("vi_sao") else ""
-        tu_quyet = "" if phai_hoi[d["loai_cau_hoi"]] else " (em tự quyết — đã đủ tin)"
-        dong.append(f"• #{d['id']} {_cau_doc(d, ten)}, chắc "
-                    f"{round(float(g.get('chac') or 0) * 100)}%{vi_sao}{tu_quyet}")
-        if phai_hoi[d["loai_cau_hoi"]]:
-            hoi.append(d["id"])
-    for d in lap_lai:
-        dong.append(f"• Em lại nghĩ: {_cau_doc(d, ten)} — câu này từng bị chấm "
-                    "SAI nên em không dùng.")
-    cuoi: list[str] = []
-    if hoi:
-        cuoi = ["", f"Anh chấm giúp em ngay trong nhóm này ({len(hoi)} câu): "
-                    f"gõ «hh {hoi[0]} đúng» hoặc «hh {hoi[0]} sai vì …». "
-                    "Nhiều câu cùng đúng: «hh 12, 13, 14 đúng». Điều gì khác muốn "
-                    "dạy em thì cứ nhắn thẳng vào nhóm, không cần tag."]
-    tin: list[str] = []
-    hien = dau + [""]
-    for x in dong:
-        if len(hien) > 2 and len("\n".join(hien + [x])) > 1800:
-            tin.append("\n".join(hien))
-            hien = []
-        hien.append(x)
-    tin.append("\n".join(hien + cuoi))
-    return [t.replace("_", " ") for t in tin]
+        phan.append(f"{kq['bo_sot']} mã chưa xếp được")
+    tin = (f"🧠 Bot học hỏi vừa xem lại thiết bị nhà (hướng dẫn bản "
+           f"{kq.get('phien_ban', '')}): " + ", ".join(phan) + ".")
+    cau, id_ = cau_hoi_tiep(ten)
+    if cau:
+        tin += "\n\n" + cau
+    return tin.replace("_", " "), id_
 
 
 def bao_nhom(tin: str | list[str]) -> int:
@@ -874,12 +976,32 @@ def bao_nhom(tin: str | list[str]) -> int:
     return sum(digest.send_targets(kenh, t) for t in ds if t)
 
 
-#: Câu chấm: «hh 12 đúng», «hh 11, 32 đúng, ghi chú…», «hh #12 và 13 sai vì …».
-#: Hai chữ đúng/sai và tiền tố `hh` do CHÍNH bot in ra trong tin hỏi.
-_CAU_CHAM = re.compile(
-    r"\s*hh\s*[:,]?\s*(?P<so>#?\d+(?:\s*(?:,|;|&|và|va)?\s*#?\d+)*)\s*[,:;.\-]?\s*"
-    r"(?P<chu>đúng|dung|sai)\b[\s,.:;\-]*(?P<con>.*)",
-    re.IGNORECASE | re.DOTALL)
+#: Câu chấm: «hh 12 đúng», «hh 11, 32 đúng, ghi chú…», «gy #12 và 13 sai vì …».
+#: Tiền tố và hai chữ đúng/sai do CHÍNH bot in ra trong tin hỏi.
+_CAU_CHAM = (r"\s*{tien_to}\s*[:,]?\s*(?P<so>#?\d+(?:\s*(?:,|;|&|và|va)?\s*#?\d+)*)"
+             r"\s*[,:;.\-]?\s*(?P<chu>đúng|dung|sai)\b[\s,.:;\-]*(?P<con>.*)")
+
+
+def doc_cau_cham(text: str, tien_to: str) -> Optional[dict[str, Any]]:
+    """Đọc câu chấm «<tiền tố> <số…> đúng|sai <ghi chú>».
+
+    Trả None khi tin không mở đầu bằng tiền tố (không phải câu chấm); ``{}`` khi
+    mở đầu đúng mà viết sai khuôn (để hỏi lại); còn lại
+    ``{"so": [...], "dung": bool, "con": ghi chú}``. Dùng chung cho «hh» (hiểu
+    thiết bị) và «gy» (gợi ý bật, `du_doan_nha.tra_loi`) — một khuôn, hai sổ.
+    """
+    from services.boi_canh_nha import _khong_dau
+
+    phan = (text or "").split()
+    if not phan or _khong_dau(phan[0]).strip(":,") != tien_to:
+        return None
+    m = re.match(_CAU_CHAM.format(tien_to=re.escape(tien_to)), text or "",
+                 re.IGNORECASE | re.DOTALL)
+    if not m:
+        return {}
+    return {"so": list(dict.fromkeys(int(x) for x in re.findall(r"\d+", m.group("so")))),
+            "dung": _khong_dau(m.group("chu")) == "dung",
+            "con": m.group("con").strip()}
 
 
 def tra_loi(text: str, *, nguoi: str = "") -> Optional[str]:
@@ -899,18 +1021,13 @@ def tra_loi(text: str, *, nguoi: str = "") -> Optional[str]:
     Chủ máy là người chấm cuối cùng nên câu đã chấm (kể cả do Claude) vẫn chấm
     lại được (`sua_cham`).
     """
-    from services.boi_canh_nha import _khong_dau
-
-    phan = (text or "").split()
-    if not phan or _khong_dau(phan[0]).strip(":,") != "hh":
+    cau = doc_cau_cham(text, "hh")
+    if cau is None:
         return None
-    m = _CAU_CHAM.match(text or "")
-    if not m:
+    if not cau:
         return ("Anh gõ giúp em: «hh <số> đúng» hoặc «hh <số> sai vì …» — nhiều số "
                 "thì cách nhau bằng dấu cách hoặc dấu phẩy.")
-    so = list(dict.fromkeys(int(x) for x in re.findall(r"\d+", m.group("so"))))
-    dung = _khong_dau(m.group("chu")) == "dung"
-    con = m.group("con").strip()
+    so, dung, con = cau["so"], cau["dung"], cau["con"]
     duoc = [x for x in so if sua_cham(x, dung, cham_boi="chu_may", ghi_chu=con)]
     khong = [x for x in so if x not in duoc]
     id_dk = ghi_du_kien(con, nguoi=nguoi, nguon="hh") if con else 0
@@ -925,7 +1042,14 @@ def tra_loi(text: str, *, nguoi: str = "") -> Optional[str]:
                     "lượt xem lại tới em dùng luôn.")
     if khong:
         dong.append(f"Không thấy câu nào số: {', '.join(f'#{x}' for x in khong)}.")
-    return " ".join(dong)
+    tra = " ".join(dong)
+    # Chấm xong thì hỏi câu kế tiếp NGAY trong câu đáp — lần lượt, như chủ máy
+    # chốt 11/09/2026. Câu đáp đi thẳng vào nhóm (`zalo_personal._nhom_hoc_hoi`).
+    cau, id_hoi = cau_hoi_tiep()
+    if cau:
+        danh_dau_da_hoi(id_hoi)
+        tra += "\n\n" + cau
+    return tra
 
 
 # ── Vòng chạy ───────────────────────────────────────────────────────────────
@@ -945,8 +1069,10 @@ def chay_mot_lan() -> dict[str, Any]:
         ghi = (ghi_ket_qua(kq["lan_giai"], kq["nhom"]) if not kq["loi"]
                else {"moi": [], "lap_lai": []})
         ten = {x["ma"]: x["ten"] for x in hs["thiet_bi"] if x.get("ten")}
-        tin = soan_bao(kq, ghi["moi"], ghi["lap_lai"], ten)
+        tin, id_hoi = soan_bao(kq, ghi["moi"], ghi["lap_lai"], ten)
         gui = bao_nhom(tin) if tin else 0
+        if gui and id_hoi:
+            danh_dau_da_hoi(id_hoi)
         return {"lan_giai": kq["lan_giai"], "phien_ban": kq["phien_ban"],
                 "nhom": len(kq["nhom"]), "moi": len(ghi["moi"]),
                 "lap_lai": len(ghi["lap_lai"]), "gui": gui, "loi": kq["loi"]}

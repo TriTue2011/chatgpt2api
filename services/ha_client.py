@@ -7,7 +7,7 @@ the smart home directly, without needing the HA voice pipeline.
 from __future__ import annotations
 
 import base64
-import json, logging, time, threading
+import json, logging, re, time, threading
 from typing import Any
 import urllib.request
 
@@ -296,8 +296,38 @@ def _get_ha_config() -> dict[str, str] | None:
     return {"url": url, "token": token}
 
 
+#: `scheme://tài-khoản:mật-khẩu@máy` nằm trong một chuỗi. Mật khẩu được phép
+#: chứa "@", nên phần trước tên máy kéo tới dấu "@" CUỐI CÙNG của cụm địa chỉ.
+_URL_CO_MAT_KHAU = re.compile(r"[a-z][a-z0-9+.-]*://[^\s/@]+:[^\s/]*@", re.IGNORECASE)
+
+
+def _an_thuc_the_mang_mat_khau(states: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Ẩn thực thể có TÊN mang tài khoản + mật khẩu — không đưa nó ra khỏi máy.
+
+    Đo 11/09/2026: tích hợp go2rtc của HA đặt tên 4 camera bằng nguyên đường
+    dẫn `rtsp://<tài khoản>:<mật khẩu>@<máy>/…`, và HA sinh luôn MÃ thực thể từ
+    tên đó. Tên và mã ấy đi vào ngữ cảnh nhà gửi model mỗi lượt chat, vào đề
+    của bot học hỏi, và vào tin báo nhóm Zalo "AI học hỏi" (19:20, đã thu hồi).
+
+    Che riêng tên là không đủ: mật khẩu còn nằm trong mã (dạng slug), mà mã thì
+    không che được — điều khiển cần mã thật. Nên ẨN HẲN thực thể đó khỏi mọi
+    nơi đọc trạng thái, cho tới khi chủ nhà đổi tên trong HA. Log ghi số lượng,
+    không ghi tên, để người soát biết vì sao nó biến mất.
+    """
+    an = {id(s) for s in states if _URL_CO_MAT_KHAU.search(
+        str((s.get("attributes") or {}).get("friendly_name") or ""))}
+    if not an:
+        return states
+    logger.warning({"event": "ha_an_thuc_the_mang_mat_khau", "so": len(an),
+                    "ghi_chu": "tên thực thể chứa tài khoản:mật khẩu trong URL — đổi tên trong HA"})
+    return [s for s in states if id(s) not in an]
+
+
 def get_states(use_cache: bool = True) -> list[dict[str, Any]]:
-    """Fetch all entity states from HA. Cache respects configurable TTL."""
+    """Fetch all entity states from HA. Cache respects configurable TTL.
+
+    Thực thể có tên mang mật khẩu bị ẩn ngay tại đây — xem
+    `_an_thuc_the_mang_mat_khau`."""
     global _state_cache, _state_cache_ts, _state_fail_ts
     ttl = _get_cache_ttl()
     now = time.time()
@@ -315,7 +345,8 @@ def get_states(use_cache: bool = True) -> list[dict[str, Any]]:
             f"{cfg['url']}/api/states",
             headers={"Authorization": f"Bearer {cfg['token']}", "Content-Type": "application/json"},
         )
-        data = json.loads(urllib.request.urlopen(req, timeout=10).read())
+        data = _an_thuc_the_mang_mat_khau(
+            json.loads(urllib.request.urlopen(req, timeout=10).read()))
         with _state_cache_lock:
             _state_cache = data
             _state_cache_ts = now
@@ -578,7 +609,9 @@ def get_state(entity_id: str) -> dict[str, Any] | None:
             f"{cfg['url']}/api/states/{entity_id}",
             headers={"Authorization": f"Bearer {cfg['token']}", "Content-Type": "application/json"},
         )
-        return json.loads(urllib.request.urlopen(req, timeout=10).read())
+        st = json.loads(urllib.request.urlopen(req, timeout=10).read())
+        # Cùng luật với `get_states`: tên mang mật khẩu thì coi như không có.
+        return st if _an_thuc_the_mang_mat_khau([st]) else None
     except Exception as exc:
         logger.debug({"event": "ha_state_failed", "entity": entity_id, "error": str(exc)})
         return None

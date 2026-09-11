@@ -48,11 +48,17 @@ class HieuThietBiNhaTest(unittest.TestCase):
         for p in (mock.patch.object(self.ht, "_duong_huong_dan", return_value=huong),
                   mock.patch.object(ha_client, "get_service_catalog",
                                     return_value=_SO_DICH_VU),
+                  # HA thật trả MỌI thực thể đang có; mã HA vắng ở đây thì
+                  # `ho_so` coi là đã đổi tên hoặc đã xoá.
                   mock.patch.object(ha_client, "get_states", return_value=[
                       {"entity_id": "switch.bep_left",
                        "attributes": {"friendly_name": "Đèn bếp"}},
                       {"entity_id": "light.bep_left",
-                       "attributes": {"friendly_name": "Đèn bếp"}}]),
+                       "attributes": {"friendly_name": "Đèn bếp"}},
+                      *({"entity_id": ma, "attributes": {}} for ma in (
+                          "light.nha_tam", "switch.quat_nha_tam", "light.hien",
+                          "binary_sensor.cua", *(f"light.a_le_{k}" for k in range(6)),
+                          *(f"switch.cam_{k}" for k in range(12))))]),
                   mock.patch.object(self.bc, "phong_cua", return_value="Bếp")):
             p.start()
             self.addCleanup(p.stop)
@@ -223,11 +229,12 @@ class HieuThietBiNhaTest(unittest.TestCase):
                 {"ma": "binary_sensor.b", "ha_bat_duoc": False}]
         data = {"nhom": [
             {"ma": ["switch.a", "switch.bia"], "ma_hoc": "switch.a", "hoc": True,
-             "loai": "bat_tat", "chac": 0.9},
-            {"ma": ["switch.a"], "ma_hoc": "switch.a", "hoc": True, "loai": "bat_tat"},
+             "loai": "bat_tat", "chac": 0.9, "dieu_kien": ["buoi"]},
+            {"ma": ["switch.a"], "ma_hoc": "switch.a", "hoc": True, "loai": "bat_tat",
+             "dieu_kien": ["buoi"]},
             {"ma": ["binary_sensor.b"], "ma_hoc": "binary_sensor.b", "hoc": True,
-             "loai": "bat_tat", "chac": 0.9}]}
-        nhom, loai_bo = self.ht._kiem(data, phan)
+             "loai": "bat_tat", "chac": 0.9, "dieu_kien": ["buoi"]}]}
+        nhom, loai_bo = self.ht._kiem(data, phan, [{"khoa": "buoi"}])
         self.assertEqual([g["ma"] for g in nhom], [["switch.a"]])
         self.assertEqual(loai_bo, 2)
 
@@ -239,6 +246,7 @@ class HieuThietBiNhaTest(unittest.TestCase):
             bai = {"nhom": [{"ma": ma, "ma_hoc": "switch.bep_left",
                              "nguon_nhanh": "zigbee2mqtt/Bếp#state_left",
                              "loai": "bat_tat", "hoc": True, "chac": 0.95,
+                             "dieu_kien": ["buoi"],
                              "vi_sao": "đổi cùng lúc 100%"}]}
             return {"choices": [{"message": {
                 "content": "```json\n" + json.dumps(bai, ensure_ascii=False) + "\n```"}}]}
@@ -248,16 +256,17 @@ class HieuThietBiNhaTest(unittest.TestCase):
              mock.patch("services.digest.send_targets", return_value=1) as gui:
             kq = self.ht.chay_mot_lan()
         self.assertEqual(kq["loi"], "")
-        self.assertEqual(kq["moi"], 3)
+        self.assertEqual(kq["moi"], 4)
         self.assertEqual(gui.call_args.args[0], ["zalop:acc:nhom"])
         self.assertEqual(self.ht.thiet_bi_hoc(), ["switch.bep_left"])
+        self.assertEqual(self.ht.dieu_kien_hoc(), {"switch.bep_left": ["buoi"]})
 
     # ── sổ kết luận ────────────────────────────────────────────────────────
     def test_KET_LUAN_Y_HET_thi_KHONG_HOI_LAI(self) -> None:
         a = self._luu(self._nhom_bep())
         b = self._luu(self._nhom_bep(vi_sao="lý do khác"))
         self.assertEqual(sorted(d["loai_cau_hoi"] for d in a["moi"]),
-                         ["cung_thiet_bi", "hoc", "nguon_nhanh"])
+                         ["cung_thiet_bi", "dieu_kien", "hoc", "nguon_nhanh"])
         self.assertEqual(b["moi"], [])
 
     def test_CHAM_SAI_thi_THOI_HOC_NGAY(self) -> None:
@@ -338,18 +347,43 @@ class HieuThietBiNhaTest(unittest.TestCase):
         ăn — bài học `test_TIN_NHAN_khong_con_MA_MAY` của `du_doan_nha`."""
         moi = self._luu(self._nhom_bep())["moi"]
         kq = {"phien_ban": "abc", "loi": "", "bo_sot": 0, "loai_bo": 0}
-        tin = "\n".join(self.ht.soan_bao(
-            kq, moi, [], {"switch.bep_left": "Đèn bếp", "light.bep_left": "Đèn bếp"}))
+        tin, id_ = self.ht.soan_bao(
+            kq, moi, [], {"switch.bep_left": "Đèn bếp", "light.bep_left": "Đèn bếp"})
+        self.assertEqual(id_, moi[0]["id"])
         self.assertIn("Đèn bếp [switch]", tin)
         self.assertIn("MỘT thiết bị", tin)
         self.assertIn("đổi cùng lúc 100%", tin)
-        self.assertIn("hh ", tin)
+        self.assertIn(f"hh {id_} ", tin)
         self.assertNotIn("_", tin)
         self.assertNotIn("switch.bep", tin)
 
+    def test_XAC_MINH_LAN_LUOT_moi_lan_MOT_CAU(self) -> None:
+        """Chủ máy chốt 11/09/2026: "tin gửi để tôi xác minh đang dài quá. Tôi
+        muốn nó xác minh lần lượt, khi tôi phản hồi xong thì mới gửi xác minh
+        tiếp". Bản 19:20 hôm đó là bốn tin dài kể mọi kết luận."""
+        moi = self._luu(self._nhom_bep())["moi"]
+        kq = {"phien_ban": "abc", "loi": "", "bo_sot": 0, "loai_bo": 0}
+        ten = {"switch.bep_left": "Đèn bếp"}
+        tin, id_ = self.ht.soan_bao(kq, moi, [], ten)
+        self.assertEqual(tin.count("«hh "), 2, "đúng MỘT câu hỏi (mẫu đúng và mẫu sai)")
+        self.ht.danh_dau_da_hoi(id_)
+        self.assertEqual(self.ht.cau_hoi_tiep(ten), ("", 0),
+                         "chưa trả lời thì không hỏi câu sau")
+        dap = self.ht.tra_loi(f"hh {id_} đúng")
+        self.assertIn(f"Câu #{moi[1]['id']}", dap, "trả lời xong thì hỏi câu kế tiếp")
+        self.assertEqual(self.ht.cau_hoi_tiep(ten), ("", 0),
+                         "câu kế tiếp vừa hỏi trong câu đáp — lại chờ")
+
+    def test_CAU_CLAUDE_DA_CHAM_thi_KHONG_HOI_CHU_MAY(self) -> None:
+        moi = self._luu(self._nhom_bep())["moi"]
+        for d in moi[:-1]:
+            self.ht.cham(d["id"], True, cham_boi="claude")
+        _, id_ = self.ht.cau_hoi_tiep({})
+        self.assertEqual(id_, moi[-1]["id"])
+
     def test_KHONG_CO_GI_MOI_thi_KHONG_NHAN(self) -> None:
         kq = {"phien_ban": "abc", "loi": "", "bo_sot": 0, "loai_bo": 0}
-        self.assertEqual(self.ht.soan_bao(kq, [], [], {}), [])
+        self.assertEqual(self.ht.soan_bao(kq, [], [], {}), ("", 0))
 
     def test_CHUA_CHON_KENH_thi_KHONG_GUI_LUNG_TUNG(self) -> None:
         """Chủ máy chỉ định nhóm "AI học hỏi" — không rơi về admin như gợi ý đèn."""
@@ -447,7 +481,7 @@ class HieuThietBiNhaTest(unittest.TestCase):
         phan = [{"ma": "switch.x", "ha_bat_duoc": True}]
         nhom, _ = self.ht._kiem({"nhom": [{"ma": ["switch.x"], "hoc": False,
                                           "ma_hoc": "", "loai": "cam_bien",
-                                          "chac": 0.9}]}, phan)
+                                          "chac": 0.9}]}, phan, [])
         self.assertEqual(nhom[0]["loai"], "cam_bien")
 
     def test_HAI_LUOT_GIAI_khong_CHONG_NHAU(self) -> None:
@@ -478,6 +512,70 @@ class HieuThietBiNhaTest(unittest.TestCase):
         self.assertIsNone(self._cong("@bot bật đèn bếp", tag=True))
         self.assertIsNone(self._cong("chào cả nhà", thread="nhom_khac"))
         self.assertEqual(self.ht.du_kien_gan_day(), [])
+
+    def test_CONG_NHOM_HOC_HOI_nhan_CAU_CHAM_GOI_Y_gy(self) -> None:
+        """Trước 11/09/2026 gợi ý bật thiết bị chỉ chấm được trên web."""
+        import services.du_doan_nha as dd
+
+        id_ = dd.ghi_nhan("switch.bep_left", "on", 0.9, {}, "goi_y")
+        self.assertIn("Em ghi rồi", self._cong(f"gy {id_} đúng"))
+        self.assertEqual(dd.so_luot("switch.bep_left"), 1)
+        self.assertEqual(self.ht.du_kien_gan_day(), [], "câu chấm không phải dữ kiện")
+
+    # ── điều kiện đi với thiết bị (11/09/2026) ─────────────────────────────
+    def test_KIEM_BIEN_DIEU_KIEN_phai_CO_THAT_trong_THUC_DON(self) -> None:
+        """Khoá bịa thì tầng xác suất không bao giờ gặp — thiết bị âm thầm học
+        không theo điều kiện nào. Code chỉ kiểm khoá CÓ THẬT; hợp lẽ hay không là
+        việc của bot và người chấm."""
+        phan = [{"ma": f"switch.{x}", "ha_bat_duoc": True} for x in "abcde"]
+        don = [{"khoa": k} for k in ("buoi", "thu", "mua", "lux_bếp", "nguoi_bếp",
+                                      "nguoi_trong_nha", "bat_switch.b")]
+        nhom = {"hoc": True, "loai": "bat_tat", "chac": 0.9}
+        data = {"nhom": [
+            {**nhom, "ma": ["switch.a"], "ma_hoc": "switch.a",
+             "dieu_kien": ["lux_bếp", "buoi"]},
+            {**nhom, "ma": ["switch.b"], "ma_hoc": "switch.b",
+             "dieu_kien": ["bat_switch.b"]},
+            {**nhom, "ma": ["switch.c"], "ma_hoc": "switch.c",
+             "dieu_kien": ["lux_phòng_bịa"]},
+            {**nhom, "ma": ["switch.d"], "ma_hoc": "switch.d"},
+            {**nhom, "ma": ["switch.e"], "ma_hoc": "switch.e",
+             "dieu_kien": ["buoi", "thu", "mua", "lux_bếp", "nguoi_bếp",
+                           "nguoi_trong_nha"]}]}
+        hop_le, loai_bo = self.ht._kiem(data, phan, don)
+        self.assertEqual([g["ma"] for g in hop_le], [["switch.a"]])
+        self.assertEqual(hop_le[0]["dieu_kien"], ["buoi", "lux_bếp"])
+        self.assertEqual(loai_bo, 4, "tự làm điều kiện cho mình, khoá bịa, thiếu, quá 5")
+
+    def test_DIEU_KIEN_BI_CHAM_SAI_thi_THOI_DUNG_nhung_VAN_HOC(self) -> None:
+        moi = self._luu(self._nhom_bep(dieu_kien=["buoi", "lux_bếp"]))["moi"]
+        self.assertEqual(self.ht.dieu_kien_hoc(), {"switch.bep_left": ["buoi", "lux_bếp"]})
+        cau = next(d for d in moi if d["loai_cau_hoi"] == "dieu_kien")
+        self.ht.tra_loi(f"hh {cau['id']} sai vì đèn bếp không theo ánh sáng")
+        self.assertEqual(self.ht.dieu_kien_hoc(), {})
+        self.assertEqual(self.ht.thiet_bi_hoc(), ["switch.bep_left"],
+                         "sai điều kiện không có nghĩa là thôi học thiết bị")
+
+    def test_HO_SO_co_THUC_DON_va_BO_MA_KHONG_CON_TRONG_HA(self) -> None:
+        """Mã HA không còn trong HA (đổi tên, xoá, hay bị ẩn vì tên mang mật
+        khẩu) thì không ra đề — kể cả khi lịch sử 30 ngày còn giữ mã cũ."""
+        from services import ha_client
+
+        self._den_bep()
+        goc = time.time() - 3 * 86400
+        for i in range(6):
+            self._sk("camera.go2rtc_rtsp_u_p_10_0_0_5_554_cua_sub",
+                     "streaming" if i % 2 == 0 else "idle", goc + i * 3600)
+        with mock.patch.object(ha_client, "get_service_catalog",
+                               return_value={**_SO_DICH_VU, "camera": {"turn_on": {}}}):
+            hs = self.ht.ho_so(so_ngay=30)
+        ma = {x["ma"] for x in hs["thiet_bi"]}
+        self.assertIn("switch.bep_left", ma)
+        self.assertNotIn("camera.go2rtc_rtsp_u_p_10_0_0_5_554_cua_sub", ma)
+        don = {x["khoa"]: x for x in hs["thuc_don_dieu_kien"]}
+        for k in ("buoi", "thu", "mua", "bat_switch.bep_left"):
+            self.assertIn(k, don)
+        self.assertEqual(don["bat_switch.bep_left"]["loai"], "thiet_bi")
 
 
 if __name__ == "__main__":

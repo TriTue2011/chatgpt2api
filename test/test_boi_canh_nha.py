@@ -241,6 +241,41 @@ class BoiCanhNhaTest(unittest.TestCase):
         finally:
             self._p.start()
 
+    # ── thực đơn điều kiện cho bot học hỏi (11/09/2026) ────────────────────
+    def test_THUC_DON_bay_DU_dieu_kien_kem_PHONG_va_THIET_BI_DO(self) -> None:
+        """Chọn điều kiện nào là việc của bot; code bày ra đủ, KHÔNG lọc hộ —
+        kể cả khoá chưa rõ phòng, kèm thiết bị đo để bot tự thấy mà bỏ."""
+        t = time.time()
+        self._do_so_do("sensor.bep_illuminance", "illuminance", 10.0, t - 600)
+        self._do_so_do("zigbee2mqtt/Aptomat tổng", "temperature", 40.0, t - 600)
+        self._do_su_kien("binary_sensor.phong_khach_occupancy", "state", "on", t - 600)
+        with mock.patch.object(self.bc, "phong_cua",
+                               side_effect=lambda tb: "" if "Aptomat" in tb else (
+                                   "bep" if "bep" in tb else "phong_khach")):
+            don = {x["khoa"]: x for x in self.bc.thuc_don_dieu_kien(30)}
+        self.assertEqual(don["lux_bep"]["do_bang"], ["sensor.bep_illuminance"])
+        self.assertEqual(don["lux_bep"]["phong"], "bep")
+        self.assertEqual(don["nhiet_do_khac"]["phong"], "")
+        self.assertEqual(don["nhiet_do_khac"]["do_bang"], ["zigbee2mqtt/Aptomat tổng"])
+        self.assertEqual(don["nguoi_phong_khach"]["loai"], "nguoi")
+        for k in ("buoi", "thu", "mua", "nguoi_trong_nha"):
+            self.assertIn(k, don)
+
+    def test_THUC_DON_dung_KHOA_cua_ROI_RAC(self) -> None:
+        """Khoá bot chọn phải là khoá tầng xác suất gặp lúc đếm — một nguồn."""
+        t = time.time()
+        self._do_so_do("sensor.bep_illuminance", "illuminance", 10.0, t)
+        self._do_su_kien("binary_sensor.bep_occupancy", "state", "on", t - 60)
+        nhan = self.bc.roi_rac(self.bc.boi_canh(t))
+        don = {x["khoa"] for x in self.bc.thuc_don_dieu_kien(30)}
+        self.assertTrue(set(nhan) <= don, set(nhan) - don)
+
+    def test_TEN_DIEU_KIEN_viet_tieng_nguoi(self) -> None:
+        self.assertEqual(self.bc.ten_dieu_kien("lux_phòng_khách"), "ánh sáng phòng khách")
+        self.assertEqual(self.bc.ten_dieu_kien("nguoi_bếp"), "có người ở bếp")
+        self.assertEqual(self.bc.ten_dieu_kien("buoi"), "buổi trong ngày")
+        self.assertNotIn("_", self.bc.ten_dieu_kien("nhiet_do_khac"))
+
 
 if __name__ == "__main__":
     unittest.main()

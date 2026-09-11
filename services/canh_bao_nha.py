@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -29,6 +30,9 @@ from typing import Any
 from services.config import DATA_DIR, config
 
 logger = logging.getLogger(__name__)
+
+#: Mã thực thể Home Assistant: `miền.tên`, chữ thường. Mã MQTT/Frigate có "/".
+_MA_HA = re.compile(r"[a-z_]+\.[a-z0-9_]+")
 
 _TZ = timezone(timedelta(hours=7))
 _FILE = Path(DATA_DIR) / "agent" / "canh_bao_nha.json"
@@ -197,6 +201,17 @@ def quet(so_ngay: int = 7) -> dict[str, Any]:
     except Exception as exc:
         logger.warning({"event": "canh_bao_soi_loi", "error": str(exc)[:200]})
         return {"can_bao": [], "tong_hong": 0, "dang_im": 0, "loi": str(exc)[:200]}
+
+    # Mã dạng Home Assistant mà HA hiện KHÔNG có thì không báo: thiết bị đã xoá
+    # hay đổi tên thì báo "chết" là báo nhầm, mà tin cảnh báo in thẳng mã
+    # (`_mo_ta`). Đo 11/09/2026: mã 4 camera go2rtc của nhà mang mật khẩu dạng
+    # slug; `ha_client.get_states` đã ẩn chúng, lọc theo đó thì mã không ra tin.
+    from services import ha_client
+
+    con_trong_ha = {str(s.get("entity_id") or "") for s in (ha_client.get_states() or [])}
+    if con_trong_ha:
+        hong = [h for h in hong if not _MA_HA.fullmatch(str(h.get("thiet_bi") or ""))
+                or h.get("thiet_bi") in con_trong_ha]
 
     with _khoa:
         so = _doc()

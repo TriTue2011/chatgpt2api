@@ -3044,7 +3044,9 @@ def _nhom_hoc_hoi(ev: dict, thread_id: str, text: str) -> str | None:
     học được chữ nào: câu chấm «hh 11, 32 đúng, …» hỏng vì dấu phẩy, còn tin
     dạy thường bị cổng tag bỏ vì không gọi tên bot. Nên trong ĐÚNG nhóm này:
 
-    * «hh …» là câu chấm (`hieu_thiet_bi_nha.tra_loi`);
+    * «hh …» là câu chấm hiểu thiết bị (`hieu_thiet_bi_nha.tra_loi`);
+    * «gy …» là câu chấm gợi ý bật thiết bị (`du_doan_nha.tra_loi`) — trước
+      11/09/2026 gợi ý hỏi "anh có muốn em bật không" mà chỉ chấm được trên web;
     * tin KHÔNG tag bot là dữ kiện, ghi vào sổ học;
     * tin CÓ tag bot vẫn đi đường chat bình thường — chủ máy vẫn hỏi bot được.
 
@@ -3059,6 +3061,8 @@ def _nhom_hoc_hoi(ev: dict, thread_id: str, text: str) -> str | None:
         return None
     nguoi = str(ev.get("display_name") or ev.get("sender_id") or "")
     dap = hieu_thiet_bi_nha.tra_loi(text, nguoi=nguoi)
+    if dap is None:
+        dap = du_doan_nha.tra_loi(text, nguoi=nguoi)
     if dap is not None:
         return dap
     try:

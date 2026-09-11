@@ -39,9 +39,17 @@ class DuDoanNhaTest(unittest.TestCase):
         # riêng). Ở đây giả như bot đã kết luận các thiết bị này được học.
         self.duoc_hoc = {"light.bep", "light.phong_khach", "light.bot_lam",
                          "light.hiem", "light.la_hoac", "switch.binh_nong_lanh"}
+        # Điều kiện đi với thiết bị nào cũng do bot học hỏi chọn. Mặc định ở
+        # đây: mọi điều kiện test dựng ra được (mọi phòng đều là "Bếp").
+        self.dieu_kien: dict[str, list[str]] = {}
+        mac_dinh = ["buoi", "thu", "mua", "lux_bếp", "nguoi_bếp", "nguoi_trong_nha",
+                    *(f"bat_{x}" for x in sorted(self.duoc_hoc))]
         for p in (mock.patch.object(self.bc, "phong_cua", return_value="Bếp"),
                   mock.patch.object(hieu_thiet_bi_nha, "thiet_bi_hoc",
                                     side_effect=lambda: sorted(self.duoc_hoc)),
+                  mock.patch.object(hieu_thiet_bi_nha, "dieu_kien_hoc",
+                                    side_effect=lambda: {x: self.dieu_kien.get(x, mac_dinh)
+                                                         for x in self.duoc_hoc}),
                   # HA thật của nhà: đèn và công tắc bật được, cảm biến thì không.
                   mock.patch.object(ha_client, "get_service_catalog", return_value={
                       "light": {"turn_on": {}}, "switch": {"turn_on": {}},
@@ -276,8 +284,8 @@ class DuDoanNhaTest(unittest.TestCase):
         """Không giải thích được thì chủ máy không sửa được bot."""
         tin = self.dd.soan_tin([{
             "ten": "light.bep", "p": 0.88, "cach": "goi_y",
-            "bang_chung": [{"dieu_kien": "buoi=tối"},
-                           {"dieu_kien": "nguoi_bep=co"}]}])
+            "bang_chung": [{"dieu_kien": "buoi=tối", "trong_so": 1.0},
+                           {"dieu_kien": "nguoi_bep=co", "trong_so": 0.6}]}])
         self.assertIn("light.bep", tin)
         self.assertIn("88%", tin)
         self.assertIn("tối", tin)
@@ -413,9 +421,9 @@ class DuDoanNhaTest(unittest.TestCase):
         from services import ha_client
 
         ds = [{"ten": "light.bep_left", "p": 0.82, "cach": "goi_y",
-               "bang_chung": [{"dieu_kien": "lux_bếp=toi"},
-                              {"dieu_kien": "buoi=tối"},
-                              {"dieu_kien": "nguoi_bếp=co"}]}]
+               "bang_chung": [{"dieu_kien": "lux_bếp=toi", "trong_so": 1.1},
+                              {"dieu_kien": "buoi=tối", "trong_so": 0.9},
+                              {"dieu_kien": "nguoi_bếp=co", "trong_so": 0.7}]}]
         trang_thai = [{"entity_id": "light.bep_left",
                        "attributes": {"friendly_name": "Đèn bếp"}}]
         with mock.patch.object(ha_client, "get_states",
@@ -433,12 +441,155 @@ class DuDoanNhaTest(unittest.TestCase):
         from services import ha_client
 
         ds = [{"ten": "light.x", "p": 0.8, "cach": "goi_y",
-               "bang_chung": [{"dieu_kien": "khoa_la_hoac=gi_do"},
-                              {"dieu_kien": "buoi=tối"}]}]
+               "bang_chung": [{"dieu_kien": "khoa_la_hoac=gi_do", "trong_so": 1.0},
+                              {"dieu_kien": "buoi=tối", "trong_so": 0.8}]}]
         with mock.patch.object(ha_client, "get_states", return_value=[]):
             tin = self.dd.soan_tin(ds)
         self.assertIn("buổi tối", tin)
         self.assertNotIn("khoa", tin)
+
+    def test_LY_DO_chi_la_BANG_CHUNG_NGHIENG_VE_BAT(self) -> None:
+        """Điều kiện đang kéo xác suất xuống không được đứng sau chữ "vì"."""
+        tin = self.dd.soan_tin([{
+            "ten": "light.bep", "p": 0.8, "cach": "goi_y",
+            "bang_chung": [{"dieu_kien": "nguoi_trong_nha=khong", "trong_so": -2.0},
+                           {"dieu_kien": "buoi=tối", "trong_so": 1.0}]}])
+        self.assertIn("buổi tối", tin)
+        self.assertNotIn("không có ai", tin)
+
+    # ── 11/09/2026: "em chắc 100%" từ điều kiện chưa từng đi cùng lần bật ──
+    def test_CHUA_TUNG_DI_CUNG_LAN_BAT_thi_KHONG_la_bang_chung_bat(self) -> None:
+        """Tái hiện ca thật: cảm biến phòng khách bật 2/556 ô, 21 điều kiện mỗi
+        cái gặp 6 ô mà KHÔNG ô nào có bật — bản cũ cộng ra 100%."""
+        bang = {"n_bat": 2, "n_khong": 554,
+                "dk": {f"dk_{i}=co": {"bat": 0, "khong": 6} for i in range(21)}}
+        p, bang_chung = self.dd._xac_suat(bang, {f"dk_{i}": "co" for i in range(21)})
+        self.assertLess(p, self.dd._P_GOI_Y)
+        self.assertTrue(all(b["trong_so"] <= 0 for b in bang_chung))
+
+    def test_MOT_HAI_LAN_TRUNG_HOP_khong_phai_BANG_CHUNG_BAT(self) -> None:
+        bang = {"n_bat": 10, "n_khong": 546,
+                "dk": {"do_am_ban_công=am": {"bat": 1, "khong": 5}}}
+        _, bang_chung = self.dd._xac_suat(bang, {"do_am_ban_công": "am"})
+        self.assertEqual(bang_chung, [])
+
+    def test_DIEU_KIEN_KHONG_NOI_GI_thi_TRONG_SO_bang_KHONG(self) -> None:
+        """Có mặt đều như nhau lúc bật và lúc không bật thì không nghiêng bên nào."""
+        bang = {"n_bat": 50, "n_khong": 500,
+                "dk": {"mua=nong": {"bat": 50, "khong": 500}}}
+        _, bang_chung = self.dd._xac_suat(bang, {"mua": "nong"})
+        self.assertAlmostEqual(bang_chung[0]["trong_so"], 0.0, places=6)
+
+    def test_DU_MAU_dem_theo_O_khong_theo_SU_KIEN(self) -> None:
+        """Đo 11/09/2026: 10 lần "bật" nhập từ HA mà chỉ nằm trong 2 ô 30 phút."""
+        goc = (int(time.time()) // 1800 - 48) * 1800
+        for i in range(10):
+            self._sk("light.hiem", "on", goc + (i % 2) * 1800 + i)
+        self.assertNotIn("light.hiem", self.dd.hoc(so_ngay=30))
+
+    def test_CHI_DEM_DIEU_KIEN_BOT_CHON(self) -> None:
+        """Bot chọn đèn bếp học theo buổi thì cảm biến phòng khác không được đếm."""
+        self._nep_toi()
+        self.dieu_kien = {"light.bep": ["buoi"]}
+        dk = self.dd.hoc(so_ngay=30)["light.bep"]["dk"]
+        self.assertTrue(dk)
+        self.assertTrue(all(k.startswith("buoi=") for k in dk), sorted(dk))
+
+    def test_CHUA_CO_KET_LUAN_DIEU_KIEN_thi_KHONG_DEM_dieu_kien_nao(self) -> None:
+        """Thiếu kết luận thì im — không rơi về mọi cảm biến cả nhà như bản cũ."""
+        self._nep_toi()
+        self.dieu_kien = {"light.bep": []}
+        self.assertEqual(self.dd.hoc(so_ngay=30)["light.bep"]["dk"], {})
+
+    # ── kiểm tiến dần từng thiết bị ────────────────────────────────────────
+    def _nep_ro(self, ngay_dau: int = 1, ngay_cuoi: int = 28, *, bat: bool = True) -> float:
+        """Nếp rõ: 18:50 có người vào bếp, 19:00 bật đèn bếp; 08:00 bếp vắng.
+
+        Trả mốc 19:05 hôm qua để đoán. Bot chọn đúng hai điều kiện: buổi và
+        có người ở bếp."""
+        from datetime import datetime, timedelta
+        dau_ngay = datetime.now(self.bc._TZ).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+        for i in range(ngay_dau, ngay_cuoi + 1):
+            d = dau_ngay - timedelta(days=i)
+            self._sk("binary_sensor.bep_occupancy", "on",
+                     (d + timedelta(hours=18, minutes=50)).timestamp())
+            if bat:
+                self._sk("light.bep", "on", (d + timedelta(hours=19)).timestamp())
+            self._sk("binary_sensor.bep_occupancy", "off",
+                     (d + timedelta(hours=8)).timestamp())
+        self.dieu_kien = {"light.bep": ["buoi", "nguoi_bếp"]}
+        return (dau_ngay - timedelta(days=1)
+                + timedelta(hours=19, minutes=5)).timestamp()
+
+    def test_NEP_VUNG_thi_QUA_KIEM_TIEN_DAN_va_duoc_GOI_Y(self) -> None:
+        luc = self._nep_ro()
+        b = self.dd.hoc(so_ngay=30)["light.bep"]
+        self.assertGreaterEqual(b["kiem"]["doan"], self.dd._KIEM_TOI_THIEU)
+        d = self.dd.du_doan("light.bep", luc, bang=b)
+        self.assertTrue(d["dat_cong"])
+        self.assertEqual(d["cach"], "goi_y")
+
+    def test_NEP_DA_DOI_thi_CHUA_QUA_KIEM_TIEN_DAN_va_IM(self) -> None:
+        """Chủ máy hỏi 11/09/2026: "nhỡ đâu thay đổi thói quen". Bảy ngày thử
+        đoán trượt thì bot tự im, không đợi 30 ngày cũ trôi hết."""
+        self._nep_ro(8, 28)
+        luc = self._nep_ro(1, 7, bat=False)
+        b = self.dd.hoc(so_ngay=30)["light.bep"]
+        d = self.dd.du_doan("light.bep", luc, bang=b)
+        self.assertGreaterEqual(d["p"], self.dd._P_GOI_Y, "xác suất trên 30 ngày vẫn cao")
+        self.assertFalse(d["dat_cong"])
+        self.assertEqual(d["cach"], "im")
+        self.assertIn("kiểm tiến dần", d["ly_do"])
+
+    def test_DANG_BAT_thi_KHONG_MOI_BAT(self) -> None:
+        """11/09/2026 bình nóng lạnh đang on mà bot vẫn hỏi có muốn bật không."""
+        from services import ha_client
+
+        luc = self._nep_ro()
+        with mock.patch.object(ha_client, "get_states",
+                               return_value=[{"entity_id": "light.bep", "state": "off"}]):
+            self.assertIn("light.bep", {d["ten"] for d in self.dd.quet(luc=luc)})
+        with mock.patch.object(ha_client, "get_states",
+                               return_value=[{"entity_id": "light.bep", "state": "on"}]):
+            self.assertNotIn("light.bep", {d["ten"] for d in self.dd.quet(luc=luc)})
+
+    # ── gửi, đánh số, chấm qua Zalo ────────────────────────────────────────
+    def test_TIN_GOI_Y_DANH_SO_GY_va_GUI_HONG_thi_KHONG_GHI(self) -> None:
+        goi_y = [{"ten": "light.bep", "p": 0.9, "cach": "goi_y", "nhan": {},
+                  "bang_chung": [{"dieu_kien": "buoi=tối", "trong_so": 1.2}]}]
+        with mock.patch.object(self.dd, "quet", side_effect=lambda: [dict(x) for x in goi_y]), \
+             mock.patch.object(self.dd, "_kenh_nhan", return_value=["zalo:b:c"]), \
+             mock.patch("services.digest.send_targets", return_value=0):
+            self.dd.chay_mot_lan()
+        with self.dd._khoa:
+            n = self.dd._db().execute("SELECT COUNT(*) FROM du_doan").fetchone()[0]
+        self.assertEqual(n, 0, "gửi hỏng thì chủ máy chưa thấy — không được còn trong sổ")
+        with mock.patch.object(self.dd, "quet", side_effect=lambda: [dict(x) for x in goi_y]), \
+             mock.patch.object(self.dd, "_kenh_nhan", return_value=["zalo:b:c"]), \
+             mock.patch("services.digest.send_targets", return_value=1) as gui:
+            kq = self.dd.chay_mot_lan()
+        self.assertIn(f"gy {kq['goi_y'][0]['id']} đúng", gui.call_args.args[1])
+
+    def test_MOI_BUOI_chi_GOI_Y_MOT_LAN(self) -> None:
+        """Đo 11/09/2026: cùng ba gợi ý gửi bốn giờ liền, không ai trả lời."""
+        now = time.time()
+        self.dd.ghi_nhan("light.bep", "on", 0.9, {}, "goi_y")
+        self.assertTrue(self.dd._da_goi_y_buoi_nay("light.bep", now))
+        self.assertFalse(self.dd._da_goi_y_buoi_nay("light.bep", now + 13 * 3600))
+
+    def test_CHAM_GY_trong_NHOM_ke_ca_khi_DA_QUA_HAN(self) -> None:
+        from services import hieu_thiet_bi_nha
+
+        id_ = self.dd.ghi_nhan("light.bep", "on", 0.9, {}, "goi_y")
+        self.dd.ghi_lo(id_)
+        with mock.patch.object(hieu_thiet_bi_nha, "ghi_du_kien", return_value=7) as dk:
+            dap = self.dd.tra_loi(f"gy {id_} sai vì tối đó nhà đi vắng", nguoi="Việt")
+        self.assertIn("sai", dap)
+        self.assertIn("dữ kiện #7", dap)
+        self.assertEqual(dk.call_args.args[0], "vì tối đó nhà đi vắng")
+        self.assertEqual(self.dd.so_luot("light.bep"), 1)
+        self.assertIsNone(self.dd.tra_loi("chào cả nhà"))
 
 
 if __name__ == "__main__":

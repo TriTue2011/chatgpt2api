@@ -693,20 +693,22 @@ class UrlCoThamSoTests(unittest.TestCase):
     dạng dễ bị một hàm che mật khẩu viết ẩu cắt mất phần sau dấu hỏi.
     """
 
-    DAHUA = "rtsp://CAM_USER:CAM_PASS_DA_XOA@10.0.0.9/cam/realmonitor?channel=1&subtype=0"
+    # Mật khẩu GIẢ. Bản trước dùng mật khẩu camera thật của nhà (commit
+    # 7aa3441) — dữ liệu test cũng là chỗ bí mật đi ra ngoài.
+    DAHUA = "rtsp://admin:MatKhau%40123@10.0.0.9/cam/realmonitor?channel=1&subtype=0"
 
     def test_che_mat_khau_giu_nguyen_duong_dan_va_tham_so(self) -> None:
         ra = cam.che_bi_mat(self.DAHUA)
         self.assertIn("/cam/realmonitor?channel=1&subtype=0", ra)
-        self.assertNotIn("CAM_PASS_DA_XOA", ra)
+        self.assertNotIn("MatKhau", ra)
 
     def test_mat_khau_co_dau_a_coi_gõ_thang_van_tach_dung_host(self) -> None:
         # Người dùng hay gõ thẳng '@' thay vì '%40'. urlsplit lấy '@' CUỐI làm
         # ranh giới nên vẫn ra đúng host — ffmpeg cũng vậy (đã thử camera thật).
-        ra = cam.che_bi_mat("rtsp://CAM_USER:CAM_PASS_DA_XOA@0610@10.0.0.9/cam/realmonitor?channel=1")
+        ra = cam.che_bi_mat("rtsp://admin:MatKhau@123@10.0.0.9/cam/realmonitor?channel=1")
         self.assertIn("10.0.0.9", ra)
         self.assertIn("channel=1", ra)
-        self.assertNotIn("CAM_PASS_DA_XOA", ra)
+        self.assertNotIn("MatKhau", ra)
 
     def test_url_giu_nguyen_khi_dua_cho_ffmpeg(self) -> None:
         # Truyền dạng danh sách nên '&' không bị shell hiểu thành chạy nền.
