@@ -38,6 +38,7 @@ WebSocket cùng gốc, thứ mà header không làm được.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 
 import httpx
@@ -60,6 +61,40 @@ _DROP_RESP = {"content-encoding", "transfer-encoding", "content-length", "connec
 
 # Cookie phiên noVNC. Đặt path=/novnc nên không lẫn với cookie phiên chính.
 TEN_COOKIE = "c2a_novnc"
+
+logger = logging.getLogger(__name__)
+
+
+def _la_https(request: Request) -> bool:
+    """Trình duyệt có đang dùng HTTPS không — tính cả khi đứng sau tunnel.
+
+    Cloudflare Tunnel cắt TLS ở biên rồi gọi vào bằng HTTP, nên
+    `request.url.scheme` là `http` trong khi người dùng đang ở `https://`.
+    Chỉ nhìn scheme thì cookie qua domain mất cờ Secure (đo 11/09/2026:
+    `set-cookie: …; Path=/novnc; SameSite=lax`, không có Secure).
+
+    Cùng cách đọc với `resolve_image_base_url` trong api/support.py.
+    """
+    proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+    if proto:
+        return proto == "https"
+    return request.url.scheme == "https"
+
+
+def _ghi_dut(cho: str, exc: BaseException) -> None:
+    """Ghi lý do một chiều của kênh RFB đứt.
+
+    Kênh đứt là chuyện BÌNH THƯỜNG (người dùng đóng tab), nên để mức INFO chứ
+    không phải ERROR — nhưng tuyệt đối không được im. Trước đây mọi nhánh hỏng
+    đều `pass` trắng, và khi phiên chết ngay sau khi mở thì không còn gì để
+    lần: log chỉ có `connection open` rồi `connection closed`.
+    """
+    logger.info({
+        "event": "novnc_kenh_dut",
+        "cho": cho,
+        "loai": type(exc).__name__,
+        "chi_tiet": str(exc)[:200],
+    })
 
 
 async def _chuyen_tiep(path: str, request: Request) -> Response:
@@ -152,10 +187,15 @@ def create_router() -> APIRouter:
                                     continue
                                 goi = chu.encode()
                             await up.send(goi)
-                    except Exception:
+                    except Exception as exc:
                         # Bắt RỘNG có chủ đích: chiều này đứt kiểu gì cũng chỉ
                         # có một cách xử lý — kết thúc để chiều kia được dọn.
-                        pass
+                        # NHƯNG PHẢI GHI LẠI. Bản cũ `pass` trắng: phiên chết
+                        # sau 150ms mà log không còn một dấu vết nào, nên không
+                        # cách nào biết vì sao (đo 11/09/2026, chủ máy mở qua
+                        # domain: `connection open` → 0,15s → `connection
+                        # closed`, không kèm gì cả).
+                        _ghi_dut("len", exc)
 
                 async def _xuong():
                     """websockify → trình duyệt."""
@@ -165,8 +205,8 @@ def create_router() -> APIRouter:
                                 await ws.send_bytes(goi)
                             else:
                                 await ws.send_text(goi)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        _ghi_dut("xuong", exc)
 
                 # Một chiều đứt là coi như xong; huỷ chiều kia để không treo.
                 _xong, con_lai = await asyncio.wait(
@@ -175,14 +215,17 @@ def create_router() -> APIRouter:
                 )
                 for t in con_lai:
                     t.cancel()
-        except Exception:
-            # Không nối được tới websockify (noVNC chưa chạy) → đóng lịch sự.
-            pass
+        except Exception as exc:
+            # Không nối được tới websockify (noVNC chưa chạy) → đóng lịch sự,
+            # nhưng NÓI RA. Đây là chỗ nuốt mất lỗi `websockets.connect` —
+            # thiếu gói, sai subprotocol, websockify từ chối… đều rơi vào đây
+            # và trước nay biến mất không dấu vết.
+            _ghi_dut("noi_upstream", exc)
         finally:
             try:
                 await ws.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                _ghi_dut("dong", exc)
 
     @router.post("/api/novnc/ve")
     async def novnc_cap_ve(authorization: str | None = Header(default=None)):
@@ -225,7 +268,14 @@ def create_router() -> APIRouter:
                 samesite="lax",
                 # Qua tunnel là HTTPS, mở bằng IP LAN là HTTP. Đặt cứng
                 # secure=True là cookie không bao giờ tới khi vào bằng IP.
-                secure=request.url.scheme == "https",
+                #
+                # Đứng SAU Cloudflare Tunnel thì `request.url.scheme` là `http`
+                # (tunnel đã cắt TLS ở biên) trong khi trình duyệt đang dùng
+                # HTTPS — nên chỉ nhìn scheme là cookie qua domain mất cờ
+                # Secure. Đo 11/09/2026: `set-cookie: …; Path=/novnc;
+                # SameSite=lax`, không có Secure. Lấy thêm `x-forwarded-proto`
+                # như resolve_image_base_url đã làm.
+                secure=_la_https(request),
             )
             return resp
 
