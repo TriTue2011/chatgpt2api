@@ -47,6 +47,14 @@ dependencies = [
     "paho-mqtt>=2.1.0",
     "tiktoken>=0.12.0",
     "uvicorn>=0.44.0",
+    # Proxy noVNC (api/novnc_proxy.py) và STT trực tiếp (services/voice/whisper_live.py)
+    # mở kết nối WebSocket RA NGOÀI. uvicorn[standard] chỉ cho phía SERVER nhận
+    # WS, không có client — nên thiếu gói này thì `import websockets` trong
+    # handler ném ImportError, handler đóng socket với mã 1011 NGAY SAU khi
+    # FastAPI đã ghi log "[accepted]". Người dùng thấy noVNC báo "Failed to
+    # connect to server" rồi thử lại liên tục, còn log máy chủ nhìn như bình
+    # thường. Đo 11/09/2026: container không hề có gói này.
+    "websockets>=15.0",
     "sqlalchemy>=2.0.0",
     "psycopg2-binary>=2.9.0",
     "gitpython>=3.1.59",  # 3.1.58 có PYSEC-2026-3785..3788

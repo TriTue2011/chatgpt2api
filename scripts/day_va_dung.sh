@@ -222,8 +222,13 @@ docker image prune -f >/dev/null 2>&1 || true   # chỉ lớp mồ côi, KHÔNG 
 # Nghĩa của số vì thế NGƯỢC nhau: `max-used-space` là trần, `reserved-space` là
 # phần GIỮ LẠI. Giữ 5 GB cho lần dựng sau còn dùng lại lớp cũ.
 _CACHE_GIU=${CACHE_GIU:-5GB}
-noi "ghìm build cache — giữ lại $_CACHE_GIU"
-docker builder prune -f --reserved-space "$_CACHE_GIU" >/dev/null 2>&1 \
+_doc_cache() { docker system df --format '{{.Type}}\t{{.Size}}' 2>/dev/null \
+    | awk -F'\t' '/Build Cache/{print $2}'; }
+# In TRƯỚC và SAU. Lần trước chỉ in "sau" rồi tôi kết luận cờ hỏng — thật ra
+# chính lần dựng vừa xong đã sinh lại cache, nên con số "sau" cao là bình
+# thường. Không có số "trước" thì không phân biệt được hai chuyện đó.
+noi "ghìm build cache — giữ lại $_CACHE_GIU (trước: $(_doc_cache))"
+docker builder prune -f --reserved-space "$_CACHE_GIU" \
     || noi "  (không ghìm được cache — bỏ qua)"
 noi "build cache còn: $(docker system df --format '{{.Type}}\t{{.Size}}' 2>/dev/null | awk -F'\t' '/Build Cache/{print $2}')"
 
