@@ -112,6 +112,43 @@ class KhoaCuaTest(unittest.TestCase):
                        "truong": "state", "gia_tri": "off"})
         return ra
 
+    def test_NEP_NGU_chi_tinh_MOT_LAN_moi_luot(self) -> None:
+        """Nếp ngủ là TRUNG VỊ 14 NGÀY — không thể đổi trong vài phút, nên
+        đừng đọc lại 14 ngày lịch sử mỗi lần hỏi.
+
+        Đo trên máy chủ 11/09/2026: mỗi lượt đọc 7.498 dòng mất 0,63 giây, mà
+        một lượt `chay_mot_lan()` hỏi BA lần (hai qua `soi_bat_thuong`, một
+        qua `gio_tom_tat`), lặp mỗi 15 giây. Claude trên máy chủ đo bằng
+        py-spy: luồng `khoa-cua-nhip` chiếm 11,9% một lõi liên tục.
+        """
+        from services import lich_su_nha
+
+        self.m._reset_for_tests()
+        dem = {"n": 0}
+        that = lich_su_nha.doc_cua_so
+
+        def _dem(*a, **k):
+            dem["n"] += 1
+            return that(*a, **k)
+
+        with mock.patch.object(lich_su_nha, "doc_cua_so", side_effect=_dem):
+            self.m.gio_di_ngu()
+            self.m.gio_di_ngu()
+            self.m.gio_di_ngu()
+        self.assertEqual(dem["n"], 1,
+                         "ba lần hỏi trong một lượt chỉ được đọc lịch sử MỘT lần")
+
+    def test_NEP_NGU_reset_thi_tinh_lai(self) -> None:
+        """Cache là biến toàn cục — không xoá khi reset là rò sang test khác."""
+        from services import lich_su_nha
+
+        self.m._reset_for_tests()
+        with mock.patch.object(lich_su_nha, "doc_cua_so", return_value=[]):
+            self.m.gio_di_ngu()
+        self.assertIsNotNone(self.m._ngu_nho, "phải nhớ lại sau khi tính")
+        self.m._reset_for_tests()
+        self.assertIsNone(self.m._ngu_nho, "reset phải xoá cache")
+
     def test_hoc_duoc_gio_di_ngu(self) -> None:
         from services import lich_su_nha
         moc = [(i, 23, 30) for i in range(1, 6)]

@@ -259,7 +259,24 @@ def create_router() -> APIRouter:
         from services import du_doan_nha as dn
 
         try:
-            return {"ok": True, "dang_nghi": dn.quet(),
+            # XÉT CỜ TẮT. Không xét thì công tắc "tắt học thói quen" chỉ tắt
+            # được đường heartbeat, còn ai mở trang cài đặt là `quet()` vẫn
+            # chạy — tức tắt mà không tắt.
+            if not dn.is_enabled():
+                return {"ok": True, "dang_nghi": [],
+                        "thong_ke": dn.thong_ke(), "bo_qua": "đang tắt"}
+            # CHẠY TRONG LUỒNG RIÊNG. `quet()` gọi `hoc()`, một việc thuần CPU
+            # đọc hàng trăm nghìn dòng lịch sử; gọi thẳng trong `async def` là
+            # chặn đứng vòng lặp sự kiện của uvicorn, nên MỌI endpoint khác —
+            # kể cả `/health` — ngừng trả lời cho tới khi nó xong.
+            #
+            # Claude trên máy chủ nêu giả thuyết này 11/09/2026 khi soi vụ c2a
+            # treo hẳn đêm trước: dấu hiệu khớp (tiến trình `R (running)`, mọi
+            # endpoint trả 000), và chỉ cần chủ máy mở trang cài đặt một lần là
+            # đủ kích hoạt. Chưa chứng minh được vì uvicorn chạy
+            # `--no-access-log` nên không truy được ai đã gọi.
+            return {"ok": True,
+                    "dang_nghi": await asyncio.to_thread(dn.quet),
                     "thong_ke": dn.thong_ke()}
         except Exception as exc:
             logger.warning("mqtt dự đoán lỗi: %s", exc)

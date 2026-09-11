@@ -140,6 +140,22 @@ def _danh_dau_da_hoi(ma: str) -> None:
 
 
 # ── Nếp ngủ của nhà ─────────────────────────────────────────────────────────
+#: Nhớ nếp ngủ trong 10 phút. Nó là TRUNG VỊ CỦA 14 NGÀY nên không thể đổi
+#: trong vài phút, mà mỗi lần tính lại phải đọc 7.498 dòng lịch sử (đo trên
+#: máy chủ 11/09/2026: 0,48 giây mỗi lượt).
+#:
+#: Vì sao thành vấn đề: vòng khoá cửa chạy mỗi 15 giây, và một lượt
+#: `chay_mot_lan()` gọi hàm này BA lần — hai qua `soi_bat_thuong()`, một qua
+#: `gio_tom_tat()`. Thành 3 × 0,48 / 15 ≈ 10% một lõi, chạy suốt ngày đêm.
+#: Claude trên máy chủ đo bằng py-spy: luồng `khoa-cua-nhip` chiếm 11,9% một
+#: lõi, đã tốn 2.688 giây CPU kể từ lúc container khởi động.
+#:
+#: Đệm ở ĐÂY chứ không sửa từng nơi gọi: nơi gọi thứ tư viết sau này cũng được
+#: hưởng, không ai phải nhớ.
+_HAN_NHO_NGU = 600.0
+_ngu_nho: tuple[float, float | None] | None = None   # (lúc tính, kết quả)
+
+
 def gio_di_ngu(so_ngay: int = 14) -> float | None:
     """Nhà thường đi ngủ lúc mấy giờ (thập phân, >24 là quá nửa đêm).
 
@@ -147,7 +163,15 @@ def gio_di_ngu(so_ngay: int = 14) -> float | None:
     0h22 (=24.37) ±74 phút — nên gửi tóm tắt lúc 22h là quá sớm.
 
     Trả ``None`` khi chưa đủ dữ liệu; tầng trên tự chọn giờ mặc định.
+
+    Kết quả được NHỚ ``_HAN_NHO_NGU`` giây — xem ghi chú ở trên.
     """
+    global _ngu_nho
+    if so_ngay == 14:                     # chỉ đệm đường mặc định
+        with _khoa:
+            nho = _ngu_nho
+        if nho is not None and time.time() - nho[0] < _HAN_NHO_NGU:
+            return nho[1]
     from services import lich_su_nha
 
     den = time.time()
@@ -180,9 +204,14 @@ def gio_di_ngu(so_ngay: int = 14) -> float | None:
         dem.setdefault(ngay, []).append(g + 24 if g < 4 else g)
 
     mocs = [max(v) for v in dem.values() if v]
-    if len(mocs) < 3:
-        return None
-    return round(statistics.median(mocs), 3)
+    kq = round(statistics.median(mocs), 3) if len(mocs) >= 3 else None
+    if so_ngay == 14:
+        # Nhớ CẢ `None`: "chưa đủ dữ liệu" cũng tốn đúng ngần ấy công để biết,
+        # và nó càng không đổi trong mười phút.
+        # (`global _ngu_nho` đã khai ở đầu hàm — khai lại ở đây là SyntaxError.)
+        with _khoa:
+            _ngu_nho = (time.time(), kq)
+    return kq
 
 
 def gio_tom_tat() -> float:
@@ -482,7 +511,9 @@ def trang_thai() -> dict[str, Any]:
 
 
 def _reset_for_tests() -> None:
+    global _ngu_nho
     with _khoa:
+        _ngu_nho = None          # cache nếp ngủ là biến toàn cục — rò giữa test
         try:
             _FILE.unlink()
         except OSError:
