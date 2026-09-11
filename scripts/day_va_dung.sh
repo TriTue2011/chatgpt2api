@@ -205,17 +205,25 @@ docker image prune -f >/dev/null 2>&1 || true   # chỉ lớp mồ côi, KHÔNG 
 # lần đã lên 16,44 GB. Không ghìm thì mỗi lần dựng lại ăn thêm chục GB.
 #
 # GHÌM chứ không XOÁ SẠCH: cache là thứ làm lần dựng sau nhanh hơn, `prune -f`
-# trắng tay biến mọi lần dựng thành dựng từ đầu. `--max-used-space` giữ lại
-# phần mới nhất trong hạn mức và chỉ bỏ phần cũ vượt ra — cùng tinh thần với
-# `_GIU_LAI` ở trên: dọn để khỏi đầy đĩa, không phải để trống đĩa.
+# trắng tay biến mọi lần dựng thành dựng từ đầu — cùng tinh thần với `_GIU_LAI`
+# ở trên: dọn để khỏi đầy đĩa, không phải để trống đĩa.
 #
-# Docker 29 đổi tên cờ: `--keep-storage` cũ nay là `--max-used-space`. Thử cờ
-# mới trước, hỏng thì lùi về cờ cũ, hỏng nữa thì thôi — không để việc dọn dẹp
-# làm hỏng một lần dựng đã thành công.
-_CACHE_TOI_DA=${CACHE_TOI_DA:-10GB}
-noi "ghìm build cache ở $_CACHE_TOI_DA"
-docker builder prune -f --max-used-space "$_CACHE_TOI_DA" >/dev/null 2>&1 \
-    || docker builder prune -f --keep-storage "$_CACHE_TOI_DA" >/dev/null 2>&1 \
+# DÙNG `--reserved-space`, KHÔNG dùng `--max-used-space`. Đo 11/09/2026 trên
+# máy chủ (Docker 29.5.1), cache 15,84 GB với 10,21 GB thu hồi được:
+#
+#   --max-used-space 10GB          → Total: 0B   (thoát 0, không dọn gì)
+#   --max-used-space 10737418240   → Total: 0B   (dạng byte cũng vậy)
+#   --reserved-space 5GB           → Total: 6.1GB, cache còn 9,74 GB  ✅
+#
+# Tức `--max-used-space` nhận cờ, thoát 0, mà không thu hồi gì — hỏng IM LẶNG,
+# đúng loại khó thấy nhất. `--reserved-space` mới thật sự dọn: nó nói "luôn
+# giữ lại chừng này", phần dôi ra thì bỏ.
+#
+# Nghĩa của số vì thế NGƯỢC nhau: `max-used-space` là trần, `reserved-space` là
+# phần GIỮ LẠI. Giữ 5 GB cho lần dựng sau còn dùng lại lớp cũ.
+_CACHE_GIU=${CACHE_GIU:-5GB}
+noi "ghìm build cache — giữ lại $_CACHE_GIU"
+docker builder prune -f --reserved-space "$_CACHE_GIU" >/dev/null 2>&1 \
     || noi "  (không ghìm được cache — bỏ qua)"
 noi "build cache còn: $(docker system df --format '{{.Type}}\t{{.Size}}' 2>/dev/null | awk -F'\t' '/Build Cache/{print $2}')"
 
