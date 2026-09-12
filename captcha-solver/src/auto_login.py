@@ -978,7 +978,33 @@ async def do_google_login_steps(
             break
 
         url_hien = _url_hien_tai()
-        if not captcha_flagged and any(p in url_hien for p in _CAPTCHA_URL_PATHS):
+        # Nhận ra reCAPTCHA bằng CHÍNH KHUNG của nó, không chỉ bằng đường dẫn.
+        #
+        # `_CAPTCHA_URL_PATHS` là một danh sách đường dẫn — mà danh sách thì
+        # luôn thiếu. Chủ máy dán ảnh 12/09/2026 lúc 19:07: trang "Xác minh
+        # danh tính của bạn" hiện đúng hộp "Tôi không phải là người máy", nhưng
+        # nếu Google không đặt nó ở `/challenge/recaptcha` thì cả nhánh tự giải
+        # lẫn nhánh báo `need_captcha` đều KHÔNG chạy — ô nằm im, người dùng
+        # ngồi đợi một thứ không bao giờ tới.
+        #
+        # `iframe[src*="/recaptcha/"]` là dấu hiệu bám vào chính thứ cần nhận:
+        # widget nào của reCAPTCHA cũng nạp khung `api2/anchor` (và `bframe`
+        # khi bung thử thách) — cũng đúng thứ `playwright_recaptcha` bám vào
+        # (`anchor_frame`/`bframe_frame`). Đổi URL không làm hỏng dấu hiệu này.
+        co_khung_recaptcha = False
+        if not captcha_flagged:
+            try:
+                # `count()` TRẢ NGAY. `is_visible(timeout=800)` thì chờ đủ 800ms
+                # mỗi vòng khi không có khung — vòng này vốn chỉ nghỉ 2s/lượt,
+                # cộng thêm 0,8s là cắt mất ~40% số lần thử trong cùng ngân
+                # sách, đúng thứ mà chú thích "BotGuard chập chờn nên thử đủ
+                # nhiều sẽ lọt" ở dưới đang dựa vào.
+                co_khung_recaptcha = await page.locator(
+                    'iframe[src*="/recaptcha/"]').count() > 0
+            except Exception:
+                co_khung_recaptcha = False
+        if not captcha_flagged and (
+                co_khung_recaptcha or any(p in url_hien for p in _CAPTCHA_URL_PATHS)):
             session.state = "need_captcha"
             session.message = ("Google bắt xác minh reCAPTCHA — gõ captcha trên noVNC, "
                                "hệ thống sẽ TỰ tiếp tục password+2FA")
