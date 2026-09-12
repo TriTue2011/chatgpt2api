@@ -69,6 +69,30 @@ async def solve_recaptcha_v3(
         }
 
 
+async def solve_recaptcha_v2_tren_trang(page) -> str:
+    """Giải reCAPTCHA v2 NGAY TRÊN TRANG ĐANG MỞ — trả về token, hoặc raise.
+
+    `solve_recaptcha_v2` bên dưới tự `pool.page()` rồi `goto(url)`. Gọi nó giữa
+    một lượt đăng nhập Google là mất sạch ngữ cảnh đang dở (cookie phiên, bước
+    Google đã đi tới) — thử thách hiện ra trên ĐÚNG trang đang đăng nhập, nên
+    phải giải tại chỗ. `recaptchav2.AsyncSolver` vốn nhận thẳng một `page`.
+
+    Nhập `playwright_recaptcha` BÊN TRONG hàm là cố ý: gói này kéo theo
+    `speech_recognition`, mà `speech_recognition` nhập `aifc` và `audioop` —
+    hai module đã bị gỡ khỏi thư viện chuẩn từ Python 3.13 (ảnh đang chạy
+    3.13.14). Nhập ở cấp module thì một gói thiếu làm hỏng CẢ luồng đăng nhập;
+    nhập tại đây thì hỏng nhiều nhất là mất đường tự giải, người vẫn gõ tay
+    trên noVNC được như trước.
+    """
+    from playwright_recaptcha import recaptchav2
+
+    async with recaptchav2.AsyncSolver(page) as solver:
+        token = await solver.solve_recaptcha(wait=True)
+    if not token:
+        raise RuntimeError("recaptcha v2 solver returned empty token")
+    return token
+
+
 async def solve_recaptcha_v2(
     url: str,
     profile: str = "default",

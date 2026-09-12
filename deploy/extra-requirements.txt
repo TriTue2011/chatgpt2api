@@ -34,6 +34,17 @@ opencv-python-headless>=4.10
 # ── captcha-solver ──
 patchright>=1.49
 playwright-recaptcha>=0.5
+# playwright-recaptcha kéo theo SpeechRecognition, mà SpeechRecognition 3.10.4
+# nhập `aifc` và `audioop` ngay đầu file — HAI module đã bị gỡ khỏi thư viện
+# chuẩn từ Python 3.13, còn ảnh này chạy 3.13.14. Nên `import
+# playwright_recaptcha` HỎNG NGAY, tức bộ giải reCAPTCHA v2 là mã chết trong
+# ảnh: gọi `/v1/solve/recaptcha2` là lỗi lập tức.
+#
+# Đo 12/09/2026 trên venv Python 3.13 sạch: chỉ hai gói trên → "No module named
+# 'aifc'"; thêm đúng hai dòng dưới → cả `speech_recognition` lẫn
+# `playwright_recaptcha` nạp được và `recaptchav2.AsyncSolver` có mặt.
+standard-aifc>=3.13
+audioop-lts>=0.2
 pydantic>=2.9
 pydantic-settings>=2.5
 pyotp>=2.9

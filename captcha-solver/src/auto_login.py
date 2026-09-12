@@ -948,6 +948,7 @@ async def do_google_login_steps(
     session.message = "Đang vào ô mật khẩu..."
     pwd_input = None
     captcha_flagged = False
+    captcha_da_thu_tu_giai = False
     block_retries = 0
     tile_clicks = 0
     vong = 0
@@ -1009,6 +1010,34 @@ async def do_google_login_steps(
                 except Exception:
                     continue
         if captcha_flagged:
+            # THỬ TỰ GIẢI MỘT LẦN trước khi làm phiền người. Trước 12/09/2026
+            # nhánh này chỉ `sleep` rồi chờ người gõ trên noVNC — mà chủ máy
+            # đúng là mắc ở đó nên không vào nổi ô mật khẩu.
+            #
+            # Chỉ thử ĐÚNG MỘT LẦN: hỏng thì quay lại đường cũ (người gõ tay),
+            # không thử vòng vòng — càng đấm nhiều càng giống bot, chính là thứ
+            # làm Google siết thêm (xem chú thích ở `_CAPTCHA_URL_PATHS`).
+            if not captcha_da_thu_tu_giai:
+                captcha_da_thu_tu_giai = True
+                try:
+                    from .solvers.recaptcha import solve_recaptcha_v2_tren_trang
+                    session.message = "Đang tự giải reCAPTCHA (thử thách âm thanh)..."
+                    logger.info("auto_login: thử tự giải reCAPTCHA cho %s", session.profile)
+                    await solve_recaptcha_v2_tren_trang(page)
+                    session.state = "running"
+                    session.message = "Đã tự giải reCAPTCHA — đang vào ô mật khẩu..."
+                    logger.info("auto_login: tự giải reCAPTCHA XONG cho %s", session.profile)
+                    captcha_flagged = False
+                    continue
+                except Exception as exc:
+                    # Nói RÕ vì sao, rồi nhường lại cho người — im lặng ở đây là
+                    # chủ máy ngồi đợi một thứ không bao giờ tới.
+                    logger.info("auto_login: tự giải reCAPTCHA không được (%s: %s) — "
+                                "nhường người gõ trên noVNC",
+                                type(exc).__name__, str(exc)[:160])
+                    session.state = "need_captcha"
+                    session.message = ("Không tự giải được reCAPTCHA — gõ trên noVNC, "
+                                       "hệ thống sẽ TỰ tiếp tục password+2FA")
             await asyncio.sleep(2.0)
             continue
 
