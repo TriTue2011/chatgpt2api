@@ -6,8 +6,12 @@ bước cho use_skill → read_webpage → find_in_text ×2 → read_webpage r�
 status=max_steps, 33,8 giây. Mọi việc dạng "tra tài liệu rồi viết" đều chết
 giữa đường ở trần đó.
 
-File riêng, KHÔNG gộp vào test_orchestrate_watchdog.py: test treo ở đó cố tình
-rò một thread `time.sleep(300)`, chạy riêng file ấy là phải chờ hết 5 phút.
+File riêng, KHÔNG gộp vào test_orchestrate_watchdog.py — nhưng lý do cũ đã hết
+hiệu lực: hồi đó test treo bên ấy cố tình rò một thread `time.sleep(300)` nên
+chạy riêng file ấy phải chờ đủ 5 phút. Nay nó chặn bằng `threading.Event` +
+`addCleanup`, thoát ngay khi test xong (cùng cách đã áp cho
+test_mcp_tool_exec.py ngày 12/09/2026). Giữ tách file vì hai nhóm tính chất
+khác nhau, không phải vì sợ chậm.
 """
 
 from __future__ import annotations

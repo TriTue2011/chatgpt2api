@@ -91,6 +91,19 @@ def create_router() -> APIRouter:
                 status = upstream.status_code
                 resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _DROP_RESP}
                 ctype = upstream.headers.get("content-type")
+        # Cùng lý do đã ghi ở api/novnc_proxy.py: đây là đường CÓ XÁC THỰC mà
+        # phản hồi lại chuyển tiếp nguyên header của dịch vụ dưới, không khai
+        # `Cache-Control` — tức để proxy biên tự quyết có cache hay không.
+        #
+        # Đo 12/09/2026: nhánh này hiện KHÔNG bị cache (`cf-cache-status:
+        # DYNAMIC` ở cả ba đường thử), khác nhánh `/novnc/*` đang `HIT` — vì
+        # Cloudflare cache theo dạng tệp và `/api/captcha/*` không trông giống
+        # tệp tĩnh. Nên đây là lỗ hổng TIỀM TÀNG, chưa khai thác được.
+        #
+        # Vẫn vá vì cơ chế y hệt và cái giá là một dòng: chỉ cần sau này có
+        # đường con trông giống tệp tĩnh, hoặc luật cache ở biên đổi, là thành
+        # lỗ thật — mà lúc đó không ai nghĩ tới chỗ này nữa.
+        resp_headers["cache-control"] = "no-store"
         return Response(
             content=payload, status_code=status,
             headers=resp_headers, media_type=ctype,

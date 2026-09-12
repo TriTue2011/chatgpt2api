@@ -43,6 +43,7 @@ import os
 import httpx
 from fastapi import APIRouter, Header, HTTPException, Request, WebSocket
 from fastapi.responses import Response
+from starlette.websockets import WebSocketState
 
 from api.support import require_admin
 from services.novnc_ve import kho_ve_novnc
@@ -172,6 +173,19 @@ async def _chuyen_tiep(path: str, request: Request) -> Response:
                             detail={"error": f"noVNC không phản hồi: {str(exc)[:120]}"})
     if ctype and "text/html" in ctype.lower():
         payload = _chan_trinh_duyet_nho_mat_khau(payload)
+    # CẤM CACHE cả nhánh /novnc — đây là đường CÓ XÁC THỰC.
+    #
+    # Máy chủ tệp tĩnh phía dưới (websockify --web) không gửi `Cache-Control`
+    # nào, nên Cloudflare áp mặc định của nó. Đo 12/09/2026 qua tên miền:
+    # `cache-control: max-age=14400`, `cf-cache-status: HIT`, `age: 132` — và
+    # lấy được `/novnc/app/ui.js` trả 200 KHÔNG cần cookie, trong khi cùng
+    # đường đó qua IP (đi thẳng vào ứng dụng) trả 401. Tức bản cache ở biên
+    # phục vụ tệp cho người chưa đăng nhập, vượt qua đúng lớp kiểm mà
+    # `novnc_http` dựng lên.
+    #
+    # Cũng là bảo hiểm cho `vnc.html`: phản hồi của nó MANG Set-Cookie phiên,
+    # cache một phản hồi như vậy là phát cùng một cookie cho nhiều người.
+    headers["cache-control"] = "no-store"
     return Response(content=payload, status_code=status,
                     headers=headers, media_type=ctype)
 
@@ -310,10 +324,21 @@ def create_router() -> APIRouter:
             # và trước nay biến mất không dấu vết.
             _ghi_dut("noi_upstream", exc)
         finally:
-            try:
-                await ws.close()
-            except Exception as exc:
-                _ghi_dut("dong", exc)
+            # CHỈ đóng khi chưa đóng. Kênh đứt bình thường (người dùng tắt tab)
+            # thì Starlette đã gửi `websocket.close` rồi; gọi thêm lần nữa ném
+            # RuntimeError "Unexpected ASGI message 'websocket.close', after
+            # sending 'websocket.close'…", và nó được ghi thành
+            # `novnc_kenh_dut cho=dong` — một dòng lỗi GIẢ, lại còn CHE MẤT lý
+            # do đứt thật vì đó là dòng cuối cùng của phiên.
+            #
+            # Đo 12/09/2026 trên log các lượt thật của chủ máy (17:33–17:38):
+            # mọi phiên đều kết thúc bằng đúng dòng RuntimeError ấy, nên nhìn
+            # log không biết được kênh đứt vì đâu.
+            if ws.application_state is not WebSocketState.DISCONNECTED:
+                try:
+                    await ws.close()
+                except Exception as exc:
+                    _ghi_dut("dong", exc)
 
     @router.post("/api/novnc/ve")
     async def novnc_cap_ve(authorization: str | None = Header(default=None)):
