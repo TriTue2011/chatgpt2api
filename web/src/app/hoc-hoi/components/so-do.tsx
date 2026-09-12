@@ -15,26 +15,34 @@ type Nut = {
   ngoai_vi: Muc[];
   dieu_kien: Muc[];
 };
+/** {mã thiết bị: {khoá điều kiện: số đo}} — về SAU sơ đồ, xem `/so-do/do`. */
+type BangDo = Record<string, Record<string, Exclude<Do, null>>>;
 
-function Chip({ m }: { m: Muc }) {
-  const co_do = m.do && m.do.mau > 0;
+function Chip({ m, khoaNut, bangDo, dangDo }: {
+  m: Muc; khoaNut: string; bangDo: BangDo; dangDo: boolean;
+}) {
+  const so = m.khoa ? bangDo[khoaNut]?.[m.khoa] : undefined;
   return (
     <span className="rounded border border-border bg-muted/50 px-1.5 py-0.5 text-[11px]" title={m.khoa}>
       {m.ten}
-      {co_do ? (
+      {so && so.mau > 0 ? (
         <span className="ml-1 text-muted-foreground">
-          — {m.do!.nhan_hay_gap ? `"${m.do!.nhan_hay_gap}"` : ""} {Math.round(m.do!.ty_le * 100)}% ({m.do!.mau} lần bật)
+          — {so.nhan_hay_gap ? `"${so.nhan_hay_gap}"` : ""} {Math.round(so.ty_le * 100)}% ({so.mau} lần bật)
         </span>
-      ) : (
+      ) : dangDo ? (
+        <span className="ml-1 text-muted-foreground">— đang đo…</span>
+      ) : m.khoa ? (
         <span className="ml-1 text-amber-600">— chưa đo được</span>
-      )}
+      ) : null}
     </span>
   );
 }
 
 export function SoDo() {
   const [ds, setDs] = useState<Nut[]>([]);
+  const [bangDo, setBangDo] = useState<BangDo>({});
   const [dangTai, setDangTai] = useState(false);
+  const [dangDo, setDangDo] = useState(false);
   const [dangSua, setDangSua] = useState<string | null>(null);
 
   const tai = useCallback(async () => {
@@ -44,6 +52,16 @@ export function SoDo() {
       setDs(r.danh_sach || []);
     } finally {
       setDangTai(false);
+    }
+    // Đo TÁCH RIÊNG sau khi sơ đồ đã hiện: phần đo phải dựng lại bối cảnh
+    // từng ô 30 phút nên tốn vài giây. Gộp chung một lượt thì cả sơ đồ mất 47
+    // giây và trình duyệt bỏ cuộc trước (đo thật 12/09/2026).
+    setDangDo(true);
+    try {
+      const d = await layGet<{ do?: BangDo }>("/api/hoc-hoi/so-do/do");
+      setBangDo(d.do || {});
+    } finally {
+      setDangDo(false);
     }
   }, []);
 
@@ -84,8 +102,12 @@ export function SoDo() {
                 </Button>
               </div>
               <div className="mt-1.5 flex flex-wrap gap-1">
-                {n.dieu_kien.map((d) => <Chip key={d.khoa} m={d} />)}
-                {n.ngoai_vi.map((v, i) => <Chip key={v.khoa || `nv-${i}`} m={v} />)}
+                {n.dieu_kien.map((d) => (
+                  <Chip key={d.khoa} m={d} khoaNut={n.khoa} bangDo={bangDo} dangDo={dangDo} />
+                ))}
+                {n.ngoai_vi.map((v, i) => (
+                  <Chip key={v.khoa || `nv-${i}`} m={v} khoaNut={n.khoa} bangDo={bangDo} dangDo={dangDo} />
+                ))}
                 {!n.dieu_kien.length && !n.ngoai_vi.length ? (
                   <span className="text-muted-foreground">chưa có điều kiện nào</span>
                 ) : null}

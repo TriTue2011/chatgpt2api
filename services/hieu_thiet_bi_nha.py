@@ -898,7 +898,7 @@ def lich_su_giai(toi_da: int = 50) -> list[dict[str, Any]]:
              "loi": r["loi"]} for r in rows]
 
 
-def so_do_kich_hoat() -> list[dict[str, Any]]:
+def so_do_kich_hoat(*, kem_so_do: bool = True) -> list[dict[str, Any]]:
     """Sơ đồ kích hoạt từng thiết bị học được: NHÂN TỐ CHÍNH ← ĐIỀU KIỆN + NGOẠI VI.
 
     - nhân tố chính: thiết bị được bật (mã học);
@@ -907,9 +907,15 @@ def so_do_kich_hoat() -> list[dict[str, Any]]:
     - điều kiện: lux / nhiệt độ / có người / buổi / mùa… (các khoá còn lại).
     Chỉ vẽ thứ bot đã kết luận (bỏ câu bị chấm sai), khớp `dieu_kien_hoc`.
 
-    Mỗi mục điều kiện/ngoại vi kèm số đo THẬT (`do`) — mấy % lần bật rơi vào
-    nhãn hay gặp nhất, xem `du_doan_nha.dem_dieu_kien_thiet_bi` — để chủ máy
-    biết điều kiện đó có đáng tin hay không trước khi sửa, không chỉ thấy tên.
+    `kem_so_do=True` thì mỗi mục điều kiện/ngoại vi kèm số đo THẬT (`do`) —
+    mấy % lần bật rơi vào nhãn hay gặp nhất, xem
+    `du_doan_nha.dem_dieu_kien_thiet_bi`.
+
+    NHƯNG phần đo TỐN VÀI GIÂY (dựng lại bối cảnh từng ô 30 phút), nên đường
+    web tách làm hai: `/api/hoc-hoi/so-do` gọi `kem_so_do=False` để sơ đồ hiện
+    NGAY, rồi `/api/hoc-hoi/so-do/do` đo sau và điền vào. Gộp một lượt thì mất
+    47 giây (đo thật 12/09/2026, 13 thiết bị) — trình duyệt bỏ cuộc trước và
+    chủ máy chỉ thấy "chưa có thiết bị nào được học".
     """
     from services import boi_canh_nha, du_doan_nha
     ten = _ten_ha()
@@ -920,14 +926,20 @@ def so_do_kich_hoat() -> list[dict[str, Any]]:
                 and d["gia_tri"].get("hoc")):
             thanh_vien[d["khoa"]] = sorted(d["nhom"].get("ma") or [])
     ra: list[dict[str, Any]] = []
+    # Bộ nhớ ô DÙNG CHUNG cho mọi thiết bị: 13 thiết bị chỉ chạm 187 ô duy nhất
+    # (đo 12/09/2026), chia sẻ thì tổng còn ~6 giây thay vì cộng dồn từng cái.
+    bo_nho_o: dict[int, dict[str, str]] = {}
     for khoa in thiet_bi_hoc():
         khoa_dieu_kien = list(dk.get(khoa, []))
-        do_dem = du_doan_nha.dem_dieu_kien_thiet_bi(khoa, khoa_dieu_kien)
+        do_dem = (du_doan_nha.dem_dieu_kien_thiet_bi(
+                      khoa, khoa_dieu_kien, bo_nho_o=bo_nho_o)
+                  if kem_so_do else {})
         ngoai_vi: list[dict[str, Any]] = []
         dieu_kien: list[dict[str, Any]] = []
         da_them: set[str] = set()
         for k in khoa_dieu_kien:
-            do = do_dem.get(k) or {"nhan_hay_gap": "", "ty_le": 0.0, "mau": 0}
+            do = ((do_dem.get(k) or {"nhan_hay_gap": "", "ty_le": 0.0, "mau": 0})
+                  if kem_so_do else None)
             if k.startswith("bat_"):
                 nv = _nhan(k[len("bat_"):], ten)
                 if nv not in da_them:

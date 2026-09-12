@@ -642,6 +642,35 @@ class DuDoanNhaTest(unittest.TestCase):
         do = self.dd.dem_dieu_kien_thiet_bi("light.bep", ["bat_switch.quat"], so_ngay=30)
         self.assertEqual(do["bat_switch.quat"], {"nhan_hay_gap": "co", "ty_le": 1.0, "mau": 1})
 
+    def test_DEM_DIEU_KIEN_DUNG_BOI_CANH_MOT_LAN_MOI_O(self) -> None:
+        """Bẫy hiệu năng đã đo 12/09/2026: gọi `boi_canh()` cho TỪNG lần bật
+        làm sơ đồ mất 47 giây (switch.bep_left có 1.153 lần bật nhưng chỉ nằm
+        trong 125 ô). Nhiều lần bật cùng một ô chỉ được dựng bối cảnh MỘT lần,
+        mà số đếm `mau` vẫn phải đủ từng lần bật."""
+        o_giay = self.dd._O_PHUT * 60
+        goc = (time.time() - 3 * 3600) // o_giay * o_giay + 60
+        for i in range(6):                       # 6 lần bật, cùng một ô 30 phút
+            self._sk("light.bep", "on", goc + i * 120)
+        that = self.dd._dieu_kien
+        with mock.patch.object(self.dd, "_dieu_kien", side_effect=that) as dk:
+            do = self.dd.dem_dieu_kien_thiet_bi("light.bep", ["buoi"], so_ngay=30)
+        self.assertEqual(dk.call_count, 1, "6 lần bật cùng ô → dựng bối cảnh 1 lần")
+        self.assertEqual(do["buoi"]["mau"], 6, "vẫn phải đếm đủ 6 lần bật")
+
+    def test_DEM_DIEU_KIEN_BO_NHO_O_DUNG_CHUNG_GIUA_HAI_THIET_BI(self) -> None:
+        """Bộ nhớ ô dùng chung: hai thiết bị bật trong CÙNG ô chỉ tốn một lượt
+        dựng bối cảnh — đây là thứ kéo cả sơ đồ 13 thiết bị từ 47s xuống ~6s."""
+        o_giay = self.dd._O_PHUT * 60
+        goc = (time.time() - 3 * 3600) // o_giay * o_giay + 60
+        self._sk("light.bep", "on", goc)
+        self._sk("light.phong_khach", "on", goc + 60)
+        that = self.dd._dieu_kien
+        bo_nho: dict = {}
+        with mock.patch.object(self.dd, "_dieu_kien", side_effect=that) as dk:
+            self.dd.dem_dieu_kien_thiet_bi("light.bep", ["buoi"], so_ngay=30, bo_nho_o=bo_nho)
+            self.dd.dem_dieu_kien_thiet_bi("light.phong_khach", ["buoi"], so_ngay=30, bo_nho_o=bo_nho)
+        self.assertEqual(dk.call_count, 1, "hai thiết bị cùng ô → chỉ 1 lượt boi_canh")
+
     def test_DEM_DIEU_KIEN_CHUA_TUNG_BAT_TRA_RONG(self) -> None:
         self.assertEqual(self.dd.dem_dieu_kien_thiet_bi("light.chua_bao_gio_bat", ["buoi"]), {})
 

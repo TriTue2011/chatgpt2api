@@ -630,6 +630,30 @@ class HieuThietBiNhaTest(unittest.TestCase):
         # Thành viên cùng nhóm (light.bep_left) là NGOẠI VI của nhân tố chính.
         self.assertIn("Đèn bếp [light]", [n["ten"] for n in nut["ngoai_vi"]])
 
+    def test_SO_DO_KHONG_KEM_SO_DO_thi_KHONG_DO_GI(self) -> None:
+        """Đường web `/api/hoc-hoi/so-do` phải trả NGAY: phần đo tốn vài giây
+        (47s cho 13 thiết bị, đo thật 12/09/2026) nên tách sang `/so-do/do`."""
+        from services import du_doan_nha
+
+        self._luu(self._nhom_bep(dieu_kien=["buoi"]))
+        with mock.patch.object(du_doan_nha, "dem_dieu_kien_thiet_bi") as dem:
+            so_do = self.ht.so_do_kich_hoat(kem_so_do=False)
+        dem.assert_not_called()
+        self.assertIsNone(so_do[0]["dieu_kien"][0]["do"])
+
+    def test_SO_DO_KEM_SO_DO_thi_DUNG_CHUNG_BO_NHO_O(self) -> None:
+        """Mọi thiết bị trên sơ đồ phải chia sẻ MỘT bộ nhớ ô, không mỗi thiết
+        bị một bộ — đó là chỗ 47 giây rơi xuống ~6 giây."""
+        from services import du_doan_nha
+
+        self._luu(self._nhom_bep(dieu_kien=["buoi"]))
+        with mock.patch.object(du_doan_nha, "dem_dieu_kien_thiet_bi",
+                               return_value={}) as dem:
+            self.ht.so_do_kich_hoat(kem_so_do=True)
+        self.assertTrue(dem.called)
+        self.assertIn("bo_nho_o", dem.call_args.kwargs,
+                      "phải truyền bộ nhớ ô dùng chung xuống từng thiết bị")
+
     def test_SO_DO_BO_QUA_THIET_BI_CHAM_SAI(self) -> None:
         moi = self._luu(self._nhom_bep())["moi"]
         hoc = next(d for d in moi if d["loai_cau_hoi"] == "hoc")

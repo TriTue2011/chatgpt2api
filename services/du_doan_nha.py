@@ -278,7 +278,9 @@ def _dieu_kien(luc: float, dang_bat: dict[str, float],
 
 
 def dem_dieu_kien_thiet_bi(thiet_bi: str, cac_khoa: list[str],
-                          so_ngay: int | None = None) -> dict[str, dict[str, Any]]:
+                          so_ngay: int | None = None,
+                          *, bo_nho_o: dict[int, dict[str, str]] | None = None,
+                          ) -> dict[str, dict[str, Any]]:
     """Với MỖI lần `thiet_bi` bật trong `so_ngay` ngày qua, điều kiện `cac_khoa`
     thường mang giá trị gì — cho tab Học hỏi trả lời "điều kiện này xảy ra khi
     nào" khi chủ máy vừa thêm một điều kiện mới trên sơ đồ kích hoạt.
@@ -287,7 +289,19 @@ def dem_dieu_kien_thiet_bi(thiet_bi: str, cac_khoa: list[str],
     để đo được cả điều kiện bot CHƯA TỪNG chọn. Trả mỗi khoá:
     ``{"nhan_hay_gap": str, "ty_le": float, "mau": int}`` — `mau` là số lần
     bật CÓ đo được nhãn đó (bỏ những lần thiếu cảm biến, không tính là "không
-    khớp"). Rỗng hoặc `mau=0` khi chưa đủ dữ liệu."""
+    khớp"). Rỗng hoặc `mau=0` khi chưa đủ dữ liệu.
+
+    DỰNG BỐI CẢNH MỘT LẦN CHO MỖI Ô 30 PHÚT, y như `hoc()` — không phải mỗi
+    lần bật một lần. Đo trên máy chủ thật 12/09/2026: `switch.bep_left` có
+    1.153 lần bật nhưng chỉ nằm trong 125 ô, mà `boi_canh()` tốn 32ms mỗi
+    lượt; gọi theo từng lần bật làm riêng nó mất ~37 giây, và cả sơ đồ 13
+    thiết bị mất 47 giây — trình duyệt bỏ cuộc trước, chủ máy chỉ thấy "chưa
+    có thiết bị nào được học". Đây đúng cái bẫy `hoc()` đã ghi lại và đã tự
+    sửa một lần.
+
+    `bo_nho_o` là bộ nhớ ô DÙNG CHUNG giữa nhiều thiết bị (nơi gọi truyền vào,
+    xem `hieu_thiet_bi_nha.so_do_kich_hoat`): 13 thiết bị chỉ chạm 187 ô duy
+    nhất, chia sẻ bộ nhớ thì tổng còn ~6 giây thay vì cộng dồn từng thiết bị."""
     from services import lich_su_nha
 
     ngay = max(1, int(so_ngay or _so_ngay_hoc()))
@@ -312,10 +326,20 @@ def dem_dieu_kien_thiet_bi(thiet_bi: str, cac_khoa: list[str],
             on_ts.append(ts)
     if not on_ts:
         return {}
+    # Bối cảnh của một ô KHÔNG phụ thuộc thiết bị đang xét: `_dieu_kien` ở đây
+    # nhận `dang_bat`/`vua_lam` RỖNG nên `tru=` không đổi gì — nhờ vậy bộ nhớ ô
+    # dùng chung được cho mọi thiết bị. Nhãn `bat_<mã>` thì thêm ở dưới, trên
+    # BẢN SAO, không được ghi đè vào bộ nhớ chung.
+    nhan_o = bo_nho_o if bo_nho_o is not None else {}
     dem: dict[str, dict[str, int]] = {k: {} for k in cac_khoa}
     for ts in on_ts:
-        nhan = _dieu_kien(ts, {}, {}, tru=thiet_bi)
         slot = int(ts // (_O_PHUT * 60))
+        goc = nhan_o.get(slot)
+        if goc is None:
+            goc = _dieu_kien(ts, {}, {})
+            nhan_o[slot] = goc
+        nhan = dict(goc)
+        nhan.pop(f"bat_{thiet_bi}", None)
         for khac in doi_trong_o.get(slot, ()):
             if khac != thiet_bi:
                 nhan[f"bat_{khac}"] = "co"

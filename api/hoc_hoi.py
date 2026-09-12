@@ -340,14 +340,43 @@ def create_router() -> APIRouter:
 
     @router.get("/api/hoc-hoi/so-do")
     async def so_do(authorization: str | None = Header(default=None)):
-        """Sơ đồ kích hoạt: nhân tố chính ← điều kiện + ngoại vi, từng thiết bị."""
+        """Sơ đồ kích hoạt: nhân tố chính ← điều kiện + ngoại vi, từng thiết bị.
+
+        KHÔNG đo ở đây — phần đo (`/so-do/do`) tốn vài giây vì phải dựng lại
+        bối cảnh từng ô 30 phút. Gộp chung làm cả sơ đồ mất 47 giây, trình
+        duyệt bỏ cuộc trước và chủ máy chỉ thấy "chưa có thiết bị nào được
+        học" (đo thật 12/09/2026). Sơ đồ hiện ngay, số % điền sau."""
         require_admin(authorization)
         try:
             from services import hieu_thiet_bi_nha
-            ds = await asyncio.to_thread(hieu_thiet_bi_nha.so_do_kich_hoat)
+            ds = await asyncio.to_thread(hieu_thiet_bi_nha.so_do_kich_hoat,
+                                         kem_so_do=False)
             return {"ok": True, "danh_sach": ds}
         except Exception as exc:
             return _loi(exc, "sơ đồ")
+
+    @router.get("/api/hoc-hoi/so-do/do")
+    async def so_do_do(authorization: str | None = Header(default=None)):
+        """Số đo thật cho từng điều kiện trên sơ đồ — gọi RIÊNG sau khi sơ đồ
+        đã hiện. Trả ``{mã thiết bị: {khoá điều kiện: {nhan_hay_gap, ty_le,
+        mau}}}`` để web ghép vào chỗ đang chờ."""
+        require_admin(authorization)
+        try:
+            from services import hieu_thiet_bi_nha
+
+            def _lay():
+                ra: dict[str, dict] = {}
+                for n in hieu_thiet_bi_nha.so_do_kich_hoat(kem_so_do=True):
+                    ra[n["khoa"]] = {
+                        m["khoa"]: m["do"]
+                        for m in (*n["dieu_kien"], *n["ngoai_vi"])
+                        if m.get("khoa") and m.get("do")
+                    }
+                return ra
+
+            return {"ok": True, "do": await asyncio.to_thread(_lay)}
+        except Exception as exc:
+            return _loi(exc, "đo sơ đồ")
 
     @router.get("/api/hoc-hoi/huong-dan")
     async def huong_dan(authorization: str | None = Header(default=None)):

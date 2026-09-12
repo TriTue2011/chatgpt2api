@@ -208,6 +208,32 @@ class SuaDieuKienEndpointTest(unittest.TestCase):
         self.assertIn("thực đơn", d["error"])
 
 
+class SoDoEndpointTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client, self._bo_qua = _app()
+        self.addCleanup(self._bo_qua.stop)
+
+    def test_SO_DO_KHONG_DO_de_TRA_NGAY(self) -> None:
+        with mock.patch("services.hieu_thiet_bi_nha.so_do_kich_hoat", return_value=[]) as s:
+            d = self.client.get("/api/hoc-hoi/so-do").json()
+        self.assertTrue(d["ok"])
+        self.assertEqual(s.call_args.kwargs, {"kem_so_do": False})
+
+    def test_SO_DO_DO_TRA_BANG_GON_THEO_MA(self) -> None:
+        nut = [{
+            "khoa": "switch.bep_left", "nhan_to_chinh": "Đèn bếp",
+            "dieu_kien": [{"khoa": "buoi", "ten": "buổi",
+                           "do": {"nhan_hay_gap": "tối", "ty_le": 0.8, "mau": 10}}],
+            "ngoai_vi": [{"khoa": "", "ten": "Đèn bếp [light]", "do": None}],
+        }]
+        with mock.patch("services.hieu_thiet_bi_nha.so_do_kich_hoat", return_value=nut) as s:
+            d = self.client.get("/api/hoc-hoi/so-do/do").json()
+        self.assertEqual(s.call_args.kwargs, {"kem_so_do": True})
+        self.assertEqual(d["do"], {"switch.bep_left": {
+            "buoi": {"nhan_hay_gap": "tối", "ty_le": 0.8, "mau": 10}}},
+            "ngoại vi không có khoá/số đo thì bỏ, không nhét None vào bảng")
+
+
 class DieuKienMenuEndpointTest(unittest.TestCase):
     def setUp(self) -> None:
         self.client, self._bo_qua = _app()
