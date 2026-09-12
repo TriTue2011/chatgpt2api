@@ -92,13 +92,36 @@ async def tich_o_recaptcha(page, cho_giay: float = 6.0) -> bool:
     # mọi kiểu hỏng trông y hệt nhau — đo 12/09/2026 lượt 20:46:57: hàm bỏ cuộc
     # sau 2,8 giây, và con số đó KHÔNG phân biệt được "không tìm thấy khung"
     # với "bấm rồi mà ô không đổi trạng thái". Thiếu dấu vết là tự bịt mắt.
+    # KHÔNG đòi URL phải chứa `api2/anchor`. Đo thật 12/09/2026 21:14 trên
+    # trang `accounts.google.com/v3/signin/challenge/recaptcha`: có 5 frame,
+    # trong đó ĐÚNG MỘT frame reCAPTCHA, nhưng `anchor=KHONG` — tức khung ấy
+    # không mang `api2/anchor`. Google dùng biến thể khác (nhiều khả năng bản
+    # Enterprise, đường `recaptcha/enterprise/anchor`).
+    #
+    # CHỈ bộ chọn của mình trượt vì bó vào `api2`. `playwright_recaptcha` thì
+    # KHÔNG: nó khớp `/recaptcha/(api2|enterprise)/anchor` nên vẫn tìm ra khung
+    # — nó thua ở bước sau, do nhận diện ô bằng TÊN HIỂN THỊ và không có bản
+    # dịch tiếng Việt (xem chú thích đầu hàm). Hai lỗi khác nhau chồng lên
+    # nhau, mỗi lần chỉ thấy một nửa nên đoán trượt mấy lượt liền.
+    #
+    # Suy thẳng từ số liệu, không đoán: ô nằm trong khung reCAPTCHA đang hiện,
+    # nên ưu tiên khung nào có "anchor" trong URL; không có thì dùng chính
+    # khung reCAPTCHA duy nhất đó.
+    from urllib.parse import parse_qs, urlparse
+
     khung_recaptcha = [f for f in page.frames if "/recaptcha/" in (f.url or "")]
     anchor = next((f for f in khung_recaptcha
-                   if "api2/anchor" in (f.url or "")), None)
-    # Sitekey nằm ngay trong URL khung anchor (tham số `k=`), khỏi truy DOM.
+                   if "anchor" in (f.url or "")), None)
+    if anchor is None and len(khung_recaptcha) == 1:
+        anchor = khung_recaptcha[0]
+
+    # Ghi ĐƯỜNG DẪN của từng khung (bỏ query — query mang token/mã phiên).
+    duong_khung = [urlparse(f.url or "").path for f in khung_recaptcha]
+    logger.info("tich_o_recaptcha: duong cac khung recaptcha: %s", duong_khung)
+
+    # Sitekey nằm trong URL khung (tham số `k=`), khỏi truy DOM.
     sitekey = ""
     if anchor is not None:
-        from urllib.parse import parse_qs, urlparse
         sitekey = (parse_qs(urlparse(anchor.url).query).get("k") or [""])[0]
     # Có ô `g-recaptcha-response` không — đây là thứ QUYẾT ĐỊNH liệu đường
     # "mua token từ dịch vụ ngoài rồi tiêm vào" (DeathByCaptcha…) có khả thi
