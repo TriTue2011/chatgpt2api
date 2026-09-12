@@ -54,6 +54,10 @@ function StatusBox({ st }: { st: LoginSt }) {
 export function GoogleProvidersCard() {
   const [cs, setCs] = useState<Cfg>({ url: "/api/captcha", apiKey: "" });
   const [flowCfg, setFlowCfg] = useState<FlowCfg>({ enabled:true, captcha_solver_url:"", captcha_solver_api_key:"", accounts:[], cooldown_seconds:3600 });
+  // Quét định kỳ giữ phiên Claude/ChatGPT-free/Gemini-web giống Flow — khoá
+  // top-level `web_session_scan`, không nằm trong `providers`. Tắt mặc định.
+  const [webScan, setWebScan] = useState(false);
+  const [savingScan, setSavingScan] = useState(false);
   const [flowDraft, setFlowDraft] = useState({ profile:"google-fx", project_id:"", label:"Main" });
   const [draft, setDraft] = useState({ email:"", password:"", totpSecret:"" });
   const [showPw, setShowPw] = useState(true);
@@ -107,7 +111,20 @@ export function GoogleProvidersCard() {
       // and cannot be reached directly from the browser.
       setCs({ url: "/api/captcha", apiKey: fl.captcha_solver_api_key||"" });
       setFlowCfg({ enabled: fl.enabled!==false, captcha_solver_url: fl.captcha_solver_url||"/api/captcha", captcha_solver_api_key: fl.captcha_solver_api_key||"", accounts: Array.isArray(fl.accounts)?fl.accounts:[], cooldown_seconds: fl.cooldown_seconds||3600 });
+      setWebScan((d.data as any)?.config?.web_session_scan?.enabled === true);
     } catch {}
+  }
+
+  async function saveWebScan(enabled: boolean) {
+    setSavingScan(true);
+    try {
+      const cur = await request.get("/api/settings");
+      const scan = { ...((cur.data as any)?.config?.web_session_scan||{}), enabled };
+      await request.post("/api/settings", { web_session_scan: scan });
+      setWebScan(enabled);
+      toast.success(enabled ? "Đã bật giữ phiên tự động" : "Đã tắt giữ phiên tự động");
+    } catch (e:any) { toast.error(e?.message||"Lỗi lưu"); }
+    finally { setSavingScan(false); }
   }
 
   function stopPoll() { if(pollRef.current) { clearInterval(pollRef.current); pollRef.current=null; } }
@@ -295,6 +312,23 @@ export function GoogleProvidersCard() {
             <h3 className="text-sm font-semibold text-blue-900">Provider qua tài khoản Google</h3>
             <p className="text-xs text-blue-700/70">Đăng nhập Google một lần → tái dùng chung cho Flow, ChatGPT, Gemini Web API và Claude</p>
           </div>
+        </div>
+
+        {/* ── GIỮ PHIÊN TỰ ĐỘNG (Claude/ChatGPT free/Gemini web) ── */}
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border-2 border-slate-200 bg-[var(--card)]/60 p-3">
+          <div>
+            <label className="flex items-center gap-2 text-xs font-bold text-slate-800">
+              <input type="checkbox" checked={webScan} disabled={savingScan}
+                onChange={e => void saveWebScan(e.target.checked)} />
+              Tự giữ phiên Claude / ChatGPT free / Gemini web
+            </label>
+            <p className="mt-1 text-[10px] text-[var(--muted-foreground)]">
+              Quét định kỳ, kiểm phiên bằng cookie/token đã lưu — không mở trình
+              duyệt nên rẻ hơn Flow. Chỉ đăng nhập lại Google khi phiên thật sự
+              mất. Đang tắt mặc định.
+            </p>
+          </div>
+          {savingScan && <LoaderCircle className="size-4 animate-spin text-[var(--muted-foreground)]" />}
         </div>
 
         {/* ── 1. ĐĂNG NHẬP GOOGLE ── */}
