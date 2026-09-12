@@ -69,6 +69,49 @@ async def solve_recaptcha_v3(
         }
 
 
+async def tich_o_recaptcha(page, cho_giay: float = 6.0) -> bool:
+    """Bấm thẳng vào ô "Tôi không phải là người máy". True = ô đã tích xong.
+
+    Vì sao KHÔNG để `playwright_recaptcha` lo bước này: nó tìm ô bằng
+    `get_by_role("checkbox", name=<tên hiển thị>)` với đúng 9 bản dịch, và
+    KHÔNG có tiếng Việt — đo 12/09/2026: tìm chuỗi "không phải là người máy"
+    trong cả gói, không ra kết quả nào. Mà trình duyệt của mình cố ý đặt
+    `locale="vi-VN"` (browser_pool.py) và ép `?hl=vi` (auto_login.py), nên
+    trang LUÔN hiện tiếng Việt. Tên không khớp → thư viện coi như không có ô →
+    báo "No unchecked reCAPTCHA boxes were found" dù ô đang hiện rành rành.
+    Đó chính là thứ đã xảy ra trong lượt đăng nhập thật đo lúc 20:03.
+
+    Ở đây bám vào VAI TRÒ và MÃ PHẦN TỬ, cả hai không đổi theo ngôn ngữ, và
+    `aria-checked` cũng vậy. Khuôn theo `solvers/turnstile.py:43` — nếp
+    bấm-trong-iframe sẵn có của nhà, kể cả cách xếp bộ chọn dự phòng.
+
+    KHÔNG hứa giải xong captcha: Google thường bung tiếp thử thách sau cú bấm.
+    Hàm này chỉ lo đúng cú tích; phần sau để caller quyết.
+    """
+    khung = page.frame_locator('iframe[src*="api2/anchor"]')
+    bam_duoc = False
+    for sel in ("#recaptcha-anchor", '[role="checkbox"]'):
+        try:
+            await khung.locator(sel).first.click(timeout=3000, force=True)
+            bam_duoc = True
+            break
+        except Exception:
+            continue
+    if not bam_duoc:
+        return False
+
+    het = time.time() + cho_giay
+    while time.time() < het:
+        try:
+            if await khung.locator("#recaptcha-anchor").first.get_attribute(
+                    "aria-checked") == "true":
+                return True
+        except Exception:
+            pass
+        await page.wait_for_timeout(500)
+    return False
+
+
 async def solve_recaptcha_v2_tren_trang(page) -> str:
     """Giải reCAPTCHA v2 NGAY TRÊN TRANG ĐANG MỞ — trả về token, hoặc raise.
 

@@ -1046,7 +1046,22 @@ async def do_google_login_steps(
             if not captcha_da_thu_tu_giai:
                 captcha_da_thu_tu_giai = True
                 try:
-                    from .solvers.recaptcha import solve_recaptcha_v2_tren_trang
+                    from .solvers.recaptcha import (
+                        solve_recaptcha_v2_tren_trang, tich_o_recaptcha,
+                    )
+                    # BƯỚC 1 — tự bấm ô, y như người dùng bấm. Rẻ, nhanh, và
+                    # không phụ thuộc ngôn ngữ giao diện. Rất nhiều lượt Google
+                    # chấp nhận ngay cú bấm mà không bung thử thách nào.
+                    session.message = "Đang tự tích ô \"Tôi không phải là người máy\"..."
+                    logger.info("auto_login: thử tự tích ô reCAPTCHA cho %s", session.profile)
+                    if await tich_o_recaptcha(page):
+                        session.state = "running"
+                        session.message = "Đã tự tích ô — đang vào ô mật khẩu..."
+                        logger.info("auto_login: tự tích ô reCAPTCHA XONG cho %s",
+                                    session.profile)
+                        captcha_flagged = False
+                        continue
+                    # BƯỚC 2 — Google bung thử thách. Thử đường âm thanh.
                     session.message = "Đang tự giải reCAPTCHA (thử thách âm thanh)..."
                     logger.info("auto_login: thử tự giải reCAPTCHA cho %s", session.profile)
                     await solve_recaptcha_v2_tren_trang(page)
@@ -1058,11 +1073,15 @@ async def do_google_login_steps(
                 except Exception as exc:
                     # Nói RÕ vì sao, rồi nhường lại cho người — im lặng ở đây là
                     # chủ máy ngồi đợi một thứ không bao giờ tới.
-                    logger.info("auto_login: tự giải reCAPTCHA không được (%s: %s) — "
+                    # Nói rõ HỎNG Ở BƯỚC NÀO: nhánh này bắt cả bước tích ô lẫn
+                    # bước giải âm thanh, ghi chung một câu "không giải được"
+                    # là chỉ sai chỗ cho người đọc log lần sau.
+                    logger.info("auto_login: không tự qua được reCAPTCHA "
+                                "(tích ô hoặc giải âm thanh) cho %s (%s: %s) — "
                                 "nhường người gõ trên noVNC",
-                                type(exc).__name__, str(exc)[:160])
+                                session.profile, type(exc).__name__, str(exc)[:160])
                     session.state = "need_captcha"
-                    session.message = ("Không tự giải được reCAPTCHA — gõ trên noVNC, "
+                    session.message = ("Không tự qua được reCAPTCHA — gõ trên noVNC, "
                                        "hệ thống sẽ TỰ tiếp tục password+2FA")
             await asyncio.sleep(2.0)
             continue
