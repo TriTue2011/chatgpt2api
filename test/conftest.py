@@ -15,7 +15,9 @@ CI (recommended)::
 from __future__ import annotations
 
 import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -27,6 +29,45 @@ if str(_ROOT) not in sys.path:
 
 # Deterministic auth for modules that import config at load time
 os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
+
+
+# ── Chạy test KHÔNG được ghi vào data/ của cây làm việc ─────────────────────
+# Đo 12/09/2026: một lượt chạy suite tự TẠO MỚI data/config.json (chỉ chứa khoá
+# giả của test), data/channel_contacts.json, data/agent/so_ten_nha.json,
+# data/agent/canh_bao_nha.json — rồi lượt sau nạp lại chính rác đó làm config.
+#
+# Vá từng test là vô ích: 61 hằng số trong services/ và api/ chốt đường dẫn
+# NGAY LÚC IMPORT (`_DB_PATH = Path(DATA_DIR) / "agent" / "..."`), nên chặn
+# `config._save` chỉ cứu được config.json, còn sqlite/json khác vẫn bị ghi.
+# Và services/config.py chọn DATA_DIR theo đường dẫn có sẵn, KHÔNG qua biến môi
+# trường, nên cũng không đổi được bằng env.
+#
+# Mối vá duy nhất phủ hết là ở đây: pytest nạp conftest TRƯỚC mọi test module,
+# mà các module services.* chỉ được import khi test module chạy — nên gán lại
+# DATA_DIR ở đây là 61 hằng số kia đều tính theo thư mục tạm. Singleton
+# `config` đã dựng sẵn lúc import vẫn an toàn: `_save()` không dùng `self.path`
+# mà dùng CONFIG_DATA_FILE + backend dựng từ DATA_DIR đọc tại thời điểm gọi.
+_TEST_DATA_DIR = Path(tempfile.mkdtemp(prefix="c2a_suite_data_"))
+(_TEST_DATA_DIR / "agent").mkdir(parents=True, exist_ok=True)
+
+from services import config as _cfg  # noqa: E402  (phải sau khi đặt auth-key)
+
+_cfg.DATA_DIR = _TEST_DATA_DIR
+_cfg.CONFIG_FILE = _TEST_DATA_DIR / "config.json"
+_cfg.CONFIG_DATA_FILE = _TEST_DATA_DIR / "config.json"
+_cfg.BACKUP_STATE_FILE = _TEST_DATA_DIR / "backup_state.json"
+_cfg.config.path = _cfg.CONFIG_FILE
+# Bắt buộc: `ConfigStore.__init__` gọi `_load()`, mà `_load()` gọi
+# `get_storage_backend()` — nên backend JSON đã dựng xong TRƯỚC dòng gán
+# DATA_DIR ở trên, và nó giữ cứng đường dẫn data/ thật trong `self.config_path`.
+# Đo 12/09/2026: thiếu đúng dòng này thì suite vẫn tạo lại data/config.json dù
+# mọi hằng số khác đã trỏ sang thư mục tạm. Thả về None để lần gọi sau dựng lại.
+_cfg.config._storage_backend = None
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Dọn thư mục tạm của cả phiên — không để lại rác trong /tmp."""
+    shutil.rmtree(_TEST_DATA_DIR, ignore_errors=True)
 
 
 def pytest_configure(config: pytest.Config) -> None:

@@ -36,6 +36,18 @@ class TangBatTest(unittest.TestCase):
 
     def test_BAT_TANG_CHI_SUA_DUNG_KHOA_do_KHONG_DUNG_KHOA_KHAC(self) -> None:
         from services.config import config
+
+        # `config` là singleton dùng chung cả tiến trình: không trả lại nguyên
+        # trạng thì test chạy sau trong cùng lô đọc phải giá trị giả này.
+        cu = config.data.get("mqtt", {}).get("du_doan")
+
+        def _tra_lai() -> None:
+            if cu is None:
+                config.data.get("mqtt", {}).pop("du_doan", None)
+            else:
+                config.data.setdefault("mqtt", {})["du_doan"] = cu
+
+        self.addCleanup(_tra_lai)
         config.data.setdefault("mqtt", {})["du_doan"] = {"bat": False, "kenh_nhan": ["zalop:a:b"]}
         d = self.client.post("/api/hoc-hoi/tang/bat", json={"khoa": "du_doan", "bat": True}).json()
         self.assertTrue(d["ok"])
