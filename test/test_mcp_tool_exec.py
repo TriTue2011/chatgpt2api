@@ -13,6 +13,7 @@ Ba tính chất dưới đây là thứ giữ cho lỗi đó không quay lại.
 from __future__ import annotations
 
 import os
+import threading
 import time
 import types
 import unittest
@@ -136,10 +137,20 @@ class McpToolExecTests(unittest.TestCase):
         câm vĩnh viễn.
         """
         m._MCP_TOOLS_BUDGET = 2
+        # Treo bằng Event chứ KHÔNG bằng `time.sleep(300)` — cùng lý do đã ghi
+        # trong test_orchestrate_watchdog.py: tool chạy trong
+        # `ThreadPoolExecutor`, luồng thợ của nó KHÔNG phải daemon và
+        # `concurrent.futures` đăng ký atexit join hết chúng. Ngủ cứng 300 giây
+        # thì test vẫn đạt (hàm vẫn thoát đúng ngân sách) nhưng TIẾN TRÌNH
+        # pytest đứng thêm 5 phút ở lúc thoát. Đo 12/09/2026: chạy riêng file
+        # này hết hạn 180 giây vẫn chưa thoát, và nó kéo dài cả lô test chung.
+        # `addCleanup` gỡ Event ngay khi test xong nên luồng thợ kết thúc luôn.
+        thoat = threading.Event()
+        self.addCleanup(thoat.set)
 
         def hanging(name, args):
             if args.get("topic") == "hang":
-                time.sleep(300)
+                thoat.wait(300)
             return "dữ liệu tốt " + "z" * 40
 
         m._execute_mcp_tool = hanging
