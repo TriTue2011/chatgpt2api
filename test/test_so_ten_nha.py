@@ -266,6 +266,35 @@ class TraTriNhoTheoPhamViTest(unittest.TestCase):
                 return_value=["- [10/09] vân tay 11 là anh Việt"]):
             self.assertIn("Việt", self.m.ten_cua("tuya", "fingerprint", "11"))
 
+    # ── Tab Học hỏi: đặt khu vực tay + xoá ──────────────────────────────────
+    def test_DAT_TEN_KEM_KHU_VUC_HIEN_TRONG_DANH_SACH(self) -> None:
+        from services.agent import state
+        with mock.patch.object(state, "nho_hoac_cap_nhat"):
+            self.m.dat_ten("mqtt", "thiet_bi", "den_ban_cong", "Đèn ban công",
+                           khu_vuc="Ban công")
+        muc = next(d for d in self.m.danh_sach() if d["ma"] == "den_ban_cong")
+        self.assertEqual(muc["khu_vuc"], "Ban công")
+
+    def test_SUA_TEN_KHONG_KEM_KHU_VUC_THI_GIU_NGUYEN_KHU_VUC_CU(self) -> None:
+        from services.agent import state
+        with mock.patch.object(state, "nho_hoac_cap_nhat"):
+            self.m.dat_ten("mqtt", "thiet_bi", "x", "Tên cũ", khu_vuc="Bếp")
+            self.m.dat_ten("mqtt", "thiet_bi", "x", "Tên mới")
+        muc = next(d for d in self.m.danh_sach() if d["ma"] == "x")
+        self.assertEqual(muc["ten"], "Tên mới")
+        self.assertEqual(muc["khu_vuc"], "Bếp")
+
+    def test_XOA_MUC_KHONG_CON_TRONG_DANH_SACH(self) -> None:
+        from services.agent import state
+        with mock.patch.object(state, "nho_hoac_cap_nhat"):
+            self.m.dat_ten("mqtt", "thiet_bi", "y", "Sẽ xoá")
+        k = self.m.khoa("mqtt", "thiet_bi", "y")
+        self.assertTrue(self.m.xoa(k))
+        self.assertFalse(any(d["khoa"] == k for d in self.m.danh_sach()))
+
+    def test_XOA_MUC_KHONG_TON_TAI_TRA_FALSE(self) -> None:
+        self.assertFalse(self.m.xoa("mqtt:thiet_bi#khong_co"))
+
 
 if __name__ == "__main__":
     unittest.main()

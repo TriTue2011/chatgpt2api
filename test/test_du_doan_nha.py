@@ -591,6 +591,29 @@ class DuDoanNhaTest(unittest.TestCase):
         self.assertEqual(self.dd.so_luot("light.bep"), 1)
         self.assertIsNone(self.dd.tra_loi("chào cả nhà"))
 
+    # ── Tab Học hỏi: xoá dòng gợi ý + xem hàng còn chờ chấm ─────────────────
+    def test_CHO_CHAM_CHI_TRA_HANG_DANG_CHO(self) -> None:
+        id_cho = self.dd.ghi_nhan("light.bep", "on", 0.9, {}, "goi_y")
+        id_da_cham = self.dd.ghi_nhan("light.hien", "on", 0.8, {}, "goi_y")
+        self.dd.ghi_dung(id_da_cham)
+        ds = self.dd.cho_cham()
+        self.assertEqual([d["id"] for d in ds], [id_cho])
+        self.assertEqual(ds[0]["ten"], "light.bep")
+        self.assertEqual(ds[0]["hanh_dong"], "on")
+
+    def test_XOA_MOT_GOI_Y_KHONG_DUNG_THANH_TICH(self) -> None:
+        id_ = self.dd.ghi_nhan("light.bep", "on", 0.9, {}, "goi_y")
+        self.dd.ghi_dung(id_)
+        diem_truoc = self.dd.diem("light.bep")
+        self.assertTrue(self.dd.xoa(id_))
+        self.assertEqual(self.dd.diem("light.bep"), diem_truoc,
+                         "xoá dòng gợi ý không được xoá ngược thành tích đã chấm")
+        n = self.dd._db().execute("SELECT COUNT(*) FROM du_doan WHERE id=?", (id_,)).fetchone()[0]
+        self.assertEqual(n, 0)
+
+    def test_XOA_ID_KHONG_TON_TAI_TRA_FALSE(self) -> None:
+        self.assertFalse(self.dd.xoa(999999))
+
 
 if __name__ == "__main__":
     unittest.main()

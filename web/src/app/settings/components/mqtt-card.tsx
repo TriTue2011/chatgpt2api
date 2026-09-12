@@ -253,6 +253,11 @@ export function MqttCard() {
           model: (modelHoc || "").trim(),
         },
         du_doan: {
+          // Giữ nguyên các khoá khác (vd `kenh_nhan` riêng của tầng này —
+          // `du_doan_nha._kenh_nhan()` đọc trước `bai_hoc.kenh_nhan`). Bản cũ
+          // dựng lại nguyên khối chỉ với hai khoá này nên lưu công tắc là mất
+          // `du_doan.kenh_nhan` nếu tab Học hỏi đã đặt nó.
+          ...(((config as any)?.mqtt?.du_doan as any) || {}),
           bat: dd.bat !== false,
           so_ngay: dd.so_ngay ?? 30,
         },

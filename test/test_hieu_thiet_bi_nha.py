@@ -577,6 +577,63 @@ class HieuThietBiNhaTest(unittest.TestCase):
             self.assertIn(k, don)
         self.assertEqual(don["bat_switch.bep_left"]["loai"], "thiet_bi")
 
+    # ── Tab Học hỏi: xoá / sửa kết luận, dữ kiện, hướng dẫn, lịch sử, sơ đồ ──
+    def test_XOA_KET_LUAN_KHONG_CON_TRONG_DANG_HIEU_LUC(self) -> None:
+        moi = self._luu(self._nhom_bep())["moi"]
+        id_ = moi[0]["id"]
+        self.assertTrue(self.ht.xoa_ket_luan(id_))
+        self.assertFalse(any(d["id"] == id_ for d in self.ht.dang_hieu_luc()))
+
+    def test_XOA_KET_LUAN_KHONG_TON_TAI_TRA_FALSE(self) -> None:
+        self.assertFalse(self.ht.xoa_ket_luan(999999))
+
+    def test_GHI_VA_SUA_VA_XOA_DU_KIEN(self) -> None:
+        i = self.ht.ghi_du_kien("bình nóng lạnh bật theo giờ quen", nguon="tab")
+        self.assertTrue(i)
+        self.assertTrue(self.ht.sua_du_kien(i, "bình nóng lạnh bật theo mùa"))
+        noi = {d["id"]: d["noi_dung"] for d in self.ht.du_kien_gan_day()}
+        self.assertEqual(noi[i], "bình nóng lạnh bật theo mùa")
+        self.assertTrue(self.ht.xoa_du_kien(i))
+        self.assertNotIn(i, {d["id"] for d in self.ht.du_kien_gan_day()})
+
+    def test_SUA_DU_KIEN_RONG_KHONG_SUA(self) -> None:
+        i = self.ht.ghi_du_kien("dữ kiện gốc")
+        self.assertFalse(self.ht.sua_du_kien(i, "  "))
+        noi = {d["id"]: d["noi_dung"] for d in self.ht.du_kien_gan_day()}
+        self.assertEqual(noi[i], "dữ kiện gốc")
+
+    def test_GHI_HUONG_DAN_DOI_PHIEN_BAN(self) -> None:
+        _, ban_cu = self.ht.huong_dan()
+        self.assertTrue(self.ht.ghi_huong_dan("nội dung hướng dẫn mới hoàn toàn"))
+        noi, ban_moi = self.ht.huong_dan()
+        self.assertEqual(noi, "nội dung hướng dẫn mới hoàn toàn")
+        self.assertNotEqual(ban_cu, ban_moi)
+
+    def test_GHI_HUONG_DAN_RONG_KHONG_GHI(self) -> None:
+        self.assertFalse(self.ht.ghi_huong_dan(""))
+
+    def test_LICH_SU_GIAI_MOI_TRUOC(self) -> None:
+        self._luu(self._nhom_bep())
+        self._luu(self._nhom_bep(vi_sao="lượt hai"))
+        ls = self.ht.lich_su_giai()
+        self.assertEqual(len(ls), 2)
+        self.assertGreater(ls[0]["id"], ls[1]["id"], "mới nhất đứng đầu")
+
+    def test_SO_DO_KICH_HOAT_GOM_DIEU_KIEN_VA_NGOAI_VI(self) -> None:
+        self._luu(self._nhom_bep(dieu_kien=["buoi", "lux_bếp"]))
+        so_do = {n["khoa"]: n for n in self.ht.so_do_kich_hoat()}
+        nut = so_do["switch.bep_left"]
+        self.assertEqual(nut["dieu_kien"], [self.bc.ten_dieu_kien("buoi"),
+                                            self.bc.ten_dieu_kien("lux_bếp")])
+        # Thành viên cùng nhóm (light.bep_left) là NGOẠI VI của nhân tố chính.
+        self.assertIn("Đèn bếp [light]", nut["ngoai_vi"])
+
+    def test_SO_DO_BO_QUA_THIET_BI_CHAM_SAI(self) -> None:
+        moi = self._luu(self._nhom_bep())["moi"]
+        hoc = next(d for d in moi if d["loai_cau_hoi"] == "hoc")
+        self.ht.cham(hoc["id"], False, cham_boi="chu_may")
+        self.assertEqual(self.ht.so_do_kich_hoat(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

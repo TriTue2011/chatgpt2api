@@ -368,6 +368,30 @@ def luu_cho_duyet(uv: dict[str, Any], ten: str, thu: int = -1) -> int:
         return int(cur.lastrowid or 0) if cur.rowcount else 0
 
 
+def them_tay(ten: str, gio: float, *, lech_phut: int = 15, thu: int = -1) -> int:
+    """Chủ máy tự thêm một nếp sinh hoạt từ tab Học hỏi — vào thẳng 'da_duyet',
+    khỏi qua vòng học. Trả id, 0 nếu thiếu tên/giờ hoặc trùng (tên+thứ).
+
+    `gio` là giờ thập phân 0–24; `lech_phut` là biên ± quanh giờ đó."""
+    ten = (ten or "").strip()
+    if not ten or not (0 <= float(gio) < 24):
+        return 0
+    with _khoa:
+        conn = _db()
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO tinh_huong"
+            " (ten, trang_thai, gio_tb, do_lech, thu, loi_cot, kem_theo,"
+            "  so_lan, lan_cuoi, tao_luc)"
+            " VALUES (?, 'da_duyet', ?, ?, ?, '[]', '[]', 0, ?, ?)",
+            (ten, float(gio), max(1, int(lech_phut)) / 60.0, int(thu),
+             time.time(), time.time()))
+        conn.commit()
+        rid = int(cur.lastrowid or 0) if cur.rowcount else 0
+    if rid:
+        logger.info({"event": "tinh_huong_them_tay", "id": rid, "ten": ten})
+    return rid
+
+
 def duyet(id_: int, ten: str = "") -> bool:
     """Người xác nhận. Truyền ``ten`` để đổi tên model đặt."""
     with _khoa:

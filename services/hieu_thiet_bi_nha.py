@@ -740,6 +740,119 @@ def dieu_kien_hoc() -> dict[str, list[str]]:
             and d["khoa"] in hoc}
 
 
+# ── CRUD cho tab Học hỏi (chủ máy xem / sửa / xoá / thêm tay) ────────────────
+def xoa_ket_luan(id_: int) -> bool:
+    """Chủ máy xoá hẳn một kết luận (dòng quyết định). Trả False nếu không có.
+
+    Xoá khác chấm-sai: chấm-sai giữ dòng lại để thang tin cậy đếm; xoá là bỏ
+    hẳn khỏi sổ khi kết luận đó rác (mã đã đổi tên, thiết bị gỡ đi…)."""
+    with _khoa:
+        conn = _db()
+        conn.execute("DELETE FROM quyet_dinh WHERE id=?", (int(id_),))
+        n = conn.total_changes
+        conn.commit()
+    if n:
+        logger.info({"event": "hieu_xoa_ket_luan", "id": int(id_)})
+    return n > 0
+
+
+def xoa_du_kien(id_: int) -> bool:
+    """Xoá một dữ kiện chủ máy đã dạy. Trả False nếu không có dòng đó."""
+    with _khoa:
+        conn = _db()
+        conn.execute("DELETE FROM du_kien WHERE id=?", (int(id_),))
+        n = conn.total_changes
+        conn.commit()
+    if n:
+        logger.info({"event": "hieu_xoa_du_kien", "id": int(id_)})
+    return n > 0
+
+
+def sua_du_kien(id_: int, noi_dung: str) -> bool:
+    """Sửa nội dung một dữ kiện. Nội dung rỗng thì không sửa (dùng xoá để bỏ)."""
+    noi = (noi_dung or "").strip()
+    if not noi:
+        return False
+    with _khoa:
+        conn = _db()
+        conn.execute("UPDATE du_kien SET noi_dung=? WHERE id=?",
+                     (noi[:2000], int(id_)))
+        n = conn.total_changes
+        conn.commit()
+    if n:
+        logger.info({"event": "hieu_sua_du_kien", "id": int(id_)})
+    return n > 0
+
+
+def ghi_huong_dan(noi_dung: str) -> bool:
+    """Chủ máy sửa hướng dẫn bản chạy thật (DATA_DIR), không đụng bản gốc repo.
+
+    Ghi thẳng đè lên `_duong_huong_dan()`; lượt giải sau dùng ngay bản mới và
+    `huong_dan()` tính lại phiên bản (sha256) nên điểm chấm không lẫn hai bản."""
+    noi = noi_dung if isinstance(noi_dung, str) else ""
+    if not noi.strip():
+        return False
+    p = _duong_huong_dan()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(noi, encoding="utf-8")
+    logger.info({"event": "hieu_ghi_huong_dan",
+                 "phien_ban": hashlib.sha256(noi.encode("utf-8")).hexdigest()[:12]})
+    return True
+
+
+def lich_su_giai(toi_da: int = 50) -> list[dict[str, Any]]:
+    """Các lượt bot giải hiểu thiết bị, mới → cũ, cho mục 'lịch sử các lượt giải'."""
+    with _khoa:
+        rows = _db().execute(
+            "SELECT id, ts, phien_ban, model, so_ho_so, so_nhom, bo_sot,"
+            " loai_bo, loi FROM lan_giai ORDER BY id DESC LIMIT ?",
+            (int(toi_da),)).fetchall()
+    return [{"id": int(r["id"]),
+             "luc": datetime.fromtimestamp(float(r["ts"]), _TZ).strftime("%d/%m/%Y %H:%M"),
+             "phien_ban": r["phien_ban"], "model": r["model"],
+             "so_ho_so": int(r["so_ho_so"]), "so_nhom": int(r["so_nhom"]),
+             "bo_sot": int(r["bo_sot"]), "loai_bo": int(r["loai_bo"]),
+             "loi": r["loi"]} for r in rows]
+
+
+def so_do_kich_hoat() -> list[dict[str, Any]]:
+    """Sơ đồ kích hoạt từng thiết bị học được: NHÂN TỐ CHÍNH ← ĐIỀU KIỆN + NGOẠI VI.
+
+    - nhân tố chính: thiết bị được bật (mã học);
+    - ngoại vi: cảm biến/thiết bị đi kèm — điều kiện dạng `bat_<mã>` và các mã
+      khác cùng nhóm vật lý;
+    - điều kiện: lux / nhiệt độ / có người / buổi / mùa… (các khoá còn lại).
+    Chỉ vẽ thứ bot đã kết luận (bỏ câu bị chấm sai), khớp `dieu_kien_hoc`.
+    """
+    from services import boi_canh_nha
+    ten = _ten_ha()
+    dk = dieu_kien_hoc()
+    thanh_vien: dict[str, list[str]] = {}
+    for d in dang_hieu_luc():
+        if (d["loai_cau_hoi"] == "hoc" and d["ket_qua"] != "sai"
+                and d["gia_tri"].get("hoc")):
+            thanh_vien[d["khoa"]] = sorted(d["nhom"].get("ma") or [])
+    ra: list[dict[str, Any]] = []
+    for khoa in thiet_bi_hoc():
+        ngoai_vi: list[str] = []
+        dieu_kien: list[str] = []
+        for k in dk.get(khoa, []):
+            if k.startswith("bat_"):
+                nv = _nhan(k[len("bat_"):], ten)
+                if nv not in ngoai_vi:
+                    ngoai_vi.append(nv)
+            else:
+                dieu_kien.append(boi_canh_nha.ten_dieu_kien(k))
+        for m in thanh_vien.get(khoa, []):
+            if m != khoa:
+                nv = _nhan(m, ten)
+                if nv not in ngoai_vi:
+                    ngoai_vi.append(nv)
+        ra.append({"khoa": khoa, "nhan_to_chinh": _nhan(khoa, ten),
+                   "ngoai_vi": ngoai_vi, "dieu_kien": dieu_kien})
+    return ra
+
+
 # ── Chấm và thang tin cậy ───────────────────────────────────────────────────
 def cham(id_: int, dung: bool, *, cham_boi: str, ghi_chu: str = "") -> bool:
     """Chấm MỘT kết luận đang chờ. Trả False nếu không có hoặc đã chấm rồi —

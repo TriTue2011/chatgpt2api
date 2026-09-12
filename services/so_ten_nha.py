@@ -240,13 +240,17 @@ def _tach_ten(dong: str, mo: str, k: str, ma: str) -> str:
 
 
 def dat_ten(nguon: str, loai: str, ma: str, ten: str,
-            *, user_id: str = "") -> bool:
+            *, user_id: str = "", khu_vuc: str = "") -> bool:
     """Chủ nhà xác nhận. Đây là bước TỰ HỌC của cả hệ.
 
     Lưu vào sổ, thôi hỏi, và phát một câu tiếng Việt vào trí nhớ để chỗ khác
     trong bot cũng dùng được. Có `user_id` thì ghi vào ĐÚNG kho riêng của
     người đó — cùng kho mà bot ghi khi học qua chat — và nhớ phạm vi ấy lại
     để `ten_cua` biết đường quét.
+
+    `khu_vuc`: chủ máy tự gõ khu vực (FREE-TEXT) từ tab Học hỏi. Chỉ ghi đè khi
+    có giá trị, để sửa tên không xoá khu vực và ngược lại. Bot tự KẾT LUẬN khu
+    vực là việc của Giai đoạn 2, không nằm ở đây.
     """
     ten = (ten or "").strip()
     if not ma or not ten:
@@ -258,6 +262,8 @@ def dat_ten(nguon: str, loai: str, ma: str, ten: str,
         m = muc.setdefault(k, {})
         m.update({"ten": ten, "da_biet": True, "nguon": nguon, "loai": loai,
                   "ma": str(ma), "dat_luc": time.time()})
+        if khu_vuc.strip():
+            m["khu_vuc"] = khu_vuc.strip()
         m["so_lan_hoi"] = 0          # đặt tên rồi thì bộ đếm hết ý nghĩa
         _ghi(so)
 
@@ -355,6 +361,7 @@ def danh_sach(nguon: str = "") -> list[dict[str, Any]]:
             continue
         ra.append({"khoa": k, "nguon": n, "loai": l, "ma": ma,
                    "ten": m.get("ten") or "", "da_biet": bool(m.get("da_biet")),
+                   "khu_vuc": m.get("khu_vuc") or "",
                    "so_lan_hoi": int(m.get("so_lan_hoi") or 0),
                    "thoi_hoi": bool(m.get("thoi_hoi")),
                    # Lộ ra để `soi_loi_ngam` đối chiếu được: bot nói "em nhớ
@@ -372,6 +379,24 @@ def thong_ke() -> dict[str, Any]:
         "chua_biet": sum(1 for d in ds if not d["da_biet"]),
         "thoi_hoi": sum(1 for d in ds if d["thoi_hoi"]),
     }
+
+
+def xoa(khoa_muc: str) -> bool:
+    """Chủ máy xoá một mục khỏi sổ tên (đối xứng với `dat_ten`). Trả False nếu
+    không có mục đó. KHÔNG đụng tới câu tiếng Việt đã phát vào trí nhớ chung —
+    xoá mục ở đây là để bot hỏi lại / học lại, còn ký ức cũ giữ nguyên."""
+    khoa_muc = (khoa_muc or "").strip()
+    if not khoa_muc:
+        return False
+    with _khoa:
+        so = _doc()
+        muc = so.get("muc") or {}
+        if khoa_muc not in muc:
+            return False
+        muc.pop(khoa_muc, None)
+        _ghi(so)
+    logger.info({"event": "so_ten_xoa", "khoa": khoa_muc})
+    return True
 
 
 def _chuyen_doi_so_cu() -> int:

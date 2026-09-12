@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Users, Cpu, Combine, ImageIcon, Search, Archive, Settings,
   LogOut, ChevronRight, Sparkles, PanelLeftClose, Languages,
   Video, Film, Plug, MessageSquare, MessageCircle, Activity, GraduationCap,
-  ScrollText,
+  ScrollText, BookOpen,
 } from "lucide-react";
 import webConfig from "@/constants/common-env";
 import { getValidatedAuthSession } from "@/lib/auth-session";
@@ -69,6 +69,7 @@ export const navGroups: NavGroup[] = [
       // Muốn vào phải tự gõ URL.
       { href: "/logs", labelKey: "nav_logs" as TranslationKey, icon: ScrollText },
       { href: "/backup", labelKey: "nav_backup" as TranslationKey, icon: Archive },
+      { href: "/hoc-hoi", labelKey: "nav_hocHoi" as TranslationKey, icon: BookOpen },
       { href: "/settings", labelKey: "nav_settings" as TranslationKey, icon: Settings },
     ],
   },
@@ -97,6 +98,7 @@ export const adminOnlyPaths = [
   "/settings",
   "/agent-runs",
   "/logs",
+  "/hoc-hoi",
   "/zalo",
   "/register",
 ];

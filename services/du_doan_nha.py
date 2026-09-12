@@ -634,6 +634,33 @@ def ghi_lo(id_: int) -> bool:
     return _cham(id_, "lo")
 
 
+def cho_cham(toi_da: int = 50) -> list[dict[str, Any]]:
+    """Gợi ý ĐÃ GỬI, còn chờ chấm ('cho') — cho tab Học hỏi. Khác `quet()`: đây là
+    hàng thật đã có id, chấm/xoá được; `quet()` chỉ là bản xem trước, chưa ghi."""
+    with _khoa:
+        rows = _db().execute(
+            "SELECT id, ts, ten, hanh_dong, p FROM du_doan"
+            " WHERE ket_qua='cho' ORDER BY ts DESC LIMIT ?",
+            (int(toi_da),)).fetchall()
+    return [{"id": int(r["id"]), "ts": float(r["ts"]), "ten": r["ten"],
+             "hanh_dong": r["hanh_dong"], "p": float(r["p"])} for r in rows]
+
+
+def xoa(id_: int) -> bool:
+    """Chủ máy xoá một dòng gợi ý khỏi sổ (tab Học hỏi). Trả False nếu không có.
+
+    Xoá KHÔNG chạm bảng `thanh_tich`: một lần đã chấm rồi đóng góp vào thang tin
+    cậy, xoá dòng gợi ý không nên viết lại lịch sử chấm."""
+    with _khoa:
+        conn = _db()
+        conn.execute("DELETE FROM du_doan WHERE id=?", (int(id_),))
+        n = conn.total_changes
+        conn.commit()
+    if n:
+        logger.info({"event": "du_doan_xoa", "id": int(id_)})
+    return n > 0
+
+
 def don_qua_han() -> int:
     """Gợi ý quá hạn mà chưa ai chấm → 'lo'."""
     cat = time.time() - _HAN_TRA_LOI_GIAY
