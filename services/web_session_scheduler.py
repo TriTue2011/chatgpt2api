@@ -201,13 +201,17 @@ def start() -> None:
     global _started
     if _started:
         return
-    if not is_enabled():
-        logger.info({"event": "web_session_scheduler_disabled"})
-        return
+    # Luồng LUÔN được dựng, kể cả khi công tắc đang tắt: `_scan_once()` tự kiểm
+    # `is_enabled()` ở đầu mỗi vòng nên tắt là nó không làm gì. Trước đây chặn
+    # ngay tại đây, nên gạt công tắc trên web chỉ LƯU được giá trị mà không có
+    # gì chạy cho tới lần khởi động lại — đo 12/09/2026: bật `web_session_scan`
+    # xong, log vẫn chỉ có `web_session_scheduler_disabled` từ lúc khởi động và
+    # không hề có vòng quét nào. Công tắc câm như vậy còn tệ hơn không có.
     _started = True
     threading.Thread(target=_loop, daemon=True, name="web-session-scan").start()
     logger.info({
         "event": "web_session_scheduler_started",
+        "enabled": is_enabled(),
         "interval_h": _interval_s() / 3600,
         "max_per_cycle": _max_per_cycle(),
         "boot_delay_s": _BOOT_DELAY_S,

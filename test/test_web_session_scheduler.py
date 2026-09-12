@@ -34,11 +34,22 @@ class TatBatTest(unittest.TestCase):
         th.assert_called_once()
         self.assertTrue(wss._started)
 
-    def test_TAT_thi_START_KHONG_TAO_THREAD(self) -> None:
+    def test_TAT_thi_VAN_DUNG_LUONG_de_GAT_CONG_TAC_AN_NGAY(self) -> None:
+        """Công tắc tắt vẫn phải dựng luồng — chốt duy nhất nằm trong `_scan_once`.
+
+        Trước 12/09/2026 `start()` thoát ngay khi thấy tắt, nên bật
+        `web_session_scan` trên web chỉ LƯU được giá trị: không vòng quét nào
+        chạy cho tới lần khởi động lại tiến trình. Đo trên máy chủ hôm đó — bật
+        xong mà log vẫn chỉ có `web_session_scheduler_disabled` từ lúc khởi
+        động, không một vòng quét nào. Phần "tắt thì không quét" đã do
+        `test_TAT_thi_KHONG_QUET` ở trên giữ, nên ở đây chỉ giữ phần "luồng
+        luôn có" để gạt công tắc là có tác dụng ngay.
+        """
         with mock.patch.object(wss, "is_enabled", return_value=False), \
              mock.patch("threading.Thread") as th:
             wss.start()
-        th.assert_not_called()
+        th.assert_called_once()
+        self.assertTrue(wss._started)
 
 
 class QuetMotTangTest(unittest.TestCase):

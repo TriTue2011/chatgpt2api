@@ -188,13 +188,15 @@ def start() -> None:
     global _started
     if _started:
         return
-    if not is_enabled():
-        logger.info({"event": "flow_session_scheduler_disabled"})
-        return
+    # Luồng LUÔN được dựng dù công tắc đang tắt — `_scan_once()` tự kiểm
+    # `is_enabled()` mỗi vòng. Cùng lớp lỗi đã sửa ở
+    # services/web_session_scheduler.py (12/09/2026): chặn ở đây làm công tắc
+    # chỉ có tác dụng sau khi khởi động lại tiến trình.
     _started = True
     threading.Thread(target=_loop, daemon=True, name="flow-session-scan").start()
     logger.info({
         "event": "flow_session_scheduler_started",
+        "enabled": is_enabled(),
         "interval_h": _interval_s() / 3600,
         "max_per_cycle": _max_per_cycle(),
         "boot_delay_s": _BOOT_DELAY_S,
