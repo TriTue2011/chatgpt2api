@@ -95,9 +95,24 @@ async def tich_o_recaptcha(page, cho_giay: float = 6.0) -> bool:
     khung_recaptcha = [f for f in page.frames if "/recaptcha/" in (f.url or "")]
     anchor = next((f for f in khung_recaptcha
                    if "api2/anchor" in (f.url or "")), None)
+    # Sitekey nằm ngay trong URL khung anchor (tham số `k=`), khỏi truy DOM.
+    sitekey = ""
+    if anchor is not None:
+        from urllib.parse import parse_qs, urlparse
+        sitekey = (parse_qs(urlparse(anchor.url).query).get("k") or [""])[0]
+    # Có ô `g-recaptcha-response` không — đây là thứ QUYẾT ĐỊNH liệu đường
+    # "mua token từ dịch vụ ngoài rồi tiêm vào" (DeathByCaptcha…) có khả thi
+    # trên trang đăng nhập của chính Google hay không. Không có ô để tiêm thì
+    # mua token cũng vô ích, và đó là tiền thật nên phải biết trước khi tiêu.
+    try:
+        co_o_token = await page.locator("textarea#g-recaptcha-response").count() > 0
+    except Exception:
+        co_o_token = False
     logger.info(
-        "tich_o_recaptcha: tong %d frame, %d frame recaptcha, anchor=%s",
+        "tich_o_recaptcha: tong %d frame, %d frame recaptcha, anchor=%s, "
+        "sitekey=%s, o_g-recaptcha-response=%s",
         len(page.frames), len(khung_recaptcha), "co" if anchor else "KHONG",
+        (sitekey[:12] + "…") if sitekey else "KHONG", co_o_token,
     )
 
     async def _bam() -> str:
