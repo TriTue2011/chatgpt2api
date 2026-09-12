@@ -23,6 +23,7 @@ import random
 import time
 from dataclasses import dataclass, field
 from typing import Optional
+from urllib.parse import urlparse
 
 from .browser_pool import HoSoDangBan, pool
 
@@ -180,7 +181,10 @@ async def _pick_authenticator_method(page) -> bool:
     except Exception as exc:
         logger.warning("auto_login: authenticator JS scan failed: %s", str(exc)[:100])
 
-    logger.info("auto_login: method-picker visible but no Authenticator selector matched")
+    # KHÔNG nói "picker visible": hàm này chưa bao giờ kiểm điều đó. Câu cũ
+    # khẳng định bảng chọn đang hiện, và lượt 12/09/2026 21:35–21:39 đã bị đọc
+    # nhầm đúng vì nó — trang lúc ấy không có lấy một dòng chọn nào.
+    logger.info("auto_login: no Authenticator row matched on this page")
     return False
 
 
@@ -207,7 +211,7 @@ async def _pick_phone_method(page) -> bool:
         except Exception:
             pass
 
-    logger.info("auto_login: method-picker visible but no phone selector matched")
+    logger.info("auto_login: no phone row matched on this page")
     return False
 
 
@@ -244,7 +248,7 @@ async def _pick_tap_method(page) -> bool:
         except Exception:
             pass
 
-    logger.info("auto_login: method-picker visible but no Tap selector matched")
+    logger.info("auto_login: no Tap row matched on this page")
     return False
 
 
@@ -1157,11 +1161,81 @@ async def do_google_login_steps(
     # ── 2FA poll loop ──
     deadline = time.time() + 240
     picker_clicked = False
+    # Vòng này TRƯỚC 12/09/2026 không ghi lại thứ nó nhìn thấy. Lượt hỏng
+    # 21:35–21:39 vì thế chỉ để lại bốn phút log "method-picker ..." giống hệt
+    # nhau: không biết trang nào đang mở, không biết còn dòng chọn nào không.
+    # Mọi kiểu hỏng trông y như nhau — đúng lớp lỗi đã sửa ở `tich_o_recaptcha`.
+    dau_van_truoc = None
+    duong_trang = ""
+    so_dong_chon = 0
+    co_khung_captcha = False
+    captcha_sau_mk_da_thu = False
     while time.time() < deadline:
         await asyncio.sleep(2.0)
 
+        # Chụp trang MỘT LẦN mỗi vòng. Ghi ĐƯỜNG DẪN, bỏ query: query mang
+        # `TL=` là mã phiên, không được rơi vào log.
+        try:
+            duong_trang = urlparse(page.url or "").path
+        except Exception:
+            duong_trang = ""
+        try:
+            so_dong_chon = await page.locator(
+                'li[data-challengetype],div[data-challengetype],'
+                'div[role="link"],li').count()
+        except Exception:
+            so_dong_chon = 0
+        try:
+            co_khung_captcha = await page.locator(
+                'iframe[src*="/recaptcha/"]').count() > 0
+        except Exception:
+            co_khung_captcha = False
+        dau_van = (duong_trang, so_dong_chon, co_khung_captcha)
+        if dau_van != dau_van_truoc:
+            logger.info("auto_login: vòng 2FA — trang=%s, %d dòng chọn, "
+                        "khung reCAPTCHA=%s", duong_trang or "?",
+                        so_dong_chon, co_khung_captcha)
+            dau_van_truoc = dau_van
+
+        # Google bung reCAPTCHA SAU mật khẩu. Vòng trước-mật-khẩu có hẳn một
+        # nhánh cho `/challenge/recaptcha`; vòng này thì KHÔNG có nhánh nào,
+        # nên gặp captcha là quay đủ 240 giây rồi chết với lý do "Hết 4 phút
+        # mà chưa hoàn tất 2FA" — người đọc không hề biết là vướng captcha.
+        #
+        # Bấm ô đúng MỘT lần rồi thôi: hàm này đã tích được thật lúc 21:34
+        # cùng ngày, còn đấm vòng vòng chỉ càng giống bot.
+        if co_khung_captcha and not captcha_sau_mk_da_thu:
+            captcha_sau_mk_da_thu = True
+            try:
+                from .solvers.recaptcha import tich_o_recaptcha
+                session.state = "need_captcha"
+                session.message = ("Google bắt reCAPTCHA sau mật khẩu — "
+                                   "đang tự tích ô...")
+                logger.info("auto_login: reCAPTCHA SAU mật khẩu cho %s "
+                            "(trang=%s) — thử tự tích ô",
+                            session.profile, duong_trang or "?")
+                if await tich_o_recaptcha(page):
+                    session.state = "running"
+                    session.message = "Đã tự tích ô — đang chờ bước 2FA..."
+                    logger.info("auto_login: tự tích ô reCAPTCHA sau mật khẩu "
+                                "XONG cho %s", session.profile)
+                    await asyncio.sleep(2.0)
+                    continue
+            except Exception as exc:
+                logger.info("auto_login: tự tích ô sau mật khẩu hỏng cho %s "
+                            "(%s: %s)", session.profile,
+                            type(exc).__name__, str(exc)[:160])
+            session.state = "need_captcha"
+            session.message = ("Google bắt reCAPTCHA sau mật khẩu — gõ trên "
+                               "noVNC, hệ thống sẽ TỰ tiếp tục 2FA")
+            await asyncio.sleep(2.0)
+            continue
+
         # 1. If Google shows the method picker, pick the method automatically
-        if not picker_clicked:
+        # KHÔNG dòng chọn nào thì KHÔNG có bảng chọn. Gọi ba hàm dò bên dưới
+        # khi ấy vừa tốn ~15 giây mỗi vòng cho những bộ chọn chắc chắn trượt,
+        # vừa đẻ ra ba dòng log nói "picker visible" mà chẳng ai kiểm.
+        if not picker_clicked and so_dong_chon > 0:
             try:
                 if session.totp_secret and _HAS_PYOTP:
                     if await _pick_authenticator_method(page):
@@ -1381,7 +1455,13 @@ async def do_google_login_steps(
             continue
 
     session.state = "failed"
-    session.error = "Hết 4 phút mà chưa hoàn tất 2FA"
+    # Nói ĐANG Ở TRANG NÀO. Bản cũ chỉ có "Hết 4 phút mà chưa hoàn tất 2FA",
+    # nên lượt 12/09/2026 21:39 không cho biết gì ngoài việc nó đã hết giờ.
+    session.error = (
+        f"Hết 4 phút mà chưa hoàn tất 2FA (trang={duong_trang or '?'}, "
+        f"{so_dong_chon} dòng chọn, "
+        f"khung reCAPTCHA={'có' if co_khung_captcha else 'không'})"
+    )
     session.completed_at = time.time()
     return False
 
