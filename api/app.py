@@ -136,6 +136,13 @@ def create_app() -> FastAPI:
             start_flow_session_scan()
         except Exception as exc:
             _record_startup_failure("flow_session_scheduler", str(exc))
+        # Giữ phiên Claude/ChatGPT-free/Gemini-web giống Flow — kiểm không mở
+        # trình duyệt nên rẻ hơn, nhưng vẫn TẮT MẶC ĐỊNH (web_session_scan.enabled).
+        try:
+            from services.web_session_scheduler import start as start_web_session_scan
+            start_web_session_scan()
+        except Exception as exc:
+            _record_startup_failure("web_session_scheduler", str(exc))
         # Listen on :1455 for OpenAI Codex CLI OAuth redirects (auto-exchange)
         try:
             from services.codex_callback_listener import start as start_codex_callback

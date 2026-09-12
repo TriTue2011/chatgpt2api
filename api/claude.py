@@ -186,20 +186,13 @@ _QUOTA_PATTERNS: list[tuple[str, str]] = [
 ]
 
 
-def _fetch_session_key_from_solver(cfg: dict[str, Any], excluded_keys: set[str] | None = None) -> str:
-    """Pull a logged-in claude.ai sessionKey from the captcha-solver.
+def claude_profiles(cfg: dict[str, Any]) -> list[str]:
+    """Mọi profile Claude Web đã cấu hình/onboard, theo đúng thứ tự ưu tiên.
 
-    Iterates ALL profiles in providers.claude.profiles[] (or accounts[].profile)
-    and returns the first available key that is NOT in excluded_keys.
-    This enables automatic pool rotation through all Google accounts already
-    onboarded in the captcha-solver — no manual session key entry needed.
+    Tách ra từ `_fetch_session_key_from_solver` để `services.web_session_scheduler`
+    dùng chung một nguồn danh sách — hai chỗ liệt kê lệch nhau là một chỗ quét
+    được, chỗ kia lại bỏ sót đúng tài khoản đang hỏng.
     """
-    from services.captcha import captcha_base
-    base = captcha_base(cfg.get("captcha_solver_url"))
-    if not base:
-        return ""
-    excluded = excluded_keys or set()
-
     # Collect ALL profiles: accounts[].profile first, then profiles[], then single profile
     profiles: list[str] = []
     for entry in (cfg.get("accounts") or []):
@@ -226,6 +219,23 @@ def _fetch_session_key_from_solver(cfg: dict[str, Any], excluded_keys: set[str] 
         pass
     if not profiles:
         profiles = ["claude-web-default"]
+    return profiles
+
+
+def _fetch_session_key_from_solver(cfg: dict[str, Any], excluded_keys: set[str] | None = None) -> str:
+    """Pull a logged-in claude.ai sessionKey from the captcha-solver.
+
+    Iterates ALL profiles in providers.claude.profiles[] (or accounts[].profile)
+    and returns the first available key that is NOT in excluded_keys.
+    This enables automatic pool rotation through all Google accounts already
+    onboarded in the captcha-solver — no manual session key entry needed.
+    """
+    from services.captcha import captcha_base
+    base = captcha_base(cfg.get("captcha_solver_url"))
+    if not base:
+        return ""
+    excluded = excluded_keys or set()
+    profiles = claude_profiles(cfg)
 
     api_key = str(cfg.get("captcha_solver_api_key") or "")
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
