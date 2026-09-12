@@ -324,17 +324,35 @@ def create_router() -> APIRouter:
             # và trước nay biến mất không dấu vết.
             _ghi_dut("noi_upstream", exc)
         finally:
-            # CHỈ đóng khi chưa đóng. Kênh đứt bình thường (người dùng tắt tab)
-            # thì Starlette đã gửi `websocket.close` rồi; gọi thêm lần nữa ném
-            # RuntimeError "Unexpected ASGI message 'websocket.close', after
-            # sending 'websocket.close'…", và nó được ghi thành
-            # `novnc_kenh_dut cho=dong` — một dòng lỗi GIẢ, lại còn CHE MẤT lý
-            # do đứt thật vì đó là dòng cuối cùng của phiên.
+            # CHỈ đóng khi kết nối còn sống. Kênh đứt bình thường là người dùng
+            # tắt tab: trình duyệt ngắt, `_len` nhận `websocket.disconnect` rồi
+            # thoát — lúc này gửi `websocket.close` xuống một kết nối đã mất thì
+            # uvicorn ném RuntimeError "Unexpected ASGI message
+            # 'websocket.close', after sending 'websocket.close' or response
+            # already completed", và nó được ghi thành `novnc_kenh_dut
+            # cho=dong` — một dòng lỗi GIẢ, lại còn CHE MẤT lý do đứt thật vì
+            # đó là dòng cuối cùng của phiên.
             #
             # Đo 12/09/2026 trên log các lượt thật của chủ máy (17:33–17:38):
             # mọi phiên đều kết thúc bằng đúng dòng RuntimeError ấy, nên nhìn
             # log không biết được kênh đứt vì đâu.
-            if ws.application_state is not WebSocketState.DISCONNECTED:
+            #
+            # PHẢI nhìn `client_state`, KHÔNG phải `application_state` — bản
+            # trước chỉ chặn bằng `application_state` và ĐÃ ĐO LÀ KHÔNG ĂN:
+            # lên ảnh rồi thử lại, vẫn đúng 1 dòng lỗi giả. Đọc
+            # starlette/websockets.py mới rõ hai trạng thái đổi ở hai lúc khác
+            # nhau: `client_state` → DISCONNECTED khi NHẬN `websocket.disconnect`
+            # (dòng 54, đúng thứ vòng `_len` gặp rồi thoát), còn
+            # `application_state` chỉ đổi khi ỨNG DỤNG gửi đi cái gì đó (dòng
+            # 63–95) nên chưa gửi close thì vẫn CONNECTED. Client đã đi mà
+            # application vẫn CONNECTED → điều kiện cũ luôn đúng → vẫn gọi
+            # close → uvicorn ném "Unexpected ASGI message 'websocket.close'".
+            #
+            # Kiểm bằng uvicorn THẬT (TestClient không tái hiện được, lớp vận
+            # chuyển trong bộ nhớ của nó dễ tính hơn): điều kiện cũ ghi
+            # `['dong']`, điều kiện này ghi `[]`.
+            if (ws.client_state is not WebSocketState.DISCONNECTED
+                    and ws.application_state is not WebSocketState.DISCONNECTED):
                 try:
                     await ws.close()
                 except Exception as exc:

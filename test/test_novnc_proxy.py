@@ -199,5 +199,106 @@ class ChanTrinhDuyetNhoMatKhauTest(unittest.TestCase):
         self.assertEqual(goc, _chan_trinh_duyet_nho_mat_khau(goc))
 
 
+class DongKenhKhongGoiHaiLanTest(unittest.TestCase):
+    """Kênh đứt bình thường thì KHÔNG được ghi thêm một dòng lỗi GIẢ.
+
+    Đo trên máy chủ 12/09/2026: mọi phiên thật của chủ máy đều kết thúc bằng
+    `novnc_kenh_dut cho=dong RuntimeError: Unexpected ASGI message
+    'websocket.close'…`. Khối `finally` gọi `ws.close()` lần thứ hai sau khi
+    trình duyệt đã ngắt. Dòng ấy vô hại với người dùng nhưng là dòng CUỐI của
+    phiên, nên nó che mất lý do đứt thật — chính cái log dựng ra để hết mù lại
+    thành thứ gây mù.
+
+    Các test ở trên KHÔNG bắt được lỗi này, và đó là lý do nó lọt: chúng mô
+    phỏng lại cặp `_len`/`_xuong` bằng hàm giả trong chính file test, nên khối
+    `finally` chưa bao giờ chạy. Test này gọi ROUTE THẬT qua TestClient.
+    """
+
+    PORT = 8791
+
+    def test_TRINH_DUYET_NGAT_thi_KHONG_ghi_loi_gia(self):
+        """PHẢI chạy uvicorn THẬT — `TestClient` không tái hiện được lỗi này.
+
+        Đo 12/09/2026: bản test viết bằng `TestClient` XANH cả với mã hỏng, nên
+        nó vô dụng và đã bị thay. Lý do: dòng lỗi do uvicorn ném ra khi ứng
+        dụng gửi `websocket.close` lúc kết nối đã mất, còn lớp vận chuyển trong
+        bộ nhớ của `TestClient` dễ tính hơn nên im lặng cho qua.
+
+        A/B trên chính máy chủ: điều kiện cũ (`application_state` đơn lẻ) ghi
+        `['dong']`, điều kiện đúng (`client_state`) ghi `[]`.
+        """
+        import asyncio as _asyncio
+
+        import uvicorn
+        import websockets
+        from fastapi import FastAPI
+
+        from api import novnc_proxy
+        from services.novnc_ve import kho_ve_novnc
+
+        noi_that = websockets.connect      # giữ TRƯỚC khi vá
+
+        class _Up:
+            """Đóng vai websockify: im lặng cho tới khi bị huỷ."""
+
+            async def send(self, goi):
+                return None
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                await _asyncio.sleep(3600)
+                raise StopAsyncIteration
+
+        class _Conn:
+            async def __aenter__(self):
+                return _Up()
+
+            async def __aexit__(self, *a):
+                return False
+
+        da_ghi: list[str] = []
+        goc_ghi = novnc_proxy._ghi_dut
+        websockets.connect = lambda *a, **k: _Conn()
+        novnc_proxy._ghi_dut = lambda cho, exc: da_ghi.append(cho)
+
+        app = FastAPI()
+        app.include_router(novnc_proxy.create_router())
+        # Kênh RFB từ chối ngay nếu không có phiên — thiếu bước này thì test
+        # đỗ vì bị chặn ở cửa, chứ không phải vì đã sửa đúng.
+        phien = kho_ve_novnc.mo_phien()
+
+        async def _chay():
+            cfg = uvicorn.Config(app, host="127.0.0.1", port=self.PORT,
+                                 log_level="critical")
+            sv = uvicorn.Server(cfg)
+            phuc_vu = _asyncio.create_task(sv.serve())
+            for _ in range(60):
+                if sv.started:
+                    break
+                await _asyncio.sleep(0.1)
+            self.assertTrue(sv.started, "uvicorn không khởi động được")
+            ws = await noi_that(
+                f"ws://127.0.0.1:{self.PORT}/novnc/websockify",
+                additional_headers={"Cookie": f"{novnc_proxy.TEN_COOKIE}={phien}"},
+            )
+            await _asyncio.sleep(0.3)
+            await ws.close()               # trình duyệt tắt tab
+            await _asyncio.sleep(1.0)
+            sv.should_exit = True
+            await phuc_vu
+
+        try:
+            _asyncio.run(_chay())
+        finally:
+            websockets.connect = noi_that
+            novnc_proxy._ghi_dut = goc_ghi
+
+        self.assertNotIn(
+            "dong", da_ghi,
+            f"gọi close() lần hai sinh lỗi giả, các chỗ đã ghi: {da_ghi}")
+
+
 if __name__ == "__main__":
     unittest.main()
