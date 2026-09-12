@@ -623,16 +623,110 @@ class HieuThietBiNhaTest(unittest.TestCase):
         self._luu(self._nhom_bep(dieu_kien=["buoi", "lux_bếp"]))
         so_do = {n["khoa"]: n for n in self.ht.so_do_kich_hoat()}
         nut = so_do["switch.bep_left"]
-        self.assertEqual(nut["dieu_kien"], [self.bc.ten_dieu_kien("buoi"),
-                                            self.bc.ten_dieu_kien("lux_bếp")])
+        self.assertEqual([d["ten"] for d in nut["dieu_kien"]],
+                         [self.bc.ten_dieu_kien("buoi"), self.bc.ten_dieu_kien("lux_bếp")])
+        self.assertEqual([d["khoa"] for d in nut["dieu_kien"]], ["buoi", "lux_bếp"])
+        self.assertIn("do", nut["dieu_kien"][0])
         # Thành viên cùng nhóm (light.bep_left) là NGOẠI VI của nhân tố chính.
-        self.assertIn("Đèn bếp [light]", nut["ngoai_vi"])
+        self.assertIn("Đèn bếp [light]", [n["ten"] for n in nut["ngoai_vi"]])
 
     def test_SO_DO_BO_QUA_THIET_BI_CHAM_SAI(self) -> None:
         moi = self._luu(self._nhom_bep())["moi"]
         hoc = next(d for d in moi if d["loai_cau_hoi"] == "hoc")
         self.ht.cham(hoc["id"], False, cham_boi="chu_may")
         self.assertEqual(self.ht.so_do_kich_hoat(), [])
+
+    # ── Sửa trực tiếp điều kiện (mục 3/4 kế hoạch "Học hỏi") ────────────────
+    def test_SUA_DIEU_KIEN_THEM_MOI_khi_CHUA_CO_DONG(self) -> None:
+        """Chưa có dòng 'dieu_kien' cho thiết bị này (đã xoá vì sai trước đó,
+        thiết bị vẫn còn được học) — sửa phải THÊM MỚI, không cần dòng cũ."""
+        self._den_bep()
+        moi = self._luu(self._nhom_bep(dieu_kien=["buoi"]))["moi"]
+        cu = next(d for d in moi if d["loai_cau_hoi"] == "dieu_kien")
+        self.assertTrue(self.ht.xoa_ket_luan(cu["id"]))
+        self.assertEqual(self.ht.dieu_kien_hoc(), {})
+        ok = self.ht.sua_dieu_kien_ket_luan("switch.bep_left", ["buoi", "mua"])
+        self.assertTrue(ok, ok)
+        self.assertEqual(self.ht.dieu_kien_hoc(), {"switch.bep_left": ["buoi", "mua"]})
+        r = self.ht._db().execute(
+            "SELECT ket_qua, cham_boi FROM quyet_dinh WHERE khoa='switch.bep_left'"
+            " AND loai_cau_hoi='dieu_kien'").fetchone()
+        self.assertEqual((r["ket_qua"], r["cham_boi"]), ("dung", "chu_may"))
+
+    def test_SUA_DIEU_KIEN_DE_DE_KHONG_DUNG_KHONG_HOI_LAI(self) -> None:
+        """Dòng đang 'cho' (chưa chấm) sửa nội dung thì VẪN chờ chấm — sửa
+        trước khi duyệt không được tự động coi là đã duyệt."""
+        self._den_bep()
+        moi = self._luu(self._nhom_bep(dieu_kien=["buoi"]))["moi"]
+        cau = next(d for d in moi if d["loai_cau_hoi"] == "dieu_kien")
+        self.assertTrue(self.ht.sua_dieu_kien_ket_luan("switch.bep_left", ["mua"]))
+        r = self.ht._db().execute("SELECT ket_qua FROM quyet_dinh WHERE id=?",
+                                  (cau["id"],)).fetchone()
+        self.assertEqual(r["ket_qua"], "cho")
+
+    def test_SUA_DIEU_KIEN_TREN_DONG_DA_CHAM_SAI_thi_DAT_LAI_DUNG(self) -> None:
+        self._den_bep()
+        moi = self._luu(self._nhom_bep(dieu_kien=["buoi"]))["moi"]
+        cau = next(d for d in moi if d["loai_cau_hoi"] == "dieu_kien")
+        self.ht.cham(cau["id"], False, cham_boi="chu_may")
+        self.assertTrue(self.ht.sua_dieu_kien_ket_luan("switch.bep_left", ["mua"]))
+        self.assertEqual(self.ht.dieu_kien_hoc(), {"switch.bep_left": ["mua"]})
+
+    def test_SUA_DIEU_KIEN_KHOA_BIA_BI_TU_CHOI(self) -> None:
+        self._den_bep()
+        self._luu(self._nhom_bep())
+        ket = self.ht.sua_dieu_kien_ket_luan("switch.bep_left", ["khoa_bia_khong_ton_tai"])
+        self.assertNotEqual(ket, True)
+        self.assertIn("thực đơn", str(ket))
+
+    def test_SUA_DIEU_KIEN_QUA_5_BI_TU_CHOI(self) -> None:
+        self._den_bep()
+        self._luu(self._nhom_bep())
+        ket = self.ht.sua_dieu_kien_ket_luan("switch.bep_left", ["buoi", "thu", "mua", "buoi2", "thu2", "mua2"])
+        self.assertNotEqual(ket, True)
+
+    def test_SUA_DIEU_KIEN_TU_THAM_CHIEU_BI_TU_CHOI(self) -> None:
+        self._den_bep()
+        self._luu(self._nhom_bep())
+        ket = self.ht.sua_dieu_kien_ket_luan("switch.bep_left", ["bat_switch.bep_left"])
+        self.assertNotEqual(ket, True)
+
+    def test_SUA_DIEU_KIEN_RONG_BI_TU_CHOI(self) -> None:
+        self._den_bep()
+        self._luu(self._nhom_bep())
+        self.assertNotEqual(self.ht.sua_dieu_kien_ket_luan("switch.bep_left", []), True)
+
+    # ── Phân tích một thiết bị theo yêu cầu (mục 7 — "bot bỏ sót") ──────────
+    def test_GIAI_MOT_THIET_BI_KHONG_THAY_MA_TRA_LOI(self) -> None:
+        self._den_bep()
+        kq = self.ht.giai_mot_thiet_bi("khong_co_that")
+        self.assertTrue(kq.get("loi"))
+
+    def test_GIAI_MOT_THIET_BI_CHI_GUI_MA_LIEN_QUAN(self) -> None:
+        self._den_bep()
+        nhan: list[list[str]] = []
+
+        def bot(model, huong, de):
+            ma = [x["ma"] for x in json.loads(de)["thiet_bi"]]
+            nhan.append(sorted(ma))
+            bai = {"nhom": [{"ma": ma, "ma_hoc": "switch.bep_left",
+                             "nguon_nhanh": "zigbee2mqtt/Bếp#state_left",
+                             "loai": "bat_tat", "hoc": True, "chac": 0.9,
+                             "dieu_kien": ["buoi"],
+                             "vi_sao": "đổi cùng lúc"}]}
+            return {"choices": [{"message": {
+                "content": json.dumps(bai, ensure_ascii=False)}}]}
+
+        with mock.patch.object(self.ht, "_goi_model", side_effect=bot), \
+             mock.patch.object(self.ht, "_model", return_value="m"):
+            kq = self.ht.giai_mot_thiet_bi("switch.bep_left")
+        self.assertEqual(kq["loi"], "")
+        self.assertEqual(kq["moi"], 4)
+        # Chỉ gửi switch.bep_left + các mã đổi CÙNG LÚC với nó, không gửi cả
+        # nhà (đo 11/09/2026: light.a_le_0..5, switch.cam_0..11 không liên quan).
+        self.assertIn("switch.bep_left", nhan[0])
+        self.assertNotIn("light.a_le_0", nhan[0])
+        self.assertEqual(self.ht.thiet_bi_hoc(), ["switch.bep_left"])
 
 
 if __name__ == "__main__":

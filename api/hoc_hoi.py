@@ -58,8 +58,12 @@ def create_router() -> APIRouter:
                 "bai_hoc": bai_hoc.is_enabled(),
                 "canh_bao": canh_bao_nha.is_enabled(),
             }
+            # `sai_gan_day` đi kèm để tab hiện rõ "còn đang theo dõi", không
+            # phải một nhãn tĩnh "đã tin" đọc như đã đóng băng mãi mãi — sai
+            # 2/10 lượt gần nhất là tụt về hỏi lại, xem `can_hoi`.
             diem = [{"loai": l, "diem": round(hieu_thiet_bi_nha.diem(l), 3),
-                     "con_hoi": hieu_thiet_bi_nha.can_hoi(l)}
+                     "con_hoi": hieu_thiet_bi_nha.can_hoi(l),
+                     "sai_gan_day": hieu_thiet_bi_nha.sai_gan_day(l)}
                     for l in hieu_thiet_bi_nha.LOAI_CAU_HOI]
             gan_nhat = (hieu_thiet_bi_nha.lich_su_giai(1) or [None])[0]
             kenh = (((config.data.get("mqtt") or {}).get("du_doan") or {})
@@ -211,6 +215,129 @@ def create_router() -> APIRouter:
         except Exception as exc:
             return _loi(exc, "xoá kết luận")
 
+    @router.post("/api/hoc-hoi/ket-luan/sua-dieu-kien")
+    async def ket_luan_sua_dieu_kien(body: dict, authorization: str | None = Header(default=None)):
+        """Sửa TRỰC TIẾP điều kiện của một thiết bị — dùng chung cho mục "Bot
+        hiểu thiết bị" và sơ đồ kích hoạt. body: {khoa, dieu_kien: [...]}."""
+        require_admin(authorization)
+        khoa = str(body.get("khoa") or "")
+        ds = [str(x) for x in (body.get("dieu_kien") or [])]
+        try:
+            from services import hieu_thiet_bi_nha
+            ket = await asyncio.to_thread(
+                hieu_thiet_bi_nha.sua_dieu_kien_ket_luan, khoa, ds)
+            if ket is True:
+                return {"ok": True}
+            return {"ok": False, "error": str(ket)}
+        except Exception as exc:
+            return _loi(exc, "sửa điều kiện")
+
+    @router.get("/api/hoc-hoi/dieu-kien-menu")
+    async def dieu_kien_menu(authorization: str | None = Header(default=None)):
+        """Thực đơn điều kiện có thể chọn — CÙNG nguồn bot dùng khi tự đề
+        xuất (`ho_so()["thuc_don_dieu_kien"]`), để web chỉ cho chọn khoá thật."""
+        require_admin(authorization)
+        try:
+            from services import hieu_thiet_bi_nha
+
+            def _lay():
+                hs = hieu_thiet_bi_nha.ho_so()
+                return hs.get("thuc_don_dieu_kien") or []
+
+            return {"ok": True, "danh_sach": await asyncio.to_thread(_lay)}
+        except Exception as exc:
+            return _loi(exc, "thực đơn điều kiện")
+
+    @router.post("/api/hoc-hoi/phan-tich-thiet-bi")
+    async def phan_tich_thiet_bi(body: dict, authorization: str | None = Header(default=None)):
+        """Chủ máy chỉ đích danh một thiết bị bot bỏ sót → giải ngay.
+        body: {ma}."""
+        require_admin(authorization)
+        ma = str(body.get("ma") or "").strip()
+        if not ma:
+            return {"ok": False, "error": "Thiếu mã thiết bị."}
+        try:
+            from services import hieu_thiet_bi_nha
+            kq = await asyncio.to_thread(hieu_thiet_bi_nha.giai_mot_thiet_bi, ma)
+            if kq.get("loi"):
+                return {"ok": False, "error": kq["loi"]}
+            return {"ok": True, **kq}
+        except Exception as exc:
+            return _loi(exc, "phân tích thiết bị")
+
+    @router.get("/api/hoc-hoi/thiet-bi-day-du")
+    async def thiet_bi_day_du(authorization: str | None = Header(default=None)):
+        """Mọi thiết bị/thực thể HA + MQTT + Tuya, kèm tên/khu vực đã biết —
+        cho ô chọn thiết bị (mục "Bot hiểu thiết bị") và tab Thiết bị & tên
+        trong Settings → Home Assistant."""
+        require_admin(authorization)
+
+        def _lay() -> list[dict]:
+            from services import so_ten_nha
+            da_biet = {d["khoa"]: d for d in so_ten_nha.danh_sach()}
+            ra: list[dict] = []
+
+            try:
+                from services import ha_client
+                trang_thai = ha_client.get_states() or []
+                idx = ha_client.get_ha_area_index()
+                khu_vuc_ha = idx.get("entity_area") or {}
+                for st in trang_thai:
+                    eid = str(st.get("entity_id") or "")
+                    if not eid:
+                        continue
+                    k = so_ten_nha.khoa("ha", "thiet_bi", eid)
+                    m = da_biet.get(k) or {}
+                    ra.append({
+                        "khoa": k, "nguon": "ha", "loai": "thiet_bi", "ma": eid,
+                        "ten_goc": str((st.get("attributes") or {}).get("friendly_name") or eid),
+                        "ten": m.get("ten") or "",
+                        "khu_vuc": m.get("khu_vuc") or "",
+                        "khu_vuc_goi_y": khu_vuc_ha.get(eid, ""),
+                    })
+            except Exception as exc:
+                logger.warning("hoc-hoi thiet-bi-day-du (ha) lỗi: %s", exc)
+
+            try:
+                from services import mqtt_nha
+                for d in mqtt_nha.danh_sach_thiet_bi():
+                    ma = str(d.get("ten") or "")
+                    if not ma:
+                        continue
+                    k = so_ten_nha.khoa("mqtt", "thiet_bi", ma)
+                    m = da_biet.get(k) or {}
+                    ra.append({
+                        "khoa": k, "nguon": "mqtt", "loai": "thiet_bi", "ma": ma,
+                        "ten_goc": ma, "ten": m.get("ten") or "",
+                        "khu_vuc": m.get("khu_vuc") or "", "khu_vuc_goi_y": "",
+                    })
+            except Exception as exc:
+                logger.warning("hoc-hoi thiet-bi-day-du (mqtt) lỗi: %s", exc)
+
+            try:
+                from services import tuya_nha
+                for d in tuya_nha.danh_sach_thiet_bi():
+                    ma = str(d.get("id") or "")
+                    if not ma:
+                        continue
+                    k = so_ten_nha.khoa("tuya", "thiet_bi", ma)
+                    m = da_biet.get(k) or {}
+                    ra.append({
+                        "khoa": k, "nguon": "tuya", "loai": "thiet_bi", "ma": ma,
+                        "ten_goc": str(d.get("ten") or ma), "ten": m.get("ten") or "",
+                        "khu_vuc": m.get("khu_vuc") or "", "khu_vuc_goi_y": "",
+                    })
+            except Exception as exc:
+                logger.warning("hoc-hoi thiet-bi-day-du (tuya) lỗi: %s", exc)
+
+            ra.sort(key=lambda x: (x["nguon"], x["ten_goc"].lower()))
+            return ra
+
+        try:
+            return {"ok": True, "danh_sach": await asyncio.to_thread(_lay)}
+        except Exception as exc:
+            return _loi(exc, "danh sách thiết bị đầy đủ")
+
     @router.get("/api/hoc-hoi/so-do")
     async def so_do(authorization: str | None = Header(default=None)):
         """Sơ đồ kích hoạt: nhân tố chính ← điều kiện + ngoại vi, từng thiết bị."""
@@ -260,7 +387,19 @@ def create_router() -> APIRouter:
         require_admin(authorization)
         try:
             from services import du_doan_nha
-            return {"ok": True, "danh_sach": du_doan_nha.cho_cham()}
+
+            def _lay():
+                ds = du_doan_nha.cho_cham()
+                for d in ds:
+                    # `giai_thich` đã có sẵn từ trước nhưng tab chưa gọi — chủ
+                    # máy chê "giải thích sơ sài" trong khi lý do đã tính rồi.
+                    try:
+                        d["giai_thich"] = du_doan_nha.giai_thich(d["id"])
+                    except Exception:
+                        d["giai_thich"] = ""
+                return ds
+
+            return {"ok": True, "danh_sach": await asyncio.to_thread(_lay)}
         except Exception as exc:
             return _loi(exc, "gợi ý chờ chấm")
 
@@ -295,5 +434,35 @@ def create_router() -> APIRouter:
                 "ok": False, "error": "Giờ ngoài 0–24 hoặc trùng nếp đã có."}
         except Exception as exc:
             return _loi(exc, "thêm nếp")
+
+    @router.post("/api/hoc-hoi/tinh-huong/sua")
+    async def tinh_huong_sua(body: dict, authorization: str | None = Header(default=None)):
+        """Sửa đầy đủ một nếp sinh hoạt — không chỉ đổi tên.
+        body: {id, ten?, gio?, phut?, thu?}."""
+        require_admin(authorization)
+        try:
+            i = int(body.get("id") or 0)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "Thiếu id."}
+        if not i:
+            return {"ok": False, "error": "Thiếu id."}
+        kw: dict = {}
+        if body.get("ten") is not None:
+            kw["ten"] = str(body["ten"])
+        if body.get("gio") is not None:
+            try:
+                kw["gio"] = float(body["gio"])
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "Giờ không hợp lệ."}
+        if body.get("phut") is not None:
+            kw["lech_phut"] = int(body["phut"])
+        if body.get("thu") is not None:
+            kw["thu"] = int(body["thu"])
+        try:
+            from services import tinh_huong_nha
+            ok = tinh_huong_nha.sua(i, **kw)
+            return {"ok": ok} if ok else {"ok": False, "error": "Không có dòng đó, hoặc chưa sửa gì."}
+        except Exception as exc:
+            return _loi(exc, "sửa nếp")
 
     return router

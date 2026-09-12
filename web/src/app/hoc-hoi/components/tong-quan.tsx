@@ -6,7 +6,7 @@ import { LoaderCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { layGet, goiPost } from "./lib";
 
-type Diem = { loai: string; diem: number; con_hoi: boolean };
+type Diem = { loai: string; diem: number; con_hoi: boolean; sai_gan_day: number };
 type LanGiai = { luc: string; model: string; so_nhom: number; loi: string } | null;
 type TongQuanData = {
   ok: boolean;
@@ -100,7 +100,9 @@ export function TongQuan() {
                     {x.con_hoi ? (
                       <span className="text-amber-600">còn hỏi</span>
                     ) : (
-                      <span className="text-green-600">đã tin</span>
+                      // "Đang tin" chứ không phải "đã tin" — vẫn liên tục theo
+                      // dõi, sai 2/10 lượt gần nhất là tụt về hỏi lại.
+                      <span className="text-green-600">đang tin — {x.sai_gan_day} sai/10 lượt gần nhất</span>
                     )}
                   </td>
                 </tr>

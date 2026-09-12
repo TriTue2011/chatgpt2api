@@ -1,12 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { LoaderCircle, RefreshCw, Trash2, Plus, Save } from "lucide-react";
+import { LoaderCircle, RefreshCw, Trash2, Plus, Save, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { httpRequest } from "@/lib/request";
 import { layGet, goiPost } from "./lib";
+import { SuaDieuKien } from "./sua-dieu-kien";
+import { ChonThietBi } from "./chon-thiet-bi";
 
 type KetLuan = {
   id: number;
@@ -28,6 +31,9 @@ export function HieuThietBi() {
   const [banHuongDan, setBanHuongDan] = useState("");
   const [dangTai, setDangTai] = useState(false);
   const [dkMoi, setDkMoi] = useState("");
+  const [suaKhoa, setSuaKhoa] = useState<string | null>(null);
+  const [dangPhanTich, setDangPhanTich] = useState(false);
+  const [ketQuaPhanTich, setKetQuaPhanTich] = useState("");
 
   const tai = useCallback(async () => {
     setDangTai(true);
@@ -80,6 +86,31 @@ export function HieuThietBi() {
         </Button>
       </div>
 
+      {/* Chọn thiết bị bot bỏ sót → phân tích ngay */}
+      <section className="rounded border border-border p-2">
+        <p className="mb-1 text-xs font-semibold">Thiết bị bot bỏ sót? Chọn để phân tích ngay</p>
+        <ChonThietBi
+          dangChay={dangPhanTich}
+          nhanNut="Phân tích ngay"
+          icon={<Sparkles className="mr-1 size-3.5" />}
+          onChon={async (ma) => {
+            setDangPhanTich(true);
+            setKetQuaPhanTich("");
+            try {
+              const r = await httpRequest<{ ok?: boolean; moi?: number; lap_lai?: number; error?: string }>(
+                "/api/hoc-hoi/phan-tich-thiet-bi", { method: "POST", body: { ma } });
+              setKetQuaPhanTich(r.ok
+                ? `Xong — ${r.moi ?? 0} kết luận mới, ${r.lap_lai ?? 0} lặp lại.`
+                : `Không phân tích được: ${r.error || "lỗi không rõ"}`);
+              if (r.ok) void tai();
+            } finally {
+              setDangPhanTich(false);
+            }
+          }}
+        />
+        {ketQuaPhanTich ? <p className="mt-1 text-[11px] text-muted-foreground">{ketQuaPhanTich}</p> : null}
+      </section>
+
       {/* Kết luận */}
       <section>
         <p className="mb-1 text-xs font-semibold">Kết luận đang hiệu lực</p>
@@ -99,13 +130,22 @@ export function HieuThietBi() {
                 </span>
               </div>
               {k.ghi_chu ? <p className="text-muted-foreground">{k.ghi_chu}</p> : null}
-              <div className="mt-1 flex gap-1">
+              <div className="mt-1 flex flex-wrap gap-1">
                 <Button variant="outline" size="sm" className="h-7" onClick={() => void cham(k.id, true)}>Đúng</Button>
                 <Button variant="outline" size="sm" className="h-7" onClick={() => void cham(k.id, false)}>Sai</Button>
+                {(k.loai_cau_hoi === "hoc" || k.loai_cau_hoi === "dieu_kien") ? (
+                  <Button variant="outline" size="sm" className="h-7"
+                    onClick={() => setSuaKhoa(suaKhoa === k.khoa ? null : k.khoa)}>
+                    Sửa điều kiện
+                  </Button>
+                ) : null}
                 <Button variant="ghost" size="sm" className="h-7 text-destructive" onClick={() => void xoaKl(k.id)}>
                   <Trash2 className="size-3.5" />
                 </Button>
               </div>
+              {suaKhoa === k.khoa ? (
+                <SuaDieuKien khoa={k.khoa} onXong={() => { setSuaKhoa(null); void tai(); }} />
+              ) : null}
             </div>
           ))}
           {!ketLuan.length ? <p className="px-2 py-3 text-center text-xs text-muted-foreground">Chưa có kết luận.</p> : null}

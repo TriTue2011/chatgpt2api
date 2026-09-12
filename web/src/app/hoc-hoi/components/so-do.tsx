@@ -1,21 +1,41 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { LoaderCircle, RefreshCw, ArrowLeft } from "lucide-react";
+import { LoaderCircle, RefreshCw, ArrowLeft, Pencil } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { layGet } from "./lib";
+import { SuaDieuKien } from "./sua-dieu-kien";
 
+type Do = { nhan_hay_gap: string; ty_le: number; mau: number } | null;
+type Muc = { khoa: string; ten: string; do: Do };
 type Nut = {
   khoa: string;
   nhan_to_chinh: string;
-  ngoai_vi: string[];
-  dieu_kien: string[];
+  ngoai_vi: Muc[];
+  dieu_kien: Muc[];
 };
+
+function Chip({ m }: { m: Muc }) {
+  const co_do = m.do && m.do.mau > 0;
+  return (
+    <span className="rounded border border-border bg-muted/50 px-1.5 py-0.5 text-[11px]" title={m.khoa}>
+      {m.ten}
+      {co_do ? (
+        <span className="ml-1 text-muted-foreground">
+          — {m.do!.nhan_hay_gap ? `"${m.do!.nhan_hay_gap}"` : ""} {Math.round(m.do!.ty_le * 100)}% ({m.do!.mau} lần bật)
+        </span>
+      ) : (
+        <span className="ml-1 text-amber-600">— chưa đo được</span>
+      )}
+    </span>
+  );
+}
 
 export function SoDo() {
   const [ds, setDs] = useState<Nut[]>([]);
   const [dangTai, setDangTai] = useState(false);
+  const [dangSua, setDangSua] = useState<string | null>(null);
 
   const tai = useCallback(async () => {
     setDangTai(true);
@@ -36,7 +56,8 @@ export function SoDo() {
       <div className="flex items-center justify-between">
         <p className="text-xs text-muted-foreground">
           Chỉ áp dụng cho <b>thiết bị</b> bot đã học: nhân tố chính (thiết bị được
-          bật) ← điều kiện + ngoại vi đi kèm.
+          bật) ← điều kiện + ngoại vi đi kèm. Số % là đo THẬT từ lịch sử, không
+          phải bot đoán.
         </p>
         <Button variant="outline" size="sm" onClick={() => void tai()} disabled={dangTai}>
           <RefreshCw className="mr-1 size-3.5" /> Làm mới
@@ -57,22 +78,21 @@ export function SoDo() {
                 </span>
                 <ArrowLeft className="size-3.5 text-muted-foreground" />
                 <span className="text-muted-foreground">điều kiện + ngoại vi:</span>
+                <Button variant="ghost" size="sm" className="h-6"
+                  onClick={() => setDangSua(dangSua === n.khoa ? null : n.khoa)}>
+                  <Pencil className="mr-1 size-3.5" /> Sửa
+                </Button>
               </div>
               <div className="mt-1.5 flex flex-wrap gap-1">
-                {n.dieu_kien.map((c, i) => (
-                  <span key={`dk-${i}`} className="rounded border border-border bg-muted/50 px-1.5 py-0.5">
-                    {c}
-                  </span>
-                ))}
-                {n.ngoai_vi.map((c, i) => (
-                  <span key={`nv-${i}`} className="rounded border border-dashed border-border px-1.5 py-0.5 text-muted-foreground">
-                    {c}
-                  </span>
-                ))}
+                {n.dieu_kien.map((d) => <Chip key={d.khoa} m={d} />)}
+                {n.ngoai_vi.map((v, i) => <Chip key={v.khoa || `nv-${i}`} m={v} />)}
                 {!n.dieu_kien.length && !n.ngoai_vi.length ? (
                   <span className="text-muted-foreground">chưa có điều kiện nào</span>
                 ) : null}
               </div>
+              {dangSua === n.khoa ? (
+                <SuaDieuKien khoa={n.khoa} onXong={() => { setDangSua(null); void tai(); }} />
+              ) : null}
             </div>
           ))}
           {!ds.length ? (

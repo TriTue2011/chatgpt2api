@@ -14,15 +14,25 @@ type Nep = {
   gio: string;
   lech_phut: number;
   so_lan: number;
+  thu: number;
   trang_thai: "cho_duyet" | "da_duyet" | "bo";
 };
 
 const THU_TRONG_TUAN = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
 
+/** Giờ "8h30" (từ server) → 8.5 để nạp vào ô số. */
+function gioSoTuChuoi(s: string): number {
+  const m = /^(\d+)h(\d+)$/.exec(s);
+  if (!m) return 0;
+  return Number(m[1]) + Number(m[2]) / 60;
+}
+
 export function NepSinhHoat() {
   const [ds, setDs] = useState<Nep[]>([]);
   const [dangTai, setDangTai] = useState(false);
   const [them, setThem] = useState({ ten: "", gio: "", phut: "15", thu: "-1" });
+  const [suaId, setSuaId] = useState<number | null>(null);
+  const [suaForm, setSuaForm] = useState({ ten: "", gio: "0", phut: "15", thu: "-1" });
 
   const tai = useCallback(async () => {
     setDangTai(true);
@@ -45,14 +55,18 @@ export function NepSinhHoat() {
     });
     if (res?.ok) void tai();
   };
-  const doiTen = async (id: number, tenCu: string) => {
-    const ten = window.prompt("Đổi tên nếp:", tenCu);
-    if (ten == null || !ten.trim()) return;
-    const res = await httpRequest<{ ok?: boolean }>("/api/mqtt/tinh-huong/duyet", {
-      method: "POST",
-      body: { id, ten },
+  const moSua = (t: Nep) => {
+    if (suaId === t.id) { setSuaId(null); return; }
+    setSuaId(t.id);
+    setSuaForm({ ten: t.ten, gio: String(gioSoTuChuoi(t.gio)), phut: String(t.lech_phut), thu: String(t.thu) });
+  };
+  const luuSua = async (id: number) => {
+    const gio = Number(suaForm.gio);
+    if (Number.isNaN(gio)) return;
+    const ok = await goiPost("/api/hoc-hoi/tinh-huong/sua", {
+      id, ten: suaForm.ten, gio, phut: Number(suaForm.phut) || 15, thu: Number(suaForm.thu),
     });
-    if (res?.ok) void tai();
+    if (ok) { setSuaId(null); void tai(); }
   };
   const themMoi = async () => {
     const gio = Number(them.gio);
@@ -118,17 +132,33 @@ export function NepSinhHoat() {
                   <span className="text-amber-600">· chờ duyệt</span>
                 )}
               </div>
-              {t.trang_thai === "cho_duyet" ? (
-                <div className="mt-1 flex flex-wrap gap-1">
-                  <Button variant="outline" size="sm" onClick={() => void duyet(t.id)}>Đúng rồi</Button>
-                  <Button variant="outline" size="sm" onClick={() => void doiTen(t.id, t.ten)}>Đổi tên</Button>
-                  <Button variant="outline" size="sm" onClick={() => void duyet(t.id, true)}>Bỏ qua</Button>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {t.trang_thai === "cho_duyet" ? (
+                  <>
+                    <Button variant="outline" size="sm" onClick={() => void duyet(t.id)}>Đúng rồi</Button>
+                    <Button variant="outline" size="sm" onClick={() => void duyet(t.id, true)}>Bỏ qua</Button>
+                  </>
+                ) : null}
+                <Button variant="outline" size="sm" onClick={() => moSua(t)}>Sửa</Button>
+              </div>
+              {suaId === t.id ? (
+                <div className="mt-2 grid gap-2 rounded border border-dashed border-border bg-muted/30 p-2 sm:grid-cols-5">
+                  <Input placeholder="tên" value={suaForm.ten} className="h-8 text-xs sm:col-span-2"
+                    onChange={(e) => setSuaForm({ ...suaForm, ten: e.target.value })} />
+                  <Input type="number" step="0.25" min={0} max={23.99} value={suaForm.gio} className="h-8 text-xs"
+                    onChange={(e) => setSuaForm({ ...suaForm, gio: e.target.value })} />
+                  <Input type="number" min={1} value={suaForm.phut} className="h-8 text-xs"
+                    onChange={(e) => setSuaForm({ ...suaForm, phut: e.target.value })} />
+                  <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" value={suaForm.thu}
+                    onChange={(e) => setSuaForm({ ...suaForm, thu: e.target.value })}>
+                    <option value="-1">Mọi ngày</option>
+                    {THU_TRONG_TUAN.map((th, i) => <option key={th} value={i}>{th}</option>)}
+                  </select>
+                  <div className="sm:col-span-5 flex justify-end">
+                    <Button size="sm" onClick={() => void luuSua(t.id)}>Lưu</Button>
+                  </div>
                 </div>
-              ) : (
-                <div className="mt-1">
-                  <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => void doiTen(t.id, t.ten)}>Đổi tên</Button>
-                </div>
-              )}
+              ) : null}
             </div>
           ))}
           {!ds.length ? <p className="px-2 py-3 text-center text-xs text-muted-foreground">Chưa có nếp nào.</p> : null}

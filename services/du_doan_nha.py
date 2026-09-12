@@ -277,6 +277,63 @@ def _dieu_kien(luc: float, dang_bat: dict[str, float],
     return nhan
 
 
+def dem_dieu_kien_thiet_bi(thiet_bi: str, cac_khoa: list[str],
+                          so_ngay: int | None = None) -> dict[str, dict[str, Any]]:
+    """Với MỖI lần `thiet_bi` bật trong `so_ngay` ngày qua, điều kiện `cac_khoa`
+    thường mang giá trị gì — cho tab Học hỏi trả lời "điều kiện này xảy ra khi
+    nào" khi chủ máy vừa thêm một điều kiện mới trên sơ đồ kích hoạt.
+
+    Nhận thẳng `cac_khoa` (không lọc theo bot đã chọn hay chưa — khác `hoc()`)
+    để đo được cả điều kiện bot CHƯA TỪNG chọn. Trả mỗi khoá:
+    ``{"nhan_hay_gap": str, "ty_le": float, "mau": int}`` — `mau` là số lần
+    bật CÓ đo được nhãn đó (bỏ những lần thiếu cảm biến, không tính là "không
+    khớp"). Rỗng hoặc `mau=0` khi chưa đủ dữ liệu."""
+    from services import lich_su_nha
+
+    ngay = max(1, int(so_ngay or _so_ngay_hoc()))
+    den = time.time()
+    tu = den - ngay * 86400
+    khac_ma = {k[len("bat_"):] for k in cac_khoa if k.startswith("bat_")}
+    try:
+        sk = lich_su_nha.doc_trang_thai(
+            tu, den, tien_to=tuple(sorted({thiet_bi} | khac_ma)), bo_do_ai=True)
+    except Exception as exc:
+        logger.warning({"event": "dem_dieu_kien_doc_loi", "error": str(exc)[:160]})
+        return {}
+    on_ts: list[float] = []
+    doi_trong_o: dict[int, set[str]] = {}
+    for r in sk:
+        if str(r.get("truong") or "") != "state":
+            continue
+        tb = str(r.get("thiet_bi") or "")
+        ts = float(r.get("ts") or 0)
+        doi_trong_o.setdefault(int(ts // (_O_PHUT * 60)), set()).add(tb)
+        if tb == thiet_bi and _la_bat(r.get("gia_tri")):
+            on_ts.append(ts)
+    if not on_ts:
+        return {}
+    dem: dict[str, dict[str, int]] = {k: {} for k in cac_khoa}
+    for ts in on_ts:
+        nhan = _dieu_kien(ts, {}, {}, tru=thiet_bi)
+        slot = int(ts // (_O_PHUT * 60))
+        for khac in doi_trong_o.get(slot, ()):
+            if khac != thiet_bi:
+                nhan[f"bat_{khac}"] = "co"
+        for k in cac_khoa:
+            if k in nhan:
+                d = dem[k]
+                d[nhan[k]] = d.get(nhan[k], 0) + 1
+    ra: dict[str, dict[str, Any]] = {}
+    for k, d in dem.items():
+        mau = sum(d.values())
+        if not mau:
+            ra[k] = {"nhan_hay_gap": "", "ty_le": 0.0, "mau": 0}
+            continue
+        nhan_hay_gap, so_lan = max(d.items(), key=lambda x: x[1])
+        ra[k] = {"nhan_hay_gap": nhan_hay_gap, "ty_le": round(so_lan / mau, 3), "mau": mau}
+    return ra
+
+
 def hoc(so_ngay: int | None = None) -> dict[str, Any]:
     """Đếm mẫu dương và mẫu âm cho các thiết bị ĐƯỢC HỌC, trả bảng đếm.
 
@@ -970,6 +1027,9 @@ def thong_ke() -> dict[str, Any]:
         x["diem"] = round(diem(str(x["ten"])), 3)
         x["cap"] = cap(str(x["ten"]))
         x["con_thieu_luot"] = max(0, _MAU_LEN_CAP - int(x["dung"]) - int(x["sai"]))
+        # Cho tab Học hỏi hiện "đang theo dõi", không phải nhãn tĩnh "đã tin"
+        # đọc như đóng băng mãi mãi — sai 2/10 lượt gần nhất là tụt về hỏi lại.
+        x["sai_gan_day"] = sai_gan_day(str(x["ten"]))
     return {"bat": is_enabled(), "tong": tong, "theo_ket_qua": theo,
             "thanh_tich": tt, "nguong_len_cap":
                 {"so_luot": _MAU_LEN_CAP, "ty_le": _TY_LE_LEN_CAP}}

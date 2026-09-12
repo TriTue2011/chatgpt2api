@@ -392,6 +392,38 @@ def them_tay(ten: str, gio: float, *, lech_phut: int = 15, thu: int = -1) -> int
     return rid
 
 
+def sua(id_: int, *, ten: str = "", gio: float | None = None,
+        lech_phut: int | None = None, thu: int | None = None) -> bool:
+    """Sửa đầy đủ một nếp sinh hoạt — giờ / độ lệch / thứ, không chỉ đổi tên
+    như `duyet(id, ten)`. Dùng được cho cả dòng đang chờ duyệt lẫn đã duyệt.
+    Chỉ sửa các trường được truyền; trả False nếu không có dòng đó."""
+    cot, gt = [], []
+    if ten.strip():
+        cot.append("ten=?"); gt.append(ten.strip())
+    if gio is not None:
+        if not (0 <= float(gio) < 24):
+            return False
+        cot.append("gio_tb=?"); gt.append(float(gio))
+    if lech_phut is not None:
+        cot.append("do_lech=?"); gt.append(max(1, int(lech_phut)) / 60.0)
+    if thu is not None:
+        cot.append("thu=?"); gt.append(int(thu))
+    if not cot:
+        return False
+    with _khoa:
+        conn = _db()
+        # `cur.rowcount` của LƯỢT NÀY, không phải `conn.total_changes` (cộng
+        # dồn từ lúc mở kết nối — sẽ báo "sửa được" cho một id không tồn tại
+        # nếu kết nối từng ghi bất cứ gì trước đó).
+        cur = conn.execute(f"UPDATE tinh_huong SET {', '.join(cot)} WHERE id=?",
+                           (*gt, int(id_)))
+        n = cur.rowcount
+        conn.commit()
+    if n:
+        logger.info({"event": "tinh_huong_sua", "id": int(id_)})
+    return n > 0
+
+
 def duyet(id_: int, ten: str = "") -> bool:
     """Người xác nhận. Truyền ``ten`` để đổi tên model đặt."""
     with _khoa:

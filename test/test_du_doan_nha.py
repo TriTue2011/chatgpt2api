@@ -614,6 +614,44 @@ class DuDoanNhaTest(unittest.TestCase):
     def test_XOA_ID_KHONG_TON_TAI_TRA_FALSE(self) -> None:
         self.assertFalse(self.dd.xoa(999999))
 
+    # ── Đo "điều kiện này xảy ra khi nào" cho tab Học hỏi ───────────────────
+    def test_DEM_DIEU_KIEN_RA_DUNG_TY_LE_DA_BIET_TRUOC(self) -> None:
+        """8/10 lần bật đèn bếp rơi vào buổi tối (19h), 2 lần vào buổi sáng
+        (8h) — đo phải ra ty_le ≈ 0.8 cho nhãn hay gặp nhất."""
+        from datetime import datetime, timedelta
+        now = datetime.now(self.bc._TZ)
+        for i in range(1, 9):
+            t = (now - timedelta(days=i)).replace(hour=19, minute=0, second=0, microsecond=0)
+            self._sk("light.bep", "on", t.timestamp())
+        for i in range(9, 11):
+            t = (now - timedelta(days=i)).replace(hour=8, minute=0, second=0, microsecond=0)
+            self._sk("light.bep", "on", t.timestamp())
+        do = self.dd.dem_dieu_kien_thiet_bi("light.bep", ["buoi"], so_ngay=30)
+        self.assertEqual(do["buoi"]["mau"], 10)
+        self.assertAlmostEqual(do["buoi"]["ty_le"], 0.8, places=2)
+
+    def test_DEM_DIEU_KIEN_BAT_MA_KHAC_DUNG_LUC(self) -> None:
+        """Điều kiện `bat_<mã>` — thiết bị khác đổi CÙNG khung giờ 30 phút."""
+        o_giay = self.dd._O_PHUT * 60
+        # Neo vào ĐẦU một ô 30 phút (không phải "giờ hiện tại trừ 1h") — nếu
+        # không, hai mốc cách nhau 60s có thể rơi ngay hai bên ranh giới ô,
+        # làm test chập chờn tuỳ giờ chạy.
+        now = (time.time() - 3600) // o_giay * o_giay + 300
+        self._sk("light.bep", "on", now)
+        self._sk("switch.quat", "on", now + 60)  # cùng ô 30 phút
+        do = self.dd.dem_dieu_kien_thiet_bi("light.bep", ["bat_switch.quat"], so_ngay=30)
+        self.assertEqual(do["bat_switch.quat"], {"nhan_hay_gap": "co", "ty_le": 1.0, "mau": 1})
+
+    def test_DEM_DIEU_KIEN_CHUA_TUNG_BAT_TRA_RONG(self) -> None:
+        self.assertEqual(self.dd.dem_dieu_kien_thiet_bi("light.chua_bao_gio_bat", ["buoi"]), {})
+
+    def test_DEM_DIEU_KIEN_KHONG_DO_DUOC_TRA_MAU_0(self) -> None:
+        """Có bật nhưng không có nhãn nào cho khoá đó (thiếu cảm biến) — trả
+        mau=0, không đoán bừa."""
+        self._sk("light.bep", "on", time.time())
+        do = self.dd.dem_dieu_kien_thiet_bi("light.bep", ["khoa_khong_bao_gio_do_duoc"])
+        self.assertEqual(do["khoa_khong_bao_gio_do_duoc"], {"nhan_hay_gap": "", "ty_le": 0.0, "mau": 0})
+
 
 if __name__ == "__main__":
     unittest.main()

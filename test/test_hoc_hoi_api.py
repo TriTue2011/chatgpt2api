@@ -177,10 +177,120 @@ class DuDoanXoaEndpointTest(unittest.TestCase):
         self.assertTrue(d["ok"])
         x.assert_called_once_with(5)
 
-    def test_CHO_CHAM_TRA_DANH_SACH(self) -> None:
-        with mock.patch.object(self.dn, "cho_cham", return_value=[{"id": 1, "ten": "x"}]):
+    def test_CHO_CHAM_TRA_DANH_SACH_KEM_GIAI_THICH(self) -> None:
+        """Chủ máy chê giải thích sơ sài — `giai_thich` đã có, chỉ chưa được
+        endpoint gọi. Đo lại đúng chỗ đó."""
+        with mock.patch.object(self.dn, "cho_cham", return_value=[{"id": 1, "ten": "x"}]), \
+             mock.patch.object(self.dn, "giai_thich", return_value="lý do thật") as gt:
             d = self.client.get("/api/hoc-hoi/du-doan/cho-cham").json()
-        self.assertEqual(d["danh_sach"], [{"id": 1, "ten": "x"}])
+        self.assertEqual(d["danh_sach"], [{"id": 1, "ten": "x", "giai_thich": "lý do thật"}])
+        gt.assert_called_once_with(1)
+
+
+class SuaDieuKienEndpointTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client, self._bo_qua = _app()
+        self.addCleanup(self._bo_qua.stop)
+
+    def test_TRUE_TRA_OK(self) -> None:
+        with mock.patch("services.hieu_thiet_bi_nha.sua_dieu_kien_ket_luan", return_value=True) as s:
+            d = self.client.post("/api/hoc-hoi/ket-luan/sua-dieu-kien",
+                                 json={"khoa": "switch.x", "dieu_kien": ["buoi", "mua"]}).json()
+        self.assertTrue(d["ok"])
+        s.assert_called_once_with("switch.x", ["buoi", "mua"])
+
+    def test_CHUOI_LOI_TRA_KHONG_OK_KEM_LY_DO(self) -> None:
+        with mock.patch("services.hieu_thiet_bi_nha.sua_dieu_kien_ket_luan",
+                        return_value="Khoá không có trong thực đơn."):
+            d = self.client.post("/api/hoc-hoi/ket-luan/sua-dieu-kien",
+                                 json={"khoa": "switch.x", "dieu_kien": ["bia"]}).json()
+        self.assertFalse(d["ok"])
+        self.assertIn("thực đơn", d["error"])
+
+
+class DieuKienMenuEndpointTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client, self._bo_qua = _app()
+        self.addCleanup(self._bo_qua.stop)
+
+    def test_TRA_THUC_DON_TU_HO_SO(self) -> None:
+        hs = {"thuc_don_dieu_kien": [{"khoa": "buoi", "ten": "buổi"}]}
+        with mock.patch("services.hieu_thiet_bi_nha.ho_so", return_value=hs):
+            d = self.client.get("/api/hoc-hoi/dieu-kien-menu").json()
+        self.assertEqual(d["danh_sach"], [{"khoa": "buoi", "ten": "buổi"}])
+
+
+class PhanTichThietBiEndpointTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client, self._bo_qua = _app()
+        self.addCleanup(self._bo_qua.stop)
+
+    def test_THIEU_MA_TU_CHOI(self) -> None:
+        d = self.client.post("/api/hoc-hoi/phan-tich-thiet-bi", json={}).json()
+        self.assertFalse(d["ok"])
+
+    def test_CO_LOI_TRA_KHONG_OK(self) -> None:
+        with mock.patch("services.hieu_thiet_bi_nha.giai_mot_thiet_bi",
+                        return_value={"loi": "không thấy mã"}):
+            d = self.client.post("/api/hoc-hoi/phan-tich-thiet-bi", json={"ma": "x"}).json()
+        self.assertFalse(d["ok"])
+        self.assertEqual(d["error"], "không thấy mã")
+
+    def test_THANH_CONG_TRA_OK(self) -> None:
+        with mock.patch("services.hieu_thiet_bi_nha.giai_mot_thiet_bi",
+                        return_value={"loi": "", "moi": 2}):
+            d = self.client.post("/api/hoc-hoi/phan-tich-thiet-bi", json={"ma": "switch.x"}).json()
+        self.assertTrue(d["ok"])
+        self.assertEqual(d["moi"], 2)
+
+
+class ThietBiDayDuEndpointTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client, self._bo_qua = _app()
+        self.addCleanup(self._bo_qua.stop)
+
+    def test_HOP_NHAT_BA_NGUON_VA_GAN_TEN_DA_BIET(self) -> None:
+        with mock.patch("services.so_ten_nha.danh_sach", return_value=[
+                {"khoa": "ha:thiet_bi#light.bep", "ten": "Đèn bếp", "khu_vuc": "Bếp"}]), \
+             mock.patch("services.ha_client.get_states", return_value=[
+                {"entity_id": "light.bep", "attributes": {"friendly_name": "light.bep"}}]), \
+             mock.patch("services.ha_client.get_ha_area_index",
+                        return_value={"entity_area": {"light.bep": "Bếp"}}), \
+             mock.patch("services.mqtt_nha.danh_sach_thiet_bi", return_value=[{"ten": "Quạt"}]), \
+             mock.patch("services.tuya_nha.danh_sach_thiet_bi", return_value=[{"id": "tuya1", "ten": "Ổ cắm"}]):
+            d = self.client.get("/api/hoc-hoi/thiet-bi-day-du").json()
+        self.assertTrue(d["ok"])
+        theo_nguon = {x["nguon"] for x in d["danh_sach"]}
+        self.assertEqual(theo_nguon, {"ha", "mqtt", "tuya"})
+        ha_row = next(x for x in d["danh_sach"] if x["nguon"] == "ha")
+        self.assertEqual(ha_row["ten"], "Đèn bếp")
+        self.assertEqual(ha_row["khu_vuc"], "Bếp")
+
+    def test_MOT_NGUON_LOI_KHONG_CHAN_NGUON_KHAC(self) -> None:
+        with mock.patch("services.so_ten_nha.danh_sach", return_value=[]), \
+             mock.patch("services.ha_client.get_states", side_effect=RuntimeError("HA hỏng")), \
+             mock.patch("services.mqtt_nha.danh_sach_thiet_bi", return_value=[{"ten": "Quạt"}]), \
+             mock.patch("services.tuya_nha.danh_sach_thiet_bi", side_effect=RuntimeError("Tuya hỏng")):
+            d = self.client.get("/api/hoc-hoi/thiet-bi-day-du").json()
+        self.assertTrue(d["ok"])
+        self.assertEqual([x["nguon"] for x in d["danh_sach"]], ["mqtt"])
+
+
+class TinhHuongSuaEndpointTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client, self._bo_qua = _app()
+        self.addCleanup(self._bo_qua.stop)
+
+    def test_GOI_DUNG_THAM_SO(self) -> None:
+        with mock.patch("services.tinh_huong_nha.sua", return_value=True) as s:
+            d = self.client.post("/api/hoc-hoi/tinh-huong/sua",
+                                 json={"id": 3, "gio": 20.5, "phut": 10, "thu": 2}).json()
+        self.assertTrue(d["ok"])
+        s.assert_called_once_with(3, gio=20.5, lech_phut=10, thu=2)
+
+    def test_THIEU_ID_TU_CHOI(self) -> None:
+        d = self.client.post("/api/hoc-hoi/tinh-huong/sua", json={"gio": 8}).json()
+        self.assertFalse(d["ok"])
 
 
 if __name__ == "__main__":

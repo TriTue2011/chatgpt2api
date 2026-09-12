@@ -617,6 +617,30 @@ def giai(hs: dict[str, Any]) -> dict[str, Any]:
             "bo_sot": bo_sot, "loai_bo": loai_bo, "loi": loi}
 
 
+def giai_mot_thiet_bi(ma: str) -> dict[str, Any]:
+    """Chủ máy chỉ đích danh MỘT mã bot bỏ sót → giải ngay, không đợi heartbeat.
+
+    Không viết lại bộ giải: chỉ thu hẹp đầu vào của `ho_so()` xuống còn mã đó
+    (cộng những mã đổi CÙNG LÚC với nó — `doi_cung_luc`, để bot vẫn thấy đủ dữ
+    kiện trả lời câu "cùng thiết bị") rồi gọi `giai()` như thường. Trả rỗng với
+    `loi` nếu không tìm thấy mã trong hồ sơ (đo chưa đủ lịch sử, hoặc mã sai).
+    """
+    hs = ho_so()
+    if not hs or not hs.get("thiet_bi"):
+        return {"loi": "chưa đo được hồ sơ nào (HA chưa trả sổ dịch vụ, hoặc chưa có lịch sử)"}
+    ca = [x for x in hs["thiet_bi"] if x["ma"] == ma]
+    if not ca:
+        return {"loi": f"không thấy mã '{ma}' trong hồ sơ đo được"}
+    lien_quan = {c["ma"] for x in ca for c in x.get("doi_cung_luc") or []}
+    con = [x for x in hs["thiet_bi"] if x["ma"] == ma or x["ma"] in lien_quan]
+    kq = giai({**hs, "thiet_bi": con})
+    if not kq["loi"]:
+        ghi = ghi_ket_qua(kq["lan_giai"], kq["nhom"])
+        kq["moi"] = len(ghi["moi"])
+        kq["lap_lai"] = len(ghi["lap_lai"])
+    return kq
+
+
 # ── Sổ kết luận ─────────────────────────────────────────────────────────────
 def _cau_hoi(g: dict[str, Any]) -> list[tuple[str, str, dict[str, Any]]]:
     """Một nhóm bot trả → các câu được chấm riêng: (loại, khoá, giá trị).
@@ -756,6 +780,65 @@ def xoa_ket_luan(id_: int) -> bool:
     return n > 0
 
 
+def sua_dieu_kien_ket_luan(khoa_hoc: str, dieu_kien_moi: list[str]) -> bool | str:
+    """Chủ máy sửa TRỰC TIẾP điều kiện của một thiết bị đã học — trên sơ đồ
+    kích hoạt hoặc trong "Bot hiểu thiết bị", trước hay sau khi chấm đều được.
+
+    Có dòng 'dieu_kien' cho `khoa_hoc` (bất kể đang cho/dung/sai) thì SỬA đè;
+    chưa có (bot chưa từng đề xuất điều kiện cho thiết bị này) thì THÊM MỚI,
+    coi như chủ máy vừa dạy — ``ket_qua='dung', cham_boi='chu_may'`` ngay,
+    khỏi phải tự chấm lại cái mình vừa gõ.
+
+    Trả ``True`` khi sửa xong, hoặc một câu tiếng Việt giải thích lý do từ
+    chối (khoá lạ / rỗng / quá 5 điều kiện) — KHÔNG tin dữ liệu từ web, kiểm
+    lại đúng luật đã áp cho bot trong `_kiem`."""
+    khoa_hoc = (khoa_hoc or "").strip()
+    if not khoa_hoc:
+        return "Thiếu mã thiết bị."
+    ds = sorted({str(k).strip() for k in (dieu_kien_moi or []) if str(k).strip()})
+    if not ds:
+        return "Thiếu điều kiện — xoá hẳn kết luận thì dùng nút Xoá."
+    if len(ds) > _TOI_DA_DIEU_KIEN:
+        return f"Tối đa {_TOI_DA_DIEU_KIEN} điều kiện cho một thiết bị."
+    if ds == [f"bat_{khoa_hoc}"] or khoa_hoc in ds:
+        return "Không được lấy chính thiết bị đang học làm điều kiện của nó."
+    # Thực đơn ĐẦY ĐỦ (điều kiện môi trường + `bat_<mã>` thiết bị khác) — cùng
+    # nguồn bot đã dùng khi tự đề xuất, xem `ho_so()`. Chỉ gọi
+    # `boi_canh_nha.thuc_don_dieu_kien()` sẽ bỏ sót mọi khoá `bat_<mã>`.
+    hs = ho_so()
+    thuc_don = {str(m.get("khoa")) for m in (hs.get("thuc_don_dieu_kien") or [])}
+    la = [k for k in ds if k not in thuc_don]
+    if la:
+        return f"Khoá không có trong thực đơn điều kiện hiện tại: {', '.join(la)}."
+    gia_tri = json.dumps({"dieu_kien": ds}, ensure_ascii=False)
+    with _khoa:
+        conn = _db()
+        r = conn.execute(
+            "SELECT id, ket_qua FROM quyet_dinh"
+            " WHERE loai_cau_hoi='dieu_kien' AND khoa=? AND hieu_luc=1",
+            (khoa_hoc,)).fetchone()
+        if r:
+            if r["ket_qua"] == "cho":
+                conn.execute("UPDATE quyet_dinh SET gia_tri=? WHERE id=?",
+                             (gia_tri, int(r["id"])))
+            else:
+                conn.execute(
+                    "UPDATE quyet_dinh SET gia_tri=?, ket_qua='dung',"
+                    " cham_boi='chu_may', cham_luc=? WHERE id=?",
+                    (gia_tri, time.time(), int(r["id"])))
+        else:
+            lan = conn.execute("SELECT MAX(id) FROM lan_giai").fetchone()[0] or 0
+            conn.execute(
+                "INSERT INTO quyet_dinh (lan_giai, ts, loai_cau_hoi, khoa,"
+                " gia_tri, nhom, ket_qua, cham_boi, cham_luc)"
+                " VALUES (?,?,'dieu_kien',?,?,?,?,?,?)",
+                (int(lan), time.time(), khoa_hoc, gia_tri, "{}",
+                 "dung", "chu_may", time.time()))
+        conn.commit()
+    logger.info({"event": "hieu_sua_dieu_kien", "khoa": khoa_hoc, "dieu_kien": ds})
+    return True
+
+
 def xoa_du_kien(id_: int) -> bool:
     """Xoá một dữ kiện chủ máy đã dạy. Trả False nếu không có dòng đó."""
     with _khoa:
@@ -823,8 +906,12 @@ def so_do_kich_hoat() -> list[dict[str, Any]]:
       khác cùng nhóm vật lý;
     - điều kiện: lux / nhiệt độ / có người / buổi / mùa… (các khoá còn lại).
     Chỉ vẽ thứ bot đã kết luận (bỏ câu bị chấm sai), khớp `dieu_kien_hoc`.
+
+    Mỗi mục điều kiện/ngoại vi kèm số đo THẬT (`do`) — mấy % lần bật rơi vào
+    nhãn hay gặp nhất, xem `du_doan_nha.dem_dieu_kien_thiet_bi` — để chủ máy
+    biết điều kiện đó có đáng tin hay không trước khi sửa, không chỉ thấy tên.
     """
-    from services import boi_canh_nha
+    from services import boi_canh_nha, du_doan_nha
     ten = _ten_ha()
     dk = dieu_kien_hoc()
     thanh_vien: dict[str, list[str]] = {}
@@ -834,20 +921,26 @@ def so_do_kich_hoat() -> list[dict[str, Any]]:
             thanh_vien[d["khoa"]] = sorted(d["nhom"].get("ma") or [])
     ra: list[dict[str, Any]] = []
     for khoa in thiet_bi_hoc():
-        ngoai_vi: list[str] = []
-        dieu_kien: list[str] = []
-        for k in dk.get(khoa, []):
+        khoa_dieu_kien = list(dk.get(khoa, []))
+        do_dem = du_doan_nha.dem_dieu_kien_thiet_bi(khoa, khoa_dieu_kien)
+        ngoai_vi: list[dict[str, Any]] = []
+        dieu_kien: list[dict[str, Any]] = []
+        da_them: set[str] = set()
+        for k in khoa_dieu_kien:
+            do = do_dem.get(k) or {"nhan_hay_gap": "", "ty_le": 0.0, "mau": 0}
             if k.startswith("bat_"):
                 nv = _nhan(k[len("bat_"):], ten)
-                if nv not in ngoai_vi:
-                    ngoai_vi.append(nv)
+                if nv not in da_them:
+                    da_them.add(nv)
+                    ngoai_vi.append({"khoa": k, "ten": nv, "do": do})
             else:
-                dieu_kien.append(boi_canh_nha.ten_dieu_kien(k))
+                dieu_kien.append({"khoa": k, "ten": boi_canh_nha.ten_dieu_kien(k), "do": do})
         for m in thanh_vien.get(khoa, []):
             if m != khoa:
                 nv = _nhan(m, ten)
-                if nv not in ngoai_vi:
-                    ngoai_vi.append(nv)
+                if nv not in da_them:
+                    da_them.add(nv)
+                    ngoai_vi.append({"khoa": "", "ten": nv, "do": None})
         ra.append({"khoa": khoa, "nhan_to_chinh": _nhan(khoa, ten),
                    "ngoai_vi": ngoai_vi, "dieu_kien": dieu_kien})
     return ra

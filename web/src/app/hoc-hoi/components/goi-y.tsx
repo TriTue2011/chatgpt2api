@@ -6,18 +6,23 @@ import { LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { httpRequest } from "@/lib/request";
 import { layGet, goiPost } from "./lib";
+import { SuaDieuKien } from "./sua-dieu-kien";
 
 /** Bản xem trước — bot đang nghĩ gì NGAY LÚC NÀY, chưa ghi, chưa có id. */
 type XemTruoc = { ten: string; p: number; cach: string; ly_do?: string };
 /** Gợi ý ĐÃ GỬI, còn chờ chấm — có id thật, chấm/xoá được. */
-type ChoCham = { id: number; ten: string; hanh_dong: string; p: number };
-type ThongKeRow = { ten: string; dung: number; sai: number; diem: number; cap: number; con_thieu_luot: number };
+type ChoCham = { id: number; ten: string; hanh_dong: string; p: number; giai_thich?: string };
+type ThongKeRow = {
+  ten: string; dung: number; sai: number; diem: number; cap: number;
+  con_thieu_luot: number; sai_gan_day: number;
+};
 
 export function GoiY() {
   const [xemTruoc, setXemTruoc] = useState<XemTruoc[]>([]);
   const [choCham, setChoCham] = useState<ChoCham[]>([]);
   const [thongKe, setThongKe] = useState<ThongKeRow[]>([]);
   const [dangTai, setDangTai] = useState(false);
+  const [dangSua, setDangSua] = useState<string | null>(null);
 
   const tai = useCallback(async () => {
     setDangTai(true);
@@ -63,13 +68,23 @@ export function GoiY() {
                 <span className="font-medium">{n.ten}</span>
                 <span className="text-muted-foreground">{n.hanh_dong} · {(n.p * 100).toFixed(0)}%</span>
               </div>
-              <div className="mt-1 flex gap-1">
+              {n.giai_thich ? (
+                <p className="mt-0.5 whitespace-pre-line text-muted-foreground">{n.giai_thich}</p>
+              ) : null}
+              <div className="mt-1 flex flex-wrap gap-1">
                 <Button variant="outline" size="sm" className="h-7" onClick={() => void cham(n.id, true)}>Đúng</Button>
                 <Button variant="outline" size="sm" className="h-7" onClick={() => void cham(n.id, false)}>Sai</Button>
+                <Button variant="outline" size="sm" className="h-7"
+                  onClick={() => setDangSua(dangSua === n.ten ? null : n.ten)}>
+                  Sửa điều kiện
+                </Button>
                 <Button variant="ghost" size="sm" className="h-7 text-destructive" onClick={() => void xoa(n.id)}>
                   <Trash2 className="size-3.5" />
                 </Button>
               </div>
+              {dangSua === n.ten ? (
+                <SuaDieuKien khoa={n.ten} onXong={() => { setDangSua(null); void tai(); }} />
+              ) : null}
             </div>
           ))}
           {!choCham.length && !dangTai ? (
@@ -116,7 +131,11 @@ export function GoiY() {
                   <td className="px-2 py-1 text-right">{t.dung}/{t.sai}</td>
                   <td className="px-2 py-1 text-right">{(t.diem * 100).toFixed(0)}%</td>
                   <td className="px-2 py-1 text-right">
-                    {t.cap >= 2 ? <span className="text-green-600">tự làm</span> : <span className="text-muted-foreground">gợi ý</span>}
+                    {t.cap >= 2 ? (
+                      <span className="text-green-600">tự làm — {t.sai_gan_day} sai/10 lượt gần nhất</span>
+                    ) : (
+                      <span className="text-muted-foreground">gợi ý</span>
+                    )}
                   </td>
                 </tr>
               ))}

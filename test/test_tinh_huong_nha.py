@@ -248,6 +248,60 @@ class TinhHuongTest(unittest.TestCase):
                                side_effect=RuntimeError("DB hỏng")):
             self.assertEqual(self.m.gom_cua_so(), [])
 
+    # ── Tự thêm tay (tab Học hỏi) ────────────────────────────────────────────
+    def test_THEM_TAY_VAO_THANG_DA_DUYET_NGAY(self) -> None:
+        i = self.m.them_tay("ăn tối", 19.5, lech_phut=20, thu=-1)
+        self.assertTrue(i)
+        d = next(x for x in self.m.danh_sach() if x["id"] == i)
+        self.assertEqual(d["trang_thai"], "da_duyet")
+        self.assertEqual(d["gio"], "19h30")
+        self.assertEqual(d["lech_phut"], 20)
+
+    def test_THEM_TAY_THIEU_TEN_TRA_0(self) -> None:
+        self.assertEqual(self.m.them_tay("", 19), 0)
+
+    def test_THEM_TAY_GIO_NGOAI_0_24_TRA_0(self) -> None:
+        self.assertEqual(self.m.them_tay("x", 24), 0)
+        self.assertEqual(self.m.them_tay("x", -1), 0)
+
+    def test_THEM_TAY_TRUNG_TEN_VA_THU_TRA_0(self) -> None:
+        self.assertTrue(self.m.them_tay("ăn tối", 19, thu=-1))
+        self.assertEqual(self.m.them_tay("ăn tối", 20, thu=-1), 0)
+
+    # ── Sửa đầy đủ (không chỉ đổi tên) ───────────────────────────────────────
+    def test_SUA_DOI_GIO_VA_LECH_VA_THU(self) -> None:
+        i = self.m.them_tay("ăn tối", 19, thu=-1)
+        self.assertTrue(self.m.sua(i, gio=20.5, lech_phut=10, thu=3))
+        d = next(x for x in self.m.danh_sach() if x["id"] == i)
+        self.assertEqual(d["gio"], "20h30")
+        self.assertEqual(d["lech_phut"], 10)
+        r = self.m._db().execute("SELECT thu FROM tinh_huong WHERE id=?", (i,)).fetchone()
+        self.assertEqual(r["thu"], 3)
+
+    def test_SUA_CHI_TRUYEN_MOT_TRUONG_KHONG_DUNG_TRUONG_KHAC(self) -> None:
+        i = self.m.them_tay("ăn tối", 19, lech_phut=15, thu=-1)
+        self.assertTrue(self.m.sua(i, gio=21))
+        d = next(x for x in self.m.danh_sach() if x["id"] == i)
+        self.assertEqual(d["gio"], "21h00")
+        self.assertEqual(d["lech_phut"], 15, "không truyền lech_phut thì giữ nguyên")
+
+    def test_SUA_DUOC_CA_DONG_CHUA_DUYET(self) -> None:
+        i = self.m.luu_cho_duyet(self._uv(), "ứng viên")
+        self.assertTrue(self.m.sua(i, gio=8.0))
+        d = next(x for x in self.m.danh_sach() if x["id"] == i)
+        self.assertEqual(d["trang_thai"], "cho_duyet", "sửa không tự duyệt")
+
+    def test_SUA_KHONG_TON_TAI_TRA_FALSE(self) -> None:
+        self.assertFalse(self.m.sua(999999, gio=8.0))
+
+    def test_SUA_GIO_NGOAI_0_24_TRA_FALSE(self) -> None:
+        i = self.m.them_tay("x", 19)
+        self.assertFalse(self.m.sua(i, gio=25))
+
+    def test_SUA_KHONG_TRUYEN_GI_TRA_FALSE(self) -> None:
+        i = self.m.them_tay("x", 19)
+        self.assertFalse(self.m.sua(i))
+
 
 if __name__ == "__main__":
     unittest.main()
