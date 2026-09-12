@@ -88,27 +88,64 @@ async def tich_o_recaptcha(page, cho_giay: float = 6.0) -> bool:
     KHÔNG hứa giải xong captcha: Google thường bung tiếp thử thách sau cú bấm.
     Hàm này chỉ lo đúng cú tích; phần sau để caller quyết.
     """
-    khung = page.frame_locator('iframe[src*="api2/anchor"]')
-    bam_duoc = False
-    for sel in ("#recaptcha-anchor", '[role="checkbox"]'):
-        try:
-            await khung.locator(sel).first.click(timeout=3000, force=True)
-            bam_duoc = True
-            break
-        except Exception:
-            continue
-    if not bam_duoc:
-        return False
+    # GHI LẠI ĐỦ ĐỂ CHẨN ĐOÁN. Bản đầu chỉ trả True/False và không log gì, nên
+    # mọi kiểu hỏng trông y hệt nhau — đo 12/09/2026 lượt 20:46:57: hàm bỏ cuộc
+    # sau 2,8 giây, và con số đó KHÔNG phân biệt được "không tìm thấy khung"
+    # với "bấm rồi mà ô không đổi trạng thái". Thiếu dấu vết là tự bịt mắt.
+    khung_recaptcha = [f for f in page.frames if "/recaptcha/" in (f.url or "")]
+    anchor = next((f for f in khung_recaptcha
+                   if "api2/anchor" in (f.url or "")), None)
+    logger.info(
+        "tich_o_recaptcha: tong %d frame, %d frame recaptcha, anchor=%s",
+        len(page.frames), len(khung_recaptcha), "co" if anchor else "KHONG",
+    )
 
+    async def _bam() -> str:
+        """Trả tên đường đã bấm được, hoặc "" nếu không đường nào chạm tới ô.
+
+        HAI cơ chế độc lập: duyệt `page.frames` theo URL (đúng cách
+        playwright_recaptcha làm, đi xuyên khung lồng nhau), và `frame_locator`
+        theo bộ chọn CSS ở cấp trên cùng. Một cái trượt thì cái kia gánh, và
+        log nói rõ cái nào đã chạy.
+        """
+        if anchor is not None:
+            for sel in ("#recaptcha-anchor", '[role="checkbox"]'):
+                try:
+                    await anchor.locator(sel).first.click(timeout=3000, force=True)
+                    return f"frames:{sel}"
+                except Exception:
+                    continue
+        khung = page.frame_locator('iframe[src*="api2/anchor"]')
+        for sel in ("#recaptcha-anchor", '[role="checkbox"]'):
+            try:
+                await khung.locator(sel).first.click(timeout=3000, force=True)
+                return f"frame_locator:{sel}"
+            except Exception:
+                continue
+        return ""
+
+    duong = await _bam()
+    if not duong:
+        logger.info("tich_o_recaptcha: KHONG bam duoc o (ca hai duong deu truot)")
+        return False
+    logger.info("tich_o_recaptcha: da bam qua duong %s", duong)
+
+    doc_cuoi = None
     het = time.time() + cho_giay
     while time.time() < het:
         try:
-            if await khung.locator("#recaptcha-anchor").first.get_attribute(
-                    "aria-checked") == "true":
+            nguon = anchor if anchor is not None else page.frame_locator(
+                'iframe[src*="api2/anchor"]')
+            doc_cuoi = await nguon.locator("#recaptcha-anchor").first.get_attribute(
+                "aria-checked")
+            if doc_cuoi == "true":
+                logger.info("tich_o_recaptcha: o DA TICH")
                 return True
-        except Exception:
-            pass
+        except Exception as exc:
+            doc_cuoi = f"loi:{type(exc).__name__}"
         await page.wait_for_timeout(500)
+    logger.info("tich_o_recaptcha: bam roi nhung o khong doi trang thai "
+                "(aria-checked doc duoc lan cuoi: %r)", doc_cuoi)
     return False
 
 
