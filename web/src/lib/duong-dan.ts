@@ -45,11 +45,29 @@ export function cungDuong(a: string | null | undefined, b: string | null | undef
  * trong nhịp người dùng bấm; gọi sau `await` là bị chặn pop-up. Nên mở tab
  * trắng trước, xin vé xong mới trỏ nó tới đích.
  *
- * @param dacTa tuỳ chọn cho `window.open` (ví dụ `"noopener,width=1024,height=720"`).
+ * @param dacTa tuỳ chọn cho `window.open` (ví dụ `"width=1024,height=720"`).
  * @returns cửa sổ vừa mở, hoặc `null` nếu trình duyệt chặn.
  */
 export async function moNoVNC(dacTa?: string): Promise<Window | null> {
-  const tab = window.open("about:blank", "_blank", dacTa);
+  // `noopener` (và `noreferrer`) trong chuỗi tuỳ chọn làm `window.open` TRẢ VỀ
+  // `null` — chuẩn HTML cắt liên kết tới cửa sổ con. Hàm này mở `about:blank`
+  // TRƯỚC rồi mới trỏ nó tới đích bằng chính giá trị trả về ấy, nên nhận `null`
+  // là cửa sổ vừa mở nằm trắng vĩnh viễn, nhánh dự phòng lại cuốn luôn trang
+  // hiện tại đi, và `vncWin.close()` ở nơi gọi cũng không bao giờ chạy.
+  //
+  // Đo 12/09/2026: 8/17 nơi gọi truyền `noopener` — tất cả đều trắng; 9 nơi
+  // không truyền — đều chạy. Chủ máy xác nhận đúng ranh giới đó: "Mở noVNC"
+  // (không tham số) chạy tốt, "Chỉ đăng nhập" (có `noopener`) thì trắng.
+  //
+  // Lọc ở ĐÂY, một chỗ, thay vì sửa 8 nơi gọi rồi nơi thứ 9 lại tái phạm.
+  // Không mất gì về an toàn: trang mở ra là trang CÙNG GỐC của chính mình,
+  // `noopener` sinh ra để cách ly trang lạ.
+  const dacTaSach = (dacTa || "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter((x) => x && x !== "noopener" && x !== "noreferrer")
+    .join(",");
+  const tab = window.open("about:blank", "_blank", dacTaSach || undefined);
   try {
     const { request } = await import("@/lib/request");
     const res = await request.post("/api/novnc/ve");
