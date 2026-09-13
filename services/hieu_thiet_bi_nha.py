@@ -109,11 +109,12 @@ _LOAI_DOC = {"rac": "đổi đồng loạt, không phải người bật",
 
 #: Loại câu hỏi được chấm và lên cấp RIÊNG: bot giỏi nhận ra thiết bị trùng
 #: chưa chắc đã giỏi chọn nguồn nhanh, càng chưa chắc giỏi chọn điều kiện.
-LOAI_CAU_HOI = ("cung_thiet_bi", "nguon_nhanh", "hoc", "dieu_kien", "ngoai_vi")
+LOAI_CAU_HOI = ("cung_thiet_bi", "nguon_nhanh", "hoc", "dieu_kien", "ngoai_vi", "thoi_quen")
 
 #: Các loại câu do LƯỢT HIỂU THIẾT BỊ (`giai`) sinh ra. `ghi_ket_qua` chỉ được vô
-#: hiệu những loại này khi một mã đổi nhóm; câu `ngoai_vi` do tầng thói quen
-#: (`services/thoi_quen_nha.py`) sinh ra, lượt hằng ngày ở đây không được xoá nó.
+#: hiệu những loại này khi một mã đổi nhóm; câu `ngoai_vi` và `thoi_quen` do tầng
+#: thói quen (`services/thoi_quen_nha.py`) sinh ra, lượt hằng ngày ở đây không được
+#: xoá chúng.
 _LOAI_CUA_LUOT_HIEU = ("cung_thiet_bi", "nguon_nhanh", "hoc", "dieu_kien")
 
 #: Một thiết bị học theo tối đa ngần này điều kiện. Naive Bayes cộng các điều
@@ -778,6 +779,30 @@ def ghi_ngoai_vi(lan: int, ket_luan: list[dict[str, Any]]) -> dict[str, list[dic
     return {"moi": moi, "lap_lai": lap_lai}
 
 
+def ghi_thoi_quen(lan: int, ket_luan: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Lưu kết luận ĐỌC THÓI QUEN — mỗi thiết bị một câu `thoi_quen`.
+
+    Mỗi mục đã kiểm ở biên trong `thoi_quen_nha.kiem_thoi_quen`. `gia_tri` chỉ
+    mang ĐIỀU KIỆN (thứ tầng xác suất sẽ dùng); lời văn thói quen nằm ở `nhom`,
+    để bot viết lại câu chữ khác đi mà điều kiện y hệt thì không thành câu hỏi
+    mới. `doc_luc` cho `thoi_quen_nha._can_doc_lai` biết lần đọc gần nhất.
+    """
+    now = time.time()
+    moi: list[dict[str, Any]] = []
+    lap_lai: list[dict[str, Any]] = []
+    with _khoa:
+        conn = _db()
+        for k in ket_luan:
+            g = {"ma": [k["ma_hoc"]], "ma_hoc": k["ma_hoc"], "chac": k["chac"],
+                 "vi_sao": k["vi_sao"], "thoi_quen_bat": k["bat"]["thoi_quen"],
+                 "thoi_quen_tat": k["tat"]["thoi_quen"], "ngoai_vi": k["ngoai_vi"],
+                 "ten_ngoai_vi": k.get("ten_ngoai_vi") or {}, "doc_luc": now}
+            gt = {"bat": k["bat"]["dieu_kien"], "tat": k["tat"]["dieu_kien"]}
+            _ghi_mot_cau(conn, lan, now, "thoi_quen", k["ma_hoc"], gt, g, moi, lap_lai)
+        conn.commit()
+    return {"moi": moi, "lap_lai": lap_lai}
+
+
 def ngoai_vi_hoc() -> dict[str, dict[str, Any]]:
     """Ngoại vi bot chọn cho từng mã được học — bỏ kết luận bị chấm sai."""
     hoc = set(thiet_bi_hoc())
@@ -1155,10 +1180,34 @@ def _cau_doc(d: dict[str, Any], ten: dict[str, str]) -> str:
               for x in gt.get("ngoai_vi") or []]
         return (f"{_nhan(d['khoa'], ten)} ở {kv}, đi theo: "
                 + (", ".join(ds) if ds else "chưa có ngoại vi nào"))
+    if d["loai_cau_hoi"] == "thoi_quen":
+        phan = []
+        for chieu, chu in (("bat", "bật"), ("tat", "tắt")):
+            ds = gt.get(chieu) or []
+            gio = [f"{x['tu']}–{x['den']}" for x in ds if x["ma"] == "gio"]
+            dk = ([f"trong {' hoặc '.join(gio)}"] if gio else []) + [
+                _dieu_kien_doc(x, g.get("ten_ngoai_vi") or {}, ten) for x in ds if x["ma"] != "gio"]
+            loi = g.get(f"thoi_quen_{chieu}") or ""
+            phan.append(f"{chu}: {loi}" + (f" (khi {', '.join(dk)})" if dk else " (không điều kiện)"))
+        return f"{_nhan(d['khoa'], ten)} — " + "; ".join(phan)
     if gt.get("hoc"):
         return f"Học thói quen {_nhan(d['khoa'], ten)}"
     return (f"Không học {_nhan(d['khoa'], ten)} "
             f"({_LOAI_DOC.get(gt.get('loai'), 'chưa rõ là gì')})")
+
+
+def _dieu_kien_doc(x: dict[str, Any], ten_nv: dict[str, str], ten: dict[str, str]) -> str:
+    """Một điều kiện thói quen thành chữ người đọc: "Hiện diện bếp là on"."""
+    if x["ma"] == "ngay":
+        return "ngày thường" if x["la"] == "thuong" else "cuối tuần"
+    if x["ma"] == "mua":
+        return {"lanh": "mùa lạnh", "chuyen": "lúc chuyển mùa"}.get(x["la"], "mùa nóng")
+    nhan = ten_nv.get(x["ma"]) or _nhan(x["ma"], ten)
+    if "duoi" in x:
+        return f"{nhan} dưới {x['duoi']:g}"
+    if "tren" in x:
+        return f"{nhan} trên {x['tren']:g}"
+    return f"{nhan} là {x.get('la')}"
 
 
 def _ten_ha() -> dict[str, str]:

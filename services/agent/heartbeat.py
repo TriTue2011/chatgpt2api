@@ -574,7 +574,8 @@ def _eval_hieu_thiet_bi_nha() -> tuple[str, str]:
 
 
 def _eval_thoi_quen_nha() -> tuple[str, str]:
-    """Bot học hỏi chọn ngoại vi theo khu vực — services.thoi_quen_nha.
+    """Bot học hỏi chọn ngoại vi theo khu vực, rồi đọc thói quen bật/tắt —
+    services.thoi_quen_nha.
 
     Mỗi ngày một lần, và CHỈ SAU khi lượt hiểu thiết bị hôm nay đã xong: tầng
     này đọc "thiết bị nào được học" từ kết luận của lượt đó. Dữ kiện mới của
