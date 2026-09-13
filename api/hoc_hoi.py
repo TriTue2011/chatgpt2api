@@ -151,7 +151,8 @@ def bo_thiet_bi(muc: list[dict]) -> dict:
                 _hong("Không thấy thực thể này trong Home Assistant.")
                 continue
             ghi.append({"nguon": "ha", "ma": ma,
-                        "ten_goc": str((st.get("attributes") or {}).get("friendly_name") or ma)})
+                        "ten_goc": str((st.get("attributes") or {}).get("friendly_name") or ma),
+                        "nhom": nhom_ha(ma, st.get("attributes") or {})})
             ma_xoa.append(ma)
         elif nguon == "mqtt":
             tb = mq.get(ma)
@@ -164,7 +165,7 @@ def bo_thiet_bi(muc: list[dict]) -> dict:
                 _hong("Thiết bị này không có gốc chủ đề riêng (chỉ một đoạn) — bỏ theo gốc "
                       "đó sẽ xoá nhầm thiết bị khác.")
                 continue
-            ghi.append({"nguon": "mqtt", "ma": ma, "ten_goc": ma, "goc": goc})
+            ghi.append({"nguon": "mqtt", "ma": ma, "ten_goc": ma, "goc": goc, "nhom": nhom_mqtt(tb)})
             goc_xoa.append(goc)
         else:
             from services import tuya_local
@@ -174,7 +175,7 @@ def bo_thiet_bi(muc: list[dict]) -> dict:
                 continue
             ten_ls = sorted({tuya_local._ten(ma), f"tuya:{ma[:12]}"})
             ghi.append({"nguon": "tuya", "ma": ma, "ten_goc": str(tb.get("ten") or ma),
-                        "ten_lich_su": ten_ls})
+                        "ten_lich_su": ten_ls, "nhom": str(tb.get("loai") or "") or "Khác"})
             ma_xoa += ten_ls
     xoa = {"su_kien": 0, "so_do": 0, "tuoi": 0, "nhip": 0}
     if ghi:
@@ -183,6 +184,40 @@ def bo_thiet_bi(muc: list[dict]) -> dict:
         thiet_bi_bo.bo_nhieu(ghi)
         xoa = lich_su_nha.xoa_thiet_bi(ma_xoa, goc_xoa)
     return {"da_bo": [thiet_bi_bo.khoa(g["nguon"], g["ma"]) for g in ghi], "loi": loi, "xoa": xoa}
+
+
+def _muc_da_bo(da_biet: dict[str, dict]) -> list[dict]:
+    """Mục đã «Bỏ khỏi c2a», chia theo ĐÚNG loại của chúng — chủ máy 13/09/2026:
+    "Khôi phục tôi cũng muốn chia rõ ràng từng mục chứ không gộp toàn bộ".
+
+    Loại lưu lúc bỏ. Mục HA bỏ trước khi sổ lưu loại thì đọc HA một lần để bù,
+    rồi ghi vào sổ để lần sau khỏi đọc; HA không trả lời thì tạm xếp "Khác".
+    """
+    from services import so_ten_nha, thiet_bi_bo
+
+    ds = thiet_bi_bo.danh_sach()
+    thieu = {b["ma"] for b in ds if b["nguon"] == "ha" and not b.get("nhom")}
+    bu: dict[str, str] = {}
+    if thieu:
+        try:
+            from services import ha_client
+            st = ha_client.doc_thuc_the_da_bo(thieu)
+            bu = {thiet_bi_bo.khoa("ha", m): nhom_ha(m, (st[m].get("attributes") or {}))
+                  for m in thieu if m in st}
+            thiet_bi_bo.ghi_nhom(bu)
+        except Exception as exc:
+            logger.warning("hoc-hoi thiet-bi da bo: không bù được loại: %s", exc)
+    ra: list[dict] = []
+    for b in ds:
+        k = so_ten_nha.khoa(b["nguon"], "thiet_bi", b["ma"])
+        m = da_biet.get(k) or {}
+        ra.append({
+            "khoa": k, "nguon": b["nguon"], "loai": "thiet_bi", "ma": b["ma"],
+            "ten_goc": b["ten_goc"], "ten": m.get("ten") or "", "khu_vuc": m.get("khu_vuc") or "",
+            "khu_vuc_goi_y": "", "da_bo": True,
+            "nhom": b.get("nhom") or bu.get(thiet_bi_bo.khoa(b["nguon"], b["ma"])) or "Khác",
+        })
+    return ra
 
 
 def create_router() -> APIRouter:
@@ -453,14 +488,7 @@ def create_router() -> APIRouter:
                 logger.warning("hoc-hoi thiet-bi-day-du (tuya) lỗi: %s", exc)
 
             if kem_da_bo:
-                from services import thiet_bi_bo
-                for b in thiet_bi_bo.danh_sach():
-                    ra.append({
-                        "khoa": so_ten_nha.khoa(b["nguon"], "thiet_bi", b["ma"]),
-                        "nguon": b["nguon"], "loai": "thiet_bi", "ma": b["ma"],
-                        "ten_goc": b["ten_goc"], "ten": "", "khu_vuc": "",
-                        "khu_vuc_goi_y": "", "nhom": "Đã bỏ khỏi c2a", "da_bo": True,
-                    })
+                ra += _muc_da_bo(da_biet)
             ra.sort(key=lambda x: (x["nguon"], x["ten_goc"].lower()))
             return ra
 
@@ -503,6 +531,23 @@ def create_router() -> APIRouter:
         except Exception as exc:
             return _loi(exc, "bỏ nhiều thiết bị")
         return {"ok": True, **kq}
+
+    @router.post("/api/hoc-hoi/thiet-bi/bo-lai-nhieu")
+    async def thiet_bi_bo_lai_nhieu(body: dict, authorization: str | None = Header(default=None)):
+        """Khôi phục NHIỀU mục đã bỏ một lượt. body: {muc: [{nguon, ma}]}.
+        Lịch sử c2a đã xoá lúc bỏ không lấy lại được."""
+        require_admin(authorization)
+        ds = body.get("muc")
+        if (not isinstance(ds, list) or not ds or len(ds) > _TOI_DA_BO_MOT_LUOT
+                or not all(isinstance(x, dict) for x in ds)):
+            return {"ok": False, "error": f"muc phải là danh sách 1–{_TOI_DA_BO_MOT_LUOT} mục {{nguon, ma}}."}
+        try:
+            from services import thiet_bi_bo
+            xong = await asyncio.to_thread(thiet_bi_bo.bo_lai_nhieu, [
+                (str(x.get("nguon") or ""), str(x.get("ma") or "")) for x in ds])
+            return {"ok": True, "khoi_phuc": xong}
+        except Exception as exc:
+            return _loi(exc, "khôi phục nhiều thiết bị")
 
     @router.post("/api/hoc-hoi/thiet-bi/bo-lai")
     async def thiet_bi_bo_lai(body: dict, authorization: str | None = Header(default=None)):

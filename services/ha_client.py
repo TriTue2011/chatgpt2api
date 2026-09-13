@@ -341,6 +341,21 @@ def _an_thuc_the_da_bo(states: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [s for s in states if not thiet_bi_bo.la_bo("ha", str(s.get("entity_id") or ""))]
 
 
+def doc_thuc_the_da_bo(ma: set[str]) -> dict[str, dict[str, Any]]:
+    """Trạng thái của các thực thể chủ máy ĐÃ BỎ — chỉ để trang Thiết bị & tên
+    biết loại của chúng khi khôi phục. `get_states` ẩn chúng, nên đọc thẳng
+    `/api/states` một lần; vẫn ẩn thực thể mang mật khẩu. Không dùng cho bot."""
+    cfg = _get_ha_config()
+    if not cfg or not ma:
+        return {}
+    req = urllib.request.Request(
+        f"{cfg['url']}/api/states",
+        headers={"Authorization": f"Bearer {cfg['token']}", "Content-Type": "application/json"},
+    )
+    data = _an_thuc_the_mang_mat_khau(json.loads(urllib.request.urlopen(req, timeout=15).read()))
+    return {str(s.get("entity_id")): s for s in data if s.get("entity_id") in ma}
+
+
 def get_states(use_cache: bool = True) -> list[dict[str, Any]]:
     """Fetch all entity states from HA. Cache respects configurable TTL.
 

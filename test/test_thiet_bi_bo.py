@@ -67,6 +67,18 @@ class SoBoTest(unittest.TestCase):
         self.assertFalse(self.tb.la_bo("ha", "light.bep"))
         self.assertFalse(self.tb.bo_lai("ha", "light.bep"), "bỏ lại lần hai không có gì để khôi phục")
 
+    def test_KHOI_PHUC_NHIEU_mot_lan_ghi_va_BU_NHOM(self) -> None:
+        self.tb.bo_nhieu([{"nguon": "ha", "ma": f"sensor.x{i}", "nhom": "Pin"} for i in range(5)])
+        self.assertEqual(self.tb.danh_sach()[0]["nhom"], "Pin", "lưu loại lúc bỏ")
+        with mock.patch.object(self.tb, "_luu", wraps=self.tb._luu) as luu:
+            xong = self.tb.bo_lai_nhieu([("ha", "sensor.x0"), ("ha", "sensor.x1"), ("ha", "sensor.x1"),
+                                         ("ha", "sensor.khong_co")])
+        self.assertEqual(xong, ["ha:sensor.x0", "ha:sensor.x1"])
+        self.assertEqual(luu.call_count, 1)
+        self.assertEqual(len(self.tb.danh_sach()), 3)
+        self.tb.ghi_nhom({"ha:sensor.x2": "Điện năng", "ha:khong_co": "X"})
+        self.assertEqual({m["ma"]: m["nhom"] for m in self.tb.danh_sach()}["sensor.x2"], "Điện năng")
+
     def test_MQTT_thieu_goc_thi_khong_ghi(self) -> None:
         with self.assertRaises(ValueError):
             self.tb.bo("mqtt", "Bếp")
@@ -327,6 +339,37 @@ class EndpointTest(unittest.TestCase):
                 self.assertFalse(d["ok"])
                 xoa.assert_not_called()
         self.assertEqual(self.tb.danh_sach(), [])
+
+    def test_DA_BO_chia_theo_DUNG_LOAI_va_BU_LOAI_cho_muc_cu_mot_lan(self) -> None:
+        """Chủ máy 13/09/2026: "Khôi phục tôi cũng muốn chia rõ ràng từng mục"."""
+        st = [{"entity_id": "switch.bom", "attributes": {"friendly_name": "Bơm"}}]
+        with mock.patch("services.ha_client.get_states", return_value=st), \
+             mock.patch("services.lich_su_nha.xoa_thiet_bi",
+                        return_value={"su_kien": 0, "so_do": 0, "tuoi": 0, "nhip": 0}):
+            self.client.post("/api/hoc-hoi/thiet-bi/bo", json={"nguon": "ha", "ma": "switch.bom"})
+        self.tb.bo("ha", "sensor.lux_cu", ten_goc="Lux cũ")          # mục bỏ trước khi lưu loại
+        tho = {"sensor.lux_cu": {"entity_id": "sensor.lux_cu",
+                                 "attributes": {"device_class": "illuminance"}}}
+        with mock.patch("services.ha_client.get_states", return_value=[]), \
+             mock.patch("services.ha_client.get_ha_area_index", return_value={}), \
+             mock.patch("services.mqtt_nha.danh_sach_thiet_bi", return_value=[]), \
+             mock.patch("services.tuya_nha.danh_sach_thiet_bi", return_value=[]), \
+             mock.patch("services.ha_client.doc_thuc_the_da_bo", return_value=tho) as doc:
+            ds1 = self.client.get("/api/hoc-hoi/thiet-bi-day-du?kem_da_bo=1").json()["danh_sach"]
+            ds2 = self.client.get("/api/hoc-hoi/thiet-bi-day-du?kem_da_bo=1").json()["danh_sach"]
+        self.assertEqual({m["ma"]: m["nhom"] for m in ds1},
+                         {"switch.bom": "Công tắc", "sensor.lux_cu": "Cảm biến ánh sáng"})
+        self.assertEqual(ds1, ds2)
+        self.assertEqual(doc.call_count, 1, "bù loại xong ghi vào sổ, lần sau khỏi đọc HA")
+
+    def test_KHOI_PHUC_NHIEU_endpoint(self) -> None:
+        self.tb.bo_nhieu([{"nguon": "ha", "ma": "light.a"}, {"nguon": "tuya", "ma": "t1",
+                                                             "ten_lich_su": ["tuya:t1"]}])
+        d = self.client.post("/api/hoc-hoi/thiet-bi/bo-lai-nhieu", json={"muc": [
+            {"nguon": "ha", "ma": "light.a"}, {"nguon": "tuya", "ma": "t1"}, {"nguon": "ha", "ma": "x"}]}).json()
+        self.assertEqual(sorted(d["khoi_phuc"]), ["ha:light.a", "tuya:t1"])
+        self.assertEqual(self.tb.danh_sach(), [])
+        self.assertFalse(self.client.post("/api/hoc-hoi/thiet-bi/bo-lai-nhieu", json={"muc": []}).json()["ok"])
 
     def test_DANH_SACH_co_nhom_va_KEM_DA_BO_chi_khi_xin(self) -> None:
         self.tb.bo("ha", "light.cu", ten_goc="Đèn cũ")

@@ -119,7 +119,10 @@ def bo_nhieu(ds: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if nguon == "mqtt" and not goc:
             raise ValueError("thiết bị MQTT cần gốc chủ đề để khớp lịch sử")
         muc.append({"nguon": nguon, "ma": ma, "ten_goc": x.get("ten_goc") or ma, "goc": goc,
-                    "ten_lich_su": list(x.get("ten_lich_su") or []), "luc": now})
+                    "ten_lich_su": list(x.get("ten_lich_su") or []), "luc": now,
+                    # Loại (tầng 2) lúc bỏ — thiết bị đã bỏ bị ẩn khỏi mọi đường đọc,
+                    # nên không tính lại được loại để chia nhóm khi khôi phục.
+                    "nhom": str(x.get("nhom") or "")})
     with _khoa:
         so = dict(_nap()["so"])
         for m in muc:
@@ -132,13 +135,33 @@ def bo_nhieu(ds: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def bo_lai(nguon: str, ma: str) -> bool:
     """Khôi phục — thiết bị hiện lại và ghi lịch sử từ giờ (lịch sử cũ đã mất)."""
+    return bool(bo_lai_nhieu([(nguon, ma)]))
+
+
+def bo_lai_nhieu(ds: list[tuple[str, str]]) -> list[str]:
+    """Khôi phục nhiều mục bằng MỘT lần ghi đĩa. Trả khoá đã khôi phục; mục không
+    nằm trong sổ thì bỏ qua."""
     with _khoa:
         so = dict(_nap()["so"])
-        if so.pop(khoa(nguon, ma), None) is None:
-            return False
-        _luu(so)
-    logger.info({"event": "thiet_bi_bo_lai", "nguon": nguon, "ma": ma[:80]})
-    return True
+        xong = [k for k in dict.fromkeys(khoa(n, m) for n, m in ds) if so.pop(k, None) is not None]
+        if xong:
+            _luu(so)
+    if xong:
+        logger.info({"event": "thiet_bi_bo_lai", "so": len(xong), "khoa": [k[:60] for k in xong[:5]]})
+    return xong
+
+
+def ghi_nhom(nhom: dict[str, str]) -> None:
+    """Bù loại cho mục bỏ trước khi sổ lưu loại (một lần ghi)."""
+    with _khoa:
+        so = dict(_nap()["so"])
+        doi = False
+        for k, n in nhom.items():
+            if k in so and n and so[k].get("nhom") != n:
+                so[k] = {**so[k], "nhom": n}
+                doi = True
+        if doi:
+            _luu(so)
 
 
 def danh_sach() -> list[dict[str, Any]]:
