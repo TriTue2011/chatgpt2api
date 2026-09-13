@@ -22,7 +22,6 @@ const TEN_LOAI: Record<string, string> = {
   cung_thiet_bi: "Cùng thiết bị",
   nguon_nhanh: "Nguồn nhanh",
   hoc: "Học thói quen",
-  dieu_kien: "Điều kiện",
   ngoai_vi: "Ngoại vi theo khu vực",
   thoi_quen: "Thói quen bật/tắt",
 };

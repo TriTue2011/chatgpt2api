@@ -108,18 +108,14 @@ _LOAI_DOC = {"rac": "đổi đồng loạt, không phải người bật",
 
 #: Loại câu hỏi được chấm và lên cấp RIÊNG: bot giỏi nhận ra thiết bị trùng
 #: chưa chắc đã giỏi chọn nguồn nhanh, càng chưa chắc giỏi chọn điều kiện.
-LOAI_CAU_HOI = ("cung_thiet_bi", "nguon_nhanh", "hoc", "dieu_kien", "ngoai_vi", "thoi_quen")
+LOAI_CAU_HOI = ("cung_thiet_bi", "nguon_nhanh", "hoc", "ngoai_vi", "thoi_quen")
 
 #: Các loại câu do LƯỢT HIỂU THIẾT BỊ (`giai`) sinh ra. `ghi_ket_qua` chỉ được vô
 #: hiệu những loại này khi một mã đổi nhóm; câu `ngoai_vi` và `thoi_quen` do tầng
 #: thói quen (`services/thoi_quen_nha.py`) sinh ra, lượt hằng ngày ở đây không được
 #: xoá chúng.
-_LOAI_CUA_LUOT_HIEU = ("cung_thiet_bi", "nguon_nhanh", "hoc", "dieu_kien")
+_LOAI_CUA_LUOT_HIEU = ("cung_thiet_bi", "nguon_nhanh", "hoc")
 
-#: Một thiết bị học theo tối đa ngần này điều kiện. Naive Bayes cộng các điều
-#: kiện như thể độc lập; ánh sáng bốn phòng cùng "tối" lúc đêm là MỘT chuyện bị
-#: đếm bốn lần — đó là một nửa lý do gợi ý 11/09/2026 ra "chắc 100%".
-_TOI_DA_DIEU_KIEN = 5
 
 
 def _cfg() -> dict[str, Any]:
@@ -178,6 +174,11 @@ def _db() -> sqlite3.Connection:
                          " DEFAULT 'hieu_thiet_bi'")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_qd_khoa"
                      " ON quyet_dinh(loai_cau_hoi, khoa, hieu_luc)")
+        # Câu `dieu_kien` (khoá phòng gom theo tên) thôi dùng từ 13/09/2026 — tầng
+        # xác suất học theo câu `thoi_quen`. Câu cũ còn hiệu lực thì không còn gì
+        # dùng tới, hỏi chủ máy chấm là tốn công vô ích.
+        conn.execute("UPDATE quyet_dinh SET hieu_luc=0"
+                     " WHERE loai_cau_hoi='dieu_kien' AND hieu_luc=1")
         conn.execute(
             "CREATE TABLE IF NOT EXISTS thanh_tich ("
             " loai_cau_hoi TEXT PRIMARY KEY,"
@@ -394,14 +395,7 @@ def ho_so(so_ngay: int | None = None, *, den: float | None = None) -> dict[str, 
                 "trung_vi": statistics.median(so_kem[ma]) if so_kem[ma] else 0,
                 "lon_nhat": max(so_kem[ma], default=0)},
         })
-    # Thực đơn điều kiện: mọi điều kiện đo được, cộng "thiết bị khác vừa bật hay
-    # tắt" cho từng mã HA bật được trong đề — mở rộng "thiết bị là điều kiện của
-    # nhau" của `du_doan_nha`. Chọn cái nào là việc của bot.
-    thuc_don = boi_canh_nha.thuc_don_dieu_kien(ngay) + [
-        {"khoa": f"bat_{x['ma']}", "ten": f"{x['ten'] or x['ma']} vừa bật hoặc tắt",
-         "loai": "thiet_bi", "phong": x["phong"], "do_bang": [x["ma"]]}
-        for x in ra if x["ha_bat_duoc"]]
-    return {"so_ngay": ngay, "thiet_bi": ra, "thuc_don_dieu_kien": thuc_don}
+    return {"so_ngay": ngay, "thiet_bi": ra}
 
 
 # ── Sổ dữ kiện của chủ máy ──────────────────────────────────────────────────
@@ -533,8 +527,7 @@ def _doc_json(tho: str) -> Any:
         return None
 
 
-def _kiem(data: Any, phan: list[dict[str, Any]],
-          thuc_don: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+def _kiem(data: Any, phan: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
     """Kiểm câu trả lời của model NGAY TẠI BIÊN. Trả (nhóm hợp lệ, số nhóm loại).
 
     Model là nguồn ngoài: có thể bịa mã, xếp một mã vào hai nhóm, hoặc bảo học
@@ -542,12 +535,9 @@ def _kiem(data: Any, phan: list[dict[str, Any]],
     là giáo viên làm bài thay học trò, và lỗi đó sẽ không bao giờ lộ ra để sửa
     hướng dẫn.
 
-    Nhóm được học phải kèm 1–`_TOI_DA_DIEU_KIEN` khoá `dieu_kien` CÓ trong thực
-    đơn. Khoá bịa thì tầng xác suất không bao giờ gặp, thiết bị âm thầm học
-    không theo điều kiện nào — lỗi không ai thấy. Code chỉ kiểm khoá CÓ THẬT;
-    khoá nào hợp lẽ với thiết bị là việc của bot và người chấm.
+    Học theo ĐIỀU KIỆN nào không còn là việc của lượt này (13/09/2026): bot
+    chọn ngoại vi và đọc thói quen ở `thoi_quen_nha`.
     """
-    trong_don = {str(x.get("khoa") or "") for x in thuc_don}
     hop_le = {x["ma"] for x in phan}
     bat_duoc = {x["ma"] for x in phan if x.get("ha_bat_duoc")}
     ds = data.get("nhom") if isinstance(data, dict) else None
@@ -567,12 +557,6 @@ def _kiem(data: Any, phan: list[dict[str, Any]],
         if not ma or (hoc and (ma_hoc not in ma or ma_hoc not in bat_duoc)):
             loai_bo += 1
             continue
-        dk = g.get("dieu_kien") if hoc else []
-        if hoc and not (isinstance(dk, list) and all(isinstance(k, str) for k in dk)
-                        and 0 < len(set(dk)) <= _TOI_DA_DIEU_KIEN
-                        and set(dk) <= trong_don and f"bat_{ma_hoc}" not in dk):
-            loai_bo += 1
-            continue
         da_co.update(ma)
         nhanh = str(g.get("nguon_nhanh") or "")
         loai = str(g.get("loai") or "")
@@ -581,7 +565,6 @@ def _kiem(data: Any, phan: list[dict[str, Any]],
         except (TypeError, ValueError):
             chac = 0.0
         ra.append({"ma": ma, "ma_hoc": ma_hoc if hoc else "",
-                   "dieu_kien": sorted(set(dk)),
                    "nguon_nhanh": nhanh if nhanh in ma else "",
                    "loai": loai if loai in _LOAI else "khong_ro",
                    "hoc": hoc, "chac": round(chac, 2),
@@ -613,14 +596,13 @@ def giai(hs: dict[str, Any]) -> dict[str, Any]:
     huong, ban = huong_dan()
     model = _model()
     du_kien = du_kien_gan_day()
-    thuc_don = list(hs.get("thuc_don_dieu_kien") or [])
     ho = list(hs.get("thiet_bi") or [])
     nhom: list[dict[str, Any]] = []
     loai_bo = 0
     loi = ""
     for phan in _chia(ho):
         de = json.dumps({"so_ngay": hs.get("so_ngay"), "du_kien_chu_may": du_kien,
-                         "thuc_don_dieu_kien": thuc_don, "thiet_bi": phan},
+                         "thiet_bi": phan},
                         ensure_ascii=False)
         r = _goi_model(model, huong, de)
         if r.get("error"):
@@ -631,7 +613,7 @@ def giai(hs: dict[str, Any]) -> dict[str, Any]:
         if data is None:
             loi = f"không đọc được JSON: {tho[:120]}"
             break
-        hop_le, bo = _kiem(data, phan, thuc_don)
+        hop_le, bo = _kiem(data, phan)
         nhom += hop_le
         loai_bo += bo
     if loi:
@@ -684,11 +666,6 @@ def _cau_hoi(g: dict[str, Any]) -> list[tuple[str, str, dict[str, Any]]]:
             ra.append(("nguon_nhanh", khoa_nhom, {"nguon_nhanh": g["nguon_nhanh"]}))
     ra.append(("hoc", g["ma_hoc"] or sorted(g["ma"])[0],
                {"hoc": g["hoc"], "loai": g["loai"]}))
-    if g["hoc"]:
-        # Chấm RIÊNG: học đúng thiết bị mà chọn sai điều kiện (cảm biến phòng
-        # khác) vẫn là bài sai — đúng lỗi chủ máy bắt được 11/09/2026.
-        ra.append(("dieu_kien", g["ma_hoc"],
-                   {"dieu_kien": sorted(g.get("dieu_kien") or [])}))
     return ra
 
 
@@ -853,21 +830,6 @@ def thiet_bi_hoc() -> list[str]:
         and "|".join(sorted(d["nhom"].get("ma") or [])) not in nhom_sai)
 
 
-def dieu_kien_hoc() -> dict[str, list[str]]:
-    """Điều kiện bot chọn cho từng mã được học — bỏ kết luận bị chấm sai.
-
-    Mã được học mà chưa có kết luận điều kiện (sổ trước 11/09/2026, hoặc câu
-    điều kiện vừa bị chấm sai) thì KHÔNG có mục ở đây: tầng xác suất học nó
-    không kèm điều kiện nào, chỉ còn tỉ lệ nền — không bao giờ đủ để gợi ý.
-    Thiếu kết luận thì im, không rơi về "mọi cảm biến cả nhà" như bản cũ.
-    """
-    hoc = set(thiet_bi_hoc())
-    return {d["khoa"]: list(d["gia_tri"].get("dieu_kien") or [])
-            for d in dang_hieu_luc()
-            if d["loai_cau_hoi"] == "dieu_kien" and d["ket_qua"] != "sai"
-            and d["khoa"] in hoc}
-
-
 # ── CRUD cho tab Học hỏi (chủ máy xem / sửa / xoá / thêm tay) ────────────────
 def xoa_ket_luan(id_: int) -> bool:
     """Chủ máy xoá hẳn một kết luận (dòng quyết định). Trả False nếu không có.
@@ -882,65 +844,6 @@ def xoa_ket_luan(id_: int) -> bool:
     if n:
         logger.info({"event": "hieu_xoa_ket_luan", "id": int(id_)})
     return n > 0
-
-
-def sua_dieu_kien_ket_luan(khoa_hoc: str, dieu_kien_moi: list[str]) -> bool | str:
-    """Chủ máy sửa TRỰC TIẾP điều kiện của một thiết bị đã học — trên sơ đồ
-    kích hoạt hoặc trong "Bot hiểu thiết bị", trước hay sau khi chấm đều được.
-
-    Có dòng 'dieu_kien' cho `khoa_hoc` (bất kể đang cho/dung/sai) thì SỬA đè;
-    chưa có (bot chưa từng đề xuất điều kiện cho thiết bị này) thì THÊM MỚI,
-    coi như chủ máy vừa dạy — ``ket_qua='dung', cham_boi='chu_may'`` ngay,
-    khỏi phải tự chấm lại cái mình vừa gõ.
-
-    Trả ``True`` khi sửa xong, hoặc một câu tiếng Việt giải thích lý do từ
-    chối (khoá lạ / rỗng / quá 5 điều kiện) — KHÔNG tin dữ liệu từ web, kiểm
-    lại đúng luật đã áp cho bot trong `_kiem`."""
-    khoa_hoc = (khoa_hoc or "").strip()
-    if not khoa_hoc:
-        return "Thiếu mã thiết bị."
-    ds = sorted({str(k).strip() for k in (dieu_kien_moi or []) if str(k).strip()})
-    if not ds:
-        return "Thiếu điều kiện — xoá hẳn kết luận thì dùng nút Xoá."
-    if len(ds) > _TOI_DA_DIEU_KIEN:
-        return f"Tối đa {_TOI_DA_DIEU_KIEN} điều kiện cho một thiết bị."
-    if ds == [f"bat_{khoa_hoc}"] or khoa_hoc in ds:
-        return "Không được lấy chính thiết bị đang học làm điều kiện của nó."
-    # Thực đơn ĐẦY ĐỦ (điều kiện môi trường + `bat_<mã>` thiết bị khác) — cùng
-    # nguồn bot đã dùng khi tự đề xuất, xem `ho_so()`. Chỉ gọi
-    # `boi_canh_nha.thuc_don_dieu_kien()` sẽ bỏ sót mọi khoá `bat_<mã>`.
-    hs = ho_so()
-    thuc_don = {str(m.get("khoa")) for m in (hs.get("thuc_don_dieu_kien") or [])}
-    la = [k for k in ds if k not in thuc_don]
-    if la:
-        return f"Khoá không có trong thực đơn điều kiện hiện tại: {', '.join(la)}."
-    gia_tri = json.dumps({"dieu_kien": ds}, ensure_ascii=False)
-    with _khoa:
-        conn = _db()
-        r = conn.execute(
-            "SELECT id, ket_qua FROM quyet_dinh"
-            " WHERE loai_cau_hoi='dieu_kien' AND khoa=? AND hieu_luc=1",
-            (khoa_hoc,)).fetchone()
-        if r:
-            if r["ket_qua"] == "cho":
-                conn.execute("UPDATE quyet_dinh SET gia_tri=? WHERE id=?",
-                             (gia_tri, int(r["id"])))
-            else:
-                conn.execute(
-                    "UPDATE quyet_dinh SET gia_tri=?, ket_qua='dung',"
-                    " cham_boi='chu_may', cham_luc=? WHERE id=?",
-                    (gia_tri, time.time(), int(r["id"])))
-        else:
-            lan = conn.execute("SELECT MAX(id) FROM lan_giai").fetchone()[0] or 0
-            conn.execute(
-                "INSERT INTO quyet_dinh (lan_giai, ts, loai_cau_hoi, khoa,"
-                " gia_tri, nhom, ket_qua, cham_boi, cham_luc)"
-                " VALUES (?,?,'dieu_kien',?,?,?,?,?,?)",
-                (int(lan), time.time(), khoa_hoc, gia_tri, "{}",
-                 "dung", "chu_may", time.time()))
-        conn.commit()
-    logger.info({"event": "hieu_sua_dieu_kien", "khoa": khoa_hoc, "dieu_kien": ds})
-    return True
 
 
 def xoa_du_kien(id_: int) -> bool:
@@ -1166,13 +1069,6 @@ def _cau_doc(d: dict[str, Any], ten: dict[str, str]) -> str:
         chinh = g.get("ma_hoc") or sorted(g["ma"])[0]
         return (f"{_nhan(chinh, ten)}: báo tin nhanh nhất qua "
                 f"{_nhan(gt['nguon_nhanh'], ten)}")
-    if d["loai_cau_hoi"] == "dieu_kien":
-        from services import boi_canh_nha
-
-        ds = [f"{_nhan(k[len('bat_'):], ten)} vừa bật hoặc tắt" if k.startswith("bat_")
-              else boi_canh_nha.ten_dieu_kien(k) for k in gt.get("dieu_kien") or []]
-        return (f"Học {_nhan(d['khoa'], ten)} theo: "
-                + (", ".join(ds) if ds else "không điều kiện nào"))
     if d["loai_cau_hoi"] == "ngoai_vi":
         kv = gt.get("khu_vuc") or "chưa rõ khu vực"
         ds = [f"{x.get('ten') or _nhan(x['ma'], ten)} "

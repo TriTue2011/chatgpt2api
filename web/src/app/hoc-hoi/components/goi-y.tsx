@@ -6,7 +6,6 @@ import { LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { httpRequest } from "@/lib/request";
 import { layGet, goiPost } from "./lib";
-import { SuaDieuKien } from "./sua-dieu-kien";
 
 /** Bản xem trước — bot đang nghĩ gì NGAY LÚC NÀY, chưa ghi, chưa có id. */
 type XemTruoc = { ten: string; p: number; cach: string; ly_do?: string };
@@ -22,7 +21,6 @@ export function GoiY() {
   const [choCham, setChoCham] = useState<ChoCham[]>([]);
   const [thongKe, setThongKe] = useState<ThongKeRow[]>([]);
   const [dangTai, setDangTai] = useState(false);
-  const [dangSua, setDangSua] = useState<string | null>(null);
 
   const tai = useCallback(async () => {
     setDangTai(true);
@@ -74,17 +72,10 @@ export function GoiY() {
               <div className="mt-1 flex flex-wrap gap-1">
                 <Button variant="outline" size="sm" className="h-7" onClick={() => void cham(n.id, true)}>Đúng</Button>
                 <Button variant="outline" size="sm" className="h-7" onClick={() => void cham(n.id, false)}>Sai</Button>
-                <Button variant="outline" size="sm" className="h-7"
-                  onClick={() => setDangSua(dangSua === n.ten ? null : n.ten)}>
-                  Sửa điều kiện
-                </Button>
                 <Button variant="ghost" size="sm" className="h-7 text-destructive" onClick={() => void xoa(n.id)}>
                   <Trash2 className="size-3.5" />
                 </Button>
               </div>
-              {dangSua === n.ten ? (
-                <SuaDieuKien khoa={n.ten} onXong={() => { setDangSua(null); void tai(); }} />
-              ) : null}
             </div>
           ))}
           {!choCham.length && !dangTai ? (

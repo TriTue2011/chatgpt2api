@@ -23,7 +23,6 @@ Chấm thử một bài chưa lưu (đề đo trên bản sao kho, bài là JSON
 from __future__ import annotations
 
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -47,10 +46,6 @@ _LECH_MOT_THIET_BI = 10
 #: điều hòa ↔ aptomat 29 ms, công tắc mini ↔ dàn âm thanh 60 ms — chủ máy xác
 #: nhận cả hai cặp là HAI thiết bị. Giữa hai ngưỡng thì chưa chấm.
 _LECH_HAI_THIET_BI = 20
-#: Bot dẫn dữ kiện chủ nhà theo đúng khuôn hướng dẫn bắt ghi ("theo dữ kiện #N").
-#: Chỉ dùng để chuyển câu sang "cần chủ nhà xem" — không bao giờ để chấm ĐÚNG:
-#: giáo viên không đọc được dữ kiện có thật sự nói vậy không.
-_DAN_DU_KIEN = re.compile(r"dữ kiện\s*#\s*\d+", re.IGNORECASE)
 
 
 def _quan_he(ho: dict[str, dict[str, Any]], a: str, b: str) -> tuple | None:
@@ -154,54 +149,7 @@ def _cham_hoc(khoa: str, gt: dict, ho: dict) -> tuple[bool | None, str]:
     return True, f"{p['so_lan_bat']} lần bật, đổi riêng lẻ (trung vị {tv} mã kèm), là mã dẫn"
 
 
-def _cham_dieu_kien(d: dict[str, Any], ho: dict,
-                    thuc_don: list[dict[str, Any]]) -> tuple[bool | None, str]:
-    """Điều kiện bot chọn có cùng phòng với thiết bị không.
-
-    Chủ máy bắt lỗi 11/09/2026: gợi ý bật dàn âm thanh phòng khách "vì nhiệt độ
-    phòng học đang lạnh" — "khu vực đang khác nhau nữa". Luật giáo viên: điều
-    kiện phải cùng phòng với thiết bị, hoặc là thời gian / của cả nhà. Khác phòng
-    mà bot dẫn dữ kiện chủ nhà, hoặc là thiết bị đi kèm, thì để chủ nhà xem.
-    """
-    from services.boi_canh_nha import _khong_dau
-
-    phong = (ho.get(d["khoa"]) or {}).get("phong") or ""
-    don = {x["khoa"]: x for x in thuc_don}
-    dan = bool(_DAN_DU_KIEN.search(d["nhom"].get("vi_sao") or ""))
-    # Tên nói một PHÒNG CÓ THẬT khác phòng hồ sơ → hướng dẫn bắt coi là chưa rõ
-    # phòng, chỉ được chọn thời gian. Bài 11/09/2026: "Đèn ban công" hồ sơ ghi
-    # Bếp, bot tự nhận ra chỗ lệch mà vẫn chọn ánh sáng bếp.
-    ten_tb = _khong_dau((ho.get(d["khoa"]) or {}).get("ten") or "")
-    lech = sorted(p for p in {x["phong"] for x in thuc_don if x.get("phong")}
-                  if p != phong and _khong_dau(p) in ten_tb)
-    can_xem: list[str] = []
-    for k in d["gia_tri"].get("dieu_kien") or []:
-        x = don.get(k)
-        if x is None:
-            return None, f"«{k}» không còn trong thực đơn hôm nay"
-        if x["loai"] == "thoi_gian" or k == "nguoi_trong_nha":
-            continue
-        if lech:
-            return False, (f"tên thiết bị nói {lech[0]} mà hồ sơ ghi {phong or 'chưa rõ'}"
-                           f" — chưa rõ phòng, chỉ được chọn thời gian, không chọn «{x['ten']}»")
-        if x["loai"] != "thiet_bi" and phong and x["phong"] == phong:
-            continue
-        if x["loai"] == "thiet_bi" or dan:
-            can_xem.append(x["ten"])
-            continue
-        if not phong:
-            return None, "thiết bị chưa rõ phòng"
-        if not x["phong"]:
-            return False, f"«{x['ten']}» chưa rõ phòng mà không dẫn dữ kiện chủ nhà"
-        return False, (f"«{x['ten']}» ở {x['phong']}, khác phòng {phong} của thiết bị,"
-                       " không dẫn dữ kiện chủ nhà")
-    if can_xem:
-        return None, "cần chủ nhà xem: " + ", ".join(can_xem)
-    return True, "mọi điều kiện cùng phòng với thiết bị, hoặc là thời gian / của cả nhà"
-
-
-def cham_mot(d: dict[str, Any], ho: dict[str, dict[str, Any]],
-             thuc_don: list[dict[str, Any]]) -> tuple[bool | None, str]:
+def cham_mot(d: dict[str, Any], ho: dict[str, dict[str, Any]]) -> tuple[bool | None, str]:
     """Chấm một kết luận theo luật giáo viên. (đúng/sai/None = chưa chấm, vì sao)."""
     gt, g = d["gia_tri"], d["nhom"]
     if any(m not in ho for m in g["ma"]) or d["khoa"].split("|")[0] not in ho:
@@ -210,28 +158,25 @@ def cham_mot(d: dict[str, Any], ho: dict[str, dict[str, Any]],
         return _cham_cung_thiet_bi(gt["ma"], ho)
     if d["loai_cau_hoi"] == "nguon_nhanh":
         return _cham_nguon_nhanh(gt["nguon_nhanh"], g["ma"], ho)
-    if d["loai_cau_hoi"] == "dieu_kien":
-        return _cham_dieu_kien(d, ho, thuc_don)
     return _cham_hoc(d["khoa"], gt, ho)
 
 
-def _doc_tu_kho() -> tuple[list[dict], dict[str, dict], list[dict], str]:
+def _doc_tu_kho() -> tuple[list[dict], dict[str, dict], str]:
     from services import hieu_thiet_bi_nha as ht
 
     hs = ht.ho_so()
     ho = {x["ma"]: x for x in hs.get("thiet_bi") or []}
-    return ht.dang_hieu_luc(), ho, hs.get("thuc_don_dieu_kien") or [], ht.huong_dan()[1]
+    return [d for d in ht.dang_hieu_luc() if d["loai_cau_hoi"] in ht._LOAI_CUA_LUOT_HIEU], ho, ht.huong_dan()[1]
 
 
-def _doc_tu_tep(duong_de: str, duong_bai: str) -> tuple[list[dict], dict[str, dict], list[dict], str]:
+def _doc_tu_tep(duong_de: str, duong_bai: str) -> tuple[list[dict], dict[str, dict], str]:
     from services import hieu_thiet_bi_nha as ht
 
     with open(duong_de, encoding="utf-8") as f:
         de = json.load(f)
     with open(duong_bai, encoding="utf-8") as f:
         bai = json.load(f)
-    thuc_don = de.get("thuc_don_dieu_kien") or []
-    nhom, loai_bo = ht._kiem(bai, de["thiet_bi"], thuc_don)
+    nhom, loai_bo = ht._kiem(bai, de["thiet_bi"])
     bo_sot = {x["ma"] for x in de["thiet_bi"]} - {m for g in nhom for m in g["ma"]}
     print(f"Bài có {len(nhom)} nhóm hợp lệ, {loai_bo} nhóm phạm luật bị loại, "
           f"bỏ sót {len(bo_sot)} mã: {sorted(bo_sot)}")
@@ -240,7 +185,7 @@ def _doc_tu_tep(duong_de: str, duong_bai: str) -> tuple[list[dict], dict[str, di
         for loai, khoa, gt in ht._cau_hoi(g):
             ds.append({"id": len(ds) + 1, "loai_cau_hoi": loai, "khoa": khoa,
                        "gia_tri": gt, "nhom": g, "ket_qua": "cho", "cham_boi": ""})
-    return ds, {x["ma"]: x for x in de["thiet_bi"]}, thuc_don, "(tệp)"
+    return ds, {x["ma"]: x for x in de["thiet_bi"]}, "(tệp)"
 
 
 def main(argv: list[str]) -> int:
@@ -252,17 +197,17 @@ def main(argv: list[str]) -> int:
         print("Chấm từ tệp là chấm thử — không ghi điểm, không báo nhóm.")
         return 2
     if tu_tep:
-        ds, ho, thuc_don, ban = _doc_tu_tep(argv[argv.index("--de") + 1],
+        ds, ho, ban = _doc_tu_tep(argv[argv.index("--de") + 1],
                                             argv[argv.index("--bai") + 1])
     else:
-        ds, ho, thuc_don, ban = _doc_tu_kho()
+        ds, ho, ban = _doc_tu_kho()
     ten = {m: p["ten"] for m, p in ho.items() if p.get("ten")}
     dem = {True: 0, False: 0, None: 0}
     sai: list[tuple[dict, str]] = []
     for d in ds:
         if d.get("cham_boi") in ("lap_lai", "chu_may"):
             continue
-        ket, vi_sao = cham_mot(d, ho, thuc_don)
+        ket, vi_sao = cham_mot(d, ho)
         dem[ket] += 1
         nhan = {True: "ĐÚNG", False: "SAI ", None: "—   "}[ket]
         print(f"{nhan} #{d['id']} [{d['loai_cau_hoi']}] {ht._cau_doc(d, ten)}"

@@ -8,7 +8,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { httpRequest } from "@/lib/request";
 import { layGet, goiPost } from "./lib";
-import { SuaDieuKien } from "./sua-dieu-kien";
 import { ChonThietBi } from "./chon-thiet-bi";
 
 type KetLuan = {
@@ -31,7 +30,6 @@ export function HieuThietBi() {
   const [banHuongDan, setBanHuongDan] = useState("");
   const [dangTai, setDangTai] = useState(false);
   const [dkMoi, setDkMoi] = useState("");
-  const [suaKhoa, setSuaKhoa] = useState<string | null>(null);
   const [dangPhanTich, setDangPhanTich] = useState(false);
   const [ketQuaPhanTich, setKetQuaPhanTich] = useState("");
 
@@ -133,19 +131,10 @@ export function HieuThietBi() {
               <div className="mt-1 flex flex-wrap gap-1">
                 <Button variant="outline" size="sm" className="h-7" onClick={() => void cham(k.id, true)}>Đúng</Button>
                 <Button variant="outline" size="sm" className="h-7" onClick={() => void cham(k.id, false)}>Sai</Button>
-                {(k.loai_cau_hoi === "hoc" || k.loai_cau_hoi === "dieu_kien") ? (
-                  <Button variant="outline" size="sm" className="h-7"
-                    onClick={() => setSuaKhoa(suaKhoa === k.khoa ? null : k.khoa)}>
-                    Sửa điều kiện
-                  </Button>
-                ) : null}
                 <Button variant="ghost" size="sm" className="h-7 text-destructive" onClick={() => void xoaKl(k.id)}>
                   <Trash2 className="size-3.5" />
                 </Button>
               </div>
-              {suaKhoa === k.khoa ? (
-                <SuaDieuKien khoa={k.khoa} onXong={() => { setSuaKhoa(null); void tai(); }} />
-              ) : null}
             </div>
           ))}
           {!ketLuan.length ? <p className="px-2 py-3 text-center text-xs text-muted-foreground">Chưa có kết luận.</p> : null}

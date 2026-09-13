@@ -361,39 +361,6 @@ def create_router() -> APIRouter:
         except Exception as exc:
             return _loi(exc, "xoá kết luận")
 
-    @router.post("/api/hoc-hoi/ket-luan/sua-dieu-kien")
-    async def ket_luan_sua_dieu_kien(body: dict, authorization: str | None = Header(default=None)):
-        """Sửa TRỰC TIẾP điều kiện của một thiết bị — dùng chung cho mục "Bot
-        hiểu thiết bị" và sơ đồ kích hoạt. body: {khoa, dieu_kien: [...]}."""
-        require_admin(authorization)
-        khoa = str(body.get("khoa") or "")
-        ds = [str(x) for x in (body.get("dieu_kien") or [])]
-        try:
-            from services import hieu_thiet_bi_nha
-            ket = await asyncio.to_thread(
-                hieu_thiet_bi_nha.sua_dieu_kien_ket_luan, khoa, ds)
-            if ket is True:
-                return {"ok": True}
-            return {"ok": False, "error": str(ket)}
-        except Exception as exc:
-            return _loi(exc, "sửa điều kiện")
-
-    @router.get("/api/hoc-hoi/dieu-kien-menu")
-    async def dieu_kien_menu(authorization: str | None = Header(default=None)):
-        """Thực đơn điều kiện có thể chọn — CÙNG nguồn bot dùng khi tự đề
-        xuất (`ho_so()["thuc_don_dieu_kien"]`), để web chỉ cho chọn khoá thật."""
-        require_admin(authorization)
-        try:
-            from services import hieu_thiet_bi_nha
-
-            def _lay():
-                hs = hieu_thiet_bi_nha.ho_so()
-                return hs.get("thuc_don_dieu_kien") or []
-
-            return {"ok": True, "danh_sach": await asyncio.to_thread(_lay)}
-        except Exception as exc:
-            return _loi(exc, "thực đơn điều kiện")
-
     @router.post("/api/hoc-hoi/phan-tich-thiet-bi")
     async def phan_tich_thiet_bi(body: dict, authorization: str | None = Header(default=None)):
         """Chủ máy chỉ đích danh một thiết bị bot bỏ sót → giải ngay.

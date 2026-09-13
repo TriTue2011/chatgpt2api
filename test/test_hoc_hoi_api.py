@@ -199,27 +199,6 @@ class DuDoanXoaEndpointTest(unittest.TestCase):
         gt.assert_called_once_with(1)
 
 
-class SuaDieuKienEndpointTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.client, self._bo_qua = _app()
-        self.addCleanup(self._bo_qua.stop)
-
-    def test_TRUE_TRA_OK(self) -> None:
-        with mock.patch("services.hieu_thiet_bi_nha.sua_dieu_kien_ket_luan", return_value=True) as s:
-            d = self.client.post("/api/hoc-hoi/ket-luan/sua-dieu-kien",
-                                 json={"khoa": "switch.x", "dieu_kien": ["buoi", "mua"]}).json()
-        self.assertTrue(d["ok"])
-        s.assert_called_once_with("switch.x", ["buoi", "mua"])
-
-    def test_CHUOI_LOI_TRA_KHONG_OK_KEM_LY_DO(self) -> None:
-        with mock.patch("services.hieu_thiet_bi_nha.sua_dieu_kien_ket_luan",
-                        return_value="Khoá không có trong thực đơn."):
-            d = self.client.post("/api/hoc-hoi/ket-luan/sua-dieu-kien",
-                                 json={"khoa": "switch.x", "dieu_kien": ["bia"]}).json()
-        self.assertFalse(d["ok"])
-        self.assertIn("thực đơn", d["error"])
-
-
 class SoDoEndpointTest(unittest.TestCase):
     def setUp(self) -> None:
         self.client, self._bo_qua = _app()
@@ -244,18 +223,6 @@ class SoDoEndpointTest(unittest.TestCase):
         self.assertEqual(d["do"], {"switch.bep_left": {
             "buoi": {"nhan_hay_gap": "tối", "ty_le": 0.8, "mau": 10}}},
             "ngoại vi không có khoá/số đo thì bỏ, không nhét None vào bảng")
-
-
-class DieuKienMenuEndpointTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.client, self._bo_qua = _app()
-        self.addCleanup(self._bo_qua.stop)
-
-    def test_TRA_THUC_DON_TU_HO_SO(self) -> None:
-        hs = {"thuc_don_dieu_kien": [{"khoa": "buoi", "ten": "buổi"}]}
-        with mock.patch("services.hieu_thiet_bi_nha.ho_so", return_value=hs):
-            d = self.client.get("/api/hoc-hoi/dieu-kien-menu").json()
-        self.assertEqual(d["danh_sach"], [{"khoa": "buoi", "ten": "buổi"}])
 
 
 class PhanTichThietBiEndpointTest(unittest.TestCase):
