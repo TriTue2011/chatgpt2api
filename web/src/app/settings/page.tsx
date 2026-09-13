@@ -17,6 +17,7 @@ import { VoiceSpeakersCard } from "./components/voice-speakers-card";
 import { TeacherSettingsCard } from "./components/teacher-settings-card";
 import { PersonasCard } from "./components/personas-card";
 import { TelegramCloudflareCard, CloudflareInfraCard } from "./components/telegram-cloudflare-card";
+import { NotificationsCard } from "./components/notifications-card";
 import { ConfigCard } from "./components/config-card";
 import { GeminiCard } from "./components/gemini-card";
 import { NvidiaNimCard } from "./components/nvidia-nim-card";
@@ -160,6 +161,15 @@ function SettingsPageContent() {
           icon={<MessageCircle className="size-5" />}
         >
           <TelegramCloudflareCard />
+        </SettingsSection>
+
+        <SettingsSection
+          title="Thông báo"
+          description="Mọi thông báo gom về đây — bật/tắt và chọn kênh cho từng cái, không có mặc định ngầm"
+          icon={<MessageCircle className="size-5" />}
+          tuKhoa="thông báo notification cảnh báo khoá cửa học hỏi tài khoản kênh nhận"
+        >
+          <NotificationsCard />
         </SettingsSection>
 
         <SettingsSection

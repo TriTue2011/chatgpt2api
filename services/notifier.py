@@ -122,44 +122,22 @@ def notify_admin(text: str, *, category: str = "") -> None:
       - newchat → 💬 chat/nhóm mới (thread ID)
     """
     cat = classify_notify_category(text, category)
-    # Telegram
-    if cat == "account_log":
-        tg_ok = _enabled("telegram_notify_enabled") and account_log_enabled("telegram")
-    elif cat == "account_update":
-        tg_ok = _enabled("telegram_notify_enabled") and account_update_log_enabled("telegram")
-    elif cat == "newchat":
-        tg_ok = _enabled("telegram_notify_enabled")  # per-admin 💬 filter trong bot
-    else:
-        tg_ok = _enabled("telegram_notify_enabled")
-    if tg_ok:
-        try:
-            from services.telegram_bot import notify_admin as _tg
-            _tg(text, category=cat)
-        except Exception:
-            pass
-
-    # Zalo Bot
-    if cat == "account_log":
-        zl_ok = _enabled("zalo_notify_enabled") and account_log_enabled("zalo")
-    elif cat == "account_update":
-        zl_ok = _enabled("zalo_notify_enabled") and account_update_log_enabled("zalo")
-    else:
-        zl_ok = _enabled("zalo_notify_enabled")
-    if zl_ok:
-        try:
-            from services.zalo_bot import notify_admin as _zl
-            _zl(text, category=cat)
-        except Exception:
-            pass
-
-    # Zalo Cá Nhân
-    if cat == "account_update":
-        zp_ok = account_update_log_enabled("zalo_personal")
-    else:
-        zp_ok = True
-    if zp_ok:
-        try:
-            from services.zalo_personal import notify_admin as _zp
-            _zp(text, category=cat)
-        except Exception:
-            pass
+    # MỘT đường duy nhất: sổ đăng ký `services/thong_bao.py`.
+    #
+    # Trước 13/09/2026 chỗ này tự rẽ ra ba kênh, mỗi kênh ba tầng cờ (toàn cục
+    # `*_notify_enabled` → cờ của từng bot → cờ của từng admin), và các cờ đó
+    # nằm rải trong hai thẻ Cài đặt khác nhau. Chủ máy chốt gom mọi cài đặt
+    # thông báo về MỘT chỗ và bỏ mặc định, nên bốn rổ dưới đây trỏ thẳng vào
+    # bốn khoá của sổ đăng ký; ai nhận là do trang Cài đặt → Thông báo quyết,
+    # không phải do ba tầng cờ ẩn nữa.
+    khoa = {
+        "account_log": "tai_khoan.log",
+        "account_update": "tai_khoan.cap_nhat",
+        "newchat": "chat.moi",
+    }.get(cat, "he_thong.loi")
+    try:
+        from services import thong_bao
+        thong_bao.gui(khoa, text)
+    except Exception as exc:
+        logger.warning({"event": "notify_admin_loi", "khoa": khoa,
+                        "loi": str(exc)[:160]})

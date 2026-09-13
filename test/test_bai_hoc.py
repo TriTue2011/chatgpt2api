@@ -283,19 +283,41 @@ class BaoChuDongTest(unittest.TestCase):
 
     def test_CHON_KENH_DICH_DANH(self) -> None:
         """Nhà có nhiều tài khoản Zalo và nhiều nhóm — chọn mỗi "zalo" thì
-        không biết là Zalo nào. Phải là khoá `plat:bot:chat` như «Lọc thread»."""
-        self.cfg.data["mqtt"]["bai_hoc"] = {
-            "bao": True, "kenh_nhan": ["zalop:4757:66427", "tg:8446:1003"]}
-        self.assertEqual(self.m._kenh_nhan(), ["zalop:4757:66427", "tg:8446:1003"])
+        không biết là Zalo nào. Phải là khoá `plat:bot:chat` như «Lọc thread».
 
-    def test_chua_chon_kenh_thi_rong(self) -> None:
-        self.assertEqual(self.m._kenh_nhan(), [])
+        Ý đó không đổi, chỉ DỜI CHỖ: từ 13/09/2026 danh sách kênh nằm ở sổ đăng
+        ký `thong_bao`, không còn ở `mqtt.bai_hoc.kenh_nhan`."""
+        from services import digest
+        self.m.ghi_sai("câu nào đó dài dòng lắm", "…", "_x")
+        self.cfg.data["mqtt"]["bai_hoc"] = {"bao": True}
+        self.cfg.data["thong_bao"] = {"hoc_hoi.ban_tin": {
+            "bat": True, "kenh": ["zalop:4757:66427", "tg:8446:1003"]}}
+        self.addCleanup(self.cfg.data.pop, "thong_bao", None)
+        with mock.patch.object(digest, "send_targets", return_value=2) as g:
+            kq = self.m.chay_mot_lan()
+        self.assertEqual(kq["gui"], 2)
+        self.assertEqual(g.call_args[0][0],
+                         ["zalop:4757:66427", "tg:8446:1003"])
+
+    def test_chua_chon_kenh_thi_KHONG_gui(self) -> None:
+        """`_kenh_nhan()` đã bỏ 13/09/2026 — kênh nằm ở sổ đăng ký `thong_bao`,
+        và chưa chọn thì IM chứ không rơi về admin."""
+        from services import digest
+        self.m.ghi_sai("câu nào đó dài dòng lắm", "…", "_x")
+        self.cfg.data["mqtt"]["bai_hoc"] = {"bao": True}
+        with mock.patch.object(digest, "send_targets", return_value=1) as g:
+            kq = self.m.chay_mot_lan()
+        self.assertEqual(kq["gui"], 0)
+        g.assert_not_called()
 
     def test_gui_dung_kenh_da_chon(self) -> None:
         from services import digest
         self.m.ghi_sai("câu nào đó dài dòng lắm", "…", "_x")
-        self.cfg.data["mqtt"]["bai_hoc"] = {
-            "bao": True, "kenh_nhan": ["zalop:4757:66427"]}
+        self.cfg.data["mqtt"]["bai_hoc"] = {"bao": True}
+        # `config` là singleton dùng chung — phải trả lại nguyên trạng.
+        self.cfg.data["thong_bao"] = {
+            "hoc_hoi.ban_tin": {"bat": True, "kenh": ["zalop:4757:66427"]}}
+        self.addCleanup(self.cfg.data.pop, "thong_bao", None)
         with mock.patch.object(digest, "send_targets", return_value=1) as g:
             kq = self.m.chay_mot_lan()
         self.assertEqual(kq["gui"], 1)

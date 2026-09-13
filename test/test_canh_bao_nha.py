@@ -165,65 +165,135 @@ class CanhBaoTest(unittest.TestCase):
         self.assertEqual(len(self._quet(self._hong())["can_bao"]), 1)
 
     # ── gửi ────────────────────────────────────────────────────────────────
+    def _dat_kenh(self, kenh: list[str]) -> None:
+        """Chọn kênh cho cảnh báo ở ĐÚNG nơi bây giờ: sổ đăng ký `thong_bao`.
+
+        `config` là singleton dùng chung cả tiến trình — không trả lại nguyên
+        trạng thì test chạy sau trong cùng lô đọc phải giá trị giả này."""
+        self.m.config.data["thong_bao"] = {
+            "nha.canh_bao": {"bat": True, "kenh": list(kenh)}}
+        self.addCleanup(self.m.config.data.pop, "thong_bao", None)
+
     def test_khong_gui_khi_chua_khai_nguoi_nhan(self) -> None:
         from services import lich_su_nha
-        self.m.config.data["mqtt"]["canh_bao"] = {"bat": True, "nguoi_nhan": []}
-        with mock.patch.object(lich_su_nha, "soi_hong", return_value=self._hong()), \
-             mock.patch.object(self.m, "_nguoi_nhan", return_value=[]):
+        self.m.config.data["mqtt"]["canh_bao"] = {"bat": True}
+        with mock.patch.object(lich_su_nha, "soi_hong", return_value=self._hong()):
             kq = self.m.chay_mot_lan()
         self.assertEqual(kq["gui"], 0)
         self.assertIn("kênh nhận", kq.get("ly_do", ""))
 
     def test_CHON_KENH_DICH_DANH_thi_gui_dung_do(self) -> None:
         """Chủ máy chốt 10/09: muốn tự đặt kênh cho cảnh báo hỏng, tách khỏi
-        kênh của phần học tập."""
+        kênh của phần học tập. Từ 13/09/2026 kênh ấy nằm ở sổ đăng ký."""
         from services import digest, lich_su_nha
-        self.m.config.data["mqtt"]["canh_bao"] = {
-            "bat": True, "kenh_nhan": ["zalop:4757:66427"]}
+        self.m.config.data["mqtt"]["canh_bao"] = {"bat": True}
+        self._dat_kenh(["zalop:4757:66427"])
         with mock.patch.object(lich_su_nha, "soi_hong", return_value=self._hong()), \
              mock.patch.object(digest, "send_targets", return_value=1) as g:
             kq = self.m.chay_mot_lan()
         self.assertEqual(kq["gui"], 1)
         self.assertEqual(g.call_args[0][0], ["zalop:4757:66427"])
 
-    def test_CHUA_CHON_KENH_thi_giu_duong_cu(self) -> None:
-        """Không được phá cảnh báo đang chạy thật với 181 lỗi đang theo dõi."""
-        from services import lich_su_nha
-        self.m.config.data["mqtt"]["canh_bao"] = {"bat": True}
-        self.assertEqual(self.m._kenh_nhan(), [])
-        with mock.patch.object(lich_su_nha, "soi_hong", return_value=self._hong()), \
-             mock.patch.object(self.m, "_nguoi_nhan", return_value=["u1", "u2"]), \
-             mock.patch.object(self.m, "_gui") as g:
-            kq = self.m.chay_mot_lan()
-        self.assertEqual(kq["gui"], 2)
-        self.assertEqual(g.call_count, 2)
+    def test_CHUA_CHON_KENH_thi_IM_chu_KHONG_roi_ve_admin(self) -> None:
+        """Thay cho phép đo cũ "chưa chọn kênh thì giữ đường cũ".
 
-    def test_gui_toi_tung_nguoi_nhan(self) -> None:
-        from services import lich_su_nha
+        Chủ máy chốt 13/09/2026: mọi thông báo theo cài đặt trên web, KHÔNG
+        mặc định. Thang admin ba tầng cũ vừa là mặc định ngầm, vừa là mặc định
+        TRẬT — nó chỉ duyệt `telegram_bots` + `zalo_bots` nên không bao giờ
+        sinh nổi tiền tố `zalop_`, tức không tài nào tới Zalo cá nhân."""
+        from services import digest, lich_su_nha
+        self.m.config.data["mqtt"]["canh_bao"] = {"bat": True}
         with mock.patch.object(lich_su_nha, "soi_hong", return_value=self._hong()), \
-             mock.patch.object(self.m, "_nguoi_nhan", return_value=["u1", "u2"]), \
-             mock.patch.object(self.m, "_gui") as g:
+             mock.patch.object(digest, "send_targets", return_value=1) as g:
+            kq = self.m.chay_mot_lan()
+        self.assertEqual(kq["gui"], 0)
+        g.assert_not_called()
+
+    def test_gui_MOT_LAN_cho_ca_danh_sach_kenh(self) -> None:
+        """`digest.send_targets` tự rải cho từng kênh nên chỉ gọi MỘT lần —
+        khác hẳn đường cũ lặp `_gui` cho từng người nhận."""
+        from services import digest, lich_su_nha
+        self.m.config.data["mqtt"]["canh_bao"] = {"bat": True}
+        self._dat_kenh(["zalop:4757:66427", "zalo:194:abc"])
+        with mock.patch.object(lich_su_nha, "soi_hong", return_value=self._hong()), \
+             mock.patch.object(digest, "send_targets", return_value=2) as g:
             kq = self.m.chay_mot_lan()
         self.assertEqual(kq["gui"], 2)
-        self.assertEqual(g.call_count, 2)
+        self.assertEqual(g.call_count, 1)
+        self.assertEqual(g.call_args[0][0],
+                         ["zalop:4757:66427", "zalo:194:abc"])
 
     def test_gui_hong_van_khong_raise(self) -> None:
-        from services import lich_su_nha
+        from services import digest, lich_su_nha
+        self.m.config.data["mqtt"]["canh_bao"] = {"bat": True}
+        self._dat_kenh(["zalop:4757:66427"])
         with mock.patch.object(lich_su_nha, "soi_hong", return_value=self._hong()), \
-             mock.patch.object(self.m, "_nguoi_nhan", return_value=["u1"]), \
-             mock.patch.object(self.m, "_gui", side_effect=RuntimeError("mất mạng")):
+             mock.patch.object(digest, "send_targets",
+                               side_effect=RuntimeError("mất mạng")):
             kq = self.m.chay_mot_lan()
         self.assertEqual(kq["gui"], 0)
 
     def test_khong_len_bac_khi_gui_that_bai(self) -> None:
         """Gửi hỏng mà vẫn lên bậc thì lần sau phải chờ lâu hơn — mất tin."""
-        from services import lich_su_nha
+        from services import digest, lich_su_nha
+        self.m.config.data["mqtt"]["canh_bao"] = {"bat": True}
+        self._dat_kenh(["zalop:4757:66427"])
         with mock.patch.object(lich_su_nha, "soi_hong", return_value=self._hong()), \
-             mock.patch.object(self.m, "_nguoi_nhan", return_value=["u1"]), \
-             mock.patch.object(self.m, "_gui", side_effect=RuntimeError("x")):
+             mock.patch.object(digest, "send_targets",
+                               side_effect=RuntimeError("x")):
             self.m.chay_mot_lan()
         bg = next(iter(self.m._doc()["muc"].values()))
         self.assertEqual(bg["bac"], 0, "gửi hỏng thì KHÔNG được lên bậc")
+
+    # ── nói rõ thiết bị gì, ở đâu ──────────────────────────────────────────
+    def test_ENTITY_co_TEN_va_KHU_VUC_thi_hien_ca_hai(self) -> None:
+        """Chủ máy 13/09/2026: "Không liệt kê rõ ràng thiết bị gì, ở đâu, tên
+        nếu có, entity nếu có". Tin cũ chỉ có mã máy."""
+        d = self.m._mo_ta(
+            {"thiet_bi": "sensor.hien_dien_phong_hoc_illuminance",
+             "truong": "state", "loai": "do", "chi_tiet": "chỉ một giá trị"},
+            {"sensor.hien_dien_phong_hoc_illuminance": "Cảm biến hiện diện"},
+            {"sensor.hien_dien_phong_hoc_illuminance": "Phòng học"})
+        self.assertIn("Cảm biến hiện diện", d)
+        self.assertIn("(Phòng học)", d)
+        self.assertIn("sensor.hien_dien_phong_hoc_illuminance", d,
+                      "vẫn phải kèm mã để chủ máy tra trong Home Assistant")
+
+    def test_KHONG_BIET_TEN_thi_giu_ma_KHONG_bia(self) -> None:
+        """Tra không ra thì giữ nguyên mã — thà khó đọc còn hơn bịa tên."""
+        d = self.m._mo_ta({"thiet_bi": "switch.aptomat_tong_overcurrent_recloser",
+                           "truong": "state", "loai": "do", "chi_tiet": "x"}, {}, {})
+        self.assertIn("switch.aptomat_tong_overcurrent_recloser", d)
+
+    def test_KHONG_DOAN_KHU_VUC_tu_chu_trong_ma(self) -> None:
+        """`hien_dien_phong_hoc` trông đúng là "phòng học" — nhưng khớp chuỗi
+        rồi không ai kiểm chứng là lớp lỗi kho này đã trả giá ba lần.
+
+        Dùng loại `chet` để nhãn không có sẵn dấu ngoặc: bản đầu của phép đo
+        này bắt `"("` trong cả câu, mà nhãn `đơ (vẫn báo nhưng số không đổi)`
+        vốn đã có ngoặc — nó đo cái nhãn chứ không đo việc đoán phòng."""
+        d = self.m._mo_ta(
+            {"thiet_bi": "sensor.hien_dien_phong_hoc_illuminance",
+             "truong": "state", "loai": "chet", "chi_tiet": "x"}, {}, {})
+        self.assertNotIn("(", d, "không có trong chỉ mục HA thì đừng đoán phòng")
+        self.assertNotIn("hòng học", d, "tên phòng chỉ được lấy từ chỉ mục HA")
+
+    def test_TOPIC_MQTT_tra_so_ten_chu_khong_tra_chi_muc_HA(self) -> None:
+        from services import so_ten_nha
+        with mock.patch.object(so_ten_nha, "ten_cua", return_value="Điều hoà"):
+            d = self.m._mo_ta({"thiet_bi": "cmnd/X_SMART_LINK_A44F95/irhvac",
+                               "truong": "Power", "loai": "chet",
+                               "chi_tiet": "không tin nào trong 3.0 ngày"}, {}, {})
+        self.assertIn("Điều hoà", d)
+        self.assertIn("· Power", d)
+        self.assertIn("cmnd/X_SMART_LINK_A44F95/irhvac", d)
+
+    def test_MOI_LOI_DUNG_MOT_DONG_THUT_LE(self) -> None:
+        """`_soan_tin` đếm "\\n   " để chặn dội 156 lỗi — thêm dòng thụt nữa là
+        phép chặn ấy âm thầm sai."""
+        d = self.m._mo_ta({"thiet_bi": "x.y", "truong": "state", "loai": "chet",
+                           "chi_tiet": "z"}, {"x.y": "Tên"}, {"x.y": "Bếp"})
+        self.assertEqual(d.count("\n   "), 1)
 
     def test_tin_gon_khong_do_156_loi_mot_luc(self) -> None:
         """Nhà thật có 156 lỗi — dội hết một lượt là người dùng tắt thông báo."""

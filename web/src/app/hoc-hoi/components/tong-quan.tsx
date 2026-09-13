@@ -121,7 +121,9 @@ export function TongQuan() {
               }`
             : "chưa có"}
         </p>
-        <p>Kênh nhận báo: {d.kenh_nhan?.length ? d.kenh_nhan.join(", ") : "admin mặc định"}</p>
+        {/* Kênh nhận đã dời hẳn sang Cài đặt → Thông báo (13/09/2026). Để lại
+            dòng này là hai nơi cùng nói về một thứ, mà nó còn nói sai: không
+            còn "admin mặc định" nào nữa. */}
       </div>
     </div>
   );

@@ -385,28 +385,10 @@ def nen_hoi_lai(bo_do: str) -> bool:
 
 
 # ── báo chủ động ────────────────────────────────────────────────────────────
-def _kenh_nhan() -> list[str]:
-    """Các kênh nhận bản tin — khoá dạng ``plat:bot:chat`` như «Lọc thread».
-
-    Rỗng = chưa chọn, rơi về admin mặc định của `canh_bao_nha._nguoi_nhan()`.
-
-    Dùng ĐÚNG danh sách mà «Gửi tóm tắt tới kênh» của email/lịch đang dùng
-    (`config.thread_filter` + `thread_filter_meta`), chứ không phải một ô chọn
-    "telegram | zalo": nhà có nhiều tài khoản Zalo và nhiều nhóm, chọn mỗi
-    "zalo" thì không biết là Zalo nào.
-    """
-    raw = _cfg().get("kenh_nhan")
-    if isinstance(raw, list):
-        return [str(x).strip() for x in raw if str(x).strip()]
-    return []
-
-
-def _gui(user_id: str, text: str) -> None:
-    """Gửi cho một người theo kênh mặc định của họ (đường của reminders)."""
-    from services.agent import reminders as rem
-
-    channel, chat_id = rem.channel_of(user_id)
-    rem._send(channel, chat_id, text, {})
+# `_kenh_nhan()` và `_gui()` đã BỎ ngày 13/09/2026. Kênh nhận bản tin giờ nằm ở
+# sổ đăng ký `services/thong_bao.py` dưới khoá `hoc_hoi.ban_tin`: không còn đọc
+# `mqtt.bai_hoc.kenh_nhan`, cũng không còn nhánh rơi về admin ba tầng. Đo lúc
+# bỏ: không còn chỗ nào trong `services/`, `api/` hay `test/` gọi tới hai hàm.
 
 
 def soan_bao(so_ngay: int = 7) -> str:
@@ -456,28 +438,13 @@ def chay_mot_lan(so_ngay: int = 7) -> dict[str, Any]:
     if not tin:
         return {"gui": 0, "ly_do": "chưa học được gì đáng kể"}
 
-    # Chủ máy chọn kênh đích danh thì gửi đúng đó — dùng lại `digest.send_targets`
-    # mà email/lịch đang dùng, cùng định dạng khoá `plat:bot:chat`.
-    gui = 0
-    kenh = _kenh_nhan()
-    if kenh:
-        try:
-            from services import digest
-            gui = digest.send_targets(kenh, tin)
-        except Exception as exc:
-            logger.warning({"event": "bai_hoc_gui_loi", "loi": str(exc)[:150]})
-    else:
-        # Chưa chọn kênh → admin mặc định, chủ máy đã khai ở tab Kênh chat.
-        from services import canh_bao_nha
-        nguoi = canh_bao_nha._nguoi_nhan()
-        if not nguoi:
-            return {"gui": 0, "ly_do": "chưa chọn kênh nhận"}
-        for uid in nguoi:
-            try:
-                _gui(uid, tin)
-                gui += 1
-            except Exception as exc:
-                logger.warning({"event": "bai_hoc_gui_loi", "loi": str(exc)[:150]})
+    # MỘT đường duy nhất: sổ đăng ký `services/thong_bao.py`. Nhánh "chưa chọn
+    # kênh → admin mặc định" đã bỏ theo yêu cầu 13/09/2026 (không mặc định).
+    from services import thong_bao
+
+    gui = thong_bao.gui("hoc_hoi.ban_tin", tin)
+    if not gui and not thong_bao.cai_dat("hoc_hoi.ban_tin")["kenh"]:
+        return {"gui": 0, "ly_do": "chưa chọn kênh nhận (Cài đặt → Thông báo)"}
     if gui:
         with _lock:
             d = _doc()

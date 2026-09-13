@@ -240,6 +240,11 @@ class HieuThietBiNhaTest(unittest.TestCase):
 
     def test_CHAY_TRON_VONG_voi_JSON_BOC_TRONG_KHOI_CODE(self) -> None:
         self._den_bep()
+        # Kênh nhận dời sang sổ đăng ký `thong_bao` (13/09/2026), không còn đọc
+        # `mqtt.du_doan.kenh_nhan`. `config` là singleton nên phải trả lại.
+        self.ls.config.data["thong_bao"] = {
+            "hoc_hoi.hieu_thiet_bi": {"bat": True, "kenh": ["zalop:acc:nhom"]}}
+        self.addCleanup(self.ls.config.data.pop, "thong_bao", None)
 
         def bot(model, huong, de):
             ma = [x["ma"] for x in json.loads(de)["thiet_bi"]]
@@ -493,6 +498,13 @@ class HieuThietBiNhaTest(unittest.TestCase):
     def _cong(self, text: str, *, thread: str = "nhom", tag: bool = False):
         import services.zalo_personal as zp
 
+        # Cổng VÀO của nhóm học hỏi đọc kênh từ sổ đăng ký `thong_bao`
+        # (13/09/2026), không còn đọc `mqtt.du_doan.kenh_nhan`. Đây là đường
+        # vào — phần GỬI không chạm tới, nên quên chỗ này là hỏng âm thầm: tin
+        # vẫn ra nhóm đều, chỉ câu chấm và lời dạy là rơi mất.
+        self.ls.config.data["thong_bao"] = {
+            "hoc_hoi.hieu_thiet_bi": {"bat": True, "kenh": ["zalop:acc:nhom"]}}
+        self.addCleanup(self.ls.config.data.pop, "thong_bao", None)
         ev = {"account_id": "acc", "thread_id": thread, "sender_id": "u1",
               "display_name": "Việt", "text": text, "thread_type": 1, "mentions": []}
         with mock.patch("services.agent.capabilities.mention_required_for",

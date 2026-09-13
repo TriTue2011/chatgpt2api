@@ -1178,20 +1178,19 @@ def soan_bao(kq: dict[str, Any], moi: list[dict[str, Any]],
 
 
 def bao_nhom(tin: str | list[str]) -> int:
-    """Gửi vào kênh học hỏi (`du_doan_nha._kenh_nhan`) — nhóm "AI học hỏi".
+    """Gửi bản tin "bot hiểu thiết bị" theo sổ đăng ký `services/thong_bao.py`.
 
-    Trả số tin gửi được. Chưa chọn kênh thì KHÔNG rơi về admin như gợi ý bật
-    đèn: chủ máy chỉ định rõ nhóm này là nơi đọc chuyện bot học.
+    Khoá `hoc_hoi.hieu_thiet_bi`; chọn kênh ở Cài đặt → Thông báo. Trả số tin
+    gửi được, chưa chọn kênh thì trả 0 và KHÔNG rơi về admin — chủ máy chốt
+    13/09/2026: mọi thông báo theo cài đặt trên web, không mặc định.
+
+    (Trước đây hàm này đọc `du_doan_nha._kenh_nhan`; câu đó đã sai từ lúc dời
+    sang sổ đăng ký nên viết lại luôn, đừng để chú thích chỉ sai đường.)
     """
-    from services import digest, du_doan_nha
+    from services import thong_bao
 
-    kenh = du_doan_nha._kenh_nhan()
-    if not kenh:
-        logger.warning({"event": "hieu_thiet_bi_chua_co_kenh",
-                        "ghi_chu": "chưa chọn mqtt.du_doan.kenh_nhan"})
-        return 0
     ds = [tin] if isinstance(tin, str) else list(tin)
-    return sum(digest.send_targets(kenh, t) for t in ds if t)
+    return sum(thong_bao.gui("hoc_hoi.hieu_thiet_bi", t) for t in ds if t)
 
 
 #: Câu chấm: «hh 12 đúng», «hh 11, 32 đúng, ghi chú…», «gy #12 và 13 sai vì …».

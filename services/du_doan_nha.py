@@ -1011,24 +1011,11 @@ def chay_mot_lan(toi_da: int = 1) -> dict[str, Any]:
         d["id"] = ghi_nhan(str(d["ten"]), "on", float(d["p"]),
                            d.get("nhan") or {}, str(d["cach"]))
     tin = soan_tin(ds)
-    gui = 0
-    kenh = _kenh_nhan()
-    if kenh:
-        try:
-            from services import digest
-            gui = digest.send_targets(kenh, tin)
-        except Exception as exc:
-            logger.warning({"event": "du_doan_gui_loi", "loi": str(exc)[:150]})
-    else:
-        try:
-            from services import canh_bao_nha
-            from services.agent import reminders as rem
-            for uid in canh_bao_nha._nguoi_nhan():
-                channel, chat_id = rem.channel_of(uid)
-                rem._send(channel, chat_id, tin, {})
-                gui += 1
-        except Exception as exc:
-            logger.warning({"event": "du_doan_gui_loi", "loi": str(exc)[:150]})
+    # MỘT đường duy nhất: sổ đăng ký `services/thong_bao.py`. Nhánh dự phòng
+    # rơi về admin đã bỏ theo yêu cầu 13/09/2026 (không mặc định).
+    from services import thong_bao
+
+    gui = thong_bao.gui("nha.goi_y", tin)
 
     if not gui:
         with _khoa:

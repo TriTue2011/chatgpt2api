@@ -34,8 +34,8 @@ type MayChu = {
 };
 
 type ThongKe = { su_kien?: number; so_do?: number; tuoi?: number; mb?: number; chay?: boolean };
-type CanhBao = { bat?: boolean; kenh?: string; nguoi_nhan?: string; gio_hang_ngay?: number };
-type TrangThaiCB = { dang_hong?: number; dang_im?: number; nguoi_nhan?: number };
+type CanhBao = { bat?: boolean; gio_hang_ngay?: number };
+type TrangThaiCB = { dang_hong?: number; dang_im?: number };
 type Hong = { thiet_bi: string; truong: string; loai: string; chi_tiet: string };
 type TinhHuong = {
   id: number; ten: string; trang_thai: string; gio: string;
@@ -73,11 +73,8 @@ export function MqttCard() {
   // nhiều tài khoản Zalo và nhiều nhóm, chọn mỗi "zalo" thì không biết Zalo nào.
   // `thread_filterS` — SỐ NHIỀU. Gõ số ít thì rỗng và danh sách kênh trống
   // trơn, đúng lỗi chủ máy gặp 10/09/2026. Xem `email-calendar-card.tsx:71`.
-  const tf = (config as any)?.thread_filters as Record<string, unknown> | undefined;
-  const tfMeta = (config as any)?.thread_filter_meta as
-    Record<string, { name?: string }> | undefined;
-  const kenhOptions: { value: string; label: string }[] = Object.keys(tf || {})
-    .map((k) => ({ value: k, label: (tfMeta?.[k]?.name ? `${tfMeta[k].name} · ` : "") + k }));
+  // Danh sách kênh nhận đã dời sang `notifications-card.tsx` — thẻ này không
+  // còn chọn nơi nhận cho bất kỳ thông báo nào.
   const saveConfig = useSettingsStore((s) => s.saveConfig);
 
   const [may, setMay] = useState<MayChu>({ ...RONG });
@@ -87,14 +84,12 @@ export function MqttCard() {
   const [ds, setDs] = useState<ThietBi[]>([]);
   const [tk, setTk] = useState<ThongKe | null>(null);
   const [hong, setHong] = useState<Hong[] | null>(null);
-  const [cb, setCb] = useState<CanhBao>({ bat: true, kenh: "", nguoi_nhan: "", gio_hang_ngay: 8 });
-  // Kênh ĐÍCH DANH cho cảnh báo hỏng — tách khỏi kênh của phần học tập.
-  const [cbKenh, setCbKenh] = useState<string[]>([]);
+  const [cb, setCb] = useState<CanhBao>({ bat: true, gio_hang_ngay: 8 });
   // Học từ lỗi: bot hỏi lại khi nó KHÔNG CHẮC, sai một lần thì lần sau tự tránh.
   const [bh, setBh] = useState<{
     bat: boolean; du_mau: number; han_ngay: number;
-    bao: boolean; kenh_nhan: string[]; bao_moi_ngay: number; dung_ai: boolean;
-  }>({ bat: true, du_mau: 4, han_ngay: 180, bao: false, kenh_nhan: [],
+    bao: boolean; bao_moi_ngay: number; dung_ai: boolean;
+  }>({ bat: true, du_mau: 4, han_ngay: 180, bao: false,
        bao_moi_ngay: 7, dung_ai: true });
   // Học thói quen theo BỐI CẢNH: không chỉ "mấy giờ hay bật đèn" mà "lúc đó
   // trời tối chưa, có ai ở nhà không, mùa nào".
@@ -125,18 +120,14 @@ export function MqttCard() {
     const q = ((config as any)?.mqtt?.canh_bao as any) || {};
     setCb({
       bat: q.bat !== false,
-      kenh: String(q.kenh || ""),
-      nguoi_nhan: Array.isArray(q.nguoi_nhan) ? q.nguoi_nhan.join(", ") : "",
       gio_hang_ngay: typeof q.gio_hang_ngay === "number" ? q.gio_hang_ngay : 8,
     });
-    setCbKenh(Array.isArray(q.kenh_nhan) ? q.kenh_nhan.map((x: unknown) => String(x)) : []);
     const h = ((config as any)?.mqtt?.bai_hoc as any) || {};
     setBh({
       bat: h.bat !== false,
       du_mau: typeof h.du_mau === "number" ? h.du_mau : 4,
       han_ngay: typeof h.han_ngay === "number" ? h.han_ngay : 180,
       bao: h.bao === true,
-      kenh_nhan: Array.isArray(h.kenh_nhan) ? h.kenh_nhan.map((x: unknown) => String(x)) : [],
       bao_moi_ngay: typeof h.bao_moi_ngay === "number" ? h.bao_moi_ngay : 7,
       dung_ai: h.dung_ai !== false,
     });
@@ -230,24 +221,23 @@ export function MqttCard() {
 
   // Lưu riêng khối cảnh báo — không đụng phần máy chủ ở trên.
   const luuCb = async () => {
-    const nguoi = (cb.nguoi_nhan || "").split(",").map((x) => x.trim()).filter(Boolean);
     await saveConfig({
       ...config,
       mqtt: {
         ...((config as any)?.mqtt || {}),
         canh_bao: {
+          // Giữ nguyên mọi khoá khác của mục này. Thẻ này chỉ còn sở hữu Bật
+          // và Giờ báo hằng ngày; phần nơi-nhận thuộc về Cài đặt → Thông báo,
+          // dựng lại nguyên khối ở đây là xoá mất phần của trang kia (bẫy #9).
+          ...(((config as any)?.mqtt?.canh_bao as any) || {}),
           bat: cb.bat !== false,
-          kenh: (cb.kenh || "").trim(),
-          nguoi_nhan: nguoi,
           gio_hang_ngay: cb.gio_hang_ngay ?? 8,
-          kenh_nhan: cbKenh,
         },
         bai_hoc: {
           bat: bh.bat !== false,
           du_mau: bh.du_mau ?? 4,
           han_ngay: bh.han_ngay ?? 180,
           bao: bh.bao === true,
-          kenh_nhan: bh.kenh_nhan || [],
           bao_moi_ngay: bh.bao_moi_ngay ?? 7,
           dung_ai: bh.dung_ai !== false,
           model: (modelHoc || "").trim(),
@@ -525,41 +515,14 @@ export function MqttCard() {
               rồi mỗi ngày một lần. Nhắn «tôi biết rồi» là thôi nhắc lỗi đó — nhưng
               sửa xong mà hỏng lại thì vẫn báo.
             </p>
-            <div className="space-y-1">
-              <p className="text-xs text-muted-foreground">Báo cho ai</p>
-              {kenhOptions.length === 0 ? (
-                <p className="text-[11px] text-amber-600">
-                  Chưa có kênh nào — vào Kênh chat → Lọc thread thêm trước. Để
-                  trống thì em báo cho admin mặc định.
-                </p>
-              ) : (
-                <div className="flex flex-wrap gap-x-3 gap-y-1">
-                  {kenhOptions.map((o) => (
-                    <label key={o.value}
-                      className="flex cursor-pointer select-none items-center gap-1 text-[11px] text-muted-foreground">
-                      <input
-                        type="checkbox"
-                        checked={cbKenh.includes(o.value)}
-                        onChange={() => setCbKenh(
-                          cbKenh.includes(o.value)
-                            ? cbKenh.filter((x) => x !== o.value)
-                            : [...cbKenh, o.value])}
-                      />
-                      {o.label}
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
+            {/* Bộ chọn kênh và ô "Gửi cho ai" đã DỜI sang Cài đặt → Thông báo
+                (13/09/2026). Chủ máy chốt gom mọi cài đặt thông báo về một chỗ
+                và xoá ở tab cũ để khỏi xung đột — mà xung đột ở đây có thật:
+                mọi thẻ Cài đặt đều POST nguyên cả config, nên thẻ nạp dữ liệu
+                cũ ghi đè phần của thẻ khác (bẫy #9, từng mất
+                `du_doan.kenh_nhan`). Giữ lại Bật và Giờ báo hằng ngày vì hai
+                thứ đó không phải nơi-nhận. */}
             <div className="grid gap-2 sm:grid-cols-2">
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Gửi cho ai (id, cách nhau dấu phẩy)</p>
-                <Input
-                  placeholder="bỏ trống = admin của bot"
-                  value={cb.nguoi_nhan || ""}
-                  onChange={(e) => setCb({ ...cb, nguoi_nhan: e.target.value })}
-                />
-              </div>
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Giờ báo hằng ngày</p>
                 <Input
@@ -579,7 +542,6 @@ export function MqttCard() {
                 <span className="text-xs text-muted-foreground">
                   {ttCb.dang_hong ?? 0} lỗi đang theo dõi
                   {ttCb.dang_im ? ` · ${ttCb.dang_im} cái đã tắt nhắc` : ""}
-                  {!ttCb.nguoi_nhan ? " · ⚠️ chưa có người nhận" : ""}
                 </span>
               ) : null}
             </div>
@@ -745,34 +707,8 @@ export function MqttCard() {
                 không nhắn cho có. Người nhận lấy theo admin anh đã khai ở tab
                 Kênh chat.
               </p>
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Kể cho ai nghe</p>
-                {kenhOptions.length === 0 ? (
-                  <p className="text-[11px] text-amber-600">
-                    Chưa có kênh nào — vào Kênh chat → Lọc thread thêm trước, rồi
-                    quay lại chọn. Để trống thì em nhắn cho admin mặc định.
-                  </p>
-                ) : (
-                  <div className="flex flex-wrap gap-x-3 gap-y-1">
-                    {kenhOptions.map((o) => (
-                      <label key={o.value}
-                        className="flex cursor-pointer select-none items-center gap-1 text-[11px] text-muted-foreground">
-                        <input
-                          type="checkbox"
-                          checked={(bh.kenh_nhan || []).includes(o.value)}
-                          onChange={() => setBh({
-                            ...bh,
-                            kenh_nhan: (bh.kenh_nhan || []).includes(o.value)
-                              ? (bh.kenh_nhan || []).filter((x) => x !== o.value)
-                              : [...(bh.kenh_nhan || []), o.value],
-                          })}
-                        />
-                        {o.label}
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </div>
+              {/* "Kể cho ai nghe" đã dời sang Cài đặt → Thông báo, dòng
+                  «Bản tin bài học» (13/09/2026). */}
               <div className="space-y-1 sm:max-w-[240px]">
                 <p className="text-xs text-muted-foreground">Mấy ngày kể một lần</p>
                 <Input

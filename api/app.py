@@ -8,7 +8,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from api import accounts, ai, browser_auth, camera, captcha_proxy, channels, claude, devices, dich, hoc_hoi, image_tasks, mcp, mcp_admin, mqtt, novnc_proxy, oauth, ollama_compat, rclone, register, system, voice, zalo_bot, zalo_personal
+from api import accounts, ai, browser_auth, camera, captcha_proxy, channels, claude, devices, dich, hoc_hoi, image_tasks, mcp, mcp_admin, mqtt, novnc_proxy, oauth, ollama_compat, rclone, register, system, thong_bao, voice, zalo_bot, zalo_personal
 from api.support import resolve_web_asset, start_limited_account_watcher, require_admin
 from api.veo_video import handle_video_generation
 from services.backup_service import backup_service
@@ -87,6 +87,16 @@ def create_app() -> FastAPI:
         # Fetch latest Karpathy guidelines + start quota watcher (fire-and-forget)
         refresh_guidelines()
         watcher_task = asyncio.create_task(quota_watcher.start())
+        # Chuyển cài đặt thông báo cũ sang sổ đăng ký `thong_bao` — CHẠY MỘT
+        # LẦN, và phải chạy TRƯỚC các scheduler vì chúng phát thông báo được
+        # ngay. Thiếu bước này thì sau khi lên bản mới mục `thong_bao` rỗng, mà
+        # luật "không mặc định" sẽ làm MỌI thông báo im — đúng thứ chủ máy đã
+        # loại bỏ khi chọn "tự điền kênh admin hiện tại" (13/09/2026).
+        try:
+            from services.thong_bao import chuyen_du_lieu_mot_lan
+            chuyen_du_lieu_mot_lan()
+        except Exception as exc:
+            _record_startup_failure("thong_bao_chuyen_du_lieu", str(exc))
         # Start JWT auto-refresh scheduler (ChatGPT free 28-day expiry)
         try:
             from services.jwt_refresh_scheduler import start as start_jwt_refresh
@@ -423,6 +433,7 @@ def create_app() -> FastAPI:
     app.include_router(camera.create_router())  # camera nhà (go2rtc / RTSP), không cần Home Assistant
     app.include_router(mqtt.create_router())  # MQTT nhà: thiết bị + điều khiển, không cần Home Assistant
     app.include_router(hoc_hoi.create_router())  # tab Học hỏi: xem/sửa/xoá + tự thêm những gì bot học
+    app.include_router(thong_bao.create_router())  # Cài đặt → Thông báo: bật/tắt + chọn kênh cho TỪNG tin
     app.include_router(devices.create_router())  # device agent (WS quay ra) + REST cho MCP device_fs
     app.include_router(rclone.create_router())  # kho lưu trữ đám mây qua rclone (Drive, OneDrive, S3…)
     app.include_router(system.create_router(app_version))

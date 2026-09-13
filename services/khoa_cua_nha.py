@@ -423,23 +423,19 @@ def chay_mot_lan() -> dict[str, Any]:
     if not is_enabled():
         return {"gui": 0, "ly_do": "tắt trong cấu hình"}
 
-    from services import canh_bao_nha
-
-    nguoi = canh_bao_nha._nguoi_nhan()
-    if not nguoi:
-        return {"gui": 0, "ly_do": "chưa khai người nhận"}
+    # Ba tin của khoá cửa giờ là BA mục cài riêng trong Cài đặt → Thông báo,
+    # thay cho thang admin ba tầng cũ. Chủ máy nêu đích danh 13/09/2026: "kể cả
+    # thông báo khoá cửa hay tương tự". Đường cũ còn hỏng ngầm: tầng 3 của
+    # `_nguoi_nhan` chỉ duyệt `telegram_bots` + `zalo_bots` nên không bao giờ
+    # sinh nổi tiền tố `zalop_` — tin khoá cửa không tài nào tới Zalo cá nhân.
+    from services import thong_bao
 
     gui = 0
     # 1. Hỏi tên người lạ — chỉ một mã mỗi lượt, đừng dội một chùm.
     for m in soi_bat_thuong():
         if m["muc"] != "hoi_ten" or not _nen_hoi(m["ma"]):
             continue
-        for uid in nguoi:
-            try:
-                canh_bao_nha._gui(uid, soan_hoi_ten(m))
-                gui += 1
-            except Exception:
-                pass
+        gui += thong_bao.gui("nha.khoa_cua.hoi_ten", soan_hoi_ten(m))
         if gui:
             _danh_dau_da_hoi(m["ma"])
         break
@@ -459,12 +455,7 @@ def chay_mot_lan() -> dict[str, Any]:
     for khoa_tin, m in moi_khuya[:3]:
         tin = (f"🌙 {m['ten'] or _mo_ta_ma(m['ma'])} mở cửa lúc "
                f"{_mo_ta_luc(m['ts'])} — sau giờ cả nhà thường đi ngủ.")
-        for uid in nguoi:
-            try:
-                canh_bao_nha._gui(uid, tin)
-                gui += 1
-            except Exception:
-                pass
+        gui += thong_bao.gui("nha.khoa_cua.mo_khuya", tin)
         da_bao.add(khoa_tin)
     if moi_khuya:
         with _khoa:
@@ -482,12 +473,7 @@ def chay_mot_lan() -> dict[str, Any]:
     if not da_tom_tat and moc <= g < moc + 0.5:
         tin = soan_tom_tat()
         if tin:
-            for uid in nguoi:
-                try:
-                    canh_bao_nha._gui(uid, tin)
-                    gui += 1
-                except Exception:
-                    pass
+            gui += thong_bao.gui("nha.khoa_cua.tom_tat", tin)
         with _khoa:
             so = _doc()
             so["tom_tat_ngay"] = hom_nay

@@ -3057,7 +3057,20 @@ def _nhom_hoc_hoi(ev: dict, thread_id: str, text: str) -> str | None:
     from services.agent import capabilities as _caps
 
     acc = str(ev.get("account_id") or "")
-    if not text or f"zalop:{acc}:{thread_id}" not in du_doan_nha._kenh_nhan():
+    # Nhóm học hỏi = kênh nhận CỦA CHÍNH các tin học hỏi, đọc từ sổ đăng ký
+    # `thong_bao` (13/09/2026). Trước đây hỏi `du_doan_nha._kenh_nhan()`, tức
+    # `mqtt.du_doan.kenh_nhan`. Sau khi cài đặt thông báo gom về một chỗ thì
+    # khoá cũ đó không còn ai đặt, cổng này sập, và chủ máy chấm bài ngay trong
+    # nhóm mà bot lặng thinh.
+    #
+    # Đây là đường VÀO. Mọi phép đo của phần GỬI đều không chạm tới nó, nên nếu
+    # quên chỗ này thì hỏng âm thầm: tin vẫn gửi ra nhóm đều đặn, chỉ có câu
+    # chấm và lời dạy là rơi mất.
+    from services import thong_bao
+
+    kenh_hoc_hoi = (set(thong_bao.cai_dat("hoc_hoi.hieu_thiet_bi")["kenh"])
+                    | set(thong_bao.cai_dat("hoc_hoi.ban_tin")["kenh"]))
+    if not text or f"zalop:{acc}:{thread_id}" not in kenh_hoc_hoi:
         return None
     nguoi = str(ev.get("display_name") or ev.get("sender_id") or "")
     dap = hieu_thiet_bi_nha.tra_loi(text, nguoi=nguoi)

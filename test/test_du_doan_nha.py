@@ -269,16 +269,24 @@ class DuDoanNhaTest(unittest.TestCase):
         self.assertEqual(d["p"], 0.0)
 
     # ── gửi thông báo ──────────────────────────────────────────────────────
-    def test_KENH_dung_chung_voi_phan_hoc_tu_loi(self) -> None:
-        """Cả hai đều là "phần học hỏi" — chủ máy chọn một lần cho cả hai."""
-        self.ls.config.data["mqtt"]["bai_hoc"] = {"kenh_nhan": ["zalo:b:c"]}
-        self.assertEqual(self.dd._kenh_nhan(), ["zalo:b:c"])
+    def test_MOI_THONG_BAO_CO_MUC_RIENG_khong_an_ke(self) -> None:
+        """Thay hai phép đo cũ về "kênh dùng chung / kênh riêng thì thắng".
 
-    def test_KENH_RIENG_thi_thang(self) -> None:
-        self.ls.config.data["mqtt"]["bai_hoc"] = {"kenh_nhan": ["zalo:b:c"]}
-        self.ls.config.data["mqtt"]["du_doan"] = {
-            "bat": True, "kenh_nhan": ["tg:x:y"]}
-        self.assertEqual(self.dd._kenh_nhan(), ["tg:x:y"])
+        Trước 13/09/2026, gợi ý mượn khoá kênh của phần "học từ lỗi"
+        (`mqtt.bai_hoc.kenh_nhan`) khi chưa đặt riêng. Chủ máy chốt mỗi thông
+        báo cài ĐỘC LẬP, nên gợi ý chỉ đọc đúng mục của nó: mục của phần khác
+        có kênh cũng không được ăn ké."""
+        from services import digest
+        self.ls.config.data["thong_bao"] = {
+            "hoc_hoi.ban_tin": {"bat": True, "kenh": ["zalo:b:c"]}}
+        self.addCleanup(self.ls.config.data.pop, "thong_bao", None)
+        goi_y = [{"ten": "light.bep", "p": 0.9, "cach": "goi_y", "nhan": {},
+                  "bang_chung": [{"dieu_kien": "buoi=tối", "trong_so": 1.2}]}]
+        with mock.patch.object(self.dd, "quet",
+                               side_effect=lambda: [dict(x) for x in goi_y]), \
+             mock.patch.object(digest, "send_targets", return_value=1) as g:
+            self.dd.chay_mot_lan()
+        g.assert_not_called()
 
     def test_TIN_NHAN_noi_ca_VI_SAO(self) -> None:
         """Không giải thích được thì chủ máy không sửa được bot."""
@@ -304,9 +312,24 @@ class DuDoanNhaTest(unittest.TestCase):
         """Gợi ý không gửi được thì đừng ghi — chấm cái chủ máy chưa thấy là
         làm hỏng thành tích."""
         self._nep_toi()
-        with mock.patch.object(self.dd, "_kenh_nhan", return_value=["zalo:b:c"]), \
-             mock.patch("services.digest.send_targets", return_value=0):
+        # Phải có HAI thứ thì phép đo mới có nghĩa: kênh thật trong sổ đăng ký,
+        # và chắc chắn có gợi ý để gửi.
+        #
+        # Bản cũ mock `_kenh_nhan` (hàm mà đường gửi không còn gọi) rồi dựa vào
+        # `_nep_toi()` tự sinh gợi ý — nhưng `_nep_toi` chỉ dựng LỊCH SỬ, còn
+        # `quet()` có ra gợi ý hay không còn tuỳ giờ chạy test. Nên phép đo ấy
+        # đúng kể cả khi chẳng gửi gì: `n == 0` hiển nhiên đúng khi không có
+        # bản ghi nào được tạo. Nó không thể đỏ, tức không đo được gì.
+        goi_y = [{"ten": "light.bep", "p": 0.9, "cach": "goi_y", "nhan": {},
+                  "bang_chung": [{"dieu_kien": "buoi=tối", "trong_so": 1.2}]}]
+        self.ls.config.data["thong_bao"] = {
+            "nha.goi_y": {"bat": True, "kenh": ["zalo:b:c"]}}
+        self.addCleanup(self.ls.config.data.pop, "thong_bao", None)
+        with mock.patch.object(self.dd, "quet",
+                               side_effect=lambda: [dict(x) for x in goi_y]), \
+             mock.patch("services.digest.send_targets", return_value=0) as g:
             self.dd.chay_mot_lan()
+        g.assert_called()
         with self.dd._khoa:
             n = self.dd._db().execute("SELECT COUNT(*) FROM du_doan").fetchone()[0]
         self.assertEqual(n, 0)
@@ -558,15 +581,18 @@ class DuDoanNhaTest(unittest.TestCase):
     def test_TIN_GOI_Y_DANH_SO_GY_va_GUI_HONG_thi_KHONG_GHI(self) -> None:
         goi_y = [{"ten": "light.bep", "p": 0.9, "cach": "goi_y", "nhan": {},
                   "bang_chung": [{"dieu_kien": "buoi=tối", "trong_so": 1.2}]}]
+        # Kênh nhận dời sang sổ đăng ký `thong_bao` (13/09/2026) — `_kenh_nhan`
+        # không còn được gọi nữa. `config` là singleton nên phải trả lại.
+        self.ls.config.data["thong_bao"] = {
+            "nha.goi_y": {"bat": True, "kenh": ["zalo:b:c"]}}
+        self.addCleanup(self.ls.config.data.pop, "thong_bao", None)
         with mock.patch.object(self.dd, "quet", side_effect=lambda: [dict(x) for x in goi_y]), \
-             mock.patch.object(self.dd, "_kenh_nhan", return_value=["zalo:b:c"]), \
              mock.patch("services.digest.send_targets", return_value=0):
             self.dd.chay_mot_lan()
         with self.dd._khoa:
             n = self.dd._db().execute("SELECT COUNT(*) FROM du_doan").fetchone()[0]
         self.assertEqual(n, 0, "gửi hỏng thì chủ máy chưa thấy — không được còn trong sổ")
         with mock.patch.object(self.dd, "quet", side_effect=lambda: [dict(x) for x in goi_y]), \
-             mock.patch.object(self.dd, "_kenh_nhan", return_value=["zalo:b:c"]), \
              mock.patch("services.digest.send_targets", return_value=1) as gui:
             kq = self.dd.chay_mot_lan()
         self.assertIn(f"gy {kq['goi_y'][0]['id']} đúng", gui.call_args.args[1])

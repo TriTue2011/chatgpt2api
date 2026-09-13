@@ -248,10 +248,15 @@ class KhoaCuaTest(unittest.TestCase):
                                side_effect=RuntimeError("mất mạng")):
             self.assertEqual(self.m.doc_nhat_ky(), [])
 
-    def test_chua_khai_nguoi_nhan_thi_khong_gui(self) -> None:
-        from services import canh_bao_nha
-        with mock.patch.object(canh_bao_nha, "_nguoi_nhan", return_value=[]):
+    def test_chua_chon_kenh_thi_khong_gui(self) -> None:
+        """Từ 13/09/2026 ba tin của khoá cửa đi theo sổ đăng ký `thong_bao`.
+
+        Chưa chọn kênh trong Cài đặt → Thông báo thì IM, không rơi về admin —
+        chủ máy nêu đích danh "kể cả thông báo khoá cửa hay tương tự"."""
+        from services import digest
+        with mock.patch.object(digest, "send_targets", return_value=1) as g:
             self.assertEqual(self.m.chay_mot_lan()["gui"], 0)
+        g.assert_not_called()
 
     def test_tat_thi_khong_lam_gi(self) -> None:
         self.m.config.data["mqtt"]["khoa_cua"] = {"bat": False}

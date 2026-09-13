@@ -158,13 +158,82 @@ def _khoa_loi(h: dict[str, Any]) -> str:
     return f"{h.get('thiet_bi')}\x00{h.get('truong')}\x00{h.get('loai')}"
 
 
-def _mo_ta(h: dict[str, Any]) -> str:
-    ten = str(h.get("thiet_bi") or "?")
+def _tra_cuu() -> tuple[dict[str, str], dict[str, str]]:
+    """(tên theo mã, khu vực theo mã) — dựng MỘT lần cho cả tin, không tra lại
+    cho từng lỗi.
+
+    Tên thực thể lấy qua ``ha_client.get_states()`` — đúng nơi đã ẩn sẵn thực
+    thể có mật khẩu trong tên (`_an_thuc_the_mang_mat_khau`). Nhờ đi qua đó,
+    tin cảnh báo không thể vô tình mang mật khẩu camera ra Zalo.
+
+    Hỏng thì trả về rỗng chứ không ném: mất tên còn đọc được, mất cảnh báo thì
+    không.
+    """
+    ten: dict[str, str] = {}
+    khu: dict[str, str] = {}
+    try:
+        from services import ha_client
+        for s in ha_client.get_states():
+            eid = str(s.get("entity_id") or "")
+            fn = str((s.get("attributes") or {}).get("friendly_name") or "")
+            if eid and fn:
+                ten[eid] = fn
+        khu = dict((ha_client.get_ha_area_index() or {}).get("entity_area") or {})
+    except Exception as exc:
+        logger.info({"event": "canh_bao_tra_ten_loi", "error": str(exc)[:120]})
+    return ten, khu
+
+
+def _ten_khu(ma: str, ten_map: dict[str, str],
+             khu_map: dict[str, str]) -> tuple[str, str]:
+    """Tên người đọc được và khu vực của một mã. Rỗng = chưa biết.
+
+    Đo trên 11 lỗi thật 13/09/2026: mã đi vào đây có HAI dạng — 4 mã thực thể
+    Home Assistant (`sensor.hien_dien_phong_hoc_illuminance`) và 7 topic MQTT
+    (`cmnd/X_SMART_LINK_A44F95/irhvac`, `zigbee2mqtt/Báo khói bếp`). Hai dạng
+    tra hai sổ khác nhau.
+
+    KHÔNG suy phòng từ chữ trong mã. `hien_dien_phong_hoc` trông đúng là "phòng
+    học", nhưng khớp chuỗi rồi không ai kiểm chứng chính là lớp lỗi kho này đã
+    trả giá ba lần trong một buổi sáng. Khu vực chỉ lấy từ chỉ mục HA; không có
+    thì thôi, không đoán.
+    """
+    if "/" in ma:                       # topic MQTT — không có khu vực
+        try:
+            from services import so_ten_nha
+            return so_ten_nha.ten_cua("mqtt", "thiet_bi", ma), ""
+        except Exception:
+            return "", ""
+    return ten_map.get(ma, ""), khu_map.get(ma, "")
+
+
+def _mo_ta(h: dict[str, Any], ten_map: dict[str, str] | None = None,
+           khu_map: dict[str, str] | None = None) -> str:
+    """Một dòng cho một lỗi: thiết bị gì, ở đâu, tên gì, mã gì, hỏng ra sao.
+
+    Chủ máy 13/09/2026: *"Không liệt kê rõ ràng thiết bị gì, ở đâu, tên nếu có,
+    entity nếu có"*. Bản cũ chỉ in mỗi mã máy (`cmnd/X_SMART_LINK_A44F95/irhvac
+    · Power`) nên không ai biết đó là cái gì trong nhà.
+
+    Giữ ĐÚNG MỘT dòng thụt lề cho mỗi lỗi: `_soan_tin` đếm `"\\n   "` để chặn
+    dội 156 lỗi một lượt, thêm dòng thụt nữa là phép chặn đó âm thầm sai.
+    """
+    ma = str(h.get("thiet_bi") or "?")
     tr = str(h.get("truong") or "")
     nhan = {"chet": "🔴 chết hẳn", "do": "🟠 đơ (vẫn báo nhưng số không đổi)",
             "chap_chon": "🟡 chập chờn"}.get(str(h.get("loai")), str(h.get("loai")))
     ct = str(h.get("chi_tiet") or "")
-    return f"{nhan} — {ten}" + (f" · {tr}" if tr and tr != "state" else "") + f"\n   {ct}"
+    ten, khu = _ten_khu(ma, ten_map or {}, khu_map or {})
+
+    dau = ten or ma
+    if khu:
+        dau += f" ({khu})"
+    # Biết tên thì vẫn kèm mã ở dòng dưới — chủ máy cần mã để tra trong HA.
+    # Chưa biết tên thì mã đã nằm ở đầu dòng rồi, đừng lặp lại.
+    duoi = ct if not ten else (f"{ma} — {ct}" if ct else ma)
+    return (f"{nhan} — {dau}"
+            + (f" · {tr}" if tr and tr != "state" else "")
+            + f"\n   {duoi}")
 
 
 # ── Nhịp báo lại ────────────────────────────────────────────────────────────
@@ -325,7 +394,9 @@ def _soan_tin(hong: list[dict[str, Any]], tong: int) -> str:
     n = len(hong)
     dau = (f"⚠️ Nhà có {tong} thiết bị đang lỗi" if tong > n
            else f"⚠️ Nhà có {n} thiết bị đang lỗi")
-    than = "\n".join(_mo_ta(h) for h in hong[:_toi_da_moi_lan()])
+    ten_map, khu_map = _tra_cuu()
+    than = "\n".join(_mo_ta(h, ten_map, khu_map)
+                     for h in hong[:_toi_da_moi_lan()])
     con = tong - min(n, _toi_da_moi_lan())
     duoi = f"\n\n…và {con} cái nữa." if con > 0 else ""
     return (f"{dau}:\n\n{than}{duoi}\n\n"
@@ -347,27 +418,16 @@ def chay_mot_lan(so_ngay: int = 7) -> dict[str, Any]:
     tin = _soan_tin(can, int(kq.get("tong_hong") or len(can)))
     gui = 0
 
-    # Chủ máy chọn kênh ĐÍCH DANH thì gửi đúng đó — dùng lại `digest.send_targets`
-    # mà email/lịch và bản tin học tập đang dùng, cùng khoá `plat:bot:chat`.
-    kenh = _kenh_nhan()
-    if kenh:
-        try:
-            from services import digest
-            gui = digest.send_targets(kenh, tin)
-        except Exception as exc:
-            logger.info({"event": "canh_bao_gui_loi", "error": str(exc)[:160]})
-    else:
-        # Chưa chọn → đường cũ ba tầng, giữ nguyên hành vi đang chạy.
-        nguoi = _nguoi_nhan()
-        if not nguoi:
-            return {"gui": 0, "ly_do": "chưa chọn kênh nhận"}
-        for uid in nguoi:
-            try:
-                _gui(uid, tin)
-                gui += 1
-            except Exception as exc:
-                logger.info({"event": "canh_bao_gui_loi", "user": uid,
-                             "error": str(exc)[:160]})
+    # MỘT đường duy nhất: sổ đăng ký `services/thong_bao.py`. Chủ máy chốt
+    # 13/09/2026 — mọi thông báo theo cài đặt trên web, KHÔNG mặc định — nên
+    # nhánh "chưa chọn kênh thì rơi về admin ba tầng" đã bỏ hẳn. Cái thang cũ
+    # ấy chỉ duyệt `telegram_bots` + `zalo_bots`, không bao giờ sinh nổi tiền
+    # tố `zalop_`, nên nó vừa là mặc định ngầm vừa là mặc định TRẬT.
+    from services import thong_bao
+
+    gui = thong_bao.gui("nha.canh_bao", tin)
+    if not gui and not thong_bao.cai_dat("nha.canh_bao")["kenh"]:
+        return {"gui": 0, "ly_do": "chưa chọn kênh nhận (Cài đặt → Thông báo)"}
 
     if gui:
         _len_bac(kq.get("khoa") or [])
@@ -394,6 +454,11 @@ def trang_thai() -> dict[str, Any]:
     muc = so.get("muc") or {}
     hong = [bg for bg in muc.values() if bg.get("dang_hong")]
     im = [bg for bg in hong if bg.get("im_lan") == bg.get("lan_hong")]
+    # Đếm KÊNH đã chọn cho cảnh báo, không đếm admin nữa. Từ 13/09/2026 cảnh
+    # báo đi theo sổ đăng ký `thong_bao`, nên số admin là con số không còn dính
+    # dáng gì tới "ai thật sự nhận được tin" — hiện nó lên web là nói sai.
+    from services import thong_bao
+
     return {
         "bat": is_enabled(),
         "dang_hong": len(hong),
@@ -401,7 +466,7 @@ def trang_thai() -> dict[str, Any]:
         "theo_doi": len(muc),
         "quet_cuoi": so.get("quet_cuoi"),
         "gio_hang_ngay": _gio_hang_ngay(),
-        "nguoi_nhan": len(_nguoi_nhan()),
+        "nguoi_nhan": len(thong_bao.cai_dat("nha.canh_bao")["kenh"]),
     }
 
 
