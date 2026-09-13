@@ -238,8 +238,13 @@ def danh_sach_thiet_bi(lam_moi: bool = False) -> list[dict[str, Any]]:
         moc = (r.get("last_row_key") or "") if isinstance(r, dict) else ""
         if len(lo) < 20 or not moc:
             break
+    from services import thiet_bi_bo
+
     ra = []
     for d in ds:
+        # Chủ máy «Bỏ khỏi c2a» — bot không thấy, không điều khiển được.
+        if thiet_bi_bo.la_bo("tuya", str(d.get("id") or "")):
+            continue
         ra.append({
             "id": d.get("id"),
             "ten": d.get("name") or "?",

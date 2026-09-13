@@ -5,10 +5,16 @@
  * vào đặt tên/khu vực ngay. Trước đây phần này nằm trong tab "Học hỏi" nhưng
  * chỉ liệt kê thứ ĐÃ TỪNG gặp (sổ tên), không cho duyệt toàn bộ danh sách
  * thiết bị đang có — chủ máy chốt chuyển sang đây, đúng chỗ quản lý thiết bị.
+ *
+ * Chủ máy 13/09/2026: "chia tầng 1 là homeassistant, MQTT, tuya. Tầng 2 chia
+ * theo từng loại, xem homeassistant", và "thêm cả nút xóa thiết bị … để xóa
+ * các thiết bị không cần thiết" — chọn nghĩa BỎ KHỎI c2a (thiết bị vẫn còn
+ * trong HA) và xoá luôn lịch sử. Tên nhóm tầng 2 do máy chủ tính
+ * (`api/hoc_hoi.nhom_ha`), thẻ này chỉ gom và hiện.
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
+import { LoaderCircle, RefreshCw, Trash2, Undo2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,20 +28,37 @@ type Muc = {
   ten: string;
   khu_vuc: string;
   khu_vuc_goi_y: string;
+  nhom: string;
+  da_bo: boolean;
 };
 
-const NHAN_NGUON: Record<string, string> = { ha: "HA", mqtt: "MQTT", tuya: "Tuya" };
+const NGUON: { khoa: Muc["nguon"]; nhan: string }[] = [
+  { khoa: "ha", nhan: "Home Assistant" },
+  { khoa: "mqtt", nhan: "MQTT" },
+  { khoa: "tuya", nhan: "Tuya" },
+];
+
+const NHOM_DA_BO = "Đã bỏ khỏi c2a";
+
+/** Nhóm "khác" và "đã bỏ" xuống cuối; còn lại theo bảng chữ cái. */
+function thuTuNhom(a: string, b: string): number {
+  const cuoi = (n: string) => (n === NHOM_DA_BO ? 2 : /khác/i.test(n) ? 1 : 0);
+  return cuoi(a) - cuoi(b) || a.localeCompare(b, "vi");
+}
 
 export function HaDevicesCard() {
   const [ds, setDs] = useState<Muc[]>([]);
   const [dangTai, setDangTai] = useState(false);
   const [loc, setLoc] = useState("");
+  const [nguon, setNguon] = useState<Muc["nguon"]>("ha");
   const [nhap, setNhap] = useState<Record<string, { ten: string; khu_vuc: string }>>({});
+  const [tin, setTin] = useState("");
 
   const tai = useCallback(async () => {
     setDangTai(true);
     try {
-      const r = await httpRequest<{ danh_sach?: Muc[] }>("/api/hoc-hoi/thiet-bi-day-du", { method: "GET" });
+      const r = await httpRequest<{ danh_sach?: Muc[] }>(
+        "/api/hoc-hoi/thiet-bi-day-du?kem_da_bo=1", { method: "GET" });
       setDs(r.danh_sach || []);
       setNhap({});
     } finally {
@@ -47,10 +70,9 @@ export function HaDevicesCard() {
 
   const luu = async (m: Muc) => {
     const v = nhap[m.khoa] || { ten: m.ten, khu_vuc: m.khu_vuc || m.khu_vuc_goi_y };
-    const nguon = m.khoa.split(":", 1)[0];
     const res = await httpRequest<{ ok?: boolean }>("/api/hoc-hoi/ten/dat", {
       method: "POST",
-      body: { nguon, loai: "thiet_bi", ma: m.ma, ten: v.ten, khu_vuc: v.khu_vuc },
+      body: { nguon: m.nguon, loai: "thiet_bi", ma: m.ma, ten: v.ten, khu_vuc: v.khu_vuc },
     });
     if (res?.ok) void tai();
   };
@@ -58,12 +80,35 @@ export function HaDevicesCard() {
     await httpRequest("/api/hoc-hoi/ten/xoa", { method: "POST", body: { khoa } });
     void tai();
   };
+  const boThietBi = async (m: Muc) => {
+    if (!window.confirm(
+      `Bỏ "${m.ten || m.ten_goc}" khỏi c2a?\n\nBot sẽ không thấy, không điều khiển, không học thiết bị này, `
+      + "và LỊCH SỬ c2a đã ghi của nó bị xoá (không lấy lại được). "
+      + "Thiết bị vẫn còn nguyên trong Home Assistant / MQTT / Tuya.")) return;
+    const r = await httpRequest<{ ok?: boolean; error?: string; xoa?: { su_kien: number; so_do: number } }>(
+      "/api/hoc-hoi/thiet-bi/bo", { method: "POST", body: { nguon: m.nguon, ma: m.ma } });
+    setTin(r.ok
+      ? `Đã bỏ "${m.ten || m.ten_goc}" — xoá ${r.xoa?.su_kien ?? 0} sự kiện, ${r.xoa?.so_do ?? 0} số đo.`
+      : `Không bỏ được: ${r.error || "lỗi không rõ"}`);
+    if (r.ok) void tai();
+  };
+  const khoiPhuc = async (m: Muc) => {
+    const r = await httpRequest<{ ok?: boolean; error?: string }>(
+      "/api/hoc-hoi/thiet-bi/bo-lai", { method: "POST", body: { nguon: m.nguon, ma: m.ma } });
+    setTin(r.ok ? `Đã khôi phục "${m.ten_goc}".` : `Không khôi phục được: ${r.error || "lỗi không rõ"}`);
+    if (r.ok) void tai();
+  };
 
   const locXuong = loc.trim().toLowerCase();
-  const hienThi = locXuong
-    ? ds.filter((m) => m.ten_goc.toLowerCase().includes(locXuong) || m.ten.toLowerCase().includes(locXuong)
-        || m.ma.toLowerCase().includes(locXuong))
-    : ds;
+  const khop = (m: Muc) => !locXuong || m.ten_goc.toLowerCase().includes(locXuong)
+    || m.ten.toLowerCase().includes(locXuong) || m.ma.toLowerCase().includes(locXuong);
+  const demNguon = (k: Muc["nguon"]) => ds.filter((m) => m.nguon === k && !m.da_bo).length;
+  const theoNhom = new Map<string, Muc[]>();
+  for (const m of ds.filter((x) => x.nguon === nguon && khop(x))) {
+    const n = m.nhom || "Khác";
+    theoNhom.set(n, [...(theoNhom.get(n) || []), m]);
+  }
+  const nhom = [...theoNhom.keys()].sort(thuTuNhom);
 
   return (
     <div className="space-y-3 rounded-xl border-2 border-slate-200 bg-[var(--card)]/60 p-3">
@@ -71,7 +116,7 @@ export function HaDevicesCard() {
         <div>
           <p className="text-xs font-bold text-slate-800">Thiết bị & tên</p>
           <p className="text-[10px] text-[var(--muted-foreground)]">
-            Toàn bộ thiết bị/thực thể HA + MQTT + Tuya đang có. Bấm vào đặt tên và khu vực.
+            Toàn bộ thiết bị/thực thể đang có, chia theo nguồn rồi theo loại. Bấm vào đặt tên và khu vực.
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => void tai()} disabled={dangTai}>
@@ -79,60 +124,85 @@ export function HaDevicesCard() {
         </Button>
       </div>
 
+      {/* Tầng 1: nguồn */}
+      <div className="flex flex-wrap gap-1.5">
+        {NGUON.map((n) => (
+          <button key={n.khoa} type="button" onClick={() => setNguon(n.khoa)}
+            className={"rounded-full border px-3 py-1 text-xs " + (nguon === n.khoa
+              ? "border-transparent bg-primary text-primary-foreground"
+              : "text-muted-foreground")}>
+            {n.nhan} ({demNguon(n.khoa)})
+          </button>
+        ))}
+      </div>
+
       <Input placeholder="Lọc theo tên hoặc mã…" value={loc} onChange={(e) => setLoc(e.target.value)}
         className="h-8 text-xs" />
+      {tin ? <p className="text-[11px] text-[var(--muted-foreground)]">{tin}</p> : null}
 
       {dangTai && !ds.length ? (
         <div className="flex items-center gap-2 p-2 text-xs text-[var(--muted-foreground)]">
           <LoaderCircle className="size-4 animate-spin" /> Đang tải…
         </div>
       ) : (
-        <div className="max-h-[32rem] overflow-auto rounded border border-border">
-          <table className="w-full text-xs">
-            <thead className="sticky top-0 bg-muted/60 text-[var(--muted-foreground)]">
-              <tr>
-                <th className="px-2 py-1 text-left">Nguồn</th>
-                <th className="px-2 py-1 text-left">Mã / tên gốc</th>
-                <th className="px-2 py-1 text-left">Tên</th>
-                <th className="px-2 py-1 text-left">Khu vực</th>
-                <th className="px-2 py-1"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {hienThi.map((m) => {
-                const v = nhap[m.khoa] || { ten: m.ten, khu_vuc: m.khu_vuc || m.khu_vuc_goi_y };
-                return (
-                  <tr key={m.khoa} className="border-t border-border/60">
-                    <td className="px-2 py-1 align-top text-[var(--muted-foreground)]">{NHAN_NGUON[m.nguon] || m.nguon}</td>
-                    <td className="px-2 py-1 align-top">
-                      <div>{m.ten_goc}</div>
-                      <div className="text-[10px] text-[var(--muted-foreground)]">{m.ma}</div>
-                    </td>
-                    <td className="px-2 py-1">
-                      <Input value={v.ten} placeholder="chưa đặt tên" className="h-7 text-xs"
-                        onChange={(e) => setNhap({ ...nhap, [m.khoa]: { ...v, ten: e.target.value } })} />
-                    </td>
-                    <td className="px-2 py-1">
-                      <Input value={v.khu_vuc} placeholder={m.khu_vuc_goi_y ? `gợi ý: ${m.khu_vuc_goi_y}` : "chưa rõ"}
-                        className="h-7 text-xs"
-                        onChange={(e) => setNhap({ ...nhap, [m.khoa]: { ...v, khu_vuc: e.target.value } })} />
-                    </td>
-                    <td className="whitespace-nowrap px-2 py-1 text-right align-top">
-                      <Button variant="outline" size="sm" className="h-7" onClick={() => void luu(m)}>Lưu</Button>
-                      {m.ten ? (
-                        <Button variant="ghost" size="sm" className="h-7 text-destructive" onClick={() => void xoaTen(m.khoa)}>
-                          <Trash2 className="size-3.5" />
-                        </Button>
-                      ) : null}
-                    </td>
-                  </tr>
-                );
-              })}
-              {!hienThi.length ? (
-                <tr><td colSpan={5} className="px-2 py-3 text-center text-[var(--muted-foreground)]">Không có thiết bị nào khớp.</td></tr>
-              ) : null}
-            </tbody>
-          </table>
+        <div className="max-h-[36rem] space-y-1.5 overflow-auto">
+          {/* Tầng 2: loại. Đang lọc thì mở sẵn mọi nhóm để thấy ngay kết quả. */}
+          {nhom.map((n) => (
+            <details key={`${nguon}-${n}-${locXuong ? "loc" : ""}`} open={!!locXuong}
+              className="rounded border border-border">
+              <summary className="cursor-pointer select-none bg-muted/40 px-2 py-1.5 text-xs font-medium">
+                {n} <span className="text-[var(--muted-foreground)]">({theoNhom.get(n)?.length})</span>
+              </summary>
+              <div className="divide-y divide-border/60">
+                {(theoNhom.get(n) || []).map((m) => {
+                  const v = nhap[m.khoa] || { ten: m.ten, khu_vuc: m.khu_vuc || m.khu_vuc_goi_y };
+                  return (
+                    <div key={m.khoa} className="grid gap-1.5 px-2 py-1.5 text-xs sm:grid-cols-[1fr_10rem_8rem_auto] sm:items-center">
+                      <div className="min-w-0">
+                        <div className="truncate">{m.ten_goc}</div>
+                        <div className="truncate text-[10px] text-[var(--muted-foreground)]">{m.ma}</div>
+                      </div>
+                      {m.da_bo ? (
+                        <div className="text-[10px] text-[var(--muted-foreground)] sm:col-span-2">
+                          Bot không thấy thiết bị này; lịch sử cũ đã xoá.
+                        </div>
+                      ) : (
+                        <>
+                          <Input value={v.ten} placeholder="chưa đặt tên" className="h-7 text-xs"
+                            onChange={(e) => setNhap({ ...nhap, [m.khoa]: { ...v, ten: e.target.value } })} />
+                          <Input value={v.khu_vuc} className="h-7 text-xs"
+                            placeholder={m.khu_vuc_goi_y ? `gợi ý: ${m.khu_vuc_goi_y}` : "khu vực"}
+                            onChange={(e) => setNhap({ ...nhap, [m.khoa]: { ...v, khu_vuc: e.target.value } })} />
+                        </>
+                      )}
+                      <div className="flex flex-wrap justify-end gap-1">
+                        {m.da_bo ? (
+                          <Button variant="outline" size="sm" className="h-7" onClick={() => void khoiPhuc(m)}>
+                            <Undo2 className="mr-1 size-3.5" /> Khôi phục
+                          </Button>
+                        ) : (
+                          <>
+                            <Button variant="outline" size="sm" className="h-7" onClick={() => void luu(m)}>Lưu</Button>
+                            {m.ten ? (
+                              <Button variant="ghost" size="sm" className="h-7" title="Xoá tên đã đặt"
+                                onClick={() => void xoaTen(m.khoa)}>Xoá tên</Button>
+                            ) : null}
+                            <Button variant="ghost" size="sm" className="h-7 text-destructive"
+                              title="Bỏ khỏi c2a và xoá lịch sử" onClick={() => void boThietBi(m)}>
+                              <Trash2 className="mr-1 size-3.5" /> Bỏ
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
+          ))}
+          {!nhom.length ? (
+            <p className="px-2 py-3 text-center text-xs text-[var(--muted-foreground)]">Không có thiết bị nào khớp.</p>
+          ) : null}
         </div>
       )}
     </div>

@@ -170,7 +170,8 @@ def _patch_state(new_state: dict[str, Any] | None, entity_id: str,
     # thì mỗi sự kiện đổi trạng thái lại chèn thực thể đã ẩn vào gương: 12/09/2026
     # lượt giải trong tiến trình chính vẫn đưa mã 4 camera go2rtc vào đề, dù kiểm
     # bằng một tiến trình mới (không có gương này) thì thấy sạch.
-    if new_state is not None and not hc._an_thuc_the_mang_mat_khau([new_state]):
+    if new_state is not None and not hc._an_thuc_the_da_bo(
+            hc._an_thuc_the_mang_mat_khau([new_state])):
         new_state = None
     with hc._state_cache_lock:
         cache = hc._state_cache

@@ -282,6 +282,13 @@ def _la_anh(thiet_bi: str, gia_tri: Any) -> bool:
     return "\x00" in s or "\ufffd" in s
 
 
+def _da_bo(thiet_bi: str) -> bool:
+    """Thiết bị chủ máy đã «Bỏ khỏi c2a» — `services/thiet_bi_bo.py`."""
+    from services import thiet_bi_bo
+
+    return thiet_bi_bo.la_bo_lich_su(thiet_bi)
+
+
 #: Cùng luật với `_la_anh`, viết cho SQL — dùng khi dọn những gì bản cũ đã ghi.
 #: So theo BYTE (`CAST … AS BLOB`): hàm chữ của SQLite dừng ở ký tự NUL đầu tiên,
 #: nên `length()`/`instr()` trên TEXT đo sai đúng loại dữ liệu cần tìm.
@@ -415,7 +422,7 @@ def ghi(nguon: str, thiet_bi: str, truong: str, gia_tri: Any,
         truong = (truong or "").strip()
         if not thiet_bi or not truong or gia_tri is None:
             return
-        if _bo_qua(thiet_bi, truong) or _la_anh(thiet_bi, gia_tri):
+        if _bo_qua(thiet_bi, truong) or _la_anh(thiet_bi, gia_tri) or _da_bo(thiet_bi):
             return
         _hang.put_nowait((nguon, thiet_bi, truong, gia_tri, bool(do_ai),
                           float(ts) if ts else time.time()))
@@ -429,7 +436,7 @@ def ghi(nguon: str, thiet_bi: str, truong: str, gia_tri: Any,
 def _ghi_thang(conn: sqlite3.Connection, nguon: str, thiet_bi: str, truong: str,
                gia_tri: Any, do_ai: bool, ts: float) -> None:
     """Ghi thật xuống đĩa. Chỉ luồng nền (và nap_tu_ha) gọi."""
-    if _bo_qua(thiet_bi, truong) or _la_anh(thiet_bi, gia_tri):
+    if _bo_qua(thiet_bi, truong) or _la_anh(thiet_bi, gia_tri) or _da_bo(thiet_bi):
         return
     gt = str(gia_tri)
     loai = _phan_loai_theo_nhip(conn, thiet_bi, truong, gia_tri)
@@ -873,6 +880,47 @@ def xoa_anh_da_luu(lo: int = 200) -> dict[str, int]:
         conn.commit()
     logger.info({"event": "lich_su_xoa_anh", "su_kien": xoa, "tuoi": tuoi})
     return {"su_kien": xoa, "tuoi": tuoi}
+
+
+def xoa_thiet_bi(ma: list[str], goc: list[str] | None = None, lo: int = 500) -> dict[str, int]:
+    """Xoá MỌI lịch sử của một thiết bị chủ máy đã bỏ khỏi c2a.
+
+    `ma` khớp đúng mã (`light.x`, tên Tuya); `goc` khớp gốc chủ đề MQTT và mọi
+    chủ đề con (`frigate/bep` → `frigate/bep/person`). Không đụng thiết bị nào
+    khác: `goc` một đoạn bị `thiet_bi_bo.goc_chu_de` từ chối từ trước.
+
+    Quét bảng sự kiện bằng kết nối chỉ-đọc rồi xoá theo `id` từng lô, nhả
+    `_khoa_db` giữa các lô — cùng lẽ `xoa_anh_da_luu`.
+    """
+    ma = [m for m in ma if m]
+    goc = [g for g in (goc or []) if g]
+    if not ma and not goc:
+        return {"su_kien": 0, "so_do": 0, "tuoi": 0, "nhip": 0}
+    dk = " OR ".join(["thiet_bi=?"] * len(ma) + ["thiet_bi=? OR thiet_bi LIKE ? ESCAPE '\\'"] * len(goc))
+    tham_so: list[str] = list(ma)
+    for g in goc:
+        tham_so += [g, g.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/%"]
+
+    ro = sqlite3.connect(f"file:{_DB_PATH}?mode=ro", uri=True, timeout=10.0)
+    try:
+        ids = [int(r[0]) for r in ro.execute(f"SELECT id FROM su_kien WHERE {dk}", tham_so)]
+    finally:
+        ro.close()
+    ra = {"su_kien": 0, "so_do": 0, "tuoi": 0, "nhip": 0}
+    for i in range(0, len(ids), lo):
+        phan = ids[i:i + lo]
+        with _khoa_db:
+            conn = _db()
+            ra["su_kien"] += conn.execute(
+                f"DELETE FROM su_kien WHERE id IN ({','.join('?' * len(phan))})", phan).rowcount
+            conn.commit()
+    with _khoa_db:
+        conn = _db()
+        for bang in ("so_do", "tuoi", "nhip"):
+            ra[bang] = conn.execute(f"DELETE FROM {bang} WHERE {dk}", tham_so).rowcount
+        conn.commit()
+    logger.info({"event": "lich_su_xoa_thiet_bi", **ra})
+    return ra
 
 
 # ── Nạp lịch sử Home Assistant ──────────────────────────────────────────────

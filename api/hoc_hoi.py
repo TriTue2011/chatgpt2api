@@ -39,6 +39,67 @@ def _loi(exc: Exception, viec: str) -> dict:
     return {"ok": False, "error": str(exc)[:200]}
 
 
+#: Tên nhóm HIỂN THỊ cho tầng 2 của tab Thiết bị & tên — chủ máy 13/09/2026:
+#: "Tầng 2 chia theo từng loại, xem homeassistant. Ví dụ công tắc, cảm biến ánh
+#: sáng, cảm biến nhiệt độ, tự động hóa, script…, khác". Chia đúng như HA chia:
+#: theo MIỀN, riêng cảm biến chia tiếp theo `device_class`. Đây là bảng DỊCH TÊN
+#: để người đọc, không phải bộ lọc: miền/lớp chưa có tên thì rơi vào "Khác" chứ
+#: không mất khỏi danh sách.
+_TEN_MIEN = {
+    "light": "Đèn", "switch": "Công tắc", "fan": "Quạt", "climate": "Điều hòa",
+    "cover": "Rèm / cửa cuốn", "lock": "Khoá", "media_player": "Loa / TV",
+    "camera": "Camera", "automation": "Tự động hóa", "script": "Script",
+    "scene": "Ngữ cảnh", "button": "Nút bấm", "number": "Số cài đặt",
+    "select": "Lựa chọn", "input_boolean": "Công tắc ảo",
+    "input_number": "Biến trợ giúp", "input_select": "Biến trợ giúp",
+    "input_text": "Biến trợ giúp", "input_datetime": "Biến trợ giúp",
+    "input_button": "Biến trợ giúp", "update": "Cập nhật phần mềm",
+    "device_tracker": "Theo dõi vị trí", "person": "Người", "zone": "Vùng",
+    "weather": "Thời tiết", "event": "Sự kiện", "vacuum": "Robot hút bụi",
+    "water_heater": "Bình nóng lạnh", "siren": "Còi", "remote": "Điều khiển từ xa",
+    "alarm_control_panel": "Báo động", "calendar": "Lịch", "todo": "Việc cần làm",
+    "image": "Ảnh", "tts": "Giọng nói / AI", "stt": "Giọng nói / AI",
+    "conversation": "Giọng nói / AI", "ai_task": "Giọng nói / AI",
+    "notify": "Thông báo", "sun": "Mặt trời",
+}
+_TEN_LOP_CAM_BIEN = {
+    "temperature": "Cảm biến nhiệt độ", "humidity": "Cảm biến độ ẩm",
+    "illuminance": "Cảm biến ánh sáng", "occupancy": "Cảm biến hiện diện",
+    "presence": "Cảm biến hiện diện", "motion": "Cảm biến chuyển động",
+    "door": "Cảm biến cửa", "window": "Cảm biến cửa", "opening": "Cảm biến cửa",
+    "battery": "Pin", "power": "Điện năng", "energy": "Điện năng",
+    "voltage": "Điện năng", "current": "Điện năng", "power_factor": "Điện năng",
+    "connectivity": "Kết nối", "smoke": "Cảm biến khói", "gas": "Cảm biến khí",
+    "moisture": "Cảm biến nước", "carbon_dioxide": "Chất lượng không khí",
+    "pm25": "Chất lượng không khí", "pressure": "Áp suất",
+    "timestamp": "Thời điểm", "date": "Thời điểm", "monetary": "Tiền tệ",
+    "distance": "Khoảng cách", "wind_speed": "Thời tiết",
+}
+
+
+def nhom_ha(entity_id: str, thuoc_tinh: dict) -> str:
+    """Nhóm tầng 2 của một thực thể HA: miền, riêng cảm biến theo lớp."""
+    mien = entity_id.split(".", 1)[0]
+    if mien in ("sensor", "binary_sensor"):
+        lop = str((thuoc_tinh or {}).get("device_class") or "")
+        return _TEN_LOP_CAM_BIEN.get(lop) or "Cảm biến khác"
+    return _TEN_MIEN.get(mien) or "Khác"
+
+
+def nhom_mqtt(tb: dict) -> str:
+    """Nhóm tầng 2 của một thiết bị MQTT — theo cách nó tự khai báo."""
+    if tb.get("nguon") == "frigate":
+        return "Camera"
+    if tb.get("nguon") == "tho":
+        return "Chưa nhận ra"
+    if tb.get("dieu_khien"):
+        loai = {str(x.get("loai") or "") for x in tb["dieu_khien"]}
+        if len(loai) == 1:
+            return _TEN_MIEN.get(loai.pop()) or "Có điều khiển"
+        return "Có điều khiển"
+    return "Cảm biến"
+
+
 def create_router() -> APIRouter:
     router = APIRouter()
 
@@ -266,10 +327,15 @@ def create_router() -> APIRouter:
             return _loi(exc, "phân tích thiết bị")
 
     @router.get("/api/hoc-hoi/thiet-bi-day-du")
-    async def thiet_bi_day_du(authorization: str | None = Header(default=None)):
+    async def thiet_bi_day_du(kem_da_bo: bool = False,
+                              authorization: str | None = Header(default=None)):
         """Mọi thiết bị/thực thể HA + MQTT + Tuya, kèm tên/khu vực đã biết —
         cho ô chọn thiết bị (mục "Bot hiểu thiết bị") và tab Thiết bị & tên
-        trong Settings → Home Assistant."""
+        trong Settings → Home Assistant.
+
+        Mỗi mục có `nhom` (tầng 2: công tắc, cảm biến ánh sáng…). `kem_da_bo`
+        thêm các thiết bị chủ máy đã «Bỏ khỏi c2a» (`da_bo`=true) để tab Thiết
+        bị & tên còn khôi phục được; ô chọn thiết bị không xin nên không thấy."""
         require_admin(authorization)
 
         def _lay() -> list[dict]:
@@ -294,6 +360,8 @@ def create_router() -> APIRouter:
                         "ten": m.get("ten") or "",
                         "khu_vuc": m.get("khu_vuc") or "",
                         "khu_vuc_goi_y": khu_vuc_ha.get(eid, ""),
+                        "nhom": nhom_ha(eid, st.get("attributes") or {}),
+                        "da_bo": False,
                     })
             except Exception as exc:
                 logger.warning("hoc-hoi thiet-bi-day-du (ha) lỗi: %s", exc)
@@ -310,6 +378,7 @@ def create_router() -> APIRouter:
                         "khoa": k, "nguon": "mqtt", "loai": "thiet_bi", "ma": ma,
                         "ten_goc": ma, "ten": m.get("ten") or "",
                         "khu_vuc": m.get("khu_vuc") or "", "khu_vuc_goi_y": "",
+                        "nhom": nhom_mqtt(d), "da_bo": False,
                     })
             except Exception as exc:
                 logger.warning("hoc-hoi thiet-bi-day-du (mqtt) lỗi: %s", exc)
@@ -326,10 +395,20 @@ def create_router() -> APIRouter:
                         "khoa": k, "nguon": "tuya", "loai": "thiet_bi", "ma": ma,
                         "ten_goc": str(d.get("ten") or ma), "ten": m.get("ten") or "",
                         "khu_vuc": m.get("khu_vuc") or "", "khu_vuc_goi_y": "",
+                        "nhom": str(d.get("loai") or "") or "Khác", "da_bo": False,
                     })
             except Exception as exc:
                 logger.warning("hoc-hoi thiet-bi-day-du (tuya) lỗi: %s", exc)
 
+            if kem_da_bo:
+                from services import thiet_bi_bo
+                for b in thiet_bi_bo.danh_sach():
+                    ra.append({
+                        "khoa": so_ten_nha.khoa(b["nguon"], "thiet_bi", b["ma"]),
+                        "nguon": b["nguon"], "loai": "thiet_bi", "ma": b["ma"],
+                        "ten_goc": b["ten_goc"], "ten": "", "khu_vuc": "",
+                        "khu_vuc_goi_y": "", "nhom": "Đã bỏ khỏi c2a", "da_bo": True,
+                    })
             ra.sort(key=lambda x: (x["nguon"], x["ten_goc"].lower()))
             return ra
 
@@ -337,6 +416,68 @@ def create_router() -> APIRouter:
             return {"ok": True, "danh_sach": await asyncio.to_thread(_lay)}
         except Exception as exc:
             return _loi(exc, "danh sách thiết bị đầy đủ")
+
+    @router.post("/api/hoc-hoi/thiet-bi/bo")
+    async def thiet_bi_bo_(body: dict, authorization: str | None = Header(default=None)):
+        """«Bỏ khỏi c2a» một thiết bị và XOÁ lịch sử c2a đã ghi của nó.
+
+        body: {nguon: ha|mqtt|tuya, ma}. Thiết bị vẫn còn nguyên trong HA/MQTT/
+        Tuya — chủ máy chốt 13/09/2026. Xem `services/thiet_bi_bo.py`."""
+        require_admin(authorization)
+        nguon = str(body.get("nguon") or "")
+        ma = str(body.get("ma") or "")
+
+        def _lam() -> dict:
+            from services import lich_su_nha, thiet_bi_bo
+            if nguon == "ha":
+                from services import ha_client
+                st = next((s for s in (ha_client.get_states() or [])
+                           if s.get("entity_id") == ma), None)
+                if st is None:
+                    return {"ok": False, "error": "Không thấy thực thể này trong Home Assistant."}
+                ten = str((st.get("attributes") or {}).get("friendly_name") or ma)
+                thiet_bi_bo.bo("ha", ma, ten_goc=ten)
+                xoa = lich_su_nha.xoa_thiet_bi([ma])
+            elif nguon == "mqtt":
+                from services import mqtt_nha
+                tb = next((d for d in mqtt_nha.danh_sach_thiet_bi() if d.get("ten") == ma), None)
+                if tb is None:
+                    return {"ok": False, "error": "Không thấy thiết bị MQTT này."}
+                chu_de = [str(x.get("chu_de") or "") for x in
+                          (tb.get("doc") or []) + (tb.get("dieu_khien") or [])]
+                goc = thiet_bi_bo.goc_chu_de(chu_de)
+                if not goc:
+                    return {"ok": False, "error": "Thiết bị này không có gốc chủ đề riêng "
+                            "(chỉ một đoạn) — bỏ theo gốc đó sẽ xoá nhầm thiết bị khác."}
+                thiet_bi_bo.bo("mqtt", ma, ten_goc=ma, goc=goc)
+                xoa = lich_su_nha.xoa_thiet_bi([], [goc])
+            elif nguon == "tuya":
+                from services import tuya_local, tuya_nha
+                tb = next((d for d in tuya_nha.danh_sach_thiet_bi() if d.get("id") == ma), None)
+                if tb is None:
+                    return {"ok": False, "error": "Không thấy thiết bị Tuya này."}
+                ten_ls = sorted({tuya_local._ten(ma), f"tuya:{ma[:12]}"})
+                thiet_bi_bo.bo("tuya", ma, ten_goc=str(tb.get("ten") or ma), ten_lich_su=ten_ls)
+                xoa = lich_su_nha.xoa_thiet_bi(ten_ls)
+            else:
+                return {"ok": False, "error": "Nguồn phải là ha, mqtt hoặc tuya."}
+            return {"ok": True, "xoa": xoa}
+
+        try:
+            return await asyncio.to_thread(_lam)
+        except Exception as exc:
+            return _loi(exc, "bỏ thiết bị")
+
+    @router.post("/api/hoc-hoi/thiet-bi/bo-lai")
+    async def thiet_bi_bo_lai(body: dict, authorization: str | None = Header(default=None)):
+        """Khôi phục thiết bị đã bỏ. body: {nguon, ma}. Lịch sử cũ không lấy lại được."""
+        require_admin(authorization)
+        try:
+            from services import thiet_bi_bo
+            ok = thiet_bi_bo.bo_lai(str(body.get("nguon") or ""), str(body.get("ma") or ""))
+            return {"ok": ok} if ok else {"ok": False, "error": "Thiết bị này không nằm trong danh sách đã bỏ."}
+        except Exception as exc:
+            return _loi(exc, "khôi phục thiết bị")
 
     @router.get("/api/hoc-hoi/so-do")
     async def so_do(authorization: str | None = Header(default=None)):

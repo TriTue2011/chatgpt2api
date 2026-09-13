@@ -323,6 +323,24 @@ def _an_thuc_the_mang_mat_khau(states: list[dict[str, Any]]) -> list[dict[str, A
     return [s for s in states if id(s) not in an]
 
 
+def _an_thuc_the_da_bo(states: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Ẩn thực thể chủ máy đã «Bỏ khỏi c2a» (`services/thiet_bi_bo.py`).
+
+    Đứng ở ĐÚNG ba chỗ đang ẩn thực thể mang mật khẩu (`get_states`,
+    `get_state`, gương `ha_live`), nên mọi nơi đọc trạng thái — ngữ cảnh chat,
+    đường tắt điều khiển, tầng học — cùng thấy thiết bị đó như không có.
+
+    `get_states` lọc cả lúc trả BỘ ĐỆM, không chỉ lúc tải: gương `ha_live` bơm
+    `_state_cache_ts` theo mỗi sự kiện nên bộ đệm không bao giờ hết hạn, và
+    thực thể vừa bỏ nằm trong đó tới khi nó tự đổi trạng thái.
+    """
+    from services import thiet_bi_bo
+
+    if not thiet_bi_bo.co_bo("ha"):
+        return states
+    return [s for s in states if not thiet_bi_bo.la_bo("ha", str(s.get("entity_id") or ""))]
+
+
 def get_states(use_cache: bool = True) -> list[dict[str, Any]]:
     """Fetch all entity states from HA. Cache respects configurable TTL.
 
@@ -332,11 +350,11 @@ def get_states(use_cache: bool = True) -> list[dict[str, Any]]:
     ttl = _get_cache_ttl()
     now = time.time()
     if use_cache and _state_cache and (now - _state_cache_ts) < ttl:
-        return _state_cache
+        return _an_thuc_the_da_bo(_state_cache)
     if use_cache and (now - _state_fail_ts) < _STATE_FAIL_TTL:
         # HA vừa lỗi xong — đừng thử lại ngay mỗi lượt chat, tốn nguyên 10s
         # timeout mỗi lần (giống get_service_catalog()).
-        return _state_cache or []
+        return _an_thuc_the_da_bo(_state_cache or [])
     cfg = _get_ha_config()
     if not cfg:
         return []
@@ -345,8 +363,8 @@ def get_states(use_cache: bool = True) -> list[dict[str, Any]]:
             f"{cfg['url']}/api/states",
             headers={"Authorization": f"Bearer {cfg['token']}", "Content-Type": "application/json"},
         )
-        data = _an_thuc_the_mang_mat_khau(
-            json.loads(urllib.request.urlopen(req, timeout=10).read()))
+        data = _an_thuc_the_da_bo(_an_thuc_the_mang_mat_khau(
+            json.loads(urllib.request.urlopen(req, timeout=10).read())))
         with _state_cache_lock:
             _state_cache = data
             _state_cache_ts = now
@@ -355,7 +373,7 @@ def get_states(use_cache: bool = True) -> list[dict[str, Any]]:
     except Exception as exc:
         _state_fail_ts = now
         logger.warning({"event": "ha_states_failed", "error": str(exc)})
-        return _state_cache or []  # return stale cache on error
+        return _an_thuc_the_da_bo(_state_cache or [])  # return stale cache on error
 
 
 # ── Exposed-entity (Assist) list ────────────────────────────────────────────
@@ -611,7 +629,7 @@ def get_state(entity_id: str) -> dict[str, Any] | None:
         )
         st = json.loads(urllib.request.urlopen(req, timeout=10).read())
         # Cùng luật với `get_states`: tên mang mật khẩu thì coi như không có.
-        return st if _an_thuc_the_mang_mat_khau([st]) else None
+        return st if _an_thuc_the_da_bo(_an_thuc_the_mang_mat_khau([st])) else None
     except Exception as exc:
         logger.debug({"event": "ha_state_failed", "entity": entity_id, "error": str(exc)})
         return None

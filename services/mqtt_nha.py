@@ -541,7 +541,11 @@ def danh_sach_thiet_bi() -> list[dict[str, Any]]:
         if ds:
             ra.append({"ten": g, "nguon": "tho", "nhanh": g,
                        "doc": ds, "dieu_khien": []})
-    return ra
+    # Chủ máy «Bỏ khỏi c2a» — bỏ ở ĐÂY thì `_khop_ten` (điều khiển theo tên) và
+    # mọi chỗ liệt kê cùng không thấy thiết bị đó.
+    from services import thiet_bi_bo
+
+    return [d for d in ra if not thiet_bi_bo.la_bo("mqtt", d["ten"])]
 
 
 def trang_thai(ten: str) -> dict[str, Any] | None:
@@ -619,9 +623,15 @@ def dem_nguoi(camera: str = "") -> dict[str, Any]:
     if cu is None or cu > _HAN_TUOI:
         return {"_cu": True, "_giay": cu, "_han": _HAN_TUOI}
     can = _tu(camera) if camera else set()
+    from services import thiet_bi_bo
+
     for ct, (v, ts) in gt.items():
         f = nhan_dang_frigate(ct)
         if not f or f["loai"] != "camera":
+            continue
+        # Đọc thẳng `_gia_tri`, không qua `danh_sach_thiet_bi` — nên camera chủ
+        # máy đã «Bỏ khỏi c2a» phải chặn riêng ở đây, theo gốc chủ đề đã lưu.
+        if thiet_bi_bo.la_bo_lich_su(ct):
             continue
         muc = f["muc"]
         if muc not in ("person", "person/active", "all", "all/active"):
