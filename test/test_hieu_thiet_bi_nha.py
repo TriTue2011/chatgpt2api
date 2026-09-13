@@ -409,6 +409,36 @@ class HieuThietBiNhaTest(unittest.TestCase):
         self.assertNotEqual(ban, ban2)
         self.assertIn("Thêm một luật.", noi2, "không được ghi đè bản giáo viên đã sửa")
 
+    def test_BAN_GOC_DOI_thi_BAN_CHAY_THAT_THEO_tru_khi_da_sua_tay(self) -> None:
+        """13/09/2026: code chọn ngoại vi sang hai bước mà bản chạy thật vẫn là
+        bản một bước, vì bản cũ chép MỘT lần rồi không bao giờ theo bản gốc."""
+        goc = Path(self._tmp.name) / "goc" / "hieu_thiet_bi.md"
+        goc.parent.mkdir()
+        goc.write_text("bản 1", encoding="utf-8")
+        with mock.patch.object(self.ht, "_HUONG_DAN_GOC", goc):
+            self.assertEqual(self.ht.huong_dan()[0], "bản 1")
+            goc.write_text("bản 2", encoding="utf-8")
+            self.assertEqual(self.ht.huong_dan()[0], "bản 2", "chưa ai sửa tay thì theo bản gốc")
+            self.assertTrue(self.ht.ghi_huong_dan("bản giáo viên sửa"))
+            goc.write_text("bản 3", encoding="utf-8")
+            self.assertEqual(self.ht.huong_dan()[0], "bản giáo viên sửa")
+
+    def test_BAN_CU_KHONG_CO_SO_GOC(self) -> None:
+        """Bản chạy thật có từ trước khi có sổ `.goc`: khớp bản gốc thì ghi sổ và
+        từ đó theo bản gốc; khác thì không biết là cũ hay đã sửa tay — giữ nguyên."""
+        goc = Path(self._tmp.name) / "goc" / "hieu_thiet_bi.md"
+        goc.parent.mkdir()
+        chay = self.ht._duong_huong_dan()
+        chay.parent.mkdir(parents=True, exist_ok=True)
+        with mock.patch.object(self.ht, "_HUONG_DAN_GOC", goc):
+            goc.write_text("gốc", encoding="utf-8")
+            chay.write_text("không rõ nguồn", encoding="utf-8")
+            self.assertEqual(self.ht.huong_dan()[0], "không rõ nguồn")
+            chay.write_text("gốc", encoding="utf-8")
+            self.ht.huong_dan()
+            goc.write_text("gốc mới", encoding="utf-8")
+            self.assertEqual(self.ht.huong_dan()[0], "gốc mới")
+
     # ── chủ máy DẠY bot (11/09/2026) ───────────────────────────────────────
     def test_HH_HIEU_DAU_PHAY_va_GHI_PHAN_DAY_THEM(self) -> None:
         """Chủ máy nhắn «hh 11, 32 đúng, aptomat …»: bản cũ trả "Anh gõ giúp
