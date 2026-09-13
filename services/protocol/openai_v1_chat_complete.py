@@ -3515,11 +3515,18 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
     #  - câu realtime có MCP chuyên dụng (giá vàng/cổ phiếu…) → gọi tool rồi liệt
     #    kê kết quả. Cắt reasoning ở CẢ 2 lượt codex (decide + format) → nhanh.
     # Câu hỏi mở ("nhiệt độ", kiến thức) giữ reasoning mặc định cho câu trả tốt.
+    #
+    # Hai lý do đó chỉ đứng được khi lượt này thật sự được đi tới HA / MCP. Lượt
+    # gọi TÁCH BIỆT (bot học hỏi giải đề, nhờ model viết lại câu) cấm cả hai, mà
+    # đề của bot học hỏi đầy chữ "đèn", "bật", "bình nóng lạnh" — bản trước cắt
+    # sạch suy luận của một bài đọc bảng số và áp luật. Xem `_tach_biet`.
+    _ha_duoc = not _thread_denies(body, "homeassistant")
     try:
         from services.mcp_client import query_has_specialized_mcp as _qhs
-        _no_reason = _is_smarthome_query(original_user_text) or _qhs(original_user_text)
+        _no_reason = ((_ha_duoc and _is_smarthome_query(original_user_text))
+                      or (not _tach_biet(body) and _qhs(original_user_text)))
     except Exception:
-        _no_reason = _is_smarthome_query(original_user_text)
+        _no_reason = _ha_duoc and _is_smarthome_query(original_user_text)
     if _no_reason and not body.get("_force_effort"):
         body["_force_effort"] = "none"
 
@@ -3527,7 +3534,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
     # the tool server-side NOW and inject the result as context, so the model
     # answers in ONE round-trip instead of two (decide-tool → read-tool). The
     # MCP tool is then NOT shipped (prefetched=True) so it won't be re-called.
-    if not body.get("_prefetched"):
+    if not body.get("_prefetched") and not _tach_biet(body):
         try:
             from services.mcp_client import prefetch_realtime_context
             _pf = prefetch_realtime_context(original_user_text)
@@ -3548,7 +3555,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
     # server-side → nhét kết quả vào ngữ cảnh, model chỉ FORMAT 1 lượt (nhanh, đặt
     # effort=none) thay vì codex tự suy luận trả lời dài. Đồng thời kho TỰ HỌC vì
     # kb_ask kích hoạt write-back. Tool không được ship lại (prefetched=True).
-    if not body.get("_prefetched"):
+    if not body.get("_prefetched") and not _tach_biet(body):
         try:
             from services.mcp_client import prefetch_kb_context
             _kb = prefetch_kb_context(original_user_text)
@@ -3967,6 +3974,21 @@ def _verbalize_in_stream(it: Iterator[dict[str, Any]]) -> Iterator[dict[str, Any
         except Exception:
             pass
         yield chunk
+
+
+def _tach_biet(body: dict) -> bool:
+    """Lượt gọi TÁCH BIỆT: bên gọi gửi `x_allowed_groups` là danh sách RỖNG —
+    không nhóm chức năng nào được dùng, gateway không được tự chèn gì thêm.
+
+    Cần riêng vì hai bước tiền xử lý (tra thời gian thực, tra kho tri thức) gọi
+    công cụ KHÔNG thuộc nhóm nào (`capabilities.group_of` → `_ungrouped`), nên
+    `_thread_denies` theo tên nhóm không chạm tới. Đo 13/09/2026: 40 lượt giải
+    của bot học hỏi (gửi `allowed_groups=set()`) thì 41 lần bị chèn ~3,3 KB tài
+    liệu điện nước — kèm lời dặn "trả lời NGẮN GỌN, tự nhiên, dễ nghe" và
+    `_force_effort="none"` — vào một bài phải trả JSON theo hướng dẫn.
+    """
+    ag = body.get("x_allowed_groups")
+    return isinstance(ag, list) and not ag
 
 
 def _thread_denies(body: dict, group: str) -> bool:
