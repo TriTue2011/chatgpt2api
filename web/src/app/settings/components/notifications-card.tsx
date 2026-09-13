@@ -39,6 +39,14 @@ type SuKien = {
 
 type DapAn = { ok?: boolean; su_kien?: SuKien[]; error?: string };
 
+/** Tiền tố nền tảng → chữ người đọc được. Khoá kênh có dạng `plat:bot:chat`,
+ *  và `plat` chỉ nhận ba giá trị này (xem `services/digest.parse_target`). */
+const TEN_NEN = {
+  tg: "Telegram",
+  zalo: "Zalo Bot",
+  zalop: "Zalo cá nhân",
+} as const;
+
 export function NotificationsCard() {
   const config = useSettingsStore((s) => s.config);
   const [ds, setDs] = useState<SuKien[]>([]);
@@ -52,10 +60,38 @@ export function NotificationsCard() {
     Record<string, unknown> | undefined;
   const tfMeta = (config as Record<string, unknown> | null)?.thread_filter_meta as
     Record<string, { name?: string }> | undefined;
-  const kenhCo: { value: string; label: string }[] = Object.keys(tf || {}).map((k) => ({
-    value: k,
-    label: tfMeta?.[k]?.name ? `${tfMeta[k].name} · ${k}` : k,
-  }));
+  // Nhãn NGẮN. Bản đầu ghép nguyên khoá (`zalop:4757…:6643…`, đo được dài
+  // 28–45 ký tự) nên trên điện thoại mỗi ô rộng hơn màn hình: tràn ra ngoài,
+  // bị cắt cụt, 11 kênh × 14 dòng thành không dùng nổi (chủ máy gửi ảnh
+  // 13/09/2026).
+  //
+  // Nhưng CHỈ TÊN thì sai: đo cùng ngày, tên "Đại ca" trùng ở BA kênh khác
+  // nhau (một Zalo cá nhân, hai Zalo Bot) — chỉ hiện tên là không biết đang
+  // tick cái nào. Nên ghép thêm nền tảng, và chỉ khi VẪN còn trùng mới thêm
+  // bốn ký tự cuối mã phòng; thêm mã cho mọi ô là quay lại đúng cái vừa bỏ.
+  const kenhCo: { value: string; label: string }[] = (() => {
+    const tho = Object.keys(tf || {}).map((k) => {
+      const phan = k.split(":");
+      const nen = TEN_NEN[phan[0] as keyof typeof TEN_NEN] || phan[0] || "?";
+      return {
+        value: k,
+        ten: (tfMeta?.[k]?.name || "").trim() || "(chưa đặt tên)",
+        nen,
+        chat: phan[2] || "",
+      };
+    });
+    const dem = new Map<string, number>();
+    for (const x of tho) {
+      const kh = `${x.ten}|${x.nen}`;
+      dem.set(kh, (dem.get(kh) || 0) + 1);
+    }
+    return tho.map((x) => ({
+      value: x.value,
+      label: (dem.get(`${x.ten}|${x.nen}`) || 0) > 1
+        ? `${x.ten} · ${x.nen} …${x.chat.slice(-4)}`
+        : `${x.ten} · ${x.nen}`,
+    }));
+  })();
 
   const nap = useCallback(async () => {
     setDangTai(true);
@@ -177,8 +213,11 @@ export function NotificationsCard() {
                         key={k.value}
                         type="button"
                         onClick={() => bamKenh(sk, k.value)}
+                        // Khoá đầy đủ để trong `title`: bấm giữ / rê chuột là
+                        // xem được, mà không làm rộng ô.
+                        title={k.value}
                         className={
-                          "rounded-full border px-2.5 py-0.5 text-xs " +
+                          "max-w-full truncate rounded-full border px-2.5 py-0.5 text-xs " +
                           (chon
                             ? "border-transparent bg-primary text-primary-foreground"
                             : "text-muted-foreground")
