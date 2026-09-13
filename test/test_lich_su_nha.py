@@ -199,6 +199,61 @@ class LichSuNhaTest(unittest.TestCase):
         rows = self.m._db().execute("SELECT gia_tri FROM su_kien").fetchall()
         self.assertEqual([r["gia_tri"] for r in rows], ["off"])
 
+    # ── ảnh không phải trạng thái ──────────────────────────────────────────
+    #: Đúng cách gương MQTT giải mã ảnh Frigate (`payload.decode("utf-8",
+    #: "replace")`): phần đầu một tệp JPEG thật.
+    ANH = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00".decode("utf-8", "replace")
+
+    def _dem(self, bang: str) -> int:
+        return self.m._db().execute(f"SELECT COUNT(*) FROM {bang}").fetchone()[0]
+
+    def test_anh_Frigate_khong_duoc_ghi(self) -> None:
+        """8.257 dòng ảnh chiếm 426 MB và bị đọc thành "có người" (13/09/2026)."""
+        self._ghi("mqtt", "frigate/bep/person", "snapshot", self.ANH, False, time.time())
+        self.assertEqual(self._dem("su_kien"), 0)
+        self.assertEqual(self._dem("tuoi"), 0, "kể cả bảng giá trị mới nhất")
+
+    def test_thuc_the_anh_cua_HA_khong_duoc_ghi(self) -> None:
+        self._ghi("ha", "image.bep_person", "state", "2026-09-13T10:00:00+00:00",
+                  False, time.time())
+        self.assertEqual(self._dem("su_kien"), 0)
+
+    def test_ghi_qua_hang_doi_cung_bo_anh(self) -> None:
+        self.m.ghi("mqtt", "frigate/bep/person", "snapshot", self.ANH)
+        self.m.ghi("mqtt", "frigate/bep/person", "snapshot", b"\xff\xd8\xff")
+        self.assertEqual(self.m._hang.qsize(), 0)
+
+    def test_chu_tieng_Viet_va_su_kien_Frigate_VAN_ghi(self) -> None:
+        """Luật nhận theo DẠNG không được bắt nhầm chữ có dấu."""
+        now = time.time()
+        self._ghi("mqtt", "zigbee2mqtt/Hiện diện bếp", "presence", "True", False, now)
+        self._ghi("frigate", "frigate/bep", "person", "bắt_đầu", False, now + 1)
+        self._ghi("ha", "sensor.bep_person_count", "state", "2", False, now + 2)
+        self.assertEqual(self._dem("su_kien"), 3)
+
+    def test_xoa_anh_da_luu_chi_xoa_dung_dong_anh(self) -> None:
+        now = time.time()
+        conn = self.m._db()
+        # Dữ liệu BẢN CŨ đã ghi (chèn thẳng, vì luật mới không cho ghi nữa).
+        cot = "(ts, nguon, thiet_bi, truong, gia_tri, gia_tri_cu, do_ai, gio, thu)"
+        for i, (tb, tr, gt) in enumerate([
+            ("frigate/bep/person", "snapshot", self.ANH),
+            ("frigate/phong-khach/person", "snapshot", self.ANH),
+            ("image.bep_person", "state", "2026-09-13T10:00:00"),
+            ("zigbee2mqtt/Hiện diện bếp", "presence", "True"),
+            ("frigate/bep", "person", "ket_thuc"),
+        ]):
+            conn.execute(f"INSERT INTO su_kien {cot} VALUES (?,?,?,?,?,?,0,1,1)",
+                         (now + i, "mqtt", tb, tr, gt, None))
+            conn.execute("INSERT INTO tuoi VALUES (?,?,?,?)", (tb, tr, gt, now + i))
+        conn.commit()
+
+        kq = self.m.xoa_anh_da_luu(lo=1)   # lô 1 dòng: đi qua đủ vòng lặp lô
+        self.assertEqual(kq, {"su_kien": 3, "tuoi": 3})
+        con = sorted(r["thiet_bi"] for r in conn.execute("SELECT thiet_bi FROM su_kien"))
+        self.assertEqual(con, ["frigate/bep", "zigbee2mqtt/Hiện diện bếp"])
+        self.assertEqual(self._dem("tuoi"), 2)
+
     # ── nạp lịch sử HA ─────────────────────────────────────────────────────
     def _gia_lap_ha(self):
         now = datetime.now(timezone.utc)

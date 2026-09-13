@@ -258,6 +258,39 @@ def _bo_qua(thiet_bi: str, truong: str) -> bool:
     return False
 
 
+def _la_anh(thiet_bi: str, gia_tri: Any) -> bool:
+    """Ảnh hoặc dữ liệu nhị phân — không phải trạng thái để học.
+
+    Chủ máy chốt 13/09/2026: *"Ảnh chụp không phải cái để học, cảm biến hiện
+    diện, cảm biến đếm người mới là cái cần"*. Đo cùng ngày: Frigate đăng ảnh
+    JPEG lên `frigate/<camera>/person/snapshot`, gương MQTT giải mã kiểu
+    "replace" rồi ghi nguyên chuỗi — 8.257 dòng chiếm 426 MB, tức 98,7% dung
+    lượng giá trị của bảng sự kiện. Tệ hơn, `boi_canh_nha._co_nguoi` đọc mọi
+    giá trị khác "off"/"0" là CÓ NGƯỜI, nên một tấm ảnh vừa chụp cũng thành
+    "phòng có người".
+
+    Nhận theo DẠNG chứ không theo tên chủ đề: chữ thật không bao giờ chứa ký tự
+    NUL, và ký tự thay thế U+FFFD chỉ xuất hiện khi giải mã một thứ vốn không
+    phải chữ. Miền `image.` của Home Assistant là thực thể ẢNH theo định nghĩa
+    của chính HA — trạng thái của nó là mốc giờ ảnh được cập nhật.
+    """
+    if thiet_bi.startswith("image."):
+        return True
+    if isinstance(gia_tri, (bytes, bytearray)):
+        return True
+    s = str(gia_tri)
+    return "\x00" in s or "\ufffd" in s
+
+
+#: Cùng luật với `_la_anh`, viết cho SQL — dùng khi dọn những gì bản cũ đã ghi.
+#: So theo BYTE (`CAST … AS BLOB`): hàm chữ của SQLite dừng ở ký tự NUL đầu tiên,
+#: nên `length()`/`instr()` trên TEXT đo sai đúng loại dữ liệu cần tìm.
+_SQL_LA_ANH = (
+    "thiet_bi LIKE 'image.%'"
+    " OR instr(CAST(gia_tri AS BLOB), X'00') > 0"
+    " OR instr(CAST(gia_tri AS BLOB), X'EFBFBD') > 0")
+
+
 def _loai_truong(truong: str, gia_tri: Any) -> str:
     """'su_kien' | 'so_do' — phỏng đoán ban đầu, dùng khi chưa đủ mẫu.
 
@@ -382,7 +415,7 @@ def ghi(nguon: str, thiet_bi: str, truong: str, gia_tri: Any,
         truong = (truong or "").strip()
         if not thiet_bi or not truong or gia_tri is None:
             return
-        if _bo_qua(thiet_bi, truong):
+        if _bo_qua(thiet_bi, truong) or _la_anh(thiet_bi, gia_tri):
             return
         _hang.put_nowait((nguon, thiet_bi, truong, gia_tri, bool(do_ai),
                           float(ts) if ts else time.time()))
@@ -396,7 +429,7 @@ def ghi(nguon: str, thiet_bi: str, truong: str, gia_tri: Any,
 def _ghi_thang(conn: sqlite3.Connection, nguon: str, thiet_bi: str, truong: str,
                gia_tri: Any, do_ai: bool, ts: float) -> None:
     """Ghi thật xuống đĩa. Chỉ luồng nền (và nap_tu_ha) gọi."""
-    if _bo_qua(thiet_bi, truong):
+    if _bo_qua(thiet_bi, truong) or _la_anh(thiet_bi, gia_tri):
         return
     gt = str(gia_tri)
     loai = _phan_loai_theo_nhip(conn, thiet_bi, truong, gia_tri)
@@ -806,6 +839,40 @@ def don() -> dict[str, Any]:
         logger.info({"event": "lich_su_don", "su_kien": a, "so_do": b,
                      "hang_so": c})
     return {"su_kien": a, "so_do": b, "hang_so": c}
+
+
+def xoa_anh_da_luu(lo: int = 200) -> dict[str, int]:
+    """Xoá ảnh và dữ liệu nhị phân bản cũ đã ghi — theo đúng luật `_la_anh`.
+
+    Chủ máy chốt 13/09/2026: "Xóa hết ảnh đã lưu". Chạy MỘT lần sau khi luật
+    chặn ghi lên máy chủ; từ đó không còn ảnh mới nào vào kho, nên không đưa
+    vào `don()` — lượt quét cả bảng mỗi 6 giờ khi ấy chỉ tốn đọc đĩa.
+
+    Không giữ `_khoa_db` lúc QUÉT: bảng có hơn 730 nghìn dòng mà không chỉ mục
+    nào phục vụ điều kiện này, quét mất vài giây — trong khi `boi_canh_nha`
+    (lượt chat của bot) đọc kho qua cùng khoá. Quét bằng kết nối chỉ-đọc riêng,
+    rồi xoá theo `id` từng lô nhỏ, nhả khoá giữa các lô.
+    """
+    ro = sqlite3.connect(f"file:{_DB_PATH}?mode=ro", uri=True, timeout=10.0)
+    try:
+        ids = [int(r[0]) for r in ro.execute(f"SELECT id FROM su_kien WHERE {_SQL_LA_ANH}")]
+    finally:
+        ro.close()
+    xoa = 0
+    for i in range(0, len(ids), lo):
+        phan = ids[i:i + lo]
+        with _khoa_db:
+            conn = _db()
+            xoa += conn.execute(
+                f"DELETE FROM su_kien WHERE id IN ({','.join('?' * len(phan))})",
+                phan).rowcount
+            conn.commit()
+    with _khoa_db:
+        conn = _db()
+        tuoi = conn.execute(f"DELETE FROM tuoi WHERE {_SQL_LA_ANH}").rowcount
+        conn.commit()
+    logger.info({"event": "lich_su_xoa_anh", "su_kien": xoa, "tuoi": tuoi})
+    return {"su_kien": xoa, "tuoi": tuoi}
 
 
 # ── Nạp lịch sử Home Assistant ──────────────────────────────────────────────
