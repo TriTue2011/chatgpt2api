@@ -25,7 +25,6 @@ người đó (học từ ``thoi_quen_nha``), hoặc mở lúc cả nhà đã ng
 from __future__ import annotations
 
 import json
-import logging
 import statistics
 import threading
 import time
@@ -35,7 +34,10 @@ from typing import Any
 
 from services.config import DATA_DIR, config
 
-logger = logging.getLogger(__name__)
+# Bộ ghi log của nhà — xem chú thích cùng việc ở `services/canh_bao_nha.py`.
+# `logging.getLogger(__name__)` rơi vào root không handler ở mức WARNING nên
+# log của module này vô hình.
+from utils.log import logger
 
 _TZ = timezone(timedelta(hours=7))
 _FILE = Path(DATA_DIR) / "agent" / "khoa_cua_nha.json"

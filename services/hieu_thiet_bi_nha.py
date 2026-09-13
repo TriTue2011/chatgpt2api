@@ -48,7 +48,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import re
 import shutil
 import sqlite3
@@ -61,7 +60,8 @@ from typing import Any, Optional
 
 from services.config import DATA_DIR, config
 
-logger = logging.getLogger(__name__)
+# Bộ ghi log của nhà — xem chú thích cùng việc ở `services/canh_bao_nha.py`.
+from utils.log import logger
 
 _TZ = timezone(timedelta(hours=7))
 _DB_PATH = Path(DATA_DIR) / "agent" / "hieu_thiet_bi_nha.sqlite"

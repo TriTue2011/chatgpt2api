@@ -53,7 +53,6 @@ gần nhất là tự tụt về chế độ hỏi.
 from __future__ import annotations
 
 import json
-import logging
 import math
 import sqlite3
 import threading
@@ -64,7 +63,8 @@ from typing import Any, Optional
 
 from services.config import DATA_DIR, config
 
-logger = logging.getLogger(__name__)
+# Bộ ghi log của nhà — xem chú thích cùng việc ở `services/canh_bao_nha.py`.
+from utils.log import logger
 
 _TZ = timezone(timedelta(hours=7))
 _DB_PATH = Path(DATA_DIR) / "agent" / "du_doan_nha.sqlite"

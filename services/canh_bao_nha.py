@@ -19,7 +19,6 @@ này tăng. "Tôi biết rồi" chỉ tắt đúng lượt hỏng đang diễn r
 from __future__ import annotations
 
 import json
-import logging
 import re
 import threading
 import time
@@ -29,7 +28,11 @@ from typing import Any
 
 from services.config import DATA_DIR, config
 
-logger = logging.getLogger(__name__)
+# Bộ ghi log CỦA NHÀ. `logging.getLogger(__name__)` propagate lên root, mà ứng
+# dụng này không cấu hình logging ở đâu cả — root không handler, mức WARNING —
+# nên mọi `logger.info` ở đây bốc hơi. Đo 13/09/2026: gọi một đường im rồi tìm
+# trong log, ra 0 dòng. Cảnh báo thiết bị hỏng mà hỏng lặng thì không ai biết.
+from utils.log import logger
 
 #: Mã thực thể Home Assistant: `miền.tên`, chữ thường. Mã MQTT/Frigate có "/".
 _MA_HA = re.compile(r"[a-z_]+\.[a-z0-9_]+")

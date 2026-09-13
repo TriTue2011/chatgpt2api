@@ -61,9 +61,14 @@ export function NotificationsCard() {
     setDangTai(true);
     setLoi("");
     try {
-      const r = (await request.get("/api/thong-bao")) as DapAn;
-      if (r?.ok && Array.isArray(r.su_kien)) setDs(r.su_kien);
-      else setLoi(r?.error || "Không đọc được danh sách thông báo");
+      // `request` là axios: kết quả nằm ở `.data`, KHÔNG phải ở chính đối
+      // tượng trả về. Bản đầu đọc thẳng `r.ok` nên luôn `undefined` → thẻ báo
+      // "Không đọc được danh sách thông báo" trong khi máy chủ trả đủ 14 dòng.
+      // `tsc` không bắt được vì chính cái ép kiểu `as DapAn` của tôi đã bịt
+      // miệng nó. Mọi thẻ khác đều làm `const d = r.data as {...}`.
+      const d = (await request.get("/api/thong-bao")).data as DapAn;
+      if (d?.ok && Array.isArray(d.su_kien)) setDs(d.su_kien);
+      else setLoi(d?.error || "Không đọc được danh sách thông báo");
     } catch (e) {
       setLoi(String(e));
     } finally {
@@ -91,8 +96,8 @@ export function NotificationsCard() {
     try {
       const muc: Record<string, { bat: boolean; kenh: string[] }> = {};
       for (const x of ds) muc[x.khoa] = { bat: x.bat, kenh: x.kenh };
-      const r = (await request.post("/api/thong-bao/luu", { muc })) as DapAn;
-      if (!r?.ok) setLoi(r?.error || "Lưu không được");
+      const d = (await request.post("/api/thong-bao/luu", { muc })).data as DapAn;
+      if (!d?.ok) setLoi(d?.error || "Lưu không được");
     } catch (e) {
       setLoi(String(e));
     } finally {
@@ -103,11 +108,11 @@ export function NotificationsCard() {
   const guiThu = async (khoa: string) => {
     setTin((t) => ({ ...t, [khoa]: "đang gửi…" }));
     try {
-      const r = (await request.post("/api/thong-bao/thu", { khoa })) as
+      const d = (await request.post("/api/thong-bao/thu", { khoa })).data as
         { ok?: boolean; gui?: number; error?: string };
       setTin((t) => ({
         ...t,
-        [khoa]: r?.ok ? `đã gửi tới ${r.gui} kênh` : `không gửi: ${r?.error || "?"}`,
+        [khoa]: d?.ok ? `đã gửi tới ${d.gui} kênh` : `không gửi: ${d?.error || "?"}`,
       }));
     } catch (e) {
       setTin((t) => ({ ...t, [khoa]: String(e) }));
