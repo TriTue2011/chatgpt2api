@@ -117,7 +117,9 @@ def _norm_cal(raw: Any, idx: int) -> dict[str, Any] | None:
         "cache_seconds": _int("cache_seconds", 900, lo=60),
         "notify_on_new": bool(raw.get("notify_on_new", True)),
         "notify_times": [str(t) for t in (times or []) if str(t).strip()],
-        "notify_targets": [str(t) for t in (targets or []) if str(t).strip()],
+        # Nơi nhận đọc từ sổ đăng ký `thong_bao`, khoá `lich.<id>` (13/09/2026).
+        # Xem chú thích cùng việc trong `email_channel._norm_acc`.
+        "notify_targets": _thong_bao_kenh(f"lich.{cal_id}", targets),
         "remind_before": remind,
     }
 
@@ -139,6 +141,19 @@ def calendars() -> list[dict[str, Any]]:
         if cal:
             out.append(cal)
     return out
+
+
+def _thong_bao_kenh(khoa: str, cu: Any) -> list[str]:
+    """Kênh nhận của lịch này theo sổ đăng ký; chưa có thì giữ giá trị cũ.
+
+    Nhập bên trong hàm vì `thong_bao._su_kien_dong()` nhập ngược lại module này
+    — nhập ở cấp module là vòng tròn lúc khởi động.
+    """
+    try:
+        from services import thong_bao
+        return thong_bao.kenh_hoac(khoa, cu)
+    except Exception:
+        return [str(t) for t in (cu or []) if str(t).strip()]
 
 
 def source_key(cal: dict[str, Any]) -> str:

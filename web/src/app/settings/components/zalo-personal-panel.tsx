@@ -912,12 +912,9 @@ function emptyZpAdmin(): ZpAdminEntry {
   };
 }
 
-const ZP_ADMIN_TOGGLES: readonly [keyof ZpAdminEntry, string][] = [
-  ["notify_enabled", "🔔 Hệ thống"],
-  ["account_log_enabled", "📋 Log tài khoản"],
-  ["account_update_log_enabled", "🔄 Cập nhật TK"],
-  ["newchat_alert_enabled", "💬 Chat mới"],
-];
+// Bảng bốn công tắc thông báo đã bỏ (13/09/2026): mọi cài đặt thông báo gom về
+// Cài đặt → Thông báo. Các trường trong `ZpAdminEntry` thì GIỮ, để lần lưu sau
+// không xoá mất giá trị cũ đang nằm trong config của chủ máy.
 
 function AdminTab({ status, showToast }:
   { status: Status | null; showToast: (m: string, ok?: boolean) => void }) {
@@ -1066,13 +1063,8 @@ function AdminTab({ status, showToast }:
                       </select>
                     </div>
                     <div className="flex flex-wrap gap-3 text-xs">
-                      {ZP_ADMIN_TOGGLES.map(([k, lbl]) => (
-                        <label key={k} className="inline-flex cursor-pointer items-center gap-1.5">
-                          <input type="checkbox" checked={Boolean(e[k])}
-                            onChange={(ev) => update(ownId, i, { [k]: ev.target.checked } as Partial<ZpAdminEntry>)} />
-                          {lbl}
-                        </label>
-                      ))}
+                      {/* Bốn ô 🔔/📋/🔄/💬 đã bỏ (13/09/2026) — chọn ai nhận
+                          cái gì ở Cài đặt → Thông báo. */}
                     </div>
                     </>
                     )}

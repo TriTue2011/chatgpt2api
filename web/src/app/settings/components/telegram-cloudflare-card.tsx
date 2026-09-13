@@ -238,10 +238,9 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
       next.filter((r) => r.token.trim()).map((r) => {
         const admins = r.admins.filter((a) => a.chat_id.trim());
         // Bot-level derived: bật nếu BẤT KỲ admin nào bật (backend vẫn đọc bot flags)
-        const anyNotify = admins.some((a) => a.notify_enabled);
-        const anyLog = admins.some((a) => a.account_log_enabled);
-        const anyUpdateLog = admins.some((a) => a.account_update_log_enabled);
-        const anyNew = admins.some((a) => a.newchat_alert_enabled);
+        // Bốn cờ thông báo suy từ admin đã bỏ — nơi nhận nằm ở sổ đăng ký
+        // `thong_bao`. Giữ `anyHa`/`anyFb`: đường tắt Home Assistant và kênh
+        // dự phòng KHÔNG phải cài đặt thông báo.
         const anyHa = admins.some((a) => a.ha_fastpath);
         const anyFb = admins.some((a) => a.fallback_enabled);
         const fbThread = admins.find((a) => a.fallback_enabled)?.chat_id || "";
@@ -260,10 +259,6 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
           admin_thread: admins[0]?.chat_id || "",
           admin_threads: admins.map((a) => a.chat_id),
           ha_fastpath: anyHa || admins.length === 0,
-          notify_admin_enabled: anyNotify || admins.length === 0,
-          account_log_enabled: anyLog || admins.length === 0,
-          account_update_log_enabled: anyUpdateLog,
-          newchat_alert_enabled: anyNew || admins.length === 0,
           fallback_enabled: anyFb,
           fallback_channel: anyFb ? (platform === "zalo" ? "zalo" : "telegram") : "",
           fallback_bot_name: anyFb ? (r.label || r.token.split(":")[0] || "") : "",
@@ -472,29 +467,11 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
                     </div>
                   </div>
 
-                  <div className="space-y-1 rounded border border-border/50 p-2">
-                    <p className="text-[10px] font-medium text-muted-foreground">Thông báo tới admin này</p>
-                    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
-                      <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5" checked={a.notify_enabled}
-                        onChange={(e) => patchAdmin(row.id, idx, { notify_enabled: e.target.checked })} />
-                      🔔 Lỗi &amp; cảnh báo (không phải provider, không phải chat mới)
-                    </label>
-                    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
-                      <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5" checked={a.account_log_enabled}
-                        onChange={(e) => patchAdmin(row.id, idx, { account_log_enabled: e.target.checked })} />
-                      📋 Log tài khoản provider (Thêm/Xóa/Lỗi/Quota…)
-                    </label>
-                    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
-                      <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5" checked={a.account_update_log_enabled}
-                        onChange={(e) => patchAdmin(row.id, idx, { account_update_log_enabled: e.target.checked })} />
-                      🔄 Log Cập nhật tài khoản (bản ghi token/status định kỳ)
-                    </label>
-                    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
-                      <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5" checked={a.newchat_alert_enabled}
-                        onChange={(e) => patchAdmin(row.id, idx, { newchat_alert_enabled: e.target.checked })} />
-                      💬 Chat/nhóm mới (thread ID + user ID) — tách hẳn 🔔/📋
-                    </label>
-                  </div>
+                  {/* Bốn ô 🔔/📋/🔄/💬 đã BỎ (13/09/2026). Chúng không còn điều
+                      khiển gì: `notifier.notify_admin` giờ đi qua sổ đăng ký
+                      `thong_bao`, và đo cùng ngày thì `telegram_bot.notify_admin`
+                      /`zalo_bot`/`zalo_personal` không còn nơi nào gọi tới. Chọn
+                      ai nhận cái gì ở Cài đặt → Thông báo. */}
                   </div>
                   ) : null}
                 </div>

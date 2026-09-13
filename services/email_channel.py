@@ -168,7 +168,13 @@ def _norm_account(raw: Any, idx: int) -> dict[str, Any] | None:
         "summarize_files": bool(raw.get("summarize_files", True)),
         "notify_on_new": bool(raw.get("notify_on_new", True)),
         "notify_times": [str(t) for t in (times or []) if str(t).strip()],
-        "notify_targets": [str(t) for t in (targets or []) if str(t).strip()],
+        # Nơi nhận đọc từ sổ đăng ký `thong_bao`, khoá `email.<id>` — Cài đặt →
+        # Thông báo là nơi DUY NHẤT chọn kênh từ 13/09/2026. Đặt ở đây (chỗ
+        # chuẩn hoá) thay vì ở từng điểm gửi là vì có tới BỐN đường giao:
+        # `digest.notify` (thư mới), `digest.flush` (nút Gửi thử), `digest.tick`
+        # qua `_all_sources`, và nhánh nhắc của lịch. Sửa bốn nơi thì kiểu gì
+        # cũng sót một.
+        "notify_targets": _thong_bao_kenh(f"email.{acc_id}", targets),
     }
 
 
@@ -193,6 +199,20 @@ def accounts() -> list[dict[str, Any]]:
         if acc:
             out.append(acc)
     return out
+
+
+def _thong_bao_kenh(khoa: str, cu: Any) -> list[str]:
+    """Kênh nhận của nguồn này theo sổ đăng ký; chưa có thì giữ giá trị cũ.
+
+    Nhập BÊN TRONG hàm, không nhập ở đầu module: `thong_bao._su_kien_dong()`
+    nhập ngược lại `email_channel` để dựng dòng động, nên nhập ở cấp module là
+    vòng tròn ngay lúc khởi động.
+    """
+    try:
+        from services import thong_bao
+        return thong_bao.kenh_hoac(khoa, cu)
+    except Exception:
+        return [str(t) for t in (cu or []) if str(t).strip()]
 
 
 def source_key(acc: dict[str, Any]) -> str:

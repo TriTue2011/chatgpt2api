@@ -169,6 +169,28 @@ def cai_dat(khoa: str) -> dict[str, Any]:
     return {"bat": bool(raw.get("bat", False)), "kenh": ds}
 
 
+def kenh_hoac(khoa: str, cu: Any) -> list[str]:
+    """Kênh của `khoa` trong sổ đăng ký; chưa có thì trả về `cu`.
+
+    Dùng cho email và lịch — hai chỗ mà nơi-nhận vốn nằm trong chính cấu hình
+    của từng nguồn (`notify_targets`). Sau 13/09/2026 nơi-nhận thuộc về sổ đăng
+    ký, nhưng vẫn phải rơi về giá trị cũ khi sổ chưa có gì, vì hai lý do:
+
+    * Lượt chạy TRƯỚC khi `chuyen_du_lieu_mot_lan()` kịp chạy vẫn phải gửi được
+      — không thì hộp mail im tiếng đúng một lần khởi động.
+    * Chính bản chuyển dữ liệu đọc qua `accounts()`/`calendars()` để lấy giá
+      trị cũ. Nếu hàm này trả rỗng khi sổ trống thì bản chuyển sẽ chép rỗng, tức
+      tự xoá đúng thứ nó cần giữ. Rơi về `cu` làm cả hai chiều tự khớp: lúc
+      chuyển thì đọc ra giá trị cũ, chuyển xong thì sổ thắng.
+    """
+    goc = [str(x).strip() for x in (cu or []) if str(x).strip()]
+    try:
+        moi = cai_dat(khoa)["kenh"]
+    except Exception:
+        return goc
+    return list(moi) if moi else goc
+
+
 def gui(khoa: str, tin: str) -> int:
     """Phát một thông báo. Trả số kênh gửi được (0 = không gửi đi đâu cả).
 

@@ -72,6 +72,30 @@ class DanhSachTests(_Nen):
             for truong in ("khoa", "nhan", "mo_ta", "nhom", "bat", "kenh"):
                 self.assertIn(truong, x)
 
+    def test_DONG_DONG_cua_tung_hop_mail_va_tung_lich_ra_TOI_API(self) -> None:
+        """Chủ máy chốt "mỗi nguồn một dòng riêng" — phải ra tới endpoint.
+
+        Sổ đăng ký đã có phép đo riêng, nhưng chưa có gì chứng minh dòng động
+        đi hết đường tới `GET /api/thong-bao` để trang Cài đặt dựng được bảng.
+        Thiếu phép đo này thì "trang có hiện email/lịch không" chỉ là suy đoán
+        từ code mình vừa viết.
+        """
+        with mock.patch("services.email_channel.accounts", return_value=[
+                {"id": "7823a0e2", "label": "Hộp mail chính"},
+                {"id": "af931d7e", "label": "visaho"}]), \
+             mock.patch("services.calendar_connector.calendars", return_value=[
+                {"id": "ef257920", "label": "Lịch chính"}]):
+            d = self.client.get("/api/thong-bao").json()
+        theo_khoa = {x["khoa"]: x for x in d["su_kien"]}
+        self.assertIn("email.af931d7e", theo_khoa)
+        self.assertIn("lich.ef257920", theo_khoa)
+        # Nhãn phải mang TÊN nguồn, không phải mã — bảng có nhiều dòng, mã
+        # `af931d7e` thì chủ máy không biết là hộp nào.
+        self.assertIn("visaho", theo_khoa["email.af931d7e"]["nhan"])
+        # Cùng một nhóm để trang gom lại một chỗ.
+        self.assertEqual(theo_khoa["lich.ef257920"]["nhom"],
+                         theo_khoa["email.af931d7e"]["nhom"])
+
     def test_chua_khai_thi_tat_va_khong_co_kenh(self) -> None:
         """"Không mặc định": chưa cài thì không có kênh nào cả."""
         d = self.client.get("/api/thong-bao").json()

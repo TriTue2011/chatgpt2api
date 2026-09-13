@@ -67,16 +67,9 @@ export function EmailCalendarCard() {
   const [msg, setMsg] = useState<Record<string, string>>({});
   const [statusLine, setStatusLine] = useState("");
 
-  // Kênh nhận = các thread ĐÃ đặt trong «Lọc thread» (có tên sẵn) — chọn nhiều.
-  const tf = (config as Record<string, unknown> | null)?.thread_filters as
-    Record<string, unknown> | undefined;
-  const tfMeta = (config as Record<string, unknown> | null)?.thread_filter_meta as
-    Record<string, { name?: string }> | undefined;
-  const targetOptions: { value: string; label: string }[] = Object.keys(tf || {})
-    .map((key) => ({
-      value: key,
-      label: (tfMeta?.[key]?.name ? `${tfMeta[key].name} · ` : "") + key,
-    }));
+  // Danh sách kênh nhận đã dời sang `notifications-card.tsx` (13/09/2026):
+  // mỗi hộp mail và mỗi lịch là một dòng riêng ở Cài đặt → Thông báo, nên thẻ
+  // này không còn dựng danh sách thread nữa.
 
   useEffect(() => {
     if (inited.current || !config) return;
@@ -229,35 +222,26 @@ export function EmailCalendarCard() {
     }
   };
 
-  /** Chọn kênh nhận (nhiều) + mốc giờ + cứ-có-mới — dùng chung email và lịch. */
+  /** Nhịp gửi tóm tắt (mốc giờ + cứ-có-mới) — dùng chung email và lịch.
+   *
+   *  Tham số `targets` đã bỏ cùng bộ chọn kênh (13/09/2026): nơi nhận nằm ở
+   *  Cài đặt → Thông báo, mỗi nguồn một dòng. Giữ lại tham số mà không dùng
+   *  thì lần sau đọc code lại tưởng thẻ này còn quyết định nơi nhận.
+   */
   const notifyBlock = (
-    targets: string[], onNew: boolean, times: string,
-    set: (p: { notify_targets?: string[]; notify_on_new?: boolean; notify_times?: string }) => void,
+    onNew: boolean, times: string,
+    set: (p: { notify_on_new?: boolean; notify_times?: string }) => void,
   ) => (
     <div className="rounded border border-dashed border-border/70 p-2 space-y-1.5">
-      <p className="text-xs font-medium">📣 Gửi tóm tắt tới kênh</p>
-      {targetOptions.length === 0 ? (
-        <p className="text-[10px] text-amber-600">
-          Chưa có thread nào trong «Lọc thread» — vào Kênh chat → Lọc thread thêm
-          thread trước, rồi quay lại chọn ở đây.
-        </p>
-      ) : (
-        <div className="flex flex-wrap gap-x-3 gap-y-1">
-          {targetOptions.map((o) => (
-            <label key={o.value}
-              className="flex items-center gap-1 text-[11px] text-muted-foreground cursor-pointer select-none">
-              <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5"
-                checked={targets.includes(o.value)}
-                onChange={() => set({
-                  notify_targets: targets.includes(o.value)
-                    ? targets.filter((x) => x !== o.value)
-                    : [...targets, o.value],
-                })} />
-              {o.label}
-            </label>
-          ))}
-        </div>
-      )}
+      {/* Bộ chọn "Gửi tóm tắt tới kênh" đã DỜI sang Cài đặt → Thông báo
+          (13/09/2026): mỗi hộp mail và mỗi lịch có một dòng riêng ở đó, nên
+          vẫn giữ được việc từng nguồn báo về một nơi khác nhau.
+          Giữ lại ở đây hai thứ KHÔNG phải nơi-nhận: "cứ có mới là gửi ngay"
+          và mốc giờ định kỳ — `digest.notify` đọc chúng độc lập với kênh. */}
+      <p className="text-xs font-medium">📣 Nhịp gửi tóm tắt</p>
+      <p className="text-[10px] text-muted-foreground">
+        Chọn NƠI NHẬN ở Cài đặt → Thông báo.
+      </p>
       <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
         <input type="checkbox" className="relative before:absolute before:left-1/2 before:top-1/2 before:size-6 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] size-3.5" checked={onNew}
           onChange={() => set({ notify_on_new: !onNew })} />
@@ -423,7 +407,7 @@ export function EmailCalendarCard() {
                       onChange={() => patchAcc(a.uiId, { reply_enabled: !a.reply_enabled })} />
                     🤖 AI trả lời thẳng vào email (tắt = chỉ tóm tắt gửi kênh)
                   </label>
-                  {notifyBlock(a.notify_targets, a.notify_on_new, a.notify_times,
+                  {notifyBlock(a.notify_on_new, a.notify_times,
                     (p) => patchAcc(a.uiId, p))}
                   <div className="flex flex-wrap gap-2">
                     <Button type="button" variant="outline" size="sm" className="h-7 text-[11px]"
@@ -536,7 +520,7 @@ export function EmailCalendarCard() {
                       </p>
                     </div>
                   </div>
-                  {notifyBlock(c.notify_targets, c.notify_on_new, c.notify_times,
+                  {notifyBlock(c.notify_on_new, c.notify_times,
                     (p) => patchCal(c.uiId, p))}
                   <div className="flex flex-wrap gap-2">
                     <Button type="button" variant="outline" size="sm" className="h-7 text-[11px]"
