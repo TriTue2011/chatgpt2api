@@ -210,37 +210,19 @@ def huong_dan(ten: str = "hieu_thiet_bi") -> tuple[str, str]:
     điểm chấm không lẫn giữa hai bản.
 
     Bản gốc trong repo ĐỔI thì bản chạy thật đổi theo — trừ khi bản chạy thật
-    đã được sửa tay (`ghi_huong_dan`, hoặc giáo viên sửa file). Sổ `<ten>.goc`
-    giữ sha của bản gốc lúc chép, để phân biệt "chưa ai sửa, chỉ cũ" với "đã
-    sửa tay". Bản cũ chép MỘT lần rồi không bao giờ ghi đè: 13/09/2026 code chọn
-    ngoại vi đã sang hai bước mà `chon_ngoai_vi.md` chạy thật vẫn là bản một
-    bước — bot không biết khuôn trả lời của bước chọn khu vực.
+    đã được sửa tay (`ghi_huong_dan`, hoặc giáo viên sửa file). Xem
+    `services/ban_goc.py`: 13/09/2026 code chọn ngoại vi đã sang hai bước mà
+    `chon_ngoai_vi.md` chạy thật vẫn là bản một bước.
 
     `ten` chọn bản hướng dẫn: mỗi việc học một bản NGẮN riêng (chủ máy chốt
     13/09/2026 "hướng dẫn ngắn gọn và xúc tích, tránh dài để bot nghĩ nhiều").
     """
+    from services import ban_goc
+
     p = _duong_huong_dan(ten)
-    goc = _HUONG_DAN_GOC.with_name(f"{ten}.md").read_text(encoding="utf-8")
-    sha_goc = hashlib.sha256(goc.encode("utf-8")).hexdigest()
-    so = p.with_suffix(".goc")
-    da_chep = so.read_text(encoding="utf-8").strip() if so.is_file() else ""
-    if not p.is_file():
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(goc, encoding="utf-8")
-        so.write_text(sha_goc, encoding="utf-8")
-    elif da_chep != sha_goc:
-        sha_hien = hashlib.sha256(p.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
-        if sha_hien == sha_goc:
-            so.write_text(sha_goc, encoding="utf-8")        # đã khớp, chỉ thiếu sổ
-        elif da_chep and sha_hien == da_chep:
-            p.write_text(goc, encoding="utf-8")              # chưa ai sửa, chỉ cũ
-            so.write_text(sha_goc, encoding="utf-8")
-            logger.info({"event": "huong_dan_theo_ban_goc", "ten": ten,
-                         "phien_ban": sha_goc[:12]})
-        else:
-            logger.warning({"event": "huong_dan_lech_ban_goc", "ten": ten,
-                            "ghi_chu": "bản chạy thật đã sửa tay (hoặc không rõ gốc) mà bản "
-                                       "gốc repo đã đổi — giữ bản chạy thật, cần giáo viên gộp"})
+    p.parent.mkdir(parents=True, exist_ok=True)
+    ban_goc.dong_bo(_HUONG_DAN_GOC.with_name(f"{ten}.md"), p, p.with_suffix(".goc"),
+                    ten=f"huong_dan:{ten}")
     noi = p.read_text(encoding="utf-8")
     return noi, hashlib.sha256(noi.encode("utf-8")).hexdigest()[:12]
 

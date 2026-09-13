@@ -47,7 +47,6 @@ from __future__ import annotations
 
 import logging
 import re
-import shutil
 import threading
 import time
 from dataclasses import dataclass, field
@@ -113,6 +112,8 @@ def _main_model() -> str:
 
 
 def _ensure_seeded() -> None:
+    """Workflow mặc định vào data dir, theo bản mới trong ảnh nếu chưa sửa tay —
+    `services/ban_goc.py` (13/09/2026: 2 workflow bài học kẹt bản 20/07)."""
     global _seeded
     if _seeded:
         return
@@ -123,11 +124,12 @@ def _ensure_seeded() -> None:
             _WF_DIR.mkdir(parents=True, exist_ok=True)
             if _DEFAULTS.is_dir():
                 for f in sorted(_DEFAULTS.glob("*.md")):
-                    dest = _WF_DIR / f.name
-                    if dest.exists():
-                        continue
-                    shutil.copy2(f, dest)
-                    logger.info("agent.workflows: seeded %s", f.name)
+                    from services import ban_goc
+
+                    viec = ban_goc.dong_bo(f, _WF_DIR / f.name, _WF_DIR / f"{f.name}.goc",
+                                           ten=f"workflow:{f.name}")
+                    if viec in ("chep", "theo"):
+                        logger.info("agent.workflows: %s → %s", f.name, viec)
         except Exception as exc:
             logger.warning("agent.workflows: seed failed: %s", exc)
         _seeded = True

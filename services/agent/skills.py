@@ -123,7 +123,9 @@ def validate_description(desc: str) -> Optional[str]:
 
 
 def _ensure_seeded() -> None:
-    """Copy package default skills into data dir once (never overwrite)."""
+    """Đưa skill mặc định vào data dir, và theo bản mới trong ảnh nếu người dùng
+    chưa sửa tay — `services/ban_goc.py` (13/09/2026: `giao-vien-tieu-hoc` chạy
+    thật kẹt bản 20/07). Skill người dùng tự dạy không đụng."""
     global _seeded
     if _seeded:
         return
@@ -136,11 +138,12 @@ def _ensure_seeded() -> None:
                 for d in sorted(_DEFAULTS_DIR.iterdir()):
                     if not d.is_dir() or not (d / "SKILL.md").is_file():
                         continue
-                    dest = _SKILLS_DIR / d.name
-                    if dest.exists():
-                        continue
-                    shutil.copytree(d, dest)
-                    logger.info("agent.skills: seeded default skill %s", d.name)
+                    from services import ban_goc
+
+                    viec = ban_goc.dong_bo(d, _SKILLS_DIR / d.name, _SKILLS_DIR / f".{d.name}.goc",
+                                           ten=f"skill:{d.name}")
+                    if viec in ("chep", "theo"):
+                        logger.info("agent.skills: default skill %s → %s", d.name, viec)
         except Exception as exc:
             logger.warning("agent.skills: seed failed: %s", exc)
         _seeded = True
