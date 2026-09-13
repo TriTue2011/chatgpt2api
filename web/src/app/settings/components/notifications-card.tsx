@@ -54,6 +54,14 @@ export function NotificationsCard() {
   const [dangLuu, setDangLuu] = useState(false);
   const [loi, setLoi] = useState("");
   const [tin, setTin] = useState<Record<string, string>>({});
+  // Số điện thoại của từng tài khoản Zalo cá nhân. Chủ máy chốt 13/09/2026:
+  // nhãn nên là tên thread + TÊN BOT, riêng Zalo cá nhân thì + SỐ ĐIỆN THOẠI —
+  // vì cái mơ hồ thật sự là "bot nào / tài khoản nào", không phải "nền tảng
+  // nào" (ba kênh cùng tên "Đại ca" nằm ở hai bot Zalo khác nhau).
+  //
+  // Số này KHÔNG có trong config, chỉ lấy được qua `/api/zalo-personal/accounts`
+  // — endpoint đã có sẵn, nên không dựng nguồn thứ hai cho cùng một dữ liệu.
+  const [soDt, setSoDt] = useState<Record<string, string>>({});
 
   // Kênh chọn được = thread đã đặt trong «Lọc thread» (đã có tên sẵn).
   const tf = (config as Record<string, unknown> | null)?.thread_filters as
@@ -69,28 +77,58 @@ export function NotificationsCard() {
   // nhau (một Zalo cá nhân, hai Zalo Bot) — chỉ hiện tên là không biết đang
   // tick cái nào. Nên ghép thêm nền tảng, và chỉ khi VẪN còn trùng mới thêm
   // bốn ký tự cuối mã phòng; thêm mã cho mọi ô là quay lại đúng cái vừa bỏ.
+  // Tên bot lấy thẳng từ config — `zalo-personal-panel.tsx:293` đã duyệt đúng
+  // hai khoá này, nên bám theo nếp sẵn có thay vì gọi thêm API.
+  const nhanBot: Record<string, string> = (() => {
+    const c = (config as Record<string, unknown> | null) || {};
+    const ra: Record<string, string> = {};
+    for (const khoa of ["telegram_bots", "zalo_bots"]) {
+      for (const b of ((c[khoa] as Record<string, unknown>[]) || [])) {
+        const id = String((b as { token?: string })?.token || "").split(":")[0].trim();
+        const nhan = String((b as { label?: string })?.label || "").trim();
+        if (id && nhan) ra[id] = nhan;
+      }
+    }
+    return ra;
+  })();
+
   const kenhCo: { value: string; label: string }[] = (() => {
     const tho = Object.keys(tf || {}).map((k) => {
       const phan = k.split(":");
-      const nen = TEN_NEN[phan[0] as keyof typeof TEN_NEN] || phan[0] || "?";
+      const plat = phan[0] || "";
+      const bot = phan[1] || "";
+      // Zalo cá nhân → số điện thoại của tài khoản; bot → tên bot chủ máy đặt.
+      // Tra không ra (bot đã xoá, hoặc máy chủ Zalo cá nhân im) thì lùi về tên
+      // nền tảng: thà chung chung còn hơn hiện mã máy dài không đọc nổi.
+      const nguon = plat === "zalop"
+        ? soDt[bot] || TEN_NEN.zalop
+        : nhanBot[bot] || TEN_NEN[plat as keyof typeof TEN_NEN] || plat || "?";
       return {
         value: k,
         ten: (tfMeta?.[k]?.name || "").trim() || "(chưa đặt tên)",
-        nen,
+        nguon,
         chat: phan[2] || "",
       };
     });
+    // Chỉ thêm đuôi mã phòng khi cặp (tên, nguồn) VẪN còn trùng — thêm cho mọi
+    // ô là quay lại đúng cái nhãn dài đã bỏ.
     const dem = new Map<string, number>();
     for (const x of tho) {
-      const kh = `${x.ten}|${x.nen}`;
+      const kh = `${x.ten}|${x.nguon}`;
       dem.set(kh, (dem.get(kh) || 0) + 1);
     }
-    return tho.map((x) => ({
-      value: x.value,
-      label: (dem.get(`${x.ten}|${x.nen}`) || 0) > 1
-        ? `${x.ten} · ${x.nen} …${x.chat.slice(-4)}`
-        : `${x.ten} · ${x.nen}`,
-    }));
+    return tho.map((x) => {
+      // Thread trùng tên với chính bot của nó (đo thật: thread "chatgpt" trên
+      // bot nhãn "chatgpt") thì đừng in hai lần — "chatgpt · chatgpt" không
+      // thêm thông tin nào, chỉ tốn chỗ trên màn hình hẹp.
+      const goc = x.ten === x.nguon ? x.ten : `${x.ten} · ${x.nguon}`;
+      return {
+        value: x.value,
+        label: (dem.get(`${x.ten}|${x.nguon}`) || 0) > 1
+          ? `${goc} …${x.chat.slice(-4)}`
+          : goc,
+      };
+    });
   })();
 
   const nap = useCallback(async () => {
@@ -115,6 +153,29 @@ export function NotificationsCard() {
   useEffect(() => {
     void nap();
   }, [nap]);
+
+  useEffect(() => {
+    let huy = false;
+    void (async () => {
+      try {
+        const d = (await request.get("/api/zalo-personal/accounts")).data as
+          { ok?: boolean; accounts?: { ownId?: string; phoneNumber?: string }[] };
+        if (huy || !d?.ok) return;
+        const m: Record<string, string> = {};
+        for (const a of d.accounts || []) {
+          const id = String(a?.ownId || "").trim();
+          const sdt = String(a?.phoneNumber || "").trim();
+          if (id && sdt) m[id] = sdt;
+        }
+        setSoDt(m);
+      } catch {
+        // Máy chủ Zalo cá nhân không trả lời thì thôi: nhãn rơi về tên nền
+        // tảng. Không được để việc tra SỐ ĐIỆN THOẠI làm hỏng cả trang thông
+        // báo — đó là thứ phụ, còn danh sách thông báo mới là việc chính.
+      }
+    })();
+    return () => { huy = true; };
+  }, []);
 
   const doi = (khoa: string, sua: Partial<SuKien>) =>
     setDs((cu) => cu.map((x) => (x.khoa === khoa ? { ...x, ...sua } : x)));
