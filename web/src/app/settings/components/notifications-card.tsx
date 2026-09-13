@@ -54,64 +54,77 @@ export function NotificationsCard() {
   const [dangLuu, setDangLuu] = useState(false);
   const [loi, setLoi] = useState("");
   const [tin, setTin] = useState<Record<string, string>>({});
-  // Số điện thoại của từng tài khoản Zalo cá nhân. Chủ máy chốt 13/09/2026:
-  // nhãn nên là tên thread + TÊN BOT, riêng Zalo cá nhân thì + SỐ ĐIỆN THOẠI —
-  // vì cái mơ hồ thật sự là "bot nào / tài khoản nào", không phải "nền tảng
-  // nào" (ba kênh cùng tên "Đại ca" nằm ở hai bot Zalo khác nhau).
+  // Danh bạ kênh của máy chủ: khoá `plat|bot|thread` → {tên thread, tên bot}.
+  // `channel_contacts.bot_label()` đã tính sẵn cả chuỗi lùi (nhãn trong config
+  // → số điện thoại/displayName của Zalo cá nhân → tên lấy qua getMe → mã
+  // trần), nên lấy về dùng thay vì tự ghép lại ở đây.
   //
-  // Số này KHÔNG có trong config, chỉ lấy được qua `/api/zalo-personal/accounts`
-  // — endpoint đã có sẵn, nên không dựng nguồn thứ hai cho cùng một dữ liệu.
-  const [soDt, setSoDt] = useState<Record<string, string>>({});
+  // `null` = CHƯA tải xong. Phải tách khỏi `{}` (tải xong mà rỗng): nếu không,
+  // mọi ô sẽ nháy cảnh báo "thiếu tên" trong lúc chờ mạng — cảnh báo giả.
+  const [danhBa, setDanhBa] = useState<
+    Record<string, { name?: string; bot_label?: string }> | null
+  >(null);
+  // Nền tảng mà lượt tải danh bạ hỏng — để cảnh báo không khuyên nhầm "đặt tên
+  // bot" khi thật ra là chính lượt tra tên không chạy.
+  const [nenLoi, setNenLoi] = useState<string[]>([]);
 
   // Kênh chọn được = thread đã đặt trong «Lọc thread» (đã có tên sẵn).
   const tf = (config as Record<string, unknown> | null)?.thread_filters as
     Record<string, unknown> | undefined;
   const tfMeta = (config as Record<string, unknown> | null)?.thread_filter_meta as
     Record<string, { name?: string }> | undefined;
-  // Nhãn NGẮN. Bản đầu ghép nguyên khoá (`zalop:4757…:6643…`, đo được dài
-  // 28–45 ký tự) nên trên điện thoại mỗi ô rộng hơn màn hình: tràn ra ngoài,
-  // bị cắt cụt, 11 kênh × 14 dòng thành không dùng nổi (chủ máy gửi ảnh
-  // 13/09/2026).
+  // Nhãn NGẮN, tên lấy từ DANH BẠ MÁY CHỦ chứ không tự ghép.
   //
-  // Nhưng CHỈ TÊN thì sai: đo cùng ngày, tên "Đại ca" trùng ở BA kênh khác
-  // nhau (một Zalo cá nhân, hai Zalo Bot) — chỉ hiện tên là không biết đang
-  // tick cái nào. Nên ghép thêm nền tảng, và chỉ khi VẪN còn trùng mới thêm
-  // bốn ký tự cuối mã phòng; thêm mã cho mọi ô là quay lại đúng cái vừa bỏ.
-  // Tên bot lấy thẳng từ config — `zalo-personal-panel.tsx:293` đã duyệt đúng
-  // hai khoá này, nên bám theo nếp sẵn có thay vì gọi thêm API.
-  const nhanBot: Record<string, string> = (() => {
-    const c = (config as Record<string, unknown> | null) || {};
-    const ra: Record<string, string> = {};
-    for (const khoa of ["telegram_bots", "zalo_bots"]) {
-      for (const b of ((c[khoa] as Record<string, unknown>[]) || [])) {
-        const id = String((b as { token?: string })?.token || "").split(":")[0].trim();
-        const nhan = String((b as { label?: string })?.label || "").trim();
-        if (id && nhan) ra[id] = nhan;
-      }
-    }
-    return ra;
-  })();
-
-  const kenhCo: { value: string; label: string }[] = (() => {
+  // Bản đầu in nguyên khoá (`zalop:4757…:6643…`, dài 28–45 ký tự) nên trên
+  // điện thoại tràn hết màn hình. Bản thứ hai ghép "tên · nền tảng" — ngắn
+  // nhưng phân biệt sai trục: ba kênh cùng tên "Đại ca" nằm ở hai bot Zalo
+  // khác nhau, "Zalo Bot" không tách nổi chúng.
+  //
+  // Đúng thứ cần là CHỦ SỞ HỮU thật của kênh, mà máy chủ đã tính sẵn:
+  // `channel_contacts.bot_label()` lùi dần nhãn-config → số điện thoại/tên
+  // Zalo cá nhân → getMe → mã trần, còn `list_directory` trả kèm tên thread.
+  // Đo 13/09/2026: danh bạ phủ ĐỦ 11/11 kênh đang dùng.
+  type Kenh = {
+    value: string; label: string; plat: string;
+    thieuTen: boolean; thieuBot: boolean; khongCo: boolean;
+  };
+  const kenhCo: Kenh[] = (() => {
     const tho = Object.keys(tf || {}).map((k) => {
       const phan = k.split(":");
       const plat = phan[0] || "";
       const bot = phan[1] || "";
-      // Zalo cá nhân → số điện thoại của tài khoản; bot → tên bot chủ máy đặt.
-      // Tra không ra (bot đã xoá, hoặc máy chủ Zalo cá nhân im) thì lùi về tên
-      // nền tảng: thà chung chung còn hơn hiện mã máy dài không đọc nổi.
-      const nguon = plat === "zalop"
-        ? soDt[bot] || TEN_NEN.zalop
-        : nhanBot[bot] || TEN_NEN[plat as keyof typeof TEN_NEN] || plat || "?";
+      const chat = phan.slice(2).join(":");
+      // Ghép NGUYÊN VĂN, không thử dạng gần đúng. `list_directory` bước 3 đưa
+      // mọi khoá «Lọc thread» vào danh bạ với `thread_id = parts[2:].join(":")`
+      // — đúng chuỗi `chat` ở trên — nên tải được danh bạ là khớp. Đo từng
+      // khoá 13/09/2026: 11/11 khớp nguyên văn. Bản trước thử thêm "bỏ #topic":
+      // với `…5521#638` ("Tiểu Hồng") nó ra dòng nhóm cha "chatgpt" — tên SAI
+      // mà trông hợp lý. Không khớp thì thà cảnh báo còn hơn.
+      const r = danhBa?.[`${plat}|${bot}|${chat}`];
+      const ten = (r?.name || "").trim() || (tfMeta?.[k]?.name || "").trim();
+      const nguonThat = (r?.bot_label || "").trim();
+      // Tách HAI loại thiếu vì cách chữa khác nhau: thiếu tên thread thì chủ
+      // máy tự đặt được, thiếu tên bot thì thường là bot/máy chủ đang hỏng.
+      // `bot_label` lúc bí trả về MÃ TRẦN, nên mã trần nghĩa là "chưa có tên".
+      // Danh bạ chưa tải xong thì CHƯA biết — không kết luận thiếu.
+      const xong = danhBa !== null;
+      const thieuTen = xong && !ten;
+      const thieuBot = xong && (!nguonThat || nguonThat === bot);
+      // Danh bạ tải được mà KHÔNG có dòng của kênh: bot vẫn có thể có tên, cái
+      // thiếu là chính dòng danh bạ — khuyên "Lấy tên bot" ở đây là chỉ sai chỗ.
+      const khongCo = xong && !r;
+      const nen = TEN_NEN[plat as keyof typeof TEN_NEN] || plat || "?";
       return {
         value: k,
-        ten: (tfMeta?.[k]?.name || "").trim() || "(chưa đặt tên)",
-        nguon,
-        chat: phan[2] || "",
+        plat,
+        ten: ten || "(chưa đặt tên)",
+        nguon: nguonThat && nguonThat !== bot ? nguonThat : nen,
+        chat,
+        thieuTen,
+        thieuBot,
+        khongCo,
       };
     });
-    // Chỉ thêm đuôi mã phòng khi cặp (tên, nguồn) VẪN còn trùng — thêm cho mọi
-    // ô là quay lại đúng cái nhãn dài đã bỏ.
     const dem = new Map<string, number>();
     for (const x of tho) {
       const kh = `${x.ten}|${x.nguon}`;
@@ -119,17 +132,25 @@ export function NotificationsCard() {
     }
     return tho.map((x) => {
       // Thread trùng tên với chính bot của nó (đo thật: thread "chatgpt" trên
-      // bot nhãn "chatgpt") thì đừng in hai lần — "chatgpt · chatgpt" không
-      // thêm thông tin nào, chỉ tốn chỗ trên màn hình hẹp.
+      // bot nhãn "chatgpt") thì in một lần — "chatgpt · chatgpt" không thêm
+      // thông tin nào, chỉ tốn chỗ.
       const goc = x.ten === x.nguon ? x.ten : `${x.ten} · ${x.nguon}`;
+      const nhan = (dem.get(`${x.ten}|${x.nguon}`) || 0) > 1
+        ? `${goc} …${x.chat.slice(-4)}`
+        : goc;
       return {
         value: x.value,
-        label: (dem.get(`${x.ten}|${x.nguon}`) || 0) > 1
-          ? `${goc} …${x.chat.slice(-4)}`
-          : goc,
+        plat: x.plat,
+        // Dấu ⚠ nằm NGAY TRÊN Ô chứ không chỉ trong `title`: chủ máy dùng điện
+        // thoại, mà điện thoại không có rê chuột để hiện `title`.
+        label: x.thieuTen || x.thieuBot ? `⚠ ${nhan}` : nhan,
+        thieuTen: x.thieuTen,
+        thieuBot: x.thieuBot,
+        khongCo: x.khongCo,
       };
     });
   })();
+  const kenhThieu = kenhCo.filter((k) => k.thieuTen || k.thieuBot);
 
   const nap = useCallback(async () => {
     setDangTai(true);
@@ -157,21 +178,34 @@ export function NotificationsCard() {
   useEffect(() => {
     let huy = false;
     void (async () => {
-      try {
-        const d = (await request.get("/api/zalo-personal/accounts")).data as
-          { ok?: boolean; accounts?: { ownId?: string; phoneNumber?: string }[] };
-        if (huy || !d?.ok) return;
-        const m: Record<string, string> = {};
-        for (const a of d.accounts || []) {
-          const id = String(a?.ownId || "").trim();
-          const sdt = String(a?.phoneNumber || "").trim();
-          if (id && sdt) m[id] = sdt;
+      // Tra TÊN hỏng thì nhãn xấu đi, nhưng danh sách thông báo vẫn phải chạy
+      // — đó mới là việc chính của trang này. Một nền tảng lỗi thì chỉ RIÊNG
+      // nó mất tên, và được ghi lại để cảnh báo nói đúng nguyên nhân.
+      const gom: Record<string, { name?: string; bot_label?: string }> = {};
+      const loi: string[] = [];
+      for (const plat of ["tg", "zalo", "zalop"]) {
+        try {
+          const d = (await request.get(
+            `/api/channels/directory?platform=${plat}`)).data as {
+              ok?: boolean;
+              rows?: { bot_id?: string; thread_id?: string;
+                       name?: string; bot_label?: string }[];
+            };
+          if (!d?.ok) {
+            loi.push(plat);
+            continue;
+          }
+          for (const r of d.rows || []) {
+            const kh = `${plat}|${String(r.bot_id || "")}|${String(r.thread_id || "")}`;
+            gom[kh] = { name: r.name, bot_label: r.bot_label };
+          }
+        } catch {
+          loi.push(plat);
         }
-        setSoDt(m);
-      } catch {
-        // Máy chủ Zalo cá nhân không trả lời thì thôi: nhãn rơi về tên nền
-        // tảng. Không được để việc tra SỐ ĐIỆN THOẠI làm hỏng cả trang thông
-        // báo — đó là thứ phụ, còn danh sách thông báo mới là việc chính.
+      }
+      if (!huy) {
+        setNenLoi(loi);
+        setDanhBa(gom);
       }
     })();
     return () => { huy = true; };
@@ -236,6 +270,32 @@ export function NotificationsCard() {
             thêm nơi nhận trước, rồi quay lại đây chọn.
           </p>
         )}
+        {/* Cảnh báo MỘT lần cho cả thẻ, không lặp dưới từng thông báo: cùng
+            một kênh thiếu tên hiện ở mọi dòng, lặp 14 lần chỉ thành nhiễu. */}
+        {kenhThieu.length > 0 && (
+          <div className="text-sm text-amber-600 space-y-1">
+            <p>⚠ {kenhThieu.length} kênh chưa lấy được tên:</p>
+            <ul className="list-disc pl-5 text-xs space-y-0.5">
+              {kenhThieu.map((k) => (
+                <li key={k.value} className="break-all">
+                  <span className="font-mono">{k.value}</span>
+                  {nenLoi.includes(k.plat) ? (
+                    ` — không tải được danh bạ ${TEN_NEN[k.plat as keyof typeof TEN_NEN] || k.plat}: tải lại trang; vẫn lỗi thì máy chủ đang hỏng.`
+                  ) : k.khongCo ? (
+                    " — danh bạ máy chủ chưa có kênh này: vừa sửa «Lọc thread» thì lưu xong tải lại trang."
+                  ) : (
+                    <>
+                      {k.thieuTen && " — chưa có tên thread: đặt ở Kênh chat → Lọc thread."}
+                      {k.thieuBot && (k.plat === "zalop"
+                        ? " — máy chủ Zalo cá nhân không trả số điện thoại: kiểm tra tài khoản còn đăng nhập."
+                        : " — bot chưa có tên: bấm «Lấy tên bot» ở Kênh chat; bấm không ra tên thì bot đã chết hoặc token sai.")}
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {nhomDs.map((nhom) => (
           <div key={nhom} className="space-y-2">
@@ -275,13 +335,16 @@ export function NotificationsCard() {
                         type="button"
                         onClick={() => bamKenh(sk, k.value)}
                         // Khoá đầy đủ để trong `title`: bấm giữ / rê chuột là
-                        // xem được, mà không làm rộng ô.
+                        // xem được, mà không làm rộng ô. Kênh chưa tra ra tên
+                        // thì nói thẳng lý do ở đây thay vì im lặng.
                         title={k.value}
                         className={
                           "max-w-full truncate rounded-full border px-2.5 py-0.5 text-xs " +
                           (chon
                             ? "border-transparent bg-primary text-primary-foreground"
-                            : "text-muted-foreground")
+                            : k.thieuTen || k.thieuBot
+                              ? "border-amber-500 text-amber-700"
+                              : "text-muted-foreground")
                         }
                       >
                         {k.label}
