@@ -67,24 +67,8 @@ class ThoiQuenNhaTest(unittest.TestCase):
                          " VALUES (?,?,?,?,?,?,1)", (int(ts // 300), thiet_bi, truong, gt, gt, gt))
             conn.commit()
 
-    # ── khu vực liên quan ──────────────────────────────────────────────────
-    def test_ten_noi_khu_khac_khu_HA_thi_bay_CA_HAI(self) -> None:
-        self.assertEqual(self.tq._khu_vuc_lien_quan("switch.bep_center", "Đèn ban công", []),
-                         ["Bếp", "Ban công"])
-
-    def test_du_kien_nhac_ten_thiet_bi_thi_bay_khu_trong_dong_do(self) -> None:
-        """"Bình nóng lạnh lấy theo … cảm biến nhiệt ẩm ban công" (11/09/2026)."""
-        du_kien = [{"id": 2, "noi_dung":
-                    "Bình nóng lạnh lấy theo thời tiết, cảm biến nhiệt ẩm ban công\n"
-                    "Cảm biến phòng khách là cảm biến, làm điều kiện cho đèn trần"}]
-        self.assertEqual(
-            self.tq._khu_vuc_lien_quan("switch.binh_nong_lanh", "Bình nóng lạnh", du_kien),
-            ["Nhà tắm", "Ban công"],
-            "dòng thứ hai không nhắc bình nóng lạnh — không được kéo Phòng khách vào")
-
-    # ── đề ─────────────────────────────────────────────────────────────────
-    def test_de_chi_co_ngoai_vi_khu_lien_quan_va_bo_dung_hai_thu_do_duoc(self) -> None:
-        now = time.time()
+    # ── bản đồ khu và đề bước 1: code BÀY, không quyết ─────────────────────
+    def _nha(self, now: float) -> None:
         for i in range(10):
             t = now - 86400 + i * 3600
             self._sk("switch.bep_center", "on" if i % 2 == 0 else "off", t)
@@ -93,45 +77,81 @@ class ThoiQuenNhaTest(unittest.TestCase):
                      t - 30, truong="presence")
             self._sk("binary_sensor.hien_dien_bep", "on" if i % 3 else "off", t + 5)
             self._sk("sensor.phong_khach_person_count", str(i % 3), t)
+            self._sk("sensor.may_lanh_x", str(i), t)                   # không khu nào
         self._sk("switch.ban_cong_motion", "on", now - 5000)          # MỘT giá trị
         self._sk("camera.rtsp_tk_mk_ban_cong", "idle", now - 4000)    # không còn trong HA
         self._sk("camera.rtsp_tk_mk_ban_cong", "streaming", now - 3000)
         self._sd("zigbee2mqtt/Hiện diện ban công", "illuminance", now - 7200, 12.0)
         self._sd("zigbee2mqtt/Hiện diện ban công", "illuminance", now - 3600, 480.0)
 
+    CON_TRONG_HA = {"switch.bep_center", "binary_sensor.hien_dien_bep", "switch.ban_cong_motion",
+                    "sensor.phong_khach_person_count", "sensor.may_lanh_x"}
+
+    def test_ban_do_xep_moi_ma_theo_so_khu_va_bo_ma_HA_vang(self) -> None:
+        now = time.time()
+        self._nha(now)
         kho = self.tq._doc_kho(now - 2 * 86400, now + 1)
-        uv = self.tq.ung_vien(
-            "switch.bep_center", kho, ten_ha={"switch.bep_center": "Đèn ban công"},
-            du_kien=[], bo_ma={"switch.bep_center", "zigbee2mqtt/Bếp#state_center"},
-            con_trong_ha={"switch.bep_center", "binary_sensor.hien_dien_bep",
-                          "switch.ban_cong_motion", "sensor.phong_khach_person_count"})
-        self.assertEqual(uv["khu_vuc"], ["Bếp", "Ban công"])
+        bd = self.tq.ban_do_khu(kho, con_trong_ha=self.CON_TRONG_HA)
+        self.assertEqual(sorted(bd), ["Ban công", "Bếp", self.tq.CHUA_XEP, "Phòng khách"])
+        self.assertIn(("sensor.may_lanh_x", "state"), bd[self.tq.CHUA_XEP])
+        self.assertNotIn("camera", json.dumps(bd), "mã HA vắng khỏi HA có thể mang mật khẩu camera")
+
+    def test_de_buoc_1_bay_MOI_khu_de_bot_tu_chon(self) -> None:
+        """Code không được quyết khu nào liên quan — chủ máy 13/09/2026."""
+        now = time.time()
+        self._nha(now)
+        kho = self.tq._doc_kho(now - 2 * 86400, now + 1)
+        bd = self.tq.ban_do_khu(kho, con_trong_ha=self.CON_TRONG_HA)
+        de = self.tq.de_khu_vuc("switch.bep_center", kho, bd,
+                                ten_ha={"switch.bep_center": "Đèn ban công"}, du_kien=[],
+                                so_bat=5, so_tat=5)
+        for kv in ("Ban công", "Bếp", "Phòng khách", self.tq.CHUA_XEP):
+            self.assertIn(f"- {kv}:", de)
+        self.assertLess(de.index("- Phòng khách:"), de.index(f"- {self.tq.CHUA_XEP}:"))
+
+    def test_kiem_buoc_1(self) -> None:
+        bd = {"Bếp": [], "Ban công": [], self.tq.CHUA_XEP: []}
+        tot = {"khu_vuc": "Ban công", "khu_xem": ["Ban công"], "vi_sao": "tên nói ban công"}
+        self.assertEqual(self.tq.kiem_khu(tot, bd)["khu_xem"], ["Ban công"])
+        for sai, ly_do in (({**tot, "khu_vuc": "Phòng ngủ"}, "khu bịa"),
+                           ({**tot, "khu_xem": []}, "rỗng"),
+                           ({**tot, "khu_xem": ["Bếp", "Ban công", "Bếp2", "X"]}, "quá 3"),
+                           ({**tot, "khu_xem": ["Hiên"]}, "khu xem bịa")):
+            with self.subTest(ly_do):
+                self.assertIsInstance(self.tq.kiem_khu(sai, bd), str)
+
+    def test_de_buoc_2_chi_khu_bot_chon_va_van_bay_ma_mot_gia_tri(self) -> None:
+        now = time.time()
+        self._nha(now)
+        kho = self.tq._doc_kho(now - 2 * 86400, now + 1)
+        bd = self.tq.ban_do_khu(kho, con_trong_ha=self.CON_TRONG_HA)
+        uv = self.tq.ung_vien("switch.bep_center", ["Ban công"], kho, bd,
+                              ten_ha={}, bo_ma={"switch.bep_center", "zigbee2mqtt/Bếp#state_center"})
         self.assertEqual(sorted(uv["ngoai_vi"]), [
-            "binary_sensor.hien_dien_bep",
+            "switch.ban_cong_motion",
             "zigbee2mqtt/Hiện diện ban công#illuminance",
             "zigbee2mqtt/Hiện diện ban công#presence"])
-        self.assertEqual(uv["so_bat"], 5)
+        self.assertEqual(uv["ngoai_vi"]["switch.ban_cong_motion"]["gia_tri"], "chỉ một giá trị: on",
+                         "bot tự loại theo hướng dẫn — code chỉ ghi rõ")
         self.assertEqual(uv["ngoai_vi"]["zigbee2mqtt/Hiện diện ban công#presence"]["quanh"], "100%")
-        de = self.tq.de_bai(uv, [])
+        de = self.tq.de_ngoai_vi(uv, ["THIẾT BỊ: switch.bep_center"], "Ban công")
         self.assertIn("NGOẠI VI — khu vực Ban công:", de)
-        self.assertNotIn("person_count", de, "khu Phòng khách không liên quan")
-        self.assertNotIn("rtsp", de, "mã HA vắng khỏi HA có thể mang mật khẩu camera")
+        self.assertNotIn("hien_dien_bep", de, "khu Bếp bot không chọn thì không bày")
 
     # ── kiểm ở biên ────────────────────────────────────────────────────────
-    UV = {"ma": "switch.bep_center", "khu_vuc": ["Bếp", "Ban công"],
+    UV = {"ma": "switch.bep_center", "khu_xem": ["Ban công"],
           "ngoai_vi": {"a#presence": {"ten": "Hiện diện ban công · presence"},
                        "b": {"ten": "Hiện diện bếp"}}}
 
     def test_kiem_nhan_bai_dung_va_gan_ten_do_code(self) -> None:
-        kq = self.tq.kiem({"khu_vuc": "Ban công", "chac": 0.8, "vi_sao": "tên nói ban công",
+        kq = self.tq.kiem({"chac": 0.8, "vi_sao": "hiện diện ban công",
                            "ngoai_vi": [{"ma": "a#presence", "vai_tro": "hien_dien"}]}, self.UV)
         self.assertEqual(kq["ngoai_vi"], [{"ma": "a#presence", "vai_tro": "hien_dien",
                                           "ten": "Hiện diện ban công · presence"}])
 
     def test_kiem_loai_bai_pham_luat(self) -> None:
-        tot = {"khu_vuc": "Ban công", "ngoai_vi": [{"ma": "b", "vai_tro": "hien_dien"}]}
+        tot = {"ngoai_vi": [{"ma": "b", "vai_tro": "hien_dien"}]}
         for sai, ly_do in (
-                ({**tot, "khu_vuc": "Phòng ngủ"}, "khu vực không có trong đề"),
                 ({**tot, "ngoai_vi": [{"ma": "bia", "vai_tro": "hien_dien"}]}, "mã không có"),
                 ({**tot, "ngoai_vi": [{"ma": "b", "vai_tro": "doan_mo"}]}, "vai trò lạ"),
                 ({**tot, "ngoai_vi": [{"ma": "b", "vai_tro": "khac"}] * 2}, "mã lặp"),
