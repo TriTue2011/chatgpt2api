@@ -2429,7 +2429,8 @@ def _orchestrate_locked(user_text: str, user_id: str,
     _override = str(model or "").strip()
     main_model = _override or _main_model("reason")
 
-    def _journal(reply: str, *, status: str | None = None, error: str = "") -> None:
+    def _journal(reply: str, *, status: str | None = None, error: str = "",
+                 meta_them: dict[str, Any] | None = None) -> None:
         try:
             uid = str(user_id or "")
             # Infer channel + source account from user_id prefixes used by bots
@@ -2507,6 +2508,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
                         "agent": "Agent",
                     }.get(run_kind, "Agent"),
                     "groups": groups,
+                    **(meta_them or {}),
                 },
                 source_kind=source_kind,
                 source_account=source_account,
@@ -3125,12 +3127,19 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # lỗi → dùng luôn văn mẫu của fast-path.
     if ha_fastpath and (allow is None or "homeassistant" in allow):
         fp_text, fp_control, fp_bo_do = None, False, ""
+        # MỐC GIỜ từng chặng, lưu vào `meta` của nhật ký lượt chạy. Lệnh "bật
+        # đèn tủ lạnh, đèn cửa sổ" 13/09/2026 12:29 mất 22 giây, đèn đổi trạng
+        # thái ở giây 18,7 — nhưng không có mốc nào nói giây đó trôi ở đâu, còn
+        # log container thì mất sạch mỗi lần triển khai. Đo lại cùng câu trên
+        # máy chủ chỉ ra 3 giây; không có mốc thì lần chậm sau lại phải đoán.
+        _t_fp = _time.time()
         try:
             from services.protocol.openai_v1_chat_complete import (
                 ha_local_fastpath_chi_tiet)
             fp_text, fp_control, fp_bo_do = ha_local_fastpath_chi_tiet(user_text)
         except Exception as exc:
             logger.warning("agent: ha fastpath error: %s", exc)
+        _t_fp_xong = _time.time()
 
         # Câu này từng bị chủ máy đánh dấu SAI, hoặc bộ dò vừa khớp hay sai quá
         # → nhường cho model. Đây là chỗ thay cho việc thêm danh sách từ khoá
@@ -3173,6 +3182,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
             logger.info("agent: ha fastpath %s -> %.120s",
                         "control" if fp_control else "answer", fp_text)
             reply = fp_text
+            _t_dien_dat = _time.time()
             try:
                 # Dùng model chat (thường "AI text") — giữ °C/%; burst có thể là
                 # model rẻ không :text và verbalize lại.
@@ -3225,6 +3235,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
                         reply = phrased
             except Exception as exc:  # call_model không raise, nhưng phòng hờ
                 logger.info("agent: ha fastpath phrasing skipped: %s", exc)
+            _t_dien_dat_xong = _time.time()
             # KHÔNG `ap_loi_dan` ở đây: lượt diễn đạt ngay trên đã mang lời dặn
             # theo rồi. Bày lại lần hai là gọi model thêm một lượt cho cùng một
             # câu, và mỗi lần viết lại là một lần nữa có thể rơi mất chi tiết.
@@ -3253,7 +3264,18 @@ def _orchestrate_locked(user_text: str, user_id: str,
             hist.append({"role": "assistant", "content": out.get("text") or reply})
             _persist_history(user_id, hist)
             tools_used.append("ha_fastpath")
-            _journal(str(out.get("text") or reply), status="ha_fastpath")
+            # truoc: từ lúc nhận lượt tới lúc vào đường tắt; do_va_lam: dò lệnh
+            # + gọi HA (với lệnh điều khiển, `_exec_local_tool_calls` chờ HA trả
+            # xong mới về); dien_dat: nhờ model viết lại câu.
+            _giai_doan = {
+                "truoc_ms": int((_t_fp - t0) * 1000),
+                "do_va_lam_ms": int((_t_fp_xong - _t_fp) * 1000),
+                "dien_dat_ms": int((_t_dien_dat_xong - _t_dien_dat) * 1000),
+            }
+            logger.info({"event": "ha_fastpath_giai_doan", "bo_do": fp_bo_do,
+                         "dieu_khien": fp_control, **_giai_doan})
+            _journal(str(out.get("text") or reply), status="ha_fastpath",
+                     meta_them={"giai_doan": _giai_doan})
             return out
 
     # 1.6) Workflow tự khai `trigger: tin_nhan` → chạy thẳng pipeline, bỏ lượt

@@ -2775,6 +2775,7 @@ def _exec_local_tool_calls(local_tcs: list[dict[str, Any]]) -> None:
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(local_tcs))
     try:
         futures = []
+        goi_ha = set()
         for tc in local_tcs:
             args_str = tc.get("function", {}).get("arguments", "{}")
             try:
@@ -2787,14 +2788,22 @@ def _exec_local_tool_calls(local_tcs: list[dict[str, Any]]) -> None:
                 svc = "turn_on" if tool_name == "HassTurnOn" else "turn_off"
                 for eid in args["_eids"]:
                     dom = eid.split(".")[0]
-                    futures.append(pool.submit(call_service, dom, svc, {"entity_id": eid}))
+                    f = pool.submit(call_service, dom, svc, {"entity_id": eid})
+                    goi_ha.add(f)
+                    futures.append(f)
             else:
                 futures.append(pool.submit(_execute_mcp_tool, tool_name, args))
         # Lệnh điều khiển lỗi PHẢI raise để caller còn fallback — giữ nguyên
         # hành vi cũ. Quá giờ cũng raise, nhưng giờ là TimeoutError sạch thay
         # vì đứng im mãi mãi.
         for f in concurrent.futures.as_completed(futures, timeout=10):
-            f.result()
+            kq = f.result()
+            # `call_service` KHÔNG raise: hết giờ hay HA từ chối nó nuốt lỗi,
+            # ghi log rồi trả False. Bỏ qua giá trị đó là lệnh hỏng vẫn bị coi
+            # như xong, và bot nói "đã bật" với cái đèn còn tắt — đúng thứ
+            # docstring ở trên hứa sẽ không xảy ra.
+            if f in goi_ha and kq is False:
+                raise RuntimeError("Home Assistant không nhận lệnh điều khiển")
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
 

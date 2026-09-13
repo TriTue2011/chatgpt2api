@@ -1855,14 +1855,20 @@ def write_ha_file_and_verify(path: str, content: str, reload_service: str = "") 
                 "KHÔNG reload.")
         _notify_result_tg(f"🏠 {_txt}")
         return "error", _txt
+    nap_lai_ok = True
     if reload_service:
         dom, _, svc = str(reload_service).partition(".")
-        call_service(dom, svc or "reload", {})
+        # `call_service` nuốt lỗi và trả False — bỏ qua nó là báo "đã reload"
+        # trong khi HA chưa hề nạp lại.
+        nap_lai_ok = call_service(dom, svc or "reload", {})
         time.sleep(1.8)
-    logger.info({"event": "ha_file_written", "path": path, "reload": reload_service})
+    logger.info({"event": "ha_file_written", "path": path, "reload": reload_service,
+                 "reload_ok": nap_lai_ok})
     _txt = (f"✅ Đã ghi {path} ({r.get('bytes')} bytes, backup: "
             f"{r.get('backup') or 'file mới'}), check_config HỢP LỆ"
-            + (f", đã reload {reload_service}" if reload_service else "") + ".")
+            + ((f", đã reload {reload_service}" if nap_lai_ok
+                else f", nhưng reload {reload_service} HỎNG — HA chưa nạp nội dung mới")
+               if reload_service else "") + ".")
     _notify_result_tg(f"🏠 {_txt}")
     return "ok", _txt
 
