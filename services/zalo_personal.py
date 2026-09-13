@@ -3271,15 +3271,6 @@ def _process_ai(ev: dict) -> None:
             send_message(thread_id, _hd.mo(pkey), thread_type, co_nut_chon=True)
             return
 
-    # Nhóm học hỏi: câu chấm «hh …» và lời chủ máy dạy bot (`_nhom_hoc_hoi`).
-    # Đứng trước cổng tag để trong nhóm gõ là chạy, không phải gọi tên bot.
-    if text:
-        _dap_hh = _nhom_hoc_hoi(ev, thread_id, text)
-        if _dap_hh:
-            send_message(thread_id, _dap_hh, thread_type,
-                         account=str(ev.get("account_id") or ""))
-            return
-
     # Lệnh /stt và /tts. Cùng sổ chờ với /dich (services/dich_cho.py) nên một
     # khoá phiên chỉ có MỘT menu đang mở — hai sổ riêng thì người dùng nhắn "2"
     # mà cả hai bên cùng nhận.
@@ -4285,6 +4276,23 @@ def handle_event(body: dict, event_name: str = "message") -> None:
             pass
         if _fw_consumed:
             return  # tin tag đã chuyển webhook — không đưa vào AI
+        # Nhóm học hỏi: câu chấm «hh/gy» và lời dạy là TRẢ LỜI câu hỏi chính bot
+        # gửi tới kênh này — đường vào của thông báo học hỏi, không phải chat AI.
+        # Nên đứng TRƯỚC cổng tắt AI ngay dưới và cổng «Lọc thread» trong
+        # `_process_ai`. Chủ máy tắt AI ở nhóm "AI học hỏi" là không muốn bot tán
+        # gẫu ở đó; 13/09/2026 16:51 câu «hh 91 đúng» rơi mất im lặng qua đúng
+        # hai cổng ấy — bot không học, không đáp.
+        #
+        # Bỏ qua cổng lọc người thì phải có cổng người khác: chỉ nhận của NGƯỜI
+        # admin tài khoản (thread 1-1 của admin chính là UID người đó). Không dùng
+        # `_la_admin_nguoi_gui`: hàm ấy hỏi "nhóm này có phải thread admin", mà
+        # nhóm học hỏi thì không.
+        _txt_hh = str(ev.get("text") or "").strip()
+        if _txt_hh and str(ev.get("sender_id") or "") in _admin_thread_ids_for_account(_acc):
+            _dap_hh = _nhom_hoc_hoi(ev, _tid, _txt_hh)
+            if _dap_hh:
+                send_message(_tid, _dap_hh, ev.get("thread_type") or 0, account=_acc)
+                return
         # Thread TẮT HẲN ChatGPT (ô trong tab «Lọc thread»): chuyển tiếp ở trên
         # vẫn chạy, chỉ phần AI là im. Tắt cho cả tin người khác lẫn tin chính
         # chủ tự gõ — "không dùng ChatGPT ở thread này" thì không có ngoại lệ.
