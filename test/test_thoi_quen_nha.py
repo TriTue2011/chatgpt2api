@@ -1,240 +1,204 @@
-"""Test học nếp sinh hoạt — cảnh báo lệch giờ và đón đầu việc quen làm."""
+"""Test tầng thói quen — chặng 1: bot chọn NGOẠI VI theo khu vực cho từng thiết bị.
+
+Mỗi ca khoá một quyết định nêu lý do trong `services/thoi_quen_nha.py`.
+"""
 
 from __future__ import annotations
 
+import json
 import time
 import unittest
-from datetime import datetime, timedelta, timezone
+from tempfile import TemporaryDirectory
 from unittest import mock
 
-TZ = timezone(timedelta(hours=7))
+from test.test_hieu_thiet_bi_nha import _nap
+
+#: Sổ khu vực giả, khuôn theo `boi_canh_nha._nap_so_phong`: (mã → khu, tên
+#: không dấu → tên gốc). Công tắc "Đèn ban công" nằm ở khu Bếp — đúng ca đo 13/09.
+_SO = ({"switch.bep_center": "Bếp", "switch.binh_nong_lanh": "Nhà tắm"},
+       {"bep": "Bếp", "ban cong": "Ban công", "nha tam": "Nhà tắm",
+        "phong khach": "Phòng khách"})
 
 
-class ThoiQuenTest(unittest.TestCase):
+def _phong(tb: str) -> str:
+    from services.boi_canh_nha import _khong_dau
+    t = _khong_dau(tb)
+    for kd, goc in sorted(_SO[1].items(), key=lambda x: -len(x[0])):
+        if kd in t:
+            return goc
+    return _SO[0].get(tb, "")
+
+
+class ThoiQuenNhaTest(unittest.TestCase):
     def setUp(self) -> None:
-        import services.thoi_quen_nha as m
-        self.m = m
-        m.config.data.setdefault("mqtt", {})["thoi_quen"] = {"bat": True}
+        import services.thoi_quen_nha as tq
 
-    def _sk(self, moc):
-        """moc: [(ngày lùi, giờ, phút, giá trị)] → bản ghi kiểu lich_su_nha."""
-        ra = []
-        now = datetime.now(TZ)
-        for lui, gio, phut, gt in moc:
-            t = (now - timedelta(days=lui)).replace(hour=gio, minute=phut,
-                                                    second=0, microsecond=0)
-            ra.append({"ts": t.timestamp(), "gia_tri": gt, "thiet_bi": "khoa",
-                       "truong": "unlock"})
-        return ra
+        self._tmp = TemporaryDirectory()
+        self.ht, self.bc, self.ls = _nap(self._tmp.name)
+        self.tq = tq
+        mqtt = self.ls.config.data.setdefault("mqtt", {})
+        mqtt["lich_su"] = {"bat": True}
+        mqtt["hieu_thiet_bi"] = {"bat": True}
+        self.ls._db()          # tạo bảng trước khi đọc chỉ-đọc
+        for p in (mock.patch.object(self.bc, "_nap_so_phong", return_value=_SO),
+                  mock.patch.object(self.bc, "phong_cua", side_effect=_phong)):
+            p.start()
+            self.addCleanup(p.stop)
 
-    def _voi(self, sk, hom_nay=None):
-        from services import lich_su_nha
+    def tearDown(self) -> None:
+        self.ht._reset_for_tests()
+        self.ls._reset_for_tests()
+        self.bc._reset_for_tests()
+        self._tmp.cleanup()
 
-        def _doc(tb, tu, den, truong=None):
-            # Gọi lần đầu là học (60 ngày), lần sau là hôm nay.
-            if den - tu > 2 * 86400:
-                return sk
-            return hom_nay if hom_nay is not None else []
+    def _sk(self, thiet_bi: str, gt: str, ts: float, truong: str = "state") -> None:
+        with self.ls._khoa_db:
+            conn = self.ls._db()
+            conn.execute(
+                "INSERT INTO su_kien (ts, nguon, thiet_bi, truong, gia_tri,"
+                " gia_tri_cu, do_ai, gio, thu) VALUES (?,?,?,?,?,?,0,12,1)",
+                (ts, "mqtt" if "/" in thiet_bi else "ha", thiet_bi, truong, gt, ""))
+            conn.commit()
 
-        return mock.patch.object(lich_su_nha, "doc_su_kien", side_effect=_doc)
+    def _sd(self, thiet_bi: str, truong: str, ts: float, gt: float) -> None:
+        with self.ls._khoa_db:
+            conn = self.ls._db()
+            conn.execute("INSERT INTO so_do (o_5p, thiet_bi, truong, nho, lon, tb, n)"
+                         " VALUES (?,?,?,?,?,?,1)", (int(ts // 300), thiet_bi, truong, gt, gt, gt))
+            conn.commit()
 
-    # ── học nếp ────────────────────────────────────────────────────────────
-    def test_hoc_duoc_nep_khi_du_mau(self) -> None:
-        """4 lần cùng thứ, cùng buổi → thành nếp."""
-        moc = [(7 * i, 17, 0, "11") for i in range(1, 5)]   # 4 tuần, cùng thứ
-        with self._voi(self._sk(moc)):
-            nep = self.m.hoc("khoa")
-        self.assertEqual(len(nep), 1)
-        v = next(iter(nep.values()))
-        self.assertEqual(v["n"], 4)
-        self.assertAlmostEqual(v["trung_binh"], 17.0, places=1)
+    # ── khu vực liên quan ──────────────────────────────────────────────────
+    def test_ten_noi_khu_khac_khu_HA_thi_bay_CA_HAI(self) -> None:
+        self.assertEqual(self.tq._khu_vuc_lien_quan("switch.bep_center", "Đèn ban công", []),
+                         ["Bếp", "Ban công"])
 
-    def test_it_mau_thi_KHONG_coi_la_nep(self) -> None:
-        """2 lần chưa đủ nói là thói quen — đoán bừa từ 2 điểm là báo động giả."""
-        with self._voi(self._sk([(7, 17, 0, "11"), (14, 17, 0, "11")])):
-            self.assertEqual(self.m.hoc("khoa"), {})
+    def test_du_kien_nhac_ten_thiet_bi_thi_bay_khu_trong_dong_do(self) -> None:
+        """"Bình nóng lạnh lấy theo … cảm biến nhiệt ẩm ban công" (11/09/2026)."""
+        du_kien = [{"id": 2, "noi_dung":
+                    "Bình nóng lạnh lấy theo thời tiết, cảm biến nhiệt ẩm ban công\n"
+                    "Cảm biến phòng khách là cảm biến, làm điều kiện cho đèn trần"}]
+        self.assertEqual(
+            self.tq._khu_vuc_lien_quan("switch.binh_nong_lanh", "Bình nóng lạnh", du_kien),
+            ["Nhà tắm", "Ban công"],
+            "dòng thứ hai không nhắc bình nóng lạnh — không được kéo Phòng khách vào")
 
-    def test_co_SAN_do_lech_khi_nep_qua_deu(self) -> None:
-        """σ=0 thì lệch 1 phút cũng thành bất thường — phải có sàn."""
-        moc = [(7 * i, 17, 0, "11") for i in range(1, 6)]   # y hệt nhau
-        with self._voi(self._sk(moc)):
-            v = next(iter(self.m.hoc("khoa").values()))
-        self.assertGreaterEqual(v["do_lech"] * 60, self.m._SAN_LECH_PHUT - 0.1)
-
-    def test_tach_theo_BUOI_khong_gop_ca_ngay(self) -> None:
-        """Gộp sáng với chiều thì trung bình rơi vào giữa trưa, vô nghĩa.
-
-        Đo thật trên nhật ký nhà: gộp cho ±297 phút, tách buổi còn ±35-60.
-        """
-        moc = ([(7 * i, 8, 0, "11") for i in range(1, 5)]
-               + [(7 * i, 17, 0, "11") for i in range(1, 5)])
-        with self._voi(self._sk(moc)):
-            nep = self.m.hoc("khoa")
-        self.assertEqual(len(nep), 2, "sáng và chiều phải là hai ô riêng")
-        tb = sorted(round(v["trung_binh"]) for v in nep.values())
-        self.assertEqual(tb, [8, 17])
-
-    def test_gio_dem_khong_bi_tinh_nguoc(self) -> None:
-        """23h50 và 0h10 cách nhau 20 phút, KHÔNG phải 23 tiếng rưỡi."""
-        t23 = datetime(2026, 9, 9, 23, 50, tzinfo=TZ)
-        t00 = datetime(2026, 9, 10, 0, 10, tzinfo=TZ)
-        self.assertAlmostEqual(
-            self.m._gio_thap_phan(t00) - self.m._gio_thap_phan(t23), 0.333, places=2)
-
-    # ── soi lệch ───────────────────────────────────────────────────────────
-    def _nep_chieu(self, gio=17, phut=0, gt="11"):
-        """Nếp: cùng thứ với HÔM NAY, buổi chiều."""
-        return [(7 * i, gio, phut, gt) for i in range(1, 6)]
-
-    def test_ve_dung_gio_thi_KHONG_bao(self) -> None:
-        sk = self._sk(self._nep_chieu())
-        hn = self._sk([(0, 17, 5, "11")])
-        with self._voi(sk, hn):
-            self.assertEqual(self.m.soi_lech("khoa"), [])
-
-    def test_ve_muon_han_thi_bao(self) -> None:
-        sk = self._sk(self._nep_chieu())
-        hn = self._sk([(0, 18, 30, "11")])       # muộn 90 phút
-        with self._voi(sk, hn):
-            ds = self.m.soi_lech("khoa")
-        self.assertEqual(len(ds), 1)
-        self.assertEqual(ds[0]["loai"], "muon")
-        self.assertGreater(ds[0]["muon_phut"], 60)
-
-    def test_ve_SOM_thi_khong_bao(self) -> None:
-        """Về sớm không phải chuyện đáng lo."""
-        sk = self._sk(self._nep_chieu())
-        hn = self._sk([(0, 15, 0, "11")])
-        with self._voi(sk, hn):
-            self.assertEqual(self.m.soi_lech("khoa"), [])
-
-    def test_CHUA_VE_bao_duoc_ma_khong_cho_ve_moi_bao(self) -> None:
-        """Thứ chủ máy cần: biết con CHƯA về, không phải đợi về rồi mới báo."""
-        now = datetime.now(TZ)
-        # nếp là 3 tiếng TRƯỚC bây giờ, hôm nay chưa có gì
-        gio_nep = (now - timedelta(hours=3)).hour
-        if not (5 <= gio_nep < 29):
-            self.skipTest("giờ chạy test rơi vào đêm")
-        sk = self._sk([(7 * i, gio_nep, 0, "11") for i in range(1, 6)])
-        with self._voi(sk, []):
-            ds = self.m.soi_lech("khoa")
-        self.assertTrue(any(d["loai"] == "chua_ve" for d in ds),
-                        f"phải báo chưa về, nhận được {ds}")
-
-    def test_khong_bao_khi_qua_lau_roi(self) -> None:
-        """Quá 6 tiếng thì thôi, không nhắc mãi chuyện sáng nay."""
-        now = datetime.now(TZ)
-        gio_nep = (now - timedelta(hours=9)).hour
-        if not (5 <= gio_nep < 24):
-            self.skipTest("giờ chạy test không hợp")
-        sk = self._sk([(7 * i, gio_nep, 0, "11") for i in range(1, 6)])
-        with self._voi(sk, []):
-            ds = [d for d in self.m.soi_lech("khoa") if d["loai"] == "chua_ve"]
-        self.assertEqual(ds, [], "quá 6 tiếng thì không nhắc nữa")
-
-    def test_nep_cua_THU_KHAC_khong_bi_xet(self) -> None:
-        """Nếp thứ Ba không dùng để phán xét thứ Năm."""
-        now = datetime.now(TZ)
-        khac = 3 if now.weekday() != 3 else 5
-        lui = (now.weekday() - khac) % 7 or 7
-        sk = self._sk([(lui + 7 * i, 17, 0, "11") for i in range(5)])
-        with self._voi(sk, []):
-            self.assertEqual(self.m.soi_lech("khoa"), [])
-
-    # ── đón đầu ────────────────────────────────────────────────────────────
-    def test_sap_den_gio_bao_truoc_dung_khoang(self) -> None:
-        """Áp cho MỌI việc lặp, không riêng "về nhà" — quản gia không bó hẹp."""
-        now = datetime.now(TZ)
-        sau = now + timedelta(minutes=20)
-        if sau.hour < 5:
-            self.skipTest("giờ chạy test rơi vào đêm")
-        sk = self._sk([(7 * i, sau.hour, sau.minute, "11") for i in range(1, 6)])
-        with self._voi(sk):
-            ds = self.m.sap_den_gio("khoa", truoc_phut=30)
-        self.assertTrue(ds, "phải báo sắp về")
-        self.assertLessEqual(ds[0]["con_phut"], 30)
-
-    def test_sap_den_gio_khong_bao_khi_con_xa(self) -> None:
-        now = datetime.now(TZ)
-        sau = now + timedelta(hours=3)
-        if sau.hour < 5 or sau.day != now.day:
-            self.skipTest("giờ chạy test không hợp")
-        sk = self._sk([(7 * i, sau.hour, sau.minute, "11") for i in range(1, 6)])
-        with self._voi(sk):
-            self.assertEqual(self.m.sap_den_gio("khoa", truoc_phut=30), [])
-
-    # ── chống nhiễu do đi chơi ─────────────────────────────────────────────
-    def test_MAY_NGAY_DI_CHOI_KHONG_KEO_LECH_NEP(self) -> None:
-        """Mấu chốt chủ máy chỉ ra: "đi chơi rất dễ nhiễu".
-
-        15 ngày về đúng 16h30 + 4 ngày đi chơi về 19h. Trung bình bị kéo lên
-        gần 17h và độ lệch phình tới ±60 phút — từ đó không báo được ca muộn
-        thật. Trung vị giữ đúng 16h30.
-        """
-        moc = [(7 * i, 16, 30, "11") for i in range(1, 16)]
-        moc += [(7 * i, 19, 0, "11") for i in range(16, 20)]
-        with self._voi(self._sk(moc)):
-            nep = self.m.hoc("khoa")
-        v = max(nep.values(), key=lambda x: x["n"])
-        self.assertLess(abs(v["trung_binh"] - 16.5), 0.35,
-                        "nếp phải bám 16h30, không bị 4 ngày đi chơi kéo lên")
-
-    def test_do_lech_khong_phinh_vi_vai_lan_lac(self) -> None:
-        moc = [(7 * i, 16, 30, "11") for i in range(1, 16)]
-        moc += [(7 * i, 20, 0, "11") for i in range(16, 19)]
-        with self._voi(self._sk(moc)):
-            v = max(self.m.hoc("khoa").values(), key=lambda x: x["n"])
-        self.assertLess(v["do_lech"] * 60, 45,
-                        "MAD phải giữ độ lệch nhỏ dù có giá trị lạc")
-
-    def test_san_lech_dung_10_phut(self) -> None:
-        """Chủ máy nêu rõ: con đi học thì 10 phút, không phải 55."""
-        self.assertEqual(self.m._SAN_LECH_PHUT, 10.0)
-
-    def test_doi_chung_qua_camera(self) -> None:
-        """Camera thấy người thì đừng khẳng định "chưa về"."""
-        from services import lich_su_nha
+    # ── đề ─────────────────────────────────────────────────────────────────
+    def test_de_chi_co_ngoai_vi_khu_lien_quan_va_bo_dung_hai_thu_do_duoc(self) -> None:
         now = time.time()
-        tuoi = [{"thiet_bi": "frigate/phong-khach", "truong": "person",
-                 "gia_tri": "1", "ts": now}]
-        with mock.patch.object(lich_su_nha, "doc_tuoi", return_value=tuoi):
-            bc = self.m.doi_chung(now)
-        self.assertTrue(bc, "camera thấy người phải thành bằng chứng")
+        for i in range(10):
+            t = now - 86400 + i * 3600
+            self._sk("switch.bep_center", "on" if i % 2 == 0 else "off", t)
+            self._sk("zigbee2mqtt/Bếp#state_center", "ON" if i % 2 == 0 else "OFF", t)
+            self._sk("zigbee2mqtt/Hiện diện ban công", "True" if i % 2 == 0 else "False",
+                     t - 30, truong="presence")
+            self._sk("binary_sensor.hien_dien_bep", "on" if i % 3 else "off", t + 5)
+            self._sk("sensor.phong_khach_person_count", str(i % 3), t)
+        self._sk("switch.ban_cong_motion", "on", now - 5000)          # MỘT giá trị
+        self._sk("camera.rtsp_tk_mk_ban_cong", "idle", now - 4000)    # không còn trong HA
+        self._sk("camera.rtsp_tk_mk_ban_cong", "streaming", now - 3000)
+        self._sd("zigbee2mqtt/Hiện diện ban công", "illuminance", now - 7200, 12.0)
+        self._sd("zigbee2mqtt/Hiện diện ban công", "illuminance", now - 3600, 480.0)
 
-    def test_doi_chung_bo_qua_moc_qua_xa(self) -> None:
-        from services import lich_su_nha
-        now = time.time()
-        tuoi = [{"thiet_bi": "cb", "truong": "presence", "gia_tri": "on",
-                 "ts": now - 7200}]
-        with mock.patch.object(lich_su_nha, "doc_tuoi", return_value=tuoi):
-            self.assertEqual(self.m.doi_chung(now), [])
+        kho = self.tq._doc_kho(now - 2 * 86400, now + 1)
+        uv = self.tq.ung_vien(
+            "switch.bep_center", kho, ten_ha={"switch.bep_center": "Đèn ban công"},
+            du_kien=[], bo_ma={"switch.bep_center", "zigbee2mqtt/Bếp#state_center"},
+            con_trong_ha={"switch.bep_center", "binary_sensor.hien_dien_bep",
+                          "switch.ban_cong_motion", "sensor.phong_khach_person_count"})
+        self.assertEqual(uv["khu_vuc"], ["Bếp", "Ban công"])
+        self.assertEqual(sorted(uv["ngoai_vi"]), [
+            "binary_sensor.hien_dien_bep",
+            "zigbee2mqtt/Hiện diện ban công#illuminance",
+            "zigbee2mqtt/Hiện diện ban công#presence"])
+        self.assertEqual(uv["so_bat"], 5)
+        self.assertEqual(uv["ngoai_vi"]["zigbee2mqtt/Hiện diện ban công#presence"]["quanh"], "100%")
+        de = self.tq.de_bai(uv, [])
+        self.assertIn("NGOẠI VI — khu vực Ban công:", de)
+        self.assertNotIn("person_count", de, "khu Phòng khách không liên quan")
+        self.assertNotIn("rtsp", de, "mã HA vắng khỏi HA có thể mang mật khẩu camera")
 
-    def test_dang_tin_gan_co_bang_chung(self) -> None:
-        from services import lich_su_nha
-        ds = [{"loai": "chua_ve", "ai": "11", "buoi": "chiều",
-               "gio_quen": 17.0, "gio_thuc": None, "muon_phut": 40, "so_lan_hoc": 5}]
-        tuoi = [{"thiet_bi": "frigate/phong-khach", "truong": "person",
-                 "gia_tri": "2", "ts": time.time()}]
-        with mock.patch.object(lich_su_nha, "doc_tuoi", return_value=tuoi):
-            ra = self.m.dang_tin(ds)
-        self.assertTrue(ra[0].get("nghi_ngo"))
-        self.assertIn("có thể đã về", self.m.mo_ta_lech(ra))
+    # ── kiểm ở biên ────────────────────────────────────────────────────────
+    UV = {"ma": "switch.bep_center", "khu_vuc": ["Bếp", "Ban công"],
+          "ngoai_vi": {"a#presence": {"ten": "Hiện diện ban công · presence"},
+                       "b": {"ten": "Hiện diện bếp"}}}
 
-    # ── lời văn ────────────────────────────────────────────────────────────
-    def test_mo_ta_co_du_thong_tin_can_thiet(self) -> None:
-        ds = [{"loai": "chua_ve", "ai": "11", "buoi": "chiều",
-               "gio_quen": 17.0, "gio_thuc": None, "muon_phut": 75,
-               "so_lan_hoc": 6}]
-        t = self.m.mo_ta_lech(ds)
-        for phai_co in ("17h00", "75", "6"):
-            self.assertIn(phai_co, t)
+    def test_kiem_nhan_bai_dung_va_gan_ten_do_code(self) -> None:
+        kq = self.tq.kiem({"khu_vuc": "Ban công", "chac": 0.8, "vi_sao": "tên nói ban công",
+                           "ngoai_vi": [{"ma": "a#presence", "vai_tro": "hien_dien"}]}, self.UV)
+        self.assertEqual(kq["ngoai_vi"], [{"ma": "a#presence", "vai_tro": "hien_dien",
+                                          "ten": "Hiện diện ban công · presence"}])
 
-    def test_doc_loi_thi_khong_raise(self) -> None:
-        from services import lich_su_nha
-        with mock.patch.object(lich_su_nha, "doc_su_kien",
-                               side_effect=RuntimeError("DB hỏng")):
-            self.assertEqual(self.m.hoc("khoa"), {})
-            self.assertEqual(self.m.soi_lech("khoa"), [])
+    def test_kiem_loai_bai_pham_luat(self) -> None:
+        tot = {"khu_vuc": "Ban công", "ngoai_vi": [{"ma": "b", "vai_tro": "hien_dien"}]}
+        for sai, ly_do in (
+                ({**tot, "khu_vuc": "Phòng ngủ"}, "khu vực không có trong đề"),
+                ({**tot, "ngoai_vi": [{"ma": "bia", "vai_tro": "hien_dien"}]}, "mã không có"),
+                ({**tot, "ngoai_vi": [{"ma": "b", "vai_tro": "doan_mo"}]}, "vai trò lạ"),
+                ({**tot, "ngoai_vi": [{"ma": "b", "vai_tro": "khac"}] * 2}, "mã lặp"),
+                ({**tot, "ngoai_vi": [{"ma": "b", "vai_tro": "khac"}] * 6}, "tối đa 5")):
+            with self.subTest(ly_do):
+                self.assertIsInstance(self.tq.kiem(sai, self.UV), str)
+
+    def test_de_dinh_mat_khau_thi_KHONG_goi_model(self) -> None:
+        with mock.patch.object(self.ht, "thiet_bi_hoc", return_value=["switch.x"]), \
+             mock.patch.object(self.ht, "_ten_ha",
+                               return_value={"switch.x": "Cam rtsp://tk:mk@10.0.0.2:8554"}), \
+             mock.patch("services.ha_client.get_states",
+                        return_value=[{"entity_id": "switch.x", "attributes": {}}]), \
+             mock.patch.object(self.ht, "huong_dan", return_value=("hd", "ban")), \
+             mock.patch.object(self.ht, "_model", return_value="m"), \
+             mock.patch.object(self.ht, "_goi_model") as goi:
+            kq = self.tq.giai()
+        goi.assert_not_called()
+        self.assertEqual(len(kq["loi"]), 1)
+
+    # ── lưu sổ ─────────────────────────────────────────────────────────────
+    def _ket_luan(self, **doi) -> dict:
+        k = {"ma_hoc": "switch.bep_left", "khu_vuc": "Bếp", "chac": 0.9, "vi_sao": "cùng bếp",
+             "ngoai_vi": [{"ma": "binary_sensor.hien_dien_bep", "vai_tro": "hien_dien",
+                           "ten": "Hiện diện bếp"}]}
+        k.update(doi)
+        return k
+
+    def test_luot_HIEU_THIET_BI_hang_ngay_KHONG_xoa_ket_luan_ngoai_vi(self) -> None:
+        """`ghi_ket_qua` vô hiệu mọi câu có chung mã — trước đây kể cả câu của tầng khác."""
+        self.ht.ghi_ngoai_vi(self.ht._ghi_lan("b", "m", 1, 1, 0, 0, ""), [self._ket_luan()])
+        g = {"ma": ["switch.bep_left"], "ma_hoc": "switch.bep_left", "nguon_nhanh": "",
+             "loai": "bat_tat", "hoc": True, "chac": 0.9, "vi_sao": "", "dieu_kien": ["buoi"]}
+        self.ht.ghi_ket_qua(self.ht._ghi_lan("b", "m", 1, 1, 0, 0, ""), [g])
+        con = [d for d in self.ht.dang_hieu_luc() if d["loai_cau_hoi"] == "ngoai_vi"]
+        self.assertEqual(len(con), 1)
+
+    def test_luot_CHON_NGOAI_VI_khong_nuot_du_kien_moi_cua_luot_hieu_thiet_bi(self) -> None:
+        """Hai việc chung bảng lượt giải: lượt của việc này không được làm việc kia
+        tưởng dữ kiện mới đã được xem."""
+        self.ht._ghi_lan("b", "m", 1, 1, 0, 0, "")                       # hiểu thiết bị
+        self.ht.ghi_du_kien("Đèn hiên theo cảm biến hiên")
+        self.ht._ghi_lan("b", "m", 1, 1, 0, 0, "", viec="ngoai_vi")      # chọn ngoại vi
+        self.assertTrue(self.ht.co_du_kien_moi(), "lượt hiểu thiết bị chưa xem dữ kiện này")
+        self.assertFalse(self.ht.co_du_kien_moi("ngoai_vi"))
+        self.assertEqual(len(self.ht.lich_su_giai()), 1, "lịch sử giải chỉ kể lượt hiểu thiết bị")
+
+    def test_ngoai_vi_hoc_chi_lay_thiet_bi_duoc_hoc_va_bo_cau_sai(self) -> None:
+        ghi = self.ht.ghi_ngoai_vi(self.ht._ghi_lan("b", "m", 1, 1, 0, 0, ""), [self._ket_luan()])
+        with mock.patch.object(self.ht, "thiet_bi_hoc", return_value=["switch.bep_left"]):
+            self.assertEqual(self.ht.ngoai_vi_hoc()["switch.bep_left"]["khu_vuc"], "Bếp")
+            self.ht.cham(ghi["moi"][0]["id"], False, cham_boi="claude")
+            self.assertEqual(self.ht.ngoai_vi_hoc(), {})
+
+    def test_cau_hoi_doc_duoc_ten_ngoai_vi(self) -> None:
+        ghi = self.ht.ghi_ngoai_vi(self.ht._ghi_lan("b", "m", 1, 1, 0, 0, ""), [self._ket_luan()])
+        d = next(x for x in self.ht.dang_hieu_luc() if x["id"] == ghi["moi"][0]["id"])
+        cau = self.ht._cau_doc(d, {"switch.bep_left": "Đèn bếp"})
+        self.assertEqual(cau, "Đèn bếp [switch] ở Bếp, đi theo: Hiện diện bếp (hiện diện)")
+        self.assertNotIn("binary_sensor", cau)
+
+    def test_luu_lai_y_het_thi_khong_hoi_lai(self) -> None:
+        lan = self.ht._ghi_lan("b", "m", 1, 1, 0, 0, "")
+        self.assertEqual(len(self.ht.ghi_ngoai_vi(lan, [self._ket_luan()])["moi"]), 1)
+        self.assertEqual(self.ht.ghi_ngoai_vi(lan, [self._ket_luan(vi_sao="khác chữ")])["moi"], [])
+        doi = self._ket_luan(khu_vuc="Ban công")
+        self.assertEqual(len(self.ht.ghi_ngoai_vi(lan, [doi])["moi"]), 1)
 
 
 if __name__ == "__main__":

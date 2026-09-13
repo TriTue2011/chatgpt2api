@@ -199,6 +199,12 @@ def _parse_tasks() -> list[dict[str, Any]]:
         "text": "Bot học hỏi tự hiểu thiết bị nhà (mã nào là một, cái nào nên học) rồi báo nhóm học hỏi",
         "system": True,
     })
+    tasks.append({
+        "id": "thoi_quen_nha",
+        "intent": "read",
+        "text": "Bot học hỏi chọn ngoại vi theo khu vực cho từng thiết bị được học rồi báo nhóm học hỏi",
+        "system": True,
+    })
 
     _ensure_heartbeat_md()
     try:
@@ -567,8 +573,35 @@ def _eval_hieu_thiet_bi_nha() -> tuple[str, str]:
         return "skip", f"error: {exc}"
 
 
+def _eval_thoi_quen_nha() -> tuple[str, str]:
+    """Bot học hỏi chọn ngoại vi theo khu vực — services.thoi_quen_nha.
+
+    Mỗi ngày một lần, và CHỈ SAU khi lượt hiểu thiết bị hôm nay đã xong: tầng
+    này đọc "thiết bị nào được học" từ kết luận của lượt đó. Dữ kiện mới của
+    chủ máy thì chạy lại ngay, cùng lẽ `_eval_hieu_thiet_bi_nha`.
+    """
+    try:
+        from services import hieu_thiet_bi_nha as ht, thoi_quen_nha as tq
+        if not ht.is_enabled():
+            return "skip", "đang tắt (mqtt.hieu_thiet_bi.bat)"
+        import time as _t
+        moc = _t.strftime("%Y-%m-%d")
+        if _state.get("hieu_thiet_bi_ngay") != moc or ht._dang_giai.locked():
+            return "skip", "chờ lượt hiểu thiết bị hôm nay xong"
+        if _state.get("thoi_quen_ngay") == moc and not ht.co_du_kien_moi("ngoai_vi"):
+            return "skip", "hôm nay đã chọn rồi, chưa có dữ kiện mới"
+        _state["thoi_quen_ngay"] = moc
+        _save_state()
+        threading.Thread(target=tq.chay_mot_lan, name="thoi-quen-nha",
+                         daemon=True).start()
+        return "act", "bot học hỏi chọn ngoại vi theo khu vực (chạy nền)"
+    except Exception as exc:
+        return "skip", f"error: {exc}"
+
+
 _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
     "hieu_thiet_bi_nha": _eval_hieu_thiet_bi_nha,
+    "thoi_quen_nha": _eval_thoi_quen_nha,
     "wiki_daily_digest": _eval_wiki_digest,
     "open_goals_nudge": _eval_open_goals,
     "chatlog_nhac_scan": _eval_chatlog_nhac,

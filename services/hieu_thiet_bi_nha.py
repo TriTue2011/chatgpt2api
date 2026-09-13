@@ -95,6 +95,13 @@ _TOI_DA_DU_KIEN = 40
 
 _LOAI = ("bat_tat", "cam_bien", "rac", "khong_ro")
 
+#: Vai trò một ngoại vi với thiết bị — tầng thói quen dùng khi đọc số đo.
+VAI_TRO_NGOAI_VI = ("hien_dien", "dem_nguoi", "anh_sang", "nhiet_do", "do_am",
+                    "thiet_bi", "khac")
+_VAI_TRO_DOC = {"hien_dien": "hiện diện", "dem_nguoi": "đếm người",
+                "anh_sang": "ánh sáng", "nhiet_do": "nhiệt độ", "do_am": "độ ẩm",
+                "thiet_bi": "thiết bị đi kèm", "khac": "khác"}
+
 _LOAI_DOC = {"rac": "đổi đồng loạt, không phải người bật",
              "cam_bien": "là cảm biến, dùng làm điều kiện",
              "khong_ro": "chưa rõ là gì",
@@ -102,7 +109,12 @@ _LOAI_DOC = {"rac": "đổi đồng loạt, không phải người bật",
 
 #: Loại câu hỏi được chấm và lên cấp RIÊNG: bot giỏi nhận ra thiết bị trùng
 #: chưa chắc đã giỏi chọn nguồn nhanh, càng chưa chắc giỏi chọn điều kiện.
-LOAI_CAU_HOI = ("cung_thiet_bi", "nguon_nhanh", "hoc", "dieu_kien")
+LOAI_CAU_HOI = ("cung_thiet_bi", "nguon_nhanh", "hoc", "dieu_kien", "ngoai_vi")
+
+#: Các loại câu do LƯỢT HIỂU THIẾT BỊ (`giai`) sinh ra. `ghi_ket_qua` chỉ được vô
+#: hiệu những loại này khi một mã đổi nhóm; câu `ngoai_vi` do tầng thói quen
+#: (`services/thoi_quen_nha.py`) sinh ra, lượt hằng ngày ở đây không được xoá nó.
+_LOAI_CUA_LUOT_HIEU = ("cung_thiet_bi", "nguon_nhanh", "hoc", "dieu_kien")
 
 #: Một thiết bị học theo tối đa ngần này điều kiện. Naive Bayes cộng các điều
 #: kiện như thể độc lập; ánh sáng bốn phòng cùng "tối" lúc đêm là MỘT chuyện bị
@@ -158,6 +170,12 @@ def _db() -> sqlite3.Connection:
         # Sổ tạo trước 11/09/2026 chưa có cột `hoi_luc` (hỏi lần lượt từng câu).
         if "hoi_luc" not in {r[1] for r in conn.execute("PRAGMA table_info(quyet_dinh)")}:
             conn.execute("ALTER TABLE quyet_dinh ADD COLUMN hoi_luc REAL")
+        # Sổ tạo trước 13/09/2026 chỉ có MỘT việc giải. Tầng thói quen ghi lượt
+        # của nó vào cùng bảng; không tách thì lượt chọn ngoại vi làm
+        # `co_du_kien_moi` tưởng dữ kiện mới đã được lượt hiểu thiết bị xem.
+        if "viec" not in {r[1] for r in conn.execute("PRAGMA table_info(lan_giai)")}:
+            conn.execute("ALTER TABLE lan_giai ADD COLUMN viec TEXT NOT NULL"
+                         " DEFAULT 'hieu_thiet_bi'")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_qd_khoa"
                      " ON quyet_dinh(loai_cau_hoi, khoa, hieu_luc)")
         conn.execute(
@@ -180,22 +198,25 @@ def _db() -> sqlite3.Connection:
 
 
 # ── Hướng dẫn ───────────────────────────────────────────────────────────────
-def _duong_huong_dan() -> Path:
-    return Path(DATA_DIR) / "agent" / "hoc_hoi" / "hieu_thiet_bi.md"
+def _duong_huong_dan(ten: str = "hieu_thiet_bi") -> Path:
+    return Path(DATA_DIR) / "agent" / "hoc_hoi" / f"{ten}.md"
 
 
-def huong_dan() -> tuple[str, str]:
+def huong_dan(ten: str = "hieu_thiet_bi") -> tuple[str, str]:
     """(nội dung, phiên bản) của hướng dẫn đang dùng.
 
     Bản chạy thật nằm trong DATA_DIR để giáo viên sửa được mà không dựng lại
     ảnh. Chưa có thì chép từ bản gốc trong repo — chép MỘT lần, không bao giờ
     ghi đè, cùng luật `skills._ensure_seeded`. Phiên bản là 12 ký tự đầu của
     sha256: đổi một chữ là đổi phiên bản, điểm chấm không lẫn giữa hai bản.
+
+    `ten` chọn bản hướng dẫn: mỗi việc học một bản NGẮN riêng (chủ máy chốt
+    13/09/2026 "hướng dẫn ngắn gọn và xúc tích, tránh dài để bot nghĩ nhiều").
     """
-    p = _duong_huong_dan()
+    p = _duong_huong_dan(ten)
     if not p.is_file():
         p.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(_HUONG_DAN_GOC, p)
+        shutil.copyfile(_HUONG_DAN_GOC.with_name(f"{ten}.md"), p)
     noi = p.read_text(encoding="utf-8")
     return noi, hashlib.sha256(noi.encode("utf-8")).hexdigest()[:12]
 
@@ -410,8 +431,8 @@ def du_kien_gan_day(toi_da: int = _TOI_DA_DU_KIEN) -> list[dict[str, Any]]:
              "noi_dung": r["noi_dung"]} for r in reversed(rows)]
 
 
-def co_du_kien_moi() -> bool:
-    """Có dữ kiện ghi SAU lượt giải gần nhất không.
+def co_du_kien_moi(viec: str = "hieu_thiet_bi") -> bool:
+    """Có dữ kiện ghi SAU lượt giải gần nhất CỦA VIỆC NÀY không.
 
     Có thì heartbeat cho giải lại ngay tick sau — chủ máy dạy xong là muốn xem
     bot hiểu ra sao ("tôi vừa đưa 2 dữ kiện xem bot học sao"), không phải chờ
@@ -420,7 +441,7 @@ def co_du_kien_moi() -> bool:
     with _khoa:
         conn = _db()
         dk = conn.execute("SELECT MAX(ts) FROM du_kien").fetchone()[0]
-        lg = conn.execute("SELECT MAX(ts) FROM lan_giai").fetchone()[0]
+        lg = conn.execute("SELECT MAX(ts) FROM lan_giai WHERE viec=?", (viec,)).fetchone()[0]
     return dk is not None and (lg is None or float(dk) > float(lg))
 
 
@@ -563,13 +584,13 @@ def _kiem(data: Any, phan: list[dict[str, Any]],
 
 
 def _ghi_lan(phien_ban: str, model: str, so_ho_so: int, so_nhom: int,
-             bo_sot: int, loai_bo: int, loi: str) -> int:
+             bo_sot: int, loai_bo: int, loi: str, *, viec: str = "hieu_thiet_bi") -> int:
     with _khoa:
         conn = _db()
         cur = conn.execute(
             "INSERT INTO lan_giai (ts, phien_ban, model, so_ho_so, so_nhom,"
-            " bo_sot, loai_bo, loi) VALUES (?,?,?,?,?,?,?,?)",
-            (time.time(), phien_ban, model, so_ho_so, so_nhom, bo_sot, loai_bo, loi))
+            " bo_sot, loai_bo, loi, viec) VALUES (?,?,?,?,?,?,?,?,?)",
+            (time.time(), phien_ban, model, so_ho_so, so_nhom, bo_sot, loai_bo, loi, viec))
         conn.commit()
         return int(cur.lastrowid or 0)
 
@@ -686,42 +707,83 @@ def ghi_ket_qua(lan: int, nhom: list[dict[str, Any]]) -> dict[str, list[dict[str
     with _khoa:
         conn = _db()
         for g in nhom:
-            nhom_json = json.dumps(g, ensure_ascii=False)
             for loai, khoa, gt in _cau_hoi(g):
-                s = json.dumps(gt, ensure_ascii=False, sort_keys=True)
                 con.add((loai, khoa))
-                cu = conn.execute(
-                    "SELECT id, gia_tri FROM quyet_dinh"
-                    " WHERE loai_cau_hoi=? AND khoa=? AND hieu_luc=1",
-                    (loai, khoa)).fetchone()
-                if cu and cu["gia_tri"] == s:
-                    # Giữ lý do mới nhất để người chấm đọc, không hỏi lại.
-                    conn.execute("UPDATE quyet_dinh SET nhom=? WHERE id=?",
-                                 (nhom_json, cu["id"]))
-                    continue
-                if cu:
-                    conn.execute("UPDATE quyet_dinh SET hieu_luc=0 WHERE id=?", (cu["id"],))
-                da_sai = conn.execute(
-                    "SELECT 1 FROM quyet_dinh WHERE loai_cau_hoi=? AND khoa=?"
-                    " AND gia_tri=? AND ket_qua='sai' LIMIT 1",
-                    (loai, khoa, s)).fetchone() is not None
-                cur = conn.execute(
-                    "INSERT INTO quyet_dinh (lan_giai, ts, loai_cau_hoi, khoa,"
-                    " gia_tri, nhom, ket_qua, cham_boi) VALUES (?,?,?,?,?,?,?,?)",
-                    (lan, now, loai, khoa, s, nhom_json,
-                     "sai" if da_sai else "cho", "lap_lai" if da_sai else ""))
-                (lap_lai if da_sai else moi).append({
-                    "id": int(cur.lastrowid or 0), "loai_cau_hoi": loai,
-                    "khoa": khoa, "gia_tri": gt, "nhom": g})
+                _ghi_mot_cau(conn, lan, now, loai, khoa, gt, g, moi, lap_lai)
         for r in conn.execute(
                 "SELECT id, loai_cau_hoi, khoa, nhom FROM quyet_dinh WHERE hieu_luc=1"
         ).fetchall():
             if (r["loai_cau_hoi"], r["khoa"]) in con:
                 continue
+            if r["loai_cau_hoi"] not in _LOAI_CUA_LUOT_HIEU:
+                continue
             if ma_moi & set(json.loads(r["nhom"]).get("ma") or []):
                 conn.execute("UPDATE quyet_dinh SET hieu_luc=0 WHERE id=?", (r["id"],))
         conn.commit()
     return {"moi": moi, "lap_lai": lap_lai}
+
+
+def _ghi_mot_cau(conn: sqlite3.Connection, lan: int, now: float, loai: str, khoa: str,
+                 gt: dict[str, Any], g: dict[str, Any],
+                 moi: list[dict[str, Any]], lap_lai: list[dict[str, Any]]) -> None:
+    """Lưu MỘT câu: y hệt câu đang hiệu lực thì chỉ cập nhật lý do; đổi thì câu
+    cũ hết hiệu lực; lặp lại đúng điều từng bị chấm sai thì ghi 'sai' ngay.
+
+    Dùng chung cho lượt hiểu thiết bị (`ghi_ket_qua`) và tầng thói quen
+    (`ghi_ngoai_vi`) — một luật lưu, một thang chấm."""
+    nhom_json = json.dumps(g, ensure_ascii=False)
+    s = json.dumps(gt, ensure_ascii=False, sort_keys=True)
+    cu = conn.execute(
+        "SELECT id, gia_tri FROM quyet_dinh"
+        " WHERE loai_cau_hoi=? AND khoa=? AND hieu_luc=1",
+        (loai, khoa)).fetchone()
+    if cu and cu["gia_tri"] == s:
+        # Giữ lý do mới nhất để người chấm đọc, không hỏi lại.
+        conn.execute("UPDATE quyet_dinh SET nhom=? WHERE id=?", (nhom_json, cu["id"]))
+        return
+    if cu:
+        conn.execute("UPDATE quyet_dinh SET hieu_luc=0 WHERE id=?", (cu["id"],))
+    da_sai = conn.execute(
+        "SELECT 1 FROM quyet_dinh WHERE loai_cau_hoi=? AND khoa=?"
+        " AND gia_tri=? AND ket_qua='sai' LIMIT 1",
+        (loai, khoa, s)).fetchone() is not None
+    cur = conn.execute(
+        "INSERT INTO quyet_dinh (lan_giai, ts, loai_cau_hoi, khoa,"
+        " gia_tri, nhom, ket_qua, cham_boi) VALUES (?,?,?,?,?,?,?,?)",
+        (lan, now, loai, khoa, s, nhom_json,
+         "sai" if da_sai else "cho", "lap_lai" if da_sai else ""))
+    (lap_lai if da_sai else moi).append({
+        "id": int(cur.lastrowid or 0), "loai_cau_hoi": loai,
+        "khoa": khoa, "gia_tri": gt, "nhom": g})
+
+
+def ghi_ngoai_vi(lan: int, ket_luan: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Lưu kết luận NGOẠI VI của tầng thói quen — mỗi thiết bị một câu `ngoai_vi`.
+
+    Mỗi mục ``{"ma_hoc", "khu_vuc", "ngoai_vi": [{"ma", "vai_tro"}], "chac",
+    "vi_sao"}`` (đã kiểm ở biên trong `thoi_quen_nha`). `nhom` mang `ma` =
+    [mã học] để tin hỏi và phần vô hiệu theo mã đọc được như mọi câu khác.
+    """
+    now = time.time()
+    moi: list[dict[str, Any]] = []
+    lap_lai: list[dict[str, Any]] = []
+    with _khoa:
+        conn = _db()
+        for k in ket_luan:
+            g = {"ma": [k["ma_hoc"]], "ma_hoc": k["ma_hoc"],
+                 "chac": k["chac"], "vi_sao": k["vi_sao"]}
+            gt = {"khu_vuc": k["khu_vuc"], "ngoai_vi": k["ngoai_vi"]}
+            _ghi_mot_cau(conn, lan, now, "ngoai_vi", k["ma_hoc"], gt, g, moi, lap_lai)
+        conn.commit()
+    return {"moi": moi, "lap_lai": lap_lai}
+
+
+def ngoai_vi_hoc() -> dict[str, dict[str, Any]]:
+    """Ngoại vi bot chọn cho từng mã được học — bỏ kết luận bị chấm sai."""
+    hoc = set(thiet_bi_hoc())
+    return {d["khoa"]: d["gia_tri"] for d in dang_hieu_luc()
+            if d["loai_cau_hoi"] == "ngoai_vi" and d["ket_qua"] != "sai"
+            and d["khoa"] in hoc}
 
 
 def dang_hieu_luc() -> list[dict[str, Any]]:
@@ -888,7 +950,8 @@ def lich_su_giai(toi_da: int = 50) -> list[dict[str, Any]]:
     with _khoa:
         rows = _db().execute(
             "SELECT id, ts, phien_ban, model, so_ho_so, so_nhom, bo_sot,"
-            " loai_bo, loi FROM lan_giai ORDER BY id DESC LIMIT ?",
+            " loai_bo, loi FROM lan_giai WHERE viec='hieu_thiet_bi'"
+            " ORDER BY id DESC LIMIT ?",
             (int(toi_da),)).fetchall()
     return [{"id": int(r["id"]),
              "luc": datetime.fromtimestamp(float(r["ts"]), _TZ).strftime("%d/%m/%Y %H:%M"),
@@ -1085,6 +1148,13 @@ def _cau_doc(d: dict[str, Any], ten: dict[str, str]) -> str:
               else boi_canh_nha.ten_dieu_kien(k) for k in gt.get("dieu_kien") or []]
         return (f"Học {_nhan(d['khoa'], ten)} theo: "
                 + (", ".join(ds) if ds else "không điều kiện nào"))
+    if d["loai_cau_hoi"] == "ngoai_vi":
+        kv = gt.get("khu_vuc") or "chưa rõ khu vực"
+        ds = [f"{x.get('ten') or _nhan(x['ma'], ten)} "
+              f"({_VAI_TRO_DOC.get(x.get('vai_tro'), 'khác')})"
+              for x in gt.get("ngoai_vi") or []]
+        return (f"{_nhan(d['khoa'], ten)} ở {kv}, đi theo: "
+                + (", ".join(ds) if ds else "chưa có ngoại vi nào"))
     if gt.get("hoc"):
         return f"Học thói quen {_nhan(d['khoa'], ten)}"
     return (f"Không học {_nhan(d['khoa'], ten)} "
