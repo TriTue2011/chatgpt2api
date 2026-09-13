@@ -58,6 +58,24 @@ class BanGocTest(unittest.TestCase):
         goc.write_text("mới", encoding="utf-8")
         self.assertEqual(self.bg.dong_bo(goc, chay, so, ten="t"), "theo")
 
+    def test_BAN_GOC_THIEU_hoac_RONG_thi_KHONG_DUNG_BAN_CHAY_THAT(self) -> None:
+        """13/09/2026: nạp module từ thư mục khác làm bản gốc "rỗng", và bản chạy
+        thật bị xoá theo — mất hướng dẫn đang chạy trên máy chủ."""
+        goc, chay, so = self.r / "goc.md", self.r / "x.md", self.r / "x.goc"
+        goc.write_text("bản 1", encoding="utf-8")
+        self.bg.dong_bo(goc, chay, so, ten="t")
+        goc.unlink()
+        self.assertEqual(self.bg.dong_bo(goc, chay, so, ten="t"), "")
+        self.assertEqual(chay.read_text(encoding="utf-8"), "bản 1")
+        dir_goc, dir_chay, dir_so = self.r / "g", self.r / "skills" / "s", self.r / "skills" / ".s.goc"
+        dir_goc.mkdir()
+        (dir_goc / "SKILL.md").write_text("v1", encoding="utf-8")
+        dir_chay.parent.mkdir()
+        self.bg.dong_bo(dir_goc, dir_chay, dir_so, ten="s")
+        (dir_goc / "SKILL.md").unlink()
+        self.assertEqual(self.bg.dong_bo(dir_goc, dir_chay, dir_so, ten="s"), "")
+        self.assertTrue((dir_chay / "SKILL.md").is_file())
+
     # ── thư mục (skill) ────────────────────────────────────────────────────
     def test_THU_MUC_theo_ban_goc_them_bot_tep_va_khong_dung_tep_nguoi_them(self) -> None:
         goc, chay, so = self.r / "goc", self.r / "skills" / "s", self.r / "skills" / ".s.goc"

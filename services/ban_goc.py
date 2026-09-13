@@ -69,9 +69,17 @@ def dong_bo(goc: Path, chay: Path, so: Path, *, ten: str) -> str:
 
     Trả việc đã làm: "chep" (chưa có), "theo" (bản gốc đổi, chưa ai sửa tay),
     "ghi_so" (đã khớp, chỉ thiếu sổ), "giu" (đã sửa tay hoặc không rõ gốc),
-    "" (không có gì đổi). Tệp người dùng thêm vào thư mục không bị đụng.
+    "" (không có gì đổi, hoặc bản gốc thiếu/rỗng). Tệp người dùng thêm vào thư
+    mục không bị đụng.
     """
-    tep_goc = _doc(goc)
+    tep_goc = _doc(goc) if goc.exists() else {}
+    if not tep_goc:
+        # Bản gốc thiếu hoặc rỗng là LỖI ĐÓNG GÓI hay sai đường dẫn, không phải
+        # "bản gốc mới là rỗng". 13/09/2026: một tiến trình nạp module từ thư
+        # mục khác, bản gốc thành rỗng, và bản chạy thật `doc_thoi_quen.md` bị
+        # xoá theo. Không làm gì cả.
+        logger.warning({"event": "ban_goc_thieu", "ten": ten, "goc": str(goc)})
+        return ""
     vt_goc = _van_tay(tep_goc)
     cu = _doc_so(so)
     if not chay.exists():
