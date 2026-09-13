@@ -896,7 +896,9 @@ def xoa_thiet_bi(ma: list[str], goc: list[str] | None = None, lo: int = 500) -> 
     goc = [g for g in (goc or []) if g]
     if not ma and not goc:
         return {"su_kien": 0, "so_do": 0, "tuoi": 0, "nhip": 0}
-    dk = " OR ".join(["thiet_bi=?"] * len(ma) + ["thiet_bi=? OR thiet_bi LIKE ? ESCAPE '\\'"] * len(goc))
+    # `IN` cho mã: bỏ hàng loạt gửi hàng trăm mã một lượt (13/09/2026).
+    dk = " OR ".join(([f"thiet_bi IN ({','.join('?' * len(ma))})"] if ma else [])
+                     + ["thiet_bi=? OR thiet_bi LIKE ? ESCAPE '\\'"] * len(goc))
     tham_so: list[str] = list(ma)
     for g in goc:
         tham_so += [g, g.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/%"]

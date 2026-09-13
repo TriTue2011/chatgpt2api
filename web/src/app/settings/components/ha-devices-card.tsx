@@ -11,6 +11,11 @@
  * các thiết bị không cần thiết" — chọn nghĩa BỎ KHỎI c2a (thiết bị vẫn còn
  * trong HA) và xoá luôn lịch sử. Tên nhóm tầng 2 do máy chủ tính
  * (`api/hoc_hoi.nhom_ha`), thẻ này chỉ gom và hiện.
+ *
+ * Chủ máy 13/09/2026: "hơn 100 cái lâu quá, thêm bỏ tất cả và tích các cái cần
+ * bỏ rồi bỏ qua theo các mục tích" — tích từng hàng, cả nhóm, hoặc mọi mục đang
+ * hiện, rồi bỏ một lượt (`/api/hoc-hoi/thiet-bi/bo-nhieu`). Sổ đã bỏ nằm trong
+ * DATA_DIR nên cập nhật ảnh không mất.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -53,6 +58,8 @@ export function HaDevicesCard() {
   const [nguon, setNguon] = useState<Muc["nguon"]>("ha");
   const [nhap, setNhap] = useState<Record<string, { ten: string; khu_vuc: string }>>({});
   const [tin, setTin] = useState("");
+  const [chon, setChon] = useState<Set<string>>(new Set());
+  const [dangBo, setDangBo] = useState(false);
 
   const tai = useCallback(async () => {
     setDangTai(true);
@@ -61,6 +68,7 @@ export function HaDevicesCard() {
         "/api/hoc-hoi/thiet-bi-day-du?kem_da_bo=1", { method: "GET" });
       setDs(r.danh_sach || []);
       setNhap({});
+      setChon(new Set());
     } finally {
       setDangTai(false);
     }
@@ -92,6 +100,39 @@ export function HaDevicesCard() {
       : `Không bỏ được: ${r.error || "lỗi không rõ"}`);
     if (r.ok) void tai();
   };
+  const boDaTich = async () => {
+    const muc = ds.filter((m) => chon.has(m.khoa) && !m.da_bo);
+    if (!muc.length || !window.confirm(
+      `Bỏ ${muc.length} thiết bị đã tích khỏi c2a?\n\nBot sẽ không thấy, không điều khiển, không học các thiết bị này, `
+      + "và LỊCH SỬ c2a đã ghi của chúng bị xoá (không lấy lại được). "
+      + "Thiết bị vẫn còn nguyên trong Home Assistant / MQTT / Tuya.")) return;
+    setDangBo(true);
+    try {
+      const r = await httpRequest<{
+        ok?: boolean; error?: string; da_bo?: string[];
+        loi?: { ma: string; error: string }[]; xoa?: { su_kien: number; so_do: number };
+      }>("/api/hoc-hoi/thiet-bi/bo-nhieu", {
+        method: "POST", body: { muc: muc.map((m) => ({ nguon: m.nguon, ma: m.ma })) },
+      });
+      if (!r.ok) {
+        setTin(`Không bỏ được: ${r.error || "lỗi không rõ"}`);
+        return;
+      }
+      const loi = r.loi || [];
+      setTin(`Đã bỏ ${r.da_bo?.length ?? 0} thiết bị — xoá ${r.xoa?.su_kien ?? 0} sự kiện, ${r.xoa?.so_do ?? 0} số đo.`
+        + (loi.length ? ` ${loi.length} mục không bỏ được: ${loi.slice(0, 3).map((x) => `${x.ma} (${x.error})`).join("; ")}` : ""));
+      void tai();
+    } finally {
+      setDangBo(false);
+    }
+  };
+  const doiChon = (khoa: string[], bat: boolean) => {
+    const moi = new Set(chon);
+    for (const k of khoa) {
+      if (bat) moi.add(k); else moi.delete(k);
+    }
+    setChon(moi);
+  };
   const khoiPhuc = async (m: Muc) => {
     const r = await httpRequest<{ ok?: boolean; error?: string }>(
       "/api/hoc-hoi/thiet-bi/bo-lai", { method: "POST", body: { nguon: m.nguon, ma: m.ma } });
@@ -109,6 +150,8 @@ export function HaDevicesCard() {
     theoNhom.set(n, [...(theoNhom.get(n) || []), m]);
   }
   const nhom = [...theoNhom.keys()].sort(thuTuNhom);
+  const dangHien = [...theoNhom.values()].flat().filter((m) => !m.da_bo).map((m) => m.khoa);
+  const soChon = ds.filter((m) => chon.has(m.khoa) && !m.da_bo).length;
 
   return (
     <div className="space-y-3 rounded-xl border-2 border-slate-200 bg-[var(--card)]/60 p-3">
@@ -138,6 +181,23 @@ export function HaDevicesCard() {
 
       <Input placeholder="Lọc theo tên hoặc mã…" value={loc} onChange={(e) => setLoc(e.target.value)}
         className="h-8 text-xs" />
+      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+        <Button variant="outline" size="sm" className="h-7" disabled={!dangHien.length}
+          onClick={() => doiChon(dangHien, true)}>
+          Chọn tất cả ({dangHien.length})
+        </Button>
+        {soChon ? (
+          <>
+            <span className="text-[var(--muted-foreground)]">Đã tích {soChon}</span>
+            <Button variant="ghost" size="sm" className="h-7" onClick={() => setChon(new Set())}>Bỏ chọn</Button>
+            <Button variant="outline" size="sm" className="h-7 text-destructive" disabled={dangBo}
+              onClick={() => void boDaTich()}>
+              {dangBo ? <LoaderCircle className="mr-1 size-3.5 animate-spin" /> : <Trash2 className="mr-1 size-3.5" />}
+              Bỏ {soChon} mục đã tích
+            </Button>
+          </>
+        ) : null}
+      </div>
       {tin ? <p className="text-[11px] text-[var(--muted-foreground)]">{tin}</p> : null}
 
       {dangTai && !ds.length ? (
@@ -147,21 +207,35 @@ export function HaDevicesCard() {
       ) : (
         <div className="max-h-[36rem] space-y-1.5 overflow-auto">
           {/* Tầng 2: loại. Đang lọc thì mở sẵn mọi nhóm để thấy ngay kết quả. */}
-          {nhom.map((n) => (
+          {nhom.map((n) => {
+            const khoaNhom = (theoNhom.get(n) || []).filter((m) => !m.da_bo).map((m) => m.khoa);
+            const caNhom = khoaNhom.length > 0 && khoaNhom.every((k) => chon.has(k));
+            return (
             <details key={`${nguon}-${n}-${locXuong ? "loc" : ""}`} open={!!locXuong}
               className="rounded border border-border">
-              <summary className="cursor-pointer select-none bg-muted/40 px-2 py-1.5 text-xs font-medium">
-                {n} <span className="text-[var(--muted-foreground)]">({theoNhom.get(n)?.length})</span>
+              <summary className="flex cursor-pointer select-none items-center gap-2 bg-muted/40 px-2 py-1.5 text-xs font-medium">
+                {khoaNhom.length ? (
+                  <input type="checkbox" checked={caNhom} title="Tích cả nhóm"
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => doiChon(khoaNhom, e.target.checked)} />
+                ) : null}
+                <span>{n} <span className="text-[var(--muted-foreground)]">({theoNhom.get(n)?.length})</span></span>
               </summary>
               <div className="divide-y divide-border/60">
                 {(theoNhom.get(n) || []).map((m) => {
                   const v = nhap[m.khoa] || { ten: m.ten, khu_vuc: m.khu_vuc || m.khu_vuc_goi_y };
                   return (
                     <div key={m.khoa} className="grid gap-1.5 px-2 py-1.5 text-xs sm:grid-cols-[1fr_10rem_8rem_auto] sm:items-center">
-                      <div className="min-w-0">
-                        <div className="truncate">{m.ten_goc}</div>
-                        <div className="truncate text-[10px] text-[var(--muted-foreground)]">{m.ma}</div>
-                      </div>
+                      <label className="flex min-w-0 items-start gap-2">
+                        {m.da_bo ? null : (
+                          <input type="checkbox" className="mt-0.5" checked={chon.has(m.khoa)}
+                            onChange={(e) => doiChon([m.khoa], e.target.checked)} />
+                        )}
+                        <span className="min-w-0">
+                          <span className="block truncate">{m.ten_goc}</span>
+                          <span className="block truncate text-[10px] text-[var(--muted-foreground)]">{m.ma}</span>
+                        </span>
+                      </label>
                       {m.da_bo ? (
                         <div className="text-[10px] text-[var(--muted-foreground)] sm:col-span-2">
                           Bot không thấy thiết bị này; lịch sử cũ đã xoá.
@@ -199,7 +273,8 @@ export function HaDevicesCard() {
                 })}
               </div>
             </details>
-          ))}
+            );
+          })}
           {!nhom.length ? (
             <p className="px-2 py-3 text-center text-xs text-[var(--muted-foreground)]">Không có thiết bị nào khớp.</p>
           ) : null}

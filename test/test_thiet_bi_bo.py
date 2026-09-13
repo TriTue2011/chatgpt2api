@@ -120,11 +120,10 @@ class LichSuTest(unittest.TestCase):
         conn.commit()
 
         # `_` trong LIKE là ký tự đại diện: gốc `zigbee2mqtt/a_b` không được ăn `zigbee2mqtt/axb/x`.
-        kq = self.m.xoa_thiet_bi(["light.bep"], ["frigate/bep", "zigbee2mqtt/a_b"], lo=1)
-        self.assertEqual(kq, {"su_kien": 4, "so_do": 4, "tuoi": 4, "nhip": 4})
+        kq = self.m.xoa_thiet_bi(["light.bep", "zigbee2mqtt/Khác"], ["frigate/bep", "zigbee2mqtt/a_b"], lo=1)
+        self.assertEqual(kq, {"su_kien": 5, "so_do": 5, "tuoi": 5, "nhip": 5})
         con = sorted(r[0] for r in conn.execute("SELECT thiet_bi FROM su_kien"))
-        self.assertEqual(con, ["frigate/bep2/person", "light.bep_2", "zigbee2mqtt/Khác",
-                               "zigbee2mqtt/axb/x"])
+        self.assertEqual(con, ["frigate/bep2/person", "light.bep_2", "zigbee2mqtt/axb/x"])
 
     def test_xoa_thiet_bi_rong_thi_khong_xoa_gi(self) -> None:
         self.assertEqual(self.m.xoa_thiet_bi([], []), {"su_kien": 0, "so_do": 0, "tuoi": 0, "nhip": 0})
@@ -244,7 +243,7 @@ class EndpointTest(unittest.TestCase):
             d = self.client.post("/api/hoc-hoi/thiet-bi/bo",
                                  json={"nguon": "ha", "ma": "light.bep"}).json()
         self.assertTrue(d["ok"], d)
-        xoa.assert_called_once_with(["light.bep"])
+        xoa.assert_called_once_with(["light.bep"], [])
         self.assertTrue(self.tb.la_bo("ha", "light.bep"))
         self.assertEqual(self.tb.danh_sach()[0]["ten_goc"], "Đèn bếp")
 
@@ -282,6 +281,51 @@ class EndpointTest(unittest.TestCase):
         self.assertFalse(d["ok"])
         d = self.client.post("/api/hoc-hoi/thiet-bi/bo", json={"nguon": "zigbee", "ma": "x"}).json()
         self.assertFalse(d["ok"])
+        self.assertEqual(self.tb.danh_sach(), [])
+
+    def test_BO_NHIEU_bo_muc_duoc_ghi_loi_muc_hong_va_doc_moi_nguon_MOT_lan(self) -> None:
+        """Chủ máy 13/09/2026: "hơn 100 cái lâu quá" — bỏ một lượt theo các mục tích."""
+        st = [{"entity_id": f"sensor.x{i}", "attributes": {"friendly_name": f"X{i}"}} for i in range(120)]
+        mq = [{"ten": "zigbee2mqtt", "nguon": "tho", "doc": [{"chu_de": "zigbee2mqtt/A"},
+                                                             {"chu_de": "zigbee2mqtt/B"}]},
+              {"ten": "Camera bep", "nguon": "frigate", "doc": [{"chu_de": "frigate/bep/person"},
+                                                                {"chu_de": "frigate/bep/all"}]}]
+        self.tb.bo("ha", "sensor.da_bo_truoc", ten_goc="cũ")
+        muc = ([{"nguon": "ha", "ma": f"sensor.x{i}"} for i in range(120)]
+               + [{"nguon": "ha", "ma": "sensor.x0"},                      # lặp
+                  {"nguon": "ha", "ma": "sensor.khong_co"},
+                  {"nguon": "ha", "ma": "sensor.da_bo_truoc"},
+                  {"nguon": "mqtt", "ma": "zigbee2mqtt"},                   # gốc một đoạn
+                  {"nguon": "mqtt", "ma": "Camera bep"},
+                  {"nguon": "zigbee", "ma": "x"}])
+        with mock.patch("services.ha_client.get_states", return_value=st) as doc_ha, \
+             mock.patch("services.mqtt_nha.danh_sach_thiet_bi", return_value=mq), \
+             mock.patch("services.tuya_nha.danh_sach_thiet_bi") as doc_tuya, \
+             mock.patch("services.lich_su_nha.xoa_thiet_bi",
+                        return_value={"su_kien": 9, "so_do": 1, "tuoi": 0, "nhip": 0}) as xoa, \
+             mock.patch.object(self.tb, "_luu", wraps=self.tb._luu) as luu:
+            d = self.client.post("/api/hoc-hoi/thiet-bi/bo-nhieu", json={"muc": muc}).json()
+        self.assertTrue(d["ok"], d)
+        self.assertEqual(len(d["da_bo"]), 121)
+        self.assertEqual(sorted(x["ma"] for x in d["loi"]),
+                         ["sensor.da_bo_truoc", "sensor.khong_co", "x", "zigbee2mqtt"])
+        doc_ha.assert_called_once()
+        doc_tuya.assert_not_called()
+        self.assertEqual(luu.call_count, 1, "sổ bỏ ghi đĩa một lần cho cả lượt")
+        xoa.assert_called_once()
+        self.assertEqual(len(xoa.call_args[0][0]), 120)
+        self.assertEqual(xoa.call_args[0][1], ["frigate/bep"])
+        self.assertTrue(self.tb.la_bo("mqtt", "Camera bep"))
+        self.assertFalse(self.tb.la_bo("mqtt", "zigbee2mqtt"))
+
+    def test_BO_NHIEU_than_sai_dang_thi_khong_lam_gi(self) -> None:
+        for than in ({}, {"muc": []}, {"muc": "sensor.x"}, {"muc": ["sensor.x"]},
+                     {"muc": [{"nguon": "ha", "ma": "x"}] * 2001}):
+            with self.subTest(than=str(than)[:40]), \
+                 mock.patch("services.lich_su_nha.xoa_thiet_bi") as xoa:
+                d = self.client.post("/api/hoc-hoi/thiet-bi/bo-nhieu", json=than).json()
+                self.assertFalse(d["ok"])
+                xoa.assert_not_called()
         self.assertEqual(self.tb.danh_sach(), [])
 
     def test_DANH_SACH_co_nhom_va_KEM_DA_BO_chi_khi_xin(self) -> None:

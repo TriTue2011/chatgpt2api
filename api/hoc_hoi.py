@@ -100,6 +100,91 @@ def nhom_mqtt(tb: dict) -> str:
     return "Cảm biến"
 
 
+#: Trần một lượt bỏ hàng loạt — nhà đo 13/09/2026 có 1.064 thiết bị.
+_TOI_DA_BO_MOT_LUOT = 2000
+
+
+def bo_thiet_bi(muc: list[dict]) -> dict:
+    """«Bỏ khỏi c2a» các mục `{nguon, ma}` và xoá lịch sử c2a đã ghi của chúng.
+
+    Mỗi nguồn đọc danh sách MỘT lần, sổ bỏ ghi một lần, lịch sử xoá một lần —
+    bỏ hơn 100 mục mà mỗi mục đọc lại danh sách Tuya qua mạng thì chờ mãi.
+    Trả ``{"da_bo": [khoá], "loi": [{"nguon", "ma", "error"}], "xoa": {...}}``.
+    """
+    from services import lich_su_nha, thiet_bi_bo
+
+    can = {x["nguon"] for x in muc}
+    ha: dict[str, dict] = {}
+    mq: dict[str, dict] = {}
+    tu: dict[str, dict] = {}
+    if "ha" in can:
+        from services import ha_client
+        ha = {str(s.get("entity_id") or ""): s for s in (ha_client.get_states() or [])}
+    if "mqtt" in can:
+        from services import mqtt_nha
+        mq = {str(d.get("ten") or ""): d for d in mqtt_nha.danh_sach_thiet_bi()}
+    if "tuya" in can:
+        from services import tuya_nha
+        tu = {str(d.get("id") or ""): d for d in tuya_nha.danh_sach_thiet_bi()}
+
+    ghi: list[dict] = []
+    loi: list[dict] = []
+    ma_xoa: list[str] = []
+    goc_xoa: list[str] = []
+    thay: set[tuple[str, str]] = set()
+    for x in muc:
+        nguon, ma = x["nguon"], x["ma"]
+        if (nguon, ma) in thay:
+            continue
+        thay.add((nguon, ma))
+
+        def _hong(error: str) -> None:
+            loi.append({"nguon": nguon, "ma": ma, "error": error})
+
+        if nguon not in thiet_bi_bo.NGUON:
+            _hong("Nguồn phải là ha, mqtt hoặc tuya.")
+        elif thiet_bi_bo.la_bo(nguon, ma):
+            _hong("Thiết bị này đã bỏ rồi.")
+        elif nguon == "ha":
+            st = ha.get(ma)
+            if st is None:
+                _hong("Không thấy thực thể này trong Home Assistant.")
+                continue
+            ghi.append({"nguon": "ha", "ma": ma,
+                        "ten_goc": str((st.get("attributes") or {}).get("friendly_name") or ma)})
+            ma_xoa.append(ma)
+        elif nguon == "mqtt":
+            tb = mq.get(ma)
+            if tb is None:
+                _hong("Không thấy thiết bị MQTT này.")
+                continue
+            goc = thiet_bi_bo.goc_chu_de([str(c.get("chu_de") or "") for c in
+                                          (tb.get("doc") or []) + (tb.get("dieu_khien") or [])])
+            if not goc:
+                _hong("Thiết bị này không có gốc chủ đề riêng (chỉ một đoạn) — bỏ theo gốc "
+                      "đó sẽ xoá nhầm thiết bị khác.")
+                continue
+            ghi.append({"nguon": "mqtt", "ma": ma, "ten_goc": ma, "goc": goc})
+            goc_xoa.append(goc)
+        else:
+            from services import tuya_local
+            tb = tu.get(ma)
+            if tb is None:
+                _hong("Không thấy thiết bị Tuya này.")
+                continue
+            ten_ls = sorted({tuya_local._ten(ma), f"tuya:{ma[:12]}"})
+            ghi.append({"nguon": "tuya", "ma": ma, "ten_goc": str(tb.get("ten") or ma),
+                        "ten_lich_su": ten_ls})
+            ma_xoa += ten_ls
+    xoa = {"su_kien": 0, "so_do": 0, "tuoi": 0, "nhip": 0}
+    if ghi:
+        # Ghi sổ TRƯỚC khi xoá: ghi xong thì luồng ghi lịch sử đã chặn thiết bị, nên
+        # không có dòng mới chen vào giữa lúc đang xoá.
+        thiet_bi_bo.bo_nhieu(ghi)
+        xoa = lich_su_nha.xoa_thiet_bi(ma_xoa, goc_xoa)
+    return {"da_bo": [thiet_bi_bo.khoa(g["nguon"], g["ma"]) for g in ghi], "loi": loi, "xoa": xoa}
+
+
 def create_router() -> APIRouter:
     router = APIRouter()
 
@@ -424,49 +509,33 @@ def create_router() -> APIRouter:
         body: {nguon: ha|mqtt|tuya, ma}. Thiết bị vẫn còn nguyên trong HA/MQTT/
         Tuya — chủ máy chốt 13/09/2026. Xem `services/thiet_bi_bo.py`."""
         require_admin(authorization)
-        nguon = str(body.get("nguon") or "")
-        ma = str(body.get("ma") or "")
-
-        def _lam() -> dict:
-            from services import lich_su_nha, thiet_bi_bo
-            if nguon == "ha":
-                from services import ha_client
-                st = next((s for s in (ha_client.get_states() or [])
-                           if s.get("entity_id") == ma), None)
-                if st is None:
-                    return {"ok": False, "error": "Không thấy thực thể này trong Home Assistant."}
-                ten = str((st.get("attributes") or {}).get("friendly_name") or ma)
-                thiet_bi_bo.bo("ha", ma, ten_goc=ten)
-                xoa = lich_su_nha.xoa_thiet_bi([ma])
-            elif nguon == "mqtt":
-                from services import mqtt_nha
-                tb = next((d for d in mqtt_nha.danh_sach_thiet_bi() if d.get("ten") == ma), None)
-                if tb is None:
-                    return {"ok": False, "error": "Không thấy thiết bị MQTT này."}
-                chu_de = [str(x.get("chu_de") or "") for x in
-                          (tb.get("doc") or []) + (tb.get("dieu_khien") or [])]
-                goc = thiet_bi_bo.goc_chu_de(chu_de)
-                if not goc:
-                    return {"ok": False, "error": "Thiết bị này không có gốc chủ đề riêng "
-                            "(chỉ một đoạn) — bỏ theo gốc đó sẽ xoá nhầm thiết bị khác."}
-                thiet_bi_bo.bo("mqtt", ma, ten_goc=ma, goc=goc)
-                xoa = lich_su_nha.xoa_thiet_bi([], [goc])
-            elif nguon == "tuya":
-                from services import tuya_local, tuya_nha
-                tb = next((d for d in tuya_nha.danh_sach_thiet_bi() if d.get("id") == ma), None)
-                if tb is None:
-                    return {"ok": False, "error": "Không thấy thiết bị Tuya này."}
-                ten_ls = sorted({tuya_local._ten(ma), f"tuya:{ma[:12]}"})
-                thiet_bi_bo.bo("tuya", ma, ten_goc=str(tb.get("ten") or ma), ten_lich_su=ten_ls)
-                xoa = lich_su_nha.xoa_thiet_bi(ten_ls)
-            else:
-                return {"ok": False, "error": "Nguồn phải là ha, mqtt hoặc tuya."}
-            return {"ok": True, "xoa": xoa}
-
         try:
-            return await asyncio.to_thread(_lam)
+            kq = await asyncio.to_thread(
+                bo_thiet_bi, [{"nguon": str(body.get("nguon") or ""), "ma": str(body.get("ma") or "")}])
         except Exception as exc:
             return _loi(exc, "bỏ thiết bị")
+        if kq["loi"]:
+            return {"ok": False, "error": kq["loi"][0]["error"]}
+        return {"ok": True, "xoa": kq["xoa"]}
+
+    @router.post("/api/hoc-hoi/thiet-bi/bo-nhieu")
+    async def thiet_bi_bo_nhieu(body: dict, authorization: str | None = Header(default=None)):
+        """Bỏ NHIỀU thiết bị một lượt — chủ máy 13/09/2026: "hơn 100 cái lâu quá,
+        thêm bỏ tất cả và tích các cái cần bỏ". body: {muc: [{nguon, ma}]}.
+
+        Mục không bỏ được (không thấy, gốc chủ đề một đoạn) nằm trong `loi`; các
+        mục khác vẫn bỏ."""
+        require_admin(authorization)
+        ds = body.get("muc")
+        if (not isinstance(ds, list) or not ds or len(ds) > _TOI_DA_BO_MOT_LUOT
+                or not all(isinstance(x, dict) for x in ds)):
+            return {"ok": False, "error": f"muc phải là danh sách 1–{_TOI_DA_BO_MOT_LUOT} mục {{nguon, ma}}."}
+        try:
+            kq = await asyncio.to_thread(
+                bo_thiet_bi, [{"nguon": str(x.get("nguon") or ""), "ma": str(x.get("ma") or "")} for x in ds])
+        except Exception as exc:
+            return _loi(exc, "bỏ nhiều thiết bị")
+        return {"ok": True, **kq}
 
     @router.post("/api/hoc-hoi/thiet-bi/bo-lai")
     async def thiet_bi_bo_lai(body: dict, authorization: str | None = Header(default=None)):

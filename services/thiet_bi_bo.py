@@ -103,17 +103,30 @@ def goc_chu_de(chu_de: list[str]) -> str:
 def bo(nguon: str, ma: str, *, ten_goc: str = "", goc: str = "",
        ten_lich_su: list[str] | None = None) -> dict[str, Any]:
     """Ghi một thiết bị vào sổ bỏ. Trả mục đã ghi."""
-    if nguon not in NGUON or not ma:
-        raise ValueError("nguồn hoặc mã không hợp lệ")
-    if nguon == "mqtt" and not goc:
-        raise ValueError("thiết bị MQTT cần gốc chủ đề để khớp lịch sử")
-    muc = {"nguon": nguon, "ma": ma, "ten_goc": ten_goc or ma, "goc": goc,
-           "ten_lich_su": list(ten_lich_su or []), "luc": time.time()}
+    return bo_nhieu([{"nguon": nguon, "ma": ma, "ten_goc": ten_goc, "goc": goc,
+                      "ten_lich_su": ten_lich_su}])[0]
+
+
+def bo_nhieu(ds: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Ghi nhiều thiết bị vào sổ bỏ bằng MỘT lần ghi đĩa — chủ máy bỏ hơn 100
+    mục một lượt (13/09/2026). Mục nào sai thì không ghi mục nào."""
+    now = time.time()
+    muc: list[dict[str, Any]] = []
+    for x in ds:
+        nguon, ma, goc = x.get("nguon"), x.get("ma"), x.get("goc") or ""
+        if nguon not in NGUON or not ma:
+            raise ValueError("nguồn hoặc mã không hợp lệ")
+        if nguon == "mqtt" and not goc:
+            raise ValueError("thiết bị MQTT cần gốc chủ đề để khớp lịch sử")
+        muc.append({"nguon": nguon, "ma": ma, "ten_goc": x.get("ten_goc") or ma, "goc": goc,
+                    "ten_lich_su": list(x.get("ten_lich_su") or []), "luc": now})
     with _khoa:
         so = dict(_nap()["so"])
-        so[khoa(nguon, ma)] = muc
+        for m in muc:
+            so[khoa(m["nguon"], m["ma"])] = m
         _luu(so)
-    logger.info({"event": "thiet_bi_bo", "nguon": nguon, "ma": ma[:80]})
+    logger.info({"event": "thiet_bi_bo", "so": len(muc),
+                 "ma": [m["ma"][:60] for m in muc[:5]]})
     return muc
 
 
