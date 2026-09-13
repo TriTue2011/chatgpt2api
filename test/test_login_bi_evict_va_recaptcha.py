@@ -119,14 +119,22 @@ class NhanRaTrangThuThachRecaptchaTests(unittest.TestCase):
                       "chỉ dò `img#captchaimg` thì trang thử thách reCAPTCHA "
                       "không bao giờ bị bắt")
 
-    def test_gan_co_need_captcha_chu_khong_phai_failed(self):
+    def test_gan_co_nhung_CHUA_goi_nguoi_luc_moi_thay(self):
+        """Thấy captcha thì gắn cờ (thôi bấm), nhưng CHƯA báo `need_captcha`.
+
+        Bản trước khoá điều ngược lại — đòi `need_captcha` ngay tại chỗ phát
+        hiện. Chính điều đó làm bên khôi phục bỏ cuộc và khoá mọi lượt đăng
+        nhập 6 giờ trong lúc máy đang tự tích ô (13/09/2026 13:05). Ý định gốc
+        "cần người thì phải báo need_captcha, đừng để vòng poll quay 700 giây"
+        vẫn giữ, và nay được đo bằng cách CHẠY vòng lặp thật trong
+        `test_captcha_khong_goi_nguoi_khi_dang_tu_qua.py`.
+        """
         # Cắt tới đúng ranh giới câu lệnh kế tiếp, KHÔNG đếm ký tự: cửa sổ cố
         # định là một con số tình cờ, thêm vài dòng chú thích là test đỏ oan.
         nhanh = _than(self.THAN, "any(p in url_hien for p in _CAPTCHA_URL_PATHS)",
                       "body = (await page")
-        self.assertIn('"need_captcha"', nhanh,
-                      "trạng thái phải là need_captcha — nó nằm trong _CAN_NGUOI "
-                      "nên vòng poll bỏ ngay thay vì chờ hết 700 giây")
+        self.assertNotIn('"need_captcha"', nhanh,
+                         "máy còn chưa thử tự qua mà đã báo cần người")
         self.assertIn("captcha_flagged = True", nhanh,
                       "gắn cờ thì vòng sau mới thôi bấm, để yên trang cho người gõ")
 

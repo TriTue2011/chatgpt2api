@@ -933,6 +933,11 @@ async def do_google_login_steps(
     # Chỉ nhận ĐÚNG nhánh recaptcha: `/challenge/pwd` là màn mật khẩu bình
     # thường, `/challenge/totp` là 2FA — hai cái đó máy tự đi tiếp được.
     _CAPTCHA_URL_PATHS = ("/challenge/recaptcha",)
+    # Tự tích ô xong, trang vẫn nằm ở `/challenge/recaptcha` thêm một lúc rồi
+    # Google mới chuyển sang ô mật khẩu — đo 13/09/2026: 13:05:11,1 → 13:05:13,2
+    # và 13:29:10,0 → 13:29:12,0, cả hai 2,0 giây. Còn thấy captcha trong khoảng
+    # này KHÔNG có nghĩa là cần người; quá mốc này mà vẫn còn thì mới cần.
+    _CHO_CHUYEN_TRANG_S = 10.0
 
     def _url_hien_tai() -> str:
         try:
@@ -953,6 +958,7 @@ async def do_google_login_steps(
     pwd_input = None
     captcha_flagged = False
     captcha_da_thu_tu_giai = False
+    tu_qua_xong_luc = 0.0
     block_retries = 0
     tile_clicks = 0
     vong = 0
@@ -1007,13 +1013,18 @@ async def do_google_login_steps(
                     'iframe[src*="/recaptcha/"]').count() > 0
             except Exception:
                 co_khung_recaptcha = False
+        # Thấy captcha thì CHƯA gọi người: `need_captcha` nghĩa là "phải có người
+        # gõ trên noVNC", mà máy còn chưa thử. Bản trước đặt nó ngay ở đây, trước
+        # cả lần tự tích ô — nên trong 4–6 giây máy đang tích, bên khôi phục
+        # (`account_recovery._freshen_google`, hỏi 5 giây một lần) đọc được đúng
+        # lúc đó, bỏ cuộc, khoá MỌI lượt đăng nhập Google 6 giờ và nhắn "chờ bạn
+        # giải captcha" — dù ô đã tự tích xong ngay sau. Đo 13/09/2026 13:05:
+        # ba hồ sơ Flow bị hoãn vì thế và nằm chết tới khi có người chạy tay.
         if not captcha_flagged and (
                 co_khung_recaptcha or any(p in url_hien for p in _CAPTCHA_URL_PATHS)):
-            session.state = "need_captcha"
-            session.message = ("Google bắt xác minh reCAPTCHA — gõ captcha trên noVNC, "
-                               "hệ thống sẽ TỰ tiếp tục password+2FA")
-            logger.info("auto_login: reCAPTCHA challenge cho %s (url=%s) — chờ người giải",
-                        session.profile, url_hien)
+            session.message = "Google bắt xác minh reCAPTCHA — đang thử tự qua..."
+            logger.info("auto_login: reCAPTCHA challenge cho %s (url=%s) — thử tự qua "
+                        "trước khi gọi người", session.profile, url_hien)
             captcha_flagged = True
 
         try:
@@ -1030,11 +1041,9 @@ async def do_google_login_steps(
             for _csel in _CAPTCHA_SELECTORS:
                 try:
                     if await page.locator(_csel).first.is_visible(timeout=800):
-                        session.state = "need_captcha"
-                        session.message = ("Google yêu cầu captcha — gõ captcha trên noVNC, "
-                                           "hệ thống sẽ TỰ tiếp tục password+2FA")
-                        logger.info("auto_login: captcha detected for %s, waiting manual solve",
-                                    session.profile)
+                        session.message = "Google yêu cầu captcha — đang thử tự qua..."
+                        logger.info("auto_login: captcha detected for %s — thử tự qua "
+                                    "trước khi gọi người", session.profile)
                         captcha_flagged = True
                         break
                 except Exception:
@@ -1064,6 +1073,7 @@ async def do_google_login_steps(
                         logger.info("auto_login: tự tích ô reCAPTCHA XONG cho %s",
                                     session.profile)
                         captcha_flagged = False
+                        tu_qua_xong_luc = time.time()
                         continue
                     # BƯỚC 2 — Google bung thử thách. Thử đường âm thanh.
                     session.message = "Đang tự giải reCAPTCHA (thử thách âm thanh)..."
@@ -1073,6 +1083,7 @@ async def do_google_login_steps(
                     session.message = "Đã tự giải reCAPTCHA — đang vào ô mật khẩu..."
                     logger.info("auto_login: tự giải reCAPTCHA XONG cho %s", session.profile)
                     captcha_flagged = False
+                    tu_qua_xong_luc = time.time()
                     continue
                 except Exception as exc:
                     # Nói RÕ vì sao, rồi nhường lại cho người — im lặng ở đây là
@@ -1087,6 +1098,16 @@ async def do_google_login_steps(
                     session.state = "need_captcha"
                     session.message = ("Không tự qua được reCAPTCHA — gõ trên noVNC, "
                                        "hệ thống sẽ TỰ tiếp tục password+2FA")
+            elif (session.state != "need_captcha"
+                  and time.time() - tu_qua_xong_luc >= _CHO_CHUYEN_TRANG_S):
+                # Đã tự qua một lần mà quá lúc trang lẽ ra phải chuyển vẫn còn
+                # captcha → lúc này mới thật sự cần người.
+                session.state = "need_captcha"
+                session.message = ("Google vẫn bắt captcha sau khi đã tự qua một lần — "
+                                   "gõ trên noVNC, hệ thống sẽ TỰ tiếp tục password+2FA")
+                logger.info("auto_login: captcha vẫn còn %ds sau lần tự qua cho %s "
+                            "(url=%s) — chờ người giải", int(_CHO_CHUYEN_TRANG_S),
+                            session.profile, url_hien)
             await asyncio.sleep(2.0)
             continue
 
@@ -1197,6 +1218,19 @@ async def do_google_login_steps(
                         so_dong_chon, co_khung_captcha)
             dau_van_truoc = dau_van
 
+        # ĐÍCH TRƯỚC, DÒ SAU — đúng nếp vòng trước mật khẩu. Kiểm "đã đăng nhập"
+        # nằm ở `_detect_state` CUỐI vòng, sau khối dò bảng chọn cách xác minh;
+        # mà trang ứng dụng Google (Gemini) có sẵn nhiều `li` và chữ "Tùy chọn
+        # khác", nên khối dò cứ bấm rồi `continue`, không bao giờ tới chỗ kiểm.
+        # Đo 13/09/2026 13:29 (benbap115): đã vào tới trang `/` của Gemini, quay
+        # đủ 4 phút rồi báo "Hết 4 phút mà chưa hoàn tất 2FA" — trong khi phiên
+        # Flow kiểm lại ngay sau đó là `ok`.
+        if await _already_logged_in(ctx):
+            session.message = "Google login OK"
+            logger.info("auto_login: vòng 2FA — đã đăng nhập (trang=%s) cho %s",
+                        duong_trang or "?", session.profile)
+            return True
+
         # Google bung reCAPTCHA SAU mật khẩu. Vòng trước-mật-khẩu có hẳn một
         # nhánh cho `/challenge/recaptcha`; vòng này thì KHÔNG có nhánh nào,
         # nên gặp captcha là quay đủ 240 giây rồi chết với lý do "Hết 4 phút
@@ -1208,7 +1242,10 @@ async def do_google_login_steps(
             captcha_sau_mk_da_thu = True
             try:
                 from .solvers.recaptcha import tich_o_recaptcha
-                session.state = "need_captcha"
+                # KHÔNG đặt `need_captcha` trước khi thử — cùng lý do với vòng
+                # trước mật khẩu (xem chú thích ở chỗ nhận ra reCAPTCHA): bên
+                # khôi phục đọc được trạng thái đó giữa lúc máy đang tích là bỏ
+                # cuộc và khoá mọi lượt đăng nhập 6 giờ.
                 session.message = ("Google bắt reCAPTCHA sau mật khẩu — "
                                    "đang tự tích ô...")
                 logger.info("auto_login: reCAPTCHA SAU mật khẩu cho %s "
@@ -1326,7 +1363,12 @@ async def do_google_login_steps(
             continue
 
         if state == "need_code":
-            session.state = "need_code"
+            # Có TOTP thì MÁY tự sinh và điền mã — chưa cần người. Cùng lớp với
+            # `need_captcha` đặt trước lúc tự tích ô: `need_code` nằm trong
+            # `account_recovery._CAN_NGUOI`, bên khôi phục đọc được giữa lúc máy
+            # đang điền là bỏ cuộc và nhắn chủ máy "chờ bạn xác nhận 2FA".
+            if not (session.totp_secret and _HAS_PYOTP):
+                session.state = "need_code"
             if not picker_clicked:
                 has_other = False
                 for _sel in (
