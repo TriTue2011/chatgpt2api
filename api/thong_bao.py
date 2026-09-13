@@ -20,17 +20,22 @@ thật thứ hai để lệch nhau.
 from __future__ import annotations
 
 import asyncio
-import logging
 
 from fastapi import APIRouter, Header
 
 from api.support import require_admin
-
-logger = logging.getLogger(__name__)
+# Bộ ghi log của nhà: `logging.getLogger(__name__)` propagate lên root, mà root
+# của ứng dụng này không có handler và đang ở mức WARNING — log biến mất. Đo
+# 13/09/2026 trên máy chủ thật.
+from utils.log import logger
 
 
 def _loi(exc: Exception, viec: str) -> dict:
-    logger.warning("thong-bao %s lỗi: %s", viec, exc)
+    # MỘT tham số: `utils.log.Logger.warning(message)` không nhận kiểu %-format
+    # nhiều đối số như `logging`. Giữ nguyên lời gọi cũ là mỗi lần có lỗi lại
+    # ném thêm TypeError ngay trong chính chỗ xử lý lỗi.
+    logger.warning({"event": "thong_bao_api_loi", "viec": viec,
+                    "loi": str(exc)[:200]})
     return {"ok": False, "error": str(exc)[:200]}
 
 

@@ -39,12 +39,21 @@ cài đặt ở các tab cũ thay vì để hai nơi cùng ghi.
 """
 from __future__ import annotations
 
-import logging
 from typing import Any, Iterable
 
 from services.config import config
-
-logger = logging.getLogger(__name__)
+# Dùng bộ ghi log CỦA NHÀ, không phải `logging.getLogger(__name__)`.
+#
+# Đo 13/09/2026 trên máy chủ thật: ứng dụng KHÔNG gọi `basicConfig`/`dictConfig`
+# ở đâu cả, nên logger chuẩn propagate lên root — mà root không có handler và
+# đang ở mức WARNING. Kết quả: mọi `logger.info` của module này biến mất sạch.
+# Đã thử thật: gọi «Gửi thử» vào một mục đang tắt, endpoint trả đúng lý do
+# nhưng log ra 0 dòng.
+#
+# Chuyện đó phá đúng thứ module này được dựng lên để làm: nói RÕ vì sao một
+# thông báo không được gửi. `utils.log.logger` có handler riêng, mức DEBUG,
+# `propagate=False`, và còn che giúp các khoá kiểu token khi in dict.
+from utils.log import logger
 
 #: Khoá cấu hình cấp cao nhất. Đo 13/09/2026: chưa có khoá nào tên `thong_bao`
 #: và cũng không có khoá nào bắt đầu bằng `thong`/`notify` — không va chạm.
