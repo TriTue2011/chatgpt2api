@@ -661,40 +661,57 @@ class HieuThietBiNhaTest(unittest.TestCase):
         self.assertEqual(len(ls), 2)
         self.assertGreater(ls[0]["id"], ls[1]["id"], "mới nhất đứng đầu")
 
-    def test_SO_DO_KICH_HOAT_GOM_DIEU_KIEN_VA_NGOAI_VI(self) -> None:
-        self._luu(self._nhom_bep(dieu_kien=["buoi", "lux_bếp"]))
-        so_do = {n["khoa"]: n for n in self.ht.so_do_kich_hoat()}
-        nut = so_do["switch.bep_left"]
-        self.assertEqual([d["ten"] for d in nut["dieu_kien"]],
-                         [self.bc.ten_dieu_kien("buoi"), self.bc.ten_dieu_kien("lux_bếp")])
-        self.assertEqual([d["khoa"] for d in nut["dieu_kien"]], ["buoi", "lux_bếp"])
-        self.assertIn("do", nut["dieu_kien"][0])
-        # Thành viên cùng nhóm (light.bep_left) là NGOẠI VI của nhân tố chính.
-        self.assertIn("Đèn bếp [light]", [n["ten"] for n in nut["ngoai_vi"]])
+    def _thoi_quen_bep(self) -> None:
+        """Bot đã chọn ngoại vi và đọc thói quen cho đèn bếp (chặng 1–2)."""
+        self.ht.ghi_ngoai_vi(self.ht._ghi_lan("b", "m", 1, 1, 0, 0, "", viec="ngoai_vi"), [{
+            "ma_hoc": "switch.bep_left", "khu_vuc": "Bếp", "chac": 0.9, "vi_sao": "",
+            "ngoai_vi": [{"ma": "binary_sensor.hien_dien_bep", "ten": "Hiện diện bếp",
+                          "vai_tro": "hien_dien"}]}])
+        self.ht.ghi_thoi_quen(self.ht._ghi_lan("b", "m", 1, 1, 0, 0, "", viec="thoi_quen"), [{
+            "ma_hoc": "switch.bep_left", "chac": 0.8, "vi_sao": "",
+            "bat": {"thoi_quen": "tối có người thì bật", "dieu_kien": [
+                {"ma": "gio", "tu": "18:00", "den": "22:00"},
+                {"ma": "binary_sensor.hien_dien_bep", "la": "on"},
+                {"ma": "gio", "tu": "06:00", "den": "08:00"}]},
+            "tat": {"thoi_quen": "", "dieu_kien": []},
+            "ngoai_vi": ["binary_sensor.hien_dien_bep"],
+            "ten_ngoai_vi": {"binary_sensor.hien_dien_bep": "Hiện diện bếp"}}])
+
+    def test_SO_DO_KICH_HOAT_la_DIEU_KIEN_THOI_QUEN_va_NGOAI_VI_BOT_CHON(self) -> None:
+        """Chủ máy chốt 13/09/2026: sơ đồ hiện đúng điều kiện tầng xác suất học theo."""
+        self._luu(self._nhom_bep())
+        self._thoi_quen_bep()
+        nut = {n["khoa"]: n for n in self.ht.so_do_kich_hoat(kem_so_do=False)}["switch.bep_left"]
+        self.assertEqual([(d["khoa"], d["ten"]) for d in nut["dieu_kien"]], [
+            ("gio", "trong 18:00–22:00 hoặc 06:00–08:00"),
+            ("binary_sensor.hien_dien_bep", "Hiện diện bếp là on")])
+        self.assertEqual([n["ten"] for n in nut["ngoai_vi"]], ["Hiện diện bếp"])
 
     def test_SO_DO_KHONG_KEM_SO_DO_thi_KHONG_DO_GI(self) -> None:
-        """Đường web `/api/hoc-hoi/so-do` phải trả NGAY: phần đo tốn vài giây
-        (47s cho 13 thiết bị, đo thật 12/09/2026) nên tách sang `/so-do/do`."""
+        """Đường web `/api/hoc-hoi/so-do` phải trả NGAY; phần đo đọc lịch sử 30
+        ngày nên tách sang `/so-do/do`."""
         from services import du_doan_nha
 
-        self._luu(self._nhom_bep(dieu_kien=["buoi"]))
-        with mock.patch.object(du_doan_nha, "dem_dieu_kien_thiet_bi") as dem:
+        self._luu(self._nhom_bep())
+        self._thoi_quen_bep()
+        with mock.patch.object(du_doan_nha, "hoc") as hoc:
             so_do = self.ht.so_do_kich_hoat(kem_so_do=False)
-        dem.assert_not_called()
+        hoc.assert_not_called()
         self.assertIsNone(so_do[0]["dieu_kien"][0]["do"])
 
-    def test_SO_DO_KEM_SO_DO_thi_DUNG_CHUNG_BO_NHO_O(self) -> None:
-        """Mọi thiết bị trên sơ đồ phải chia sẻ MỘT bộ nhớ ô, không mỗi thiết
-        bị một bộ — đó là chỗ 47 giây rơi xuống ~6 giây."""
+    def test_SO_DO_KEM_SO_DO_lay_TY_LE_KHOP_tu_BANG_DEM_cua_tang_xac_suat(self) -> None:
+        """Số % trên sơ đồ là đúng bảng đếm tầng xác suất dùng — không đo riêng một kiểu."""
         from services import du_doan_nha
 
-        self._luu(self._nhom_bep(dieu_kien=["buoi"]))
-        with mock.patch.object(du_doan_nha, "dem_dieu_kien_thiet_bi",
-                               return_value={}) as dem:
-            self.ht.so_do_kich_hoat(kem_so_do=True)
-        self.assertTrue(dem.called)
-        self.assertIn("bo_nho_o", dem.call_args.kwargs,
-                      "phải truyền bộ nhớ ô dùng chung xuống từng thiết bị")
+        self._luu(self._nhom_bep())
+        self._thoi_quen_bep()
+        bang = {"switch.bep_left": {"dk": {"gio=khop": {"bat": 8, "khong": 40},
+                                          "gio=lech": {"bat": 2, "khong": 300}}}}
+        with mock.patch.object(du_doan_nha, "hoc", return_value=bang):
+            nut = self.ht.so_do_kich_hoat(kem_so_do=True)[0]
+        do = {d["khoa"]: d["do"] for d in nut["dieu_kien"]}
+        self.assertEqual(do["gio"], {"nhan_hay_gap": "khớp", "mau": 10, "ty_le": 0.8})
+        self.assertEqual(do["binary_sensor.hien_dien_bep"]["mau"], 0, "chưa đo được thì nói 0 mẫu")
 
     def test_SO_DO_BO_QUA_THIET_BI_CHAM_SAI(self) -> None:
         moi = self._luu(self._nhom_bep())["moi"]

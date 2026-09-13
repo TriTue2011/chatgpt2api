@@ -4,20 +4,18 @@ Chủ máy nêu 10/09/2026: *"Rồi sau này căn cứ các điều kiện đó 
 cần bật thiết bị hay thông báo. Triển khai và phát triển rộng hơn."*
 
 Bốn sơ đồ chủ máy vẽ là bốn TRƯỜNG HỢP của một luật chung, nên tầng này không
-đóng khung theo tên thiết bị: bất cứ thứ gì có trong lịch sử đều học được, và
-điều kiện là bất cứ thứ gì `boi_canh_nha` trả về.
+đóng khung theo tên thiết bị.
 
-BA MỞ RỘNG QUÁ SƠ ĐỒ, chủ máy chốt cùng ngày:
+ĐIỀU KIỆN LÀ THỨ BOT ĐỌC ĐƯỢC TỪ THÓI QUEN (chủ máy chốt 13/09/2026): bot chọn
+ngoại vi theo khu vực, rồi đọc thói quen bật và chọn điều kiện
+(`thoi_quen_nha`); tầng này chỉ đếm xem mỗi điều kiện đó khớp hay lệch lúc có
+người bật và lúc không. Thiết bị khác vẫn là điều kiện được — bot chọn nó làm
+ngoại vi "thiết bị đi kèm" và điều kiện "đang bật". Bản trước tự sinh điều kiện
+từ khoá phòng (`boi_canh_nha.roi_rac`) và thiết bị vừa đổi (`bat_<tên>`);
+xem phần "Gom mẫu theo THÓI QUEN" vì sao bỏ.
 
-1. THIẾT BỊ LÀ ĐIỀU KIỆN CỦA NHAU. Mũi tên trong sơ đồ vẽ hai chiều — thiết bị
-   này đang bật cũng là bối cảnh cho thiết bị khác. Không cần cấu trúc mới:
-   mỗi thiết bị đang bật thành một điều kiện `bat_<tên>` như mọi điều kiện
-   khác, và phép đếm tự tìm ra cặp nào đi với nhau. Bật bình nóng lạnh thì lát
-   nữa bật đèn nhà tắm; bật bếp thì sắp tới giờ ăn. Không ai phải liệt kê.
-2. "HÀNH ĐỘNG" — ô có mặt trong cả bốn sơ đồ — là việc chủ máy VỪA LÀM, cũng
-   là điều kiện: `vua_lam_<tên>` trong 15 phút qua.
-3. XÁC SUẤT ÁP CHO CẢ THÔNG BÁO. Cùng mô hình, chỉ đổi câu hỏi: thay vì "có
-   nên bật đèn không" là "tin này chủ máy có muốn nghe không".
+XÁC SUẤT ÁP ĐƯỢC CHO CẢ THÔNG BÁO. Cùng mô hình, chỉ đổi câu hỏi: thay vì "có
+nên bật đèn không" là "tin này chủ máy có muốn nghe không".
 
 VÌ SAO NAIVE BAYES ĐẾM, KHÔNG PHẢI MÔ HÌNH LỚN HƠN:
 
@@ -74,9 +72,6 @@ _khoa = threading.Lock()
 #: Ô thời gian sinh mẫu âm. 30 phút: hẹp hơn thì mẫu âm nhiều gấp bội mẫu
 #: dương và mô hình chỉ học được "phần lớn thời gian không ai bật gì".
 _O_PHUT = 30
-
-#: Cửa sổ coi là "vừa làm" — ô "Hành động" trong sơ đồ chủ máy.
-_VUA_LAM_GIAY = 900.0
 
 #: Điều kiện xuất hiện ít hơn ngần này lần thì bỏ: một lần trùng hợp không
 #: phải bằng chứng, mà lại được Laplace thổi lên thành 2/3.
@@ -257,242 +252,192 @@ def ten_thiet_bi(ten: str) -> str:
     return ma
 
 
-def _dieu_kien(luc: float, dang_bat: dict[str, float],
-               vua_lam: dict[str, float], tru: str = "") -> dict[str, str]:
-    """Toàn bộ điều kiện lúc `luc`, dạng nhãn.
+# ── Gom mẫu theo THÓI QUEN bot đọc được ─────────────────────────────────────
+# Chủ máy chốt 13/09/2026 (chặng 3): tầng này học CHỈ theo điều kiện bật bot
+# đọc được ở `thoi_quen_nha` (câu `thoi_quen`), bỏ hẳn khoá phòng gom theo tên
+# (`boi_canh_nha.roi_rac`). Khoá phòng gom nhầm cảm biến — `nguoi_phòng_khách`
+# gồm cả công tắc bật tính năng phát hiện của camera, 12% ô 30 phút do giá trị
+# luôn "có người" quyết — và `boi_canh_nha._so_do_gan` lấy số đo trong ±30
+# phút, gồm cả những phút SAU lúc bật (đèn vừa bật làm sáng chính ô đó).
+# Thiết bị chưa có thói quen thì im: thà không nói còn hơn nói theo điều kiện sai.
 
-    `tru` là thiết bị đang được đoán — phải BỎ nó khỏi điều kiện, nếu không mô
-    hình học được "đèn bếp đang bật thì hay bật đèn bếp", đúng 100% và vô
-    dụng. Đây là rò rỉ nhãn, cùng họ với chuyện dùng `tuoi` cho quá khứ.
-    """
-    from services import boi_canh_nha
+_KHOP, _LECH = "khop", "lech"
 
-    nhan = boi_canh_nha.roi_rac(boi_canh_nha.boi_canh(luc))
-    for ten, tu in dang_bat.items():
-        if ten != tru and luc - tu < 6 * 3600:
-            nhan[f"bat_{ten}"] = "co"
-    for ten, tu in vua_lam.items():
-        if ten != tru and 0 <= luc - tu < _VUA_LAM_GIAY:
-            nhan[f"vua_lam_{ten}"] = "co"
-    return nhan
+#: Mã điều kiện không phải ngoại vi — đo từ chính mốc thời gian.
+_DIEU_KIEN_THOI_GIAN = ("gio", "ngay", "mua")
 
 
-def dem_dieu_kien_thiet_bi(thiet_bi: str, cac_khoa: list[str],
-                          so_ngay: int | None = None,
-                          *, bo_nho_o: dict[int, dict[str, str]] | None = None,
-                          ) -> dict[str, dict[str, Any]]:
-    """Với MỖI lần `thiet_bi` bật trong `so_ngay` ngày qua, điều kiện `cac_khoa`
-    thường mang giá trị gì — cho tab Học hỏi trả lời "điều kiện này xảy ra khi
-    nào" khi chủ máy vừa thêm một điều kiện mới trên sơ đồ kích hoạt.
+def _trong_khoang(phut: int, tu: str, den: str) -> bool:
+    a = int(tu[:2]) * 60 + int(tu[3:])
+    b = int(den[:2]) * 60 + int(den[3:])
+    return a <= phut < b if a <= b else (phut >= a or phut < b)
 
-    Nhận thẳng `cac_khoa` (không lọc theo bot đã chọn hay chưa — khác `hoc()`)
-    để đo được cả điều kiện bot CHƯA TỪNG chọn. Trả mỗi khoá:
-    ``{"nhan_hay_gap": str, "ty_le": float, "mau": int}`` — `mau` là số lần
-    bật CÓ đo được nhãn đó (bỏ những lần thiếu cảm biến, không tính là "không
-    khớp"). Rỗng hoặc `mau=0` khi chưa đủ dữ liệu.
 
-    DỰNG BỐI CẢNH MỘT LẦN CHO MỖI Ô 30 PHÚT, y như `hoc()` — không phải mỗi
-    lần bật một lần. Đo trên máy chủ thật 12/09/2026: `switch.bep_left` có
-    1.153 lần bật nhưng chỉ nằm trong 125 ô, mà `boi_canh()` tốn 32ms mỗi
-    lượt; gọi theo từng lần bật làm riêng nó mất ~37 giây, và cả sơ đồ 13
-    thiết bị mất 47 giây — trình duyệt bỏ cuộc trước, chủ máy chỉ thấy "chưa
-    có thiết bị nào được học". Đây đúng cái bẫy `hoc()` đã ghi lại và đã tự
-    sửa một lần.
+def _doc_tuyen(ro: sqlite3.Connection, dieu_kien: list[dict[str, Any]], tu: float, den: float,
+               dem: dict[str, Any] | None = None) -> dict[str, tuple[list[float], list[str]]]:
+    """Dòng giá trị của từng ngoại vi trong điều kiện. `dem` dùng chung giữa các
+    thiết bị cùng một lượt — nhiều đèn cùng đi theo một cảm biến hiện diện."""
+    from services import thoi_quen_nha as tq
 
-    `bo_nho_o` là bộ nhớ ô DÙNG CHUNG giữa nhiều thiết bị (nơi gọi truyền vào,
-    xem `hieu_thiet_bi_nha.so_do_kich_hoat`): 13 thiết bị chỉ chạm 187 ô duy
-    nhất, chia sẻ bộ nhớ thì tổng còn ~6 giây thay vì cộng dồn từng thiết bị."""
-    from services import lich_su_nha
-
-    ngay = max(1, int(so_ngay or _so_ngay_hoc()))
-    den = time.time()
-    tu = den - ngay * 86400
-    khac_ma = {k[len("bat_"):] for k in cac_khoa if k.startswith("bat_")}
-    try:
-        sk = lich_su_nha.doc_trang_thai(
-            tu, den, tien_to=tuple(sorted({thiet_bi} | khac_ma)), bo_do_ai=True)
-    except Exception as exc:
-        logger.warning({"event": "dem_dieu_kien_doc_loi", "error": str(exc)[:160]})
-        return {}
-    on_ts: list[float] = []
-    doi_trong_o: dict[int, set[str]] = {}
-    for r in sk:
-        if str(r.get("truong") or "") != "state":
+    dem = {} if dem is None else dem
+    ra: dict[str, tuple[list[float], list[str]]] = {}
+    for x in dieu_kien:
+        ma = str(x["ma"])
+        if ma in _DIEU_KIEN_THOI_GIAN or ma in ra:
             continue
-        tb = str(r.get("thiet_bi") or "")
-        ts = float(r.get("ts") or 0)
-        doi_trong_o.setdefault(int(ts // (_O_PHUT * 60)), set()).add(tb)
-        if tb == thiet_bi and _la_bat(r.get("gia_tri")):
-            on_ts.append(ts)
-    if not on_ts:
-        return {}
-    # Bối cảnh của một ô KHÔNG phụ thuộc thiết bị đang xét: `_dieu_kien` ở đây
-    # nhận `dang_bat`/`vua_lam` RỖNG nên `tru=` không đổi gì — nhờ vậy bộ nhớ ô
-    # dùng chung được cho mọi thiết bị. Nhãn `bat_<mã>` thì thêm ở dưới, trên
-    # BẢN SAO, không được ghi đè vào bộ nhớ chung.
-    nhan_o = bo_nho_o if bo_nho_o is not None else {}
-    dem: dict[str, dict[str, int]] = {k: {} for k in cac_khoa}
-    for ts in on_ts:
-        slot = int(ts // (_O_PHUT * 60))
-        goc = nhan_o.get(slot)
-        if goc is None:
-            goc = _dieu_kien(ts, {}, {})
-            nhan_o[slot] = goc
-        nhan = dict(goc)
-        nhan.pop(f"bat_{thiet_bi}", None)
-        for khac in doi_trong_o.get(slot, ()):
-            if khac != thiet_bi:
-                nhan[f"bat_{khac}"] = "co"
-        for k in cac_khoa:
-            if k in nhan:
-                d = dem[k]
-                d[nhan[k]] = d.get(nhan[k], 0) + 1
-    ra: dict[str, dict[str, Any]] = {}
-    for k, d in dem.items():
-        mau = sum(d.values())
-        if not mau:
-            ra[k] = {"nhan_hay_gap": "", "ty_le": 0.0, "mau": 0}
-            continue
-        nhan_hay_gap, so_lan = max(d.items(), key=lambda x: x[1])
-        ra[k] = {"nhan_hay_gap": nhan_hay_gap, "ty_le": round(so_lan / mau, 3), "mau": mau}
+        if ma not in dem:
+            tb, _, tr = ma.partition("#")
+            dem[ma] = tq._tuyen(ro, tb, tr or "state", tu, den)
+        ra[ma] = dem[ma]
     return ra
 
 
-def hoc(so_ngay: int | None = None) -> dict[str, Any]:
-    """Đếm mẫu dương và mẫu âm cho các thiết bị ĐƯỢC HỌC, trả bảng đếm.
+def nhan_thoi_quen(dieu_kien: list[dict[str, Any]], luc: float,
+                   tuyen: dict[str, tuple[list[float], list[str]]]) -> dict[str, str]:
+    """Mỗi điều kiện thói quen KHỚP hay LỆCH tại mốc `luc`.
 
-    Trả ``{ten: {"n_bat", "n_khong", "dk": {nhãn: {"bat": k, "khong": k}}}}``.
-
-    HỌC CÁI GÌ DO BOT HỌC HỎI KẾT LUẬN (`hieu_thiet_bi_nha.thiet_bi_hoc`),
-    không do code liệt kê. Chủ máy chốt 11/09/2026: *"Việc học hỏi nên học
-    theo các thiết bị bật tắt được chứ các thiết bị trạng thái học làm gì"* —
-    và Claude chỉ soạn hướng dẫn cho bot tự giải rồi chấm. Bot chưa kết luận
-    gì thì BỎ LƯỢT: học rỗng hay học bừa đều tệ hơn im.
-
-    CHỈ ĐỌC THIẾT BỊ ĐƯỢC HỌC, lọc ngay trong SQL. Bản trước kéo mọi sự kiện về
-    rồi tự bỏ: đo kho thật 11/09/2026, 30 ngày có 609.089 sự kiện mà trần đọc
-    là 200.000 — tầng học chỉ thấy 4,5 ngày gần nhất.
-
-    Đọc với ``bo_do_ai=True``: học từ hành động của chính bot là tự khẳng định
-    vòng quanh.
+    Ngoại vi không đo được (chưa có giá trị trước mốc, đang `unavailable`) thì
+    VẮNG — thiếu không phải lệch, cùng luật "nói rõ cái không biết" của
+    `boi_canh_nha`. Giá trị lấy CHẶT trước mốc (`thoi_quen_nha._truoc`). Nhiều
+    khoảng giờ gộp một nhãn `gio`, hiểu là HOẶC.
     """
-    from services import hieu_thiet_bi_nha, lich_su_nha
+    from services import boi_canh_nha, thoi_quen_nha as tq
 
-    duoc_hoc = set(hieu_thiet_bi_nha.thiet_bi_hoc())
-    if not duoc_hoc:
+    d = datetime.fromtimestamp(luc, _TZ)
+    nhan: dict[str, str] = {}
+    gio = [x for x in dieu_kien if x["ma"] == "gio"]
+    if gio:
+        phut = d.hour * 60 + d.minute
+        nhan["gio"] = _KHOP if any(_trong_khoang(phut, x["tu"], x["den"]) for x in gio) else _LECH
+    for x in dieu_kien:
+        ma = str(x["ma"])
+        if ma == "gio":
+            continue
+        if ma == "ngay":
+            khop = (d.weekday() >= 5) == (x["la"] == "cuoi_tuan")
+        elif ma == "mua":
+            khop = boi_canh_nha.mua(d.month) == x["la"]
+        else:
+            ts, gt = tuyen.get(ma) or ([], [])
+            v = tq._truoc(ts, gt, luc)
+            if v is None or v.strip().lower() in tq._KHONG_RO:
+                continue
+            if "la" in x:
+                khop = v == x["la"]
+            elif _la_so(v):
+                khop = float(v) < x["duoi"] if "duoi" in x else float(v) > x["tren"]
+            else:
+                continue
+        nhan[ma] = _KHOP if khop else _LECH
+    return nhan
+
+
+def hoc(so_ngay: int | None = None) -> dict[str, Any]:
+    """Đếm mẫu dương và mẫu âm cho các thiết bị ĐÃ CÓ THÓI QUEN, trả bảng đếm.
+
+    Trả ``{ten: {"n_bat", "n_khong", "dk": {nhãn: {"bat": k, "khong": k}},
+    "dieu_kien", "ten_ngoai_vi", "kiem"}}``.
+
+    HỌC GÌ VÀ THEO ĐIỀU KIỆN NÀO DO BOT HỌC HỎI KẾT LUẬN: thiết bị được học
+    (`hieu_thiet_bi_nha.thiet_bi_hoc`) có câu `thoi_quen` chưa bị chấm sai
+    (`hieu_thiet_bi_nha.thoi_quen_hoc`). Chủ máy chốt 11/09/2026 Claude chỉ soạn
+    hướng dẫn cho bot tự giải rồi chấm. Chưa có thì BỎ LƯỢT.
+
+    Mỗi mẫu là một ô 30 phút nhà có động mà ĐẦU Ô thiết bị đang tắt; nhãn đo ở
+    ĐẦU Ô; kết quả là trong ô có NGƯỜI bật không (bỏ `do_ai=1` — học từ việc
+    chính bot làm là tự khẳng định vòng quanh; bỏ off↔unavailable). Ô thiết bị
+    đang bật không phải "chọn không bật" — `quet()` cũng không mời bật thứ đang
+    bật. Không có mẫu âm thì mọi xác suất bằng 1.
+
+    VÌ SAO ĐO Ở ĐẦU Ô CHO CẢ MẪU DƯƠNG, không ở ngay trước lúc bật như số đo bot
+    đọc (`thoi_quen_nha.do_thoi_quen` — ở đó là để HIỂU thói quen): `quet()` đoán
+    ở một mốc bất kỳ "nửa giờ tới có ai bật không". Đo trên kho thật 13/09/2026,
+    đèn bếp chạy theo tự động hóa (có người là đèn sáng sau vài giây), 7 ngày
+    thử: đo ngay trước lúc bật → đoán 72 trúng 71; đo ở sự kiện đầu ô → 21/20;
+    đo ở đầu ô → không lần nào đủ chắc để đoán. 99% kia là ảo: nó biết "có
+    người" chỉ vì nhìn đúng giây trước khi đèn sáng, điều `quet()` không bao giờ
+    có.
+
+    Đọc bằng kết nối CHỈ-ĐỌC riêng, không qua `lich_su_nha._khoa_db`: lượt chat
+    của bot đọc lịch sử qua cùng khoá đó.
+    """
+    from services import hieu_thiet_bi_nha, lich_su_nha, thoi_quen_nha as tq
+
+    thoi_quen = hieu_thiet_bi_nha.thoi_quen_hoc()
+    if not thoi_quen:
         logger.info({"event": "du_doan_bo_luot",
-                     "ly_do": "bot học hỏi chưa kết luận thiết bị nào được học"})
+                     "ly_do": "bot học hỏi chưa đọc được thói quen bật nào (câu thoi_quen)"})
         return {}
-    # Điều kiện nào đi với thiết bị nào cũng do bot học hỏi kết luận — chủ máy
-    # 11/09/2026: "AI không phân tích trước khi học hỏi à, khu vực đang khác nhau".
-    chon = hieu_thiet_bi_nha.dieu_kien_hoc()
     ngay = so_ngay if so_ngay else _so_ngay_hoc()
     den = time.time()
     tu = den - max(1, int(ngay)) * 86400
+    o_giay = _O_PHUT * 60
+    # Ô từ mốc này trở đi là NGÀY THỬ của phép kiểm tiến dần (`_KIEM_NGAY`).
+    o_thu = int((den - _KIEM_NGAY * 86400) // o_giay)
+    ra: dict[str, Any] = {}
     try:
-        sk = lich_su_nha.doc_trang_thai(tu, den, tien_to=tuple(sorted(duoc_hoc)),
-                                        bo_do_ai=True)
-        # Mẫu âm lấy từ MỌI ô có dữ liệu, kể cả ô chỉ có cảm biến — y như khi
-        # còn đọc cả nhà. Chỉ lấy ô có thiết bị được học thì còn 192/535 ô (đo
-        # 11/09/2026) và xác suất phồng lên. Ô nhà vắng hoàn toàn không nói lên
-        # "chủ máy chọn không bật" nên vẫn không tính.
-        o_moc = lich_su_nha.o_co_su_kien(tu, den, _O_PHUT * 60, bo_do_ai=True)
-    except Exception as exc:
+        ro = sqlite3.connect(f"file:{lich_su_nha._DB_PATH}?mode=ro", uri=True, timeout=10.0)
+    except sqlite3.Error as exc:
         logger.warning({"event": "du_doan_doc_loi", "error": str(exc)[:160]})
         return {}
-
-    # Lượt BẬT của từng thiết bị, và thiết bị nào đổi trong từng ô.
-    bat_luc: dict[str, list[float]] = {}
-    doi_trong_o: dict[int, set[str]] = {}
-
-    for r in sk:
-        tb = str(r.get("thiet_bi") or "")
-        # Tiền tố trong SQL là LIKE: `switch.bep_left` khớp cả `switch.bep_left_2`.
-        if tb not in duoc_hoc or str(r.get("truong") or "") != "state":
-            continue
-        ts = float(r.get("ts") or 0)
-        if _la_bat(r.get("gia_tri")):
-            bat_luc.setdefault(tb, []).append(ts)
-        doi_trong_o.setdefault(int(ts // (_O_PHUT * 60)), set()).add(tb)
-
-    if not bat_luc:
-        return {}
-
-    o_ds = sorted(o_moc)
-
-    # DỰNG BỐI CẢNH MỘT LẦN CHO MỖI Ô, rồi mọi thiết bị dùng chung.
-    #
-    # Bản đầu gọi `_dieu_kien()` NGAY TRONG vòng lặp thiết bị, nên cùng một ô
-    # thời gian bị dựng lại một lần cho mỗi thiết bị. Đo trên máy chủ thật
-    # 11/09/2026: `boi_canh()` mất 26ms mỗi lần (nó chạy vài truy vấn SQLite),
-    # 30 ngày có 1.440 ô, nhà có 414 thiết bị từng đổi trạng thái:
-    #
-    #     414 thiết bị × 1.440 ô × 26ms  ≈  262 PHÚT cho một lượt `hoc()`
-    #
-    # Mà `hoc()` gọi từ heartbeat. Đó gần như chắc chắn là thủ phạm làm c2a
-    # treo hẳn đêm 11/09 (uvicorn `R (running)`, CPU cao, mọi endpoint trả 000).
-    #
-    # Bối cảnh của một ô KHÔNG phụ thuộc thiết bị đang xét — `tru=tb` chỉ bỏ
-    # nhãn `bat_<tên>` của chính nó, mà nhãn đó thêm ở vòng dưới. Nên tách ra
-    # được, và chi phí còn 1.440 lần thay vì 596.160 lần: **nhanh gấp 414**.
-    nhan_o: dict[int, dict[str, str]] = {
-        o: _dieu_kien(o_moc[o], {}, {}) for o in o_ds
-    }
-
-    # Ô từ mốc này trở đi là NGÀY THỬ của phép kiểm tiến dần (`_KIEM_NGAY`).
-    o_thu = int((den - _KIEM_NGAY * 86400) // (_O_PHUT * 60))
-
-    ra: dict[str, Any] = {}
-    for tb, moc in bat_luc.items():
-        o_bat = {int(t // (_O_PHUT * 60)) for t in moc}
-        # Đếm Ô, không đếm SỰ KIỆN. Đo 11/09/2026: cảm biến phòng khách có 10
-        # lần "bật" nhập từ lịch sử HA mà chỉ nằm trong 2 ô 30 phút — đếm sự
-        # kiện thì nó qua ngưỡng, trong khi 2 mẫu dương thì không học được gì.
-        if len(o_bat) < _TOI_THIEU_DIEU_KIEN:
-            continue
-        # CHỈ đếm điều kiện bot học hỏi chọn cho thiết bị này. Chưa có kết
-        # luận điều kiện thì không đếm điều kiện nào: chỉ còn tỉ lệ nền, không
-        # bao giờ đủ để mở miệng — thà im còn hơn lấy nhiệt độ phòng học làm
-        # lý do bật dàn âm thanh phòng khách (11/09/2026).
-        duoc = set(chon.get(tb) or ())
-        dem: dict[str, dict[str, int]] = {}
-        dem_truoc: dict[str, dict[str, int]] = {}
-        n_bat = n_khong = nb_truoc = nk_truoc = 0
-        thu: list[tuple[dict[str, str], bool]] = []
-        for o in o_ds:
-            co = o in o_bat
-            nhan = {k: v for k, v in nhan_o[o].items() if k in duoc}
-            # Thiết bị khác đổi trong ô này (mở rộng 1 và 2), nếu bot chọn nó.
-            for khac in doi_trong_o.get(o, ()):
-                if khac != tb and f"bat_{khac}" in duoc:
-                    nhan[f"bat_{khac}"] = "co"
-            if co:
-                n_bat += 1
-            else:
-                n_khong += 1
-            for k, v in nhan.items():
-                d = dem.setdefault(f"{k}={v}", {"bat": 0, "khong": 0})
-                d["bat" if co else "khong"] += 1
-            if o >= o_thu:
-                thu.append((nhan, co))
+    try:
+        o_nha = tq._o_nha(ro, tu, den)
+        dem_tuyen: dict[str, Any] = {}
+        for tb, muc in sorted(thoi_quen.items()):
+            # Không lấy CHÍNH thiết bị làm điều kiện của nó: "đèn bếp đang bật thì
+            # hay bật đèn bếp" đúng 100% và vô dụng — rò rỉ nhãn.
+            dk_def = [x for x in muc.get("bat") or [] if str(x["ma"]).partition("#")[0] != tb]
+            bat, _, ts, gt = tq._bat_tat(ro, tb, tu, den)
+            dau_bat: dict[int, float] = {}
+            for t in bat:
+                dau_bat.setdefault(int(t // o_giay), t)
+            # Đếm Ô, không đếm SỰ KIỆN. Đo 11/09/2026: cảm biến phòng khách có 10
+            # lần "bật" nhập từ lịch sử HA mà chỉ nằm trong 2 ô 30 phút.
+            if len(dau_bat) < _TOI_THIEU_DIEU_KIEN:
                 continue
-            if co:
-                nb_truoc += 1
-            else:
-                nk_truoc += 1
-            for k, v in nhan.items():
-                d = dem_truoc.setdefault(f"{k}={v}", {"bat": 0, "khong": 0})
-                d["bat" if co else "khong"] += 1
-        # Sống lại những ngày thử bằng bảng đếm của những ngày TRƯỚC chúng.
-        bang_truoc = {"n_bat": nb_truoc, "n_khong": nk_truoc, "dk": dem_truoc}
-        doan = trung = 0
-        for nhan, co in thu:
-            if _xac_suat(bang_truoc, nhan)[0] >= _P_GOI_Y:
-                doan += 1
-                trung += int(co)
-        ra[tb] = {"n_bat": n_bat, "n_khong": n_khong, "dk": dem,
-                  "dieu_kien": sorted(duoc),
-                  "kiem": {"doan": doan, "trung": trung, "ngay": _KIEM_NGAY}}
+            tuyen = _doc_tuyen(ro, dk_def, tu, den, dem_tuyen)
+            dem: dict[str, dict[str, int]] = {}
+            dem_truoc: dict[str, dict[str, int]] = {}
+            n_bat = n_khong = nb_truoc = nk_truoc = 0
+            thu: list[tuple[dict[str, str], bool]] = []
+            for o in o_nha:
+                g = tq._truoc(ts, gt, o * o_giay)
+                if g is None or g.strip().lower() in tq._KHONG_RO or _la_bat(g):
+                    continue
+                co = o in dau_bat
+                nhan = nhan_thoi_quen(dk_def, float(o * o_giay), tuyen)
+                if co:
+                    n_bat += 1
+                else:
+                    n_khong += 1
+                for k, v in nhan.items():
+                    d = dem.setdefault(f"{k}={v}", {"bat": 0, "khong": 0})
+                    d["bat" if co else "khong"] += 1
+                if o >= o_thu:
+                    thu.append((nhan, co))
+                    continue
+                if co:
+                    nb_truoc += 1
+                else:
+                    nk_truoc += 1
+                for k, v in nhan.items():
+                    d = dem_truoc.setdefault(f"{k}={v}", {"bat": 0, "khong": 0})
+                    d["bat" if co else "khong"] += 1
+            # Sống lại những ngày thử bằng bảng đếm của những ngày TRƯỚC chúng.
+            bang_truoc = {"n_bat": nb_truoc, "n_khong": nk_truoc, "dk": dem_truoc}
+            doan = trung = 0
+            for nhan, co in thu:
+                if _xac_suat(bang_truoc, nhan)[0] >= _P_GOI_Y:
+                    doan += 1
+                    trung += int(co)
+            ra[tb] = {"n_bat": n_bat, "n_khong": n_khong, "dk": dem,
+                      "dieu_kien": dk_def, "ten_ngoai_vi": dict(muc.get("ten_ngoai_vi") or {}),
+                      "kiem": {"doan": doan, "trung": trung, "ngay": _KIEM_NGAY}}
+    except sqlite3.Error as exc:
+        logger.warning({"event": "du_doan_doc_loi", "error": str(exc)[:160]})
+        return {}
+    finally:
+        ro.close()
     return ra
 
 
@@ -567,16 +512,15 @@ def _xac_suat(bang: dict[str, Any], nhan: dict[str, str]) -> tuple[float, list[d
 
 
 def du_doan(ten: str, luc: float | None = None,
-            bang: dict[str, Any] | None = None, *,
-            vua_doi: set[str] | frozenset[str] = frozenset()) -> dict[str, Any]:
+            bang: dict[str, Any] | None = None) -> dict[str, Any]:
     """Bây giờ có nên bật `ten` không, và VÌ SAO.
 
-    Trả ``{"ten", "p", "cap", "cach", "bang_chung", "nhan", "kiem", "dat_cong",
-    "ly_do"}``. ``cach`` là ``"im"`` | ``"goi_y"`` | ``"tu_lam"``.
+    Trả ``{"ten", "p", "cap", "cach", "bang_chung", "nhan", "dieu_kien",
+    "ten_ngoai_vi", "kiem", "dat_cong", "ly_do"}``. ``cach`` là ``"im"`` |
+    ``"goi_y"`` | ``"tu_lam"``.
 
-    ``vua_doi`` — thiết bị được học vừa đổi trạng thái trong ô 30 phút này, đúng
-    nghĩa nhãn ``bat_<tên>`` lúc học (`hoc`). Không truyền thì nhãn thiết bị
-    không bao giờ có mặt lúc đoán, dù bot đã chọn nó làm điều kiện.
+    Nhãn đo theo ĐÚNG luật lúc học (`nhan_thoi_quen`): giá trị ngoại vi chặt
+    trước mốc — nên "bây giờ" là giá trị mới nhất đã ghi, không đọc bảng `tuoi`.
 
     Qua ngưỡng xác suất mà chưa qua KIỂM TIẾN DẦN (`_KIEM_NGAY`) thì vẫn im:
     xác suất cao trên chính dữ liệu đã học chưa chứng minh được gì — gợi ý
@@ -588,12 +532,15 @@ def du_doan(ten: str, luc: float | None = None,
         return {"ten": ten, "p": 0.0, "cap": 0, "cach": "im",
                 "bang_chung": [], "nhan": {}, "ly_do": "chưa đủ dữ liệu"}
 
-    from services import boi_canh_nha
-    nhan = boi_canh_nha.roi_rac(boi_canh_nha.hien_tai() if not luc
-                                else boi_canh_nha.boi_canh(t))
-    for khac in vua_doi:
-        if khac != ten:
-            nhan[f"bat_{khac}"] = "co"
+    from services import lich_su_nha, thoi_quen_nha as tq
+
+    dk_def = list(b.get("dieu_kien") or [])
+    ro = sqlite3.connect(f"file:{lich_su_nha._DB_PATH}?mode=ro", uri=True, timeout=10.0)
+    try:
+        tuyen = _doc_tuyen(ro, dk_def, t - tq._HAN_GIA_TRI_GIAY, t + 1)
+    finally:
+        ro.close()
+    nhan = nhan_thoi_quen(dk_def, t, tuyen)
     p, bc = _xac_suat(b, nhan)
     c = cap(ten)
     kiem = b.get("kiem") or {}
@@ -611,8 +558,9 @@ def du_doan(ten: str, luc: float | None = None,
     else:
         cach = "goi_y"
     return {"ten": ten, "p": round(p, 4), "cap": c, "cach": cach,
-            "bang_chung": bc[:6], "nhan": nhan, "kiem": kiem, "dat_cong": dat,
-            "ly_do": ly_do}
+            "bang_chung": bc[:6], "nhan": nhan, "dieu_kien": dk_def,
+            "ten_ngoai_vi": dict(b.get("ten_ngoai_vi") or {}), "kiem": kiem,
+            "dat_cong": dat, "ly_do": ly_do}
 
 
 # ── Thành tích và cấp tự chủ ────────────────────────────────────────────────
@@ -802,7 +750,13 @@ def giai_thich(id_: int) -> str:
     dong = [f"{g:%H:%M %d/%m} — {ten_thiet_bi(str(r['ten']))} {r['hanh_dong']}, "
             f"em chắc {float(r['p']) * 100:.0f}%"]
     if nhan:
-        luc_do = [x for x in (_ly_do(f"{k}={v}")
+        from services import hieu_thiet_bi_nha as ht
+
+        # Dịch bằng thói quen HIỆN TẠI của thiết bị: lượt đoán chỉ lưu nhãn.
+        tq = ht.thoi_quen_hoc().get(str(r["ten"])) or {}
+        ten_ha = ht._ten_ha()
+        luc_do = [x for x in (_ly_do(f"{k}={v}", tq.get("bat") or [],
+                                     tq.get("ten_ngoai_vi") or {}, ten_ha)
                               for k, v in list(nhan.items())[:8]) if x]
         if luc_do:
             dong.append("Lúc đó: " + ", ".join(luc_do))
@@ -829,24 +783,15 @@ def quet(luc: float | None = None) -> list[dict[str, Any]]:
     bang = hoc()
     if not bang:
         return []
-    from services import ha_client, lich_su_nha
+    from services import ha_client
 
     dang = {str(s.get("entity_id") or ""): s.get("state")
             for s in (ha_client.get_states() or [])}
-    t = float(luc) if luc else time.time()
-    o_giay = _O_PHUT * 60
-    try:
-        vua_doi = {str(r.get("thiet_bi") or "") for r in lich_su_nha.doc_trang_thai(
-            t // o_giay * o_giay, t, tien_to=tuple(sorted(bang)), bo_do_ai=True)
-            if str(r.get("truong") or "") == "state"} & set(bang)
-    except Exception as exc:
-        logger.warning({"event": "du_doan_doc_loi", "error": str(exc)[:160]})
-        vua_doi = set()
     ra = []
     for ten, b in bang.items():
         if _la_bat(dang.get(ten)):
             continue
-        d = du_doan(ten, luc, bang=b, vua_doi=vua_doi)
+        d = du_doan(ten, luc, bang=b)
         if d["cach"] != "im":
             ra.append(d)
     ra.sort(key=lambda x: -x["p"])
@@ -871,18 +816,25 @@ def _kenh_nhan() -> list[str]:
     return []
 
 
-def _ly_do(dieu_kien: str) -> str:
-    """Một dòng bằng chứng của mô hình → một mệnh đề tiếng Việt.
+def _ly_do(dieu_kien: str, dinh_nghia: list[dict[str, Any]], ten_nv: dict[str, str],
+           ten: dict[str, str]) -> str:
+    """Một dòng bằng chứng "mã=khop" → một mệnh đề tiếng Việt.
 
-    Khoá do `boi_canh_nha.roi_rac()` sinh ra nên nhờ chính module đó dịch:
-    một nguồn duy nhất, không có bảng thứ hai để mà lệch.
-
-    Dịch không ra thì trả rỗng và tầng trên bỏ hẳn lý do đó đi.
+    Dịch bằng chính định nghĩa điều kiện trong câu thói quen
+    (`hieu_thiet_bi_nha._dieu_kien_doc`) — cùng chữ chủ máy đọc khi chấm «hh».
+    Nhãn "lệch" hay điều kiện không còn trong định nghĩa thì trả rỗng và tầng
+    trên bỏ hẳn lý do đó: "vì không phải lúc có người" không giúp ai sửa bot.
     """
-    from services import boi_canh_nha
+    from services import hieu_thiet_bi_nha as ht
 
     khoa, _, gt = str(dieu_kien or "").partition("=")
-    return boi_canh_nha.mo_ta_dieu_kien(khoa, gt) if khoa else ""
+    if gt != _KHOP:
+        return ""
+    if khoa == "gio":
+        gio = [f"{x['tu']}–{x['den']}" for x in dinh_nghia if x["ma"] == "gio"]
+        return f"đang trong {' hoặc '.join(gio)}" if gio else ""
+    x = next((x for x in dinh_nghia if x["ma"] == khoa), None)
+    return ht._dieu_kien_doc(x, ten_nv, ten) if x else ""
 
 
 def soan_tin(ds: list[dict[str, Any]]) -> str:
@@ -904,6 +856,9 @@ def soan_tin(ds: list[dict[str, Any]]) -> str:
     """
     if not ds:
         return ""
+    from services import hieu_thiet_bi_nha as ht
+
+    ten_ha = ht._ten_ha()
     dong = ["🏠 Em để ý nếp nhà, thấy mấy việc này:"]
     so_hoi: list[int] = []
     for d in ds:
@@ -912,7 +867,11 @@ def soan_tin(ds: list[dict[str, Any]]) -> str:
         ung_ho = [b for b in (d.get("bang_chung") or [])
                   if float(b.get("trong_so") or 0) > 0]
         vi_sao = ", ".join(x for x in (
-            _ly_do(str(b.get("dieu_kien") or "")) for b in ung_ho[:3]) if x)
+            _ly_do(str(b.get("dieu_kien") or ""), d.get("dieu_kien") or [],
+                   d.get("ten_ngoai_vi") or {}, ten_ha) for b in ung_ho[:3]) if x)
+        # Zalo gửi ở markdown, ăn dấu gạch dưới làm in nghiêng — tên thô của
+        # thiết bị (mã HA) còn gạch dưới thì đổi thành dấu cách.
+        vi_sao = vi_sao.replace("_", " ")
         lam = "em bật rồi" if d["cach"] == "tu_lam" else "giờ này nhà hay bật"
         so = f"#{d['id']} " if d.get("id") else ""
         if d.get("id"):

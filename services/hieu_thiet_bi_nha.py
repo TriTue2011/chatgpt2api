@@ -816,6 +816,18 @@ def ngoai_vi_hoc() -> dict[str, dict[str, Any]]:
             and d["khoa"] in hoc}
 
 
+def thoi_quen_hoc() -> dict[str, dict[str, Any]]:
+    """Điều kiện BẬT bot đọc được cho từng mã được học — bỏ câu bị chấm sai và
+    thói quen không có điều kiện bật nào. Tầng xác suất (`du_doan_nha.hoc`) chỉ
+    học theo đây (chủ máy chốt 13/09/2026)."""
+    hoc = set(thiet_bi_hoc())
+    return {d["khoa"]: {"bat": list(d["gia_tri"].get("bat") or []),
+                        "ten_ngoai_vi": dict(d["nhom"].get("ten_ngoai_vi") or {})}
+            for d in dang_hieu_luc()
+            if d["loai_cau_hoi"] == "thoi_quen" and d["ket_qua"] != "sai"
+            and d["khoa"] in hoc and d["gia_tri"].get("bat")}
+
+
 def dang_hieu_luc() -> list[dict[str, Any]]:
     """Mọi kết luận đang hiệu lực, đã giải JSON — cho tầng học và người chấm."""
     with _khoa:
@@ -995,57 +1007,40 @@ def so_do_kich_hoat(*, kem_so_do: bool = True) -> list[dict[str, Any]]:
     """Sơ đồ kích hoạt từng thiết bị học được: NHÂN TỐ CHÍNH ← ĐIỀU KIỆN + NGOẠI VI.
 
     - nhân tố chính: thiết bị được bật (mã học);
-    - ngoại vi: cảm biến/thiết bị đi kèm — điều kiện dạng `bat_<mã>` và các mã
-      khác cùng nhóm vật lý;
-    - điều kiện: lux / nhiệt độ / có người / buổi / mùa… (các khoá còn lại).
-    Chỉ vẽ thứ bot đã kết luận (bỏ câu bị chấm sai), khớp `dieu_kien_hoc`.
+    - điều kiện: điều kiện BẬT trong thói quen bot đọc được (`thoi_quen_hoc`) —
+      đúng thứ tầng xác suất học theo (chủ máy chốt 13/09/2026);
+    - ngoại vi: cảm biến/thiết bị bot chọn theo khu vực (`ngoai_vi_hoc`).
 
-    `kem_so_do=True` thì mỗi mục điều kiện/ngoại vi kèm số đo THẬT (`do`) —
-    mấy % lần bật rơi vào nhãn hay gặp nhất, xem
-    `du_doan_nha.dem_dieu_kien_thiet_bi`.
-
-    NHƯNG phần đo TỐN VÀI GIÂY (dựng lại bối cảnh từng ô 30 phút), nên đường
-    web tách làm hai: `/api/hoc-hoi/so-do` gọi `kem_so_do=False` để sơ đồ hiện
-    NGAY, rồi `/api/hoc-hoi/so-do/do` đo sau và điền vào. Gộp một lượt thì mất
-    47 giây (đo thật 12/09/2026, 13 thiết bị) — trình duyệt bỏ cuộc trước và
-    chủ máy chỉ thấy "chưa có thiết bị nào được học".
+    `kem_so_do=True` thì mỗi điều kiện kèm số đo THẬT (`do`) lấy từ bảng đếm của
+    `du_doan_nha.hoc()`: trong các ô có người bật mà đo được điều kiện đó, mấy %
+    khớp. Phần đo đọc lịch sử 30 ngày nên web gọi riêng (`/api/hoc-hoi/so-do/do`)
+    sau khi sơ đồ đã hiện.
     """
-    from services import boi_canh_nha, du_doan_nha
+    from services import du_doan_nha
+
     ten = _ten_ha()
-    dk = dieu_kien_hoc()
-    thanh_vien: dict[str, list[str]] = {}
-    for d in dang_hieu_luc():
-        if (d["loai_cau_hoi"] == "hoc" and d["ket_qua"] != "sai"
-                and d["gia_tri"].get("hoc")):
-            thanh_vien[d["khoa"]] = sorted(d["nhom"].get("ma") or [])
+    tq = thoi_quen_hoc()
+    nv = ngoai_vi_hoc()
+    bang = du_doan_nha.hoc() if kem_so_do else {}
     ra: list[dict[str, Any]] = []
-    # Bộ nhớ ô DÙNG CHUNG cho mọi thiết bị: 13 thiết bị chỉ chạm 187 ô duy nhất
-    # (đo 12/09/2026), chia sẻ thì tổng còn ~6 giây thay vì cộng dồn từng cái.
-    bo_nho_o: dict[int, dict[str, str]] = {}
     for khoa in thiet_bi_hoc():
-        khoa_dieu_kien = list(dk.get(khoa, []))
-        do_dem = (du_doan_nha.dem_dieu_kien_thiet_bi(
-                      khoa, khoa_dieu_kien, bo_nho_o=bo_nho_o)
-                  if kem_so_do else {})
-        ngoai_vi: list[dict[str, Any]] = []
+        dk_def = (tq.get(khoa) or {}).get("bat") or []
+        ten_nv = (tq.get(khoa) or {}).get("ten_ngoai_vi") or {}
+        dem = (bang.get(khoa) or {}).get("dk") or {}
+        gio = [f"{x['tu']}–{x['den']}" for x in dk_def if x["ma"] == "gio"]
+        muc = ([("gio", f"trong {' hoặc '.join(gio)}")] if gio else []) + [
+            (str(x["ma"]), _dieu_kien_doc(x, ten_nv, ten)) for x in dk_def if x["ma"] != "gio"]
         dieu_kien: list[dict[str, Any]] = []
-        da_them: set[str] = set()
-        for k in khoa_dieu_kien:
-            do = ((do_dem.get(k) or {"nhan_hay_gap": "", "ty_le": 0.0, "mau": 0})
-                  if kem_so_do else None)
-            if k.startswith("bat_"):
-                nv = _nhan(k[len("bat_"):], ten)
-                if nv not in da_them:
-                    da_them.add(nv)
-                    ngoai_vi.append({"khoa": k, "ten": nv, "do": do})
-            else:
-                dieu_kien.append({"khoa": k, "ten": boi_canh_nha.ten_dieu_kien(k), "do": do})
-        for m in thanh_vien.get(khoa, []):
-            if m != khoa:
-                nv = _nhan(m, ten)
-                if nv not in da_them:
-                    da_them.add(nv)
-                    ngoai_vi.append({"khoa": "", "ten": nv, "do": None})
+        for k, chu in muc:
+            do = None
+            if kem_so_do:
+                khop = int((dem.get(f"{k}=khop") or {}).get("bat") or 0)
+                lech = int((dem.get(f"{k}=lech") or {}).get("bat") or 0)
+                do = {"nhan_hay_gap": "khớp", "mau": khop + lech,
+                      "ty_le": round(khop / (khop + lech), 3) if khop + lech else 0.0}
+            dieu_kien.append({"khoa": k, "ten": chu, "do": do})
+        ngoai_vi = [{"khoa": "", "ten": str(x.get("ten") or _nhan(str(x["ma"]), ten)), "do": None}
+                    for x in (nv.get(khoa) or {}).get("ngoai_vi") or []]
         ra.append({"khoa": khoa, "nhan_to_chinh": _nhan(khoa, ten),
                    "ngoai_vi": ngoai_vi, "dieu_kien": dieu_kien})
     return ra

@@ -1,11 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { LoaderCircle, RefreshCw, ArrowLeft, Pencil } from "lucide-react";
+import { LoaderCircle, RefreshCw, ArrowLeft } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { layGet } from "./lib";
-import { SuaDieuKien } from "./sua-dieu-kien";
 
 type Do = { nhan_hay_gap: string; ty_le: number; mau: number } | null;
 type Muc = { khoa: string; ten: string; do: Do };
@@ -27,7 +26,7 @@ function Chip({ m, khoaNut, bangDo, dangDo }: {
       {m.ten}
       {so && so.mau > 0 ? (
         <span className="ml-1 text-muted-foreground">
-          — {so.nhan_hay_gap ? `"${so.nhan_hay_gap}"` : ""} {Math.round(so.ty_le * 100)}% ({so.mau} lần bật)
+          — {so.nhan_hay_gap ? `${so.nhan_hay_gap} ` : ""}{Math.round(so.ty_le * 100)}% ({so.mau} lần bật)
         </span>
       ) : dangDo ? (
         <span className="ml-1 text-muted-foreground">— đang đo…</span>
@@ -43,7 +42,6 @@ export function SoDo() {
   const [bangDo, setBangDo] = useState<BangDo>({});
   const [dangTai, setDangTai] = useState(false);
   const [dangDo, setDangDo] = useState(false);
-  const [dangSua, setDangSua] = useState<string | null>(null);
 
   const tai = useCallback(async () => {
     setDangTai(true);
@@ -74,8 +72,9 @@ export function SoDo() {
       <div className="flex items-center justify-between">
         <p className="text-xs text-muted-foreground">
           Chỉ áp dụng cho <b>thiết bị</b> bot đã học: nhân tố chính (thiết bị được
-          bật) ← điều kiện + ngoại vi đi kèm. Số % là đo THẬT từ lịch sử, không
-          phải bot đoán.
+          bật) ← điều kiện bật trong thói quen bot đọc được + ngoại vi bot chọn theo
+          khu vực. Số % là đo THẬT từ lịch sử: trong các lần có người bật, mấy lần
+          khớp điều kiện. Điều kiện sai thì chấm «hh N sai vì …» để bot đọc lại.
         </p>
         <Button variant="outline" size="sm" onClick={() => void tai()} disabled={dangTai}>
           <RefreshCw className="mr-1 size-3.5" /> Làm mới
@@ -96,10 +95,6 @@ export function SoDo() {
                 </span>
                 <ArrowLeft className="size-3.5 text-muted-foreground" />
                 <span className="text-muted-foreground">điều kiện + ngoại vi:</span>
-                <Button variant="ghost" size="sm" className="h-6"
-                  onClick={() => setDangSua(dangSua === n.khoa ? null : n.khoa)}>
-                  <Pencil className="mr-1 size-3.5" /> Sửa
-                </Button>
               </div>
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {n.dieu_kien.map((d) => (
@@ -108,13 +103,10 @@ export function SoDo() {
                 {n.ngoai_vi.map((v, i) => (
                   <Chip key={v.khoa || `nv-${i}`} m={v} khoaNut={n.khoa} bangDo={bangDo} dangDo={dangDo} />
                 ))}
-                {!n.dieu_kien.length && !n.ngoai_vi.length ? (
-                  <span className="text-muted-foreground">chưa có điều kiện nào</span>
+                {!n.dieu_kien.length ? (
+                  <span className="text-muted-foreground">chưa có thói quen nào — bot im với thiết bị này</span>
                 ) : null}
               </div>
-              {dangSua === n.khoa ? (
-                <SuaDieuKien khoa={n.khoa} onXong={() => { setDangSua(null); void tai(); }} />
-              ) : null}
             </div>
           ))}
           {!ds.length ? (
