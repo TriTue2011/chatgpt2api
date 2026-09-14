@@ -48,6 +48,10 @@ class _CoSo(unittest.TestCase):
             p = patch.object(phat_ha.ha_client, dich, side_effect=gia_tri)
             p.start()
             self.addCleanup(p.stop)
+        # Luồng tự chuyển bài chạy nền: test gọi thẳng `mot_vong`, không bật luồng thật.
+        p = patch("services.youtube_phat.tu_chuyen_bai.dam_bao_chay")
+        p.start()
+        self.addCleanup(p.stop)
         self.cuoc_goi: list[tuple[str, str, dict]] = []
         self.ha_nhan = True
 
@@ -173,11 +177,10 @@ class PhatTest(_CoSo):
         for sai in (1.5, True, "0.3", None):
             with self.assertRaisesRegex(ValueError, "invalid_volume_level"):
                 self.phat_ha.dieu_khien("am_luong", [GOOGLE_HOME["entity_id"]], sai, goi=self.goi)
-        with patch.object(self.core, "stop") as dung:
-            self.phat_ha.dieu_khien("dung_rieng", [LG["entity_id"]], goi=self.goi)
-            dung.assert_not_called()  # tắt riêng một loa: phiên chung còn nguyên
-            self.phat_ha.dieu_khien("dung", [LG["entity_id"]], goi=self.goi)
-        dung.assert_called_once_with()
+        # Dừng loa nào thì loa đó rời phiên; loa khác trong phiên vẫn phát.
+        self.core.record_session("http", "https://nhac.lan/a.mp3", output_entity_ids=[LG["entity_id"], GOOGLE_HOME["entity_id"]])
+        self.phat_ha.dieu_khien("dung", [LG["entity_id"]], goi=self.goi)
+        self.assertEqual([[GOOGLE_HOME["entity_id"]]], [p["output_entity_ids"] for p in self.phat_ha.cac_phien()])
         with self.assertRaisesRegex(ValueError, "lenh_khong_ho_tro"):
             self.phat_ha.dieu_khien("tat_nguon", [LG["entity_id"]], goi=self.goi)
         # Loa nhập vào video đang xem trên trang thì tua tới chỗ video.
@@ -187,6 +190,93 @@ class PhatTest(_CoSo):
         for sai in (-1, None, "10", True):
             with self.assertRaisesRegex(ValueError, "invalid_seek_position"):
                 self.phat_ha.dieu_khien("tua", [GOOGLE_HOME["entity_id"]], vi_tri=sai, goi=self.goi)
+
+
+class PhienTheoNhomLoaTest(_CoSo):
+    """Mỗi loa một bài / nhiều loa chung bài, bài kế theo phiên, dừng, bỏ loa, tự chuyển bài."""
+
+    def _luong(self, nguon, ma):
+        return ma, {"content_type": "audio/mp4"}
+
+    def setUp(self) -> None:
+        super().setUp()
+        ket_qua = [{"source": "youtube", "kind": "video", "id": i, "url": f"https://www.youtube.com/watch?v={i}",
+                    "title": f"Bai {n}", "channel": "K", "duration": 200}
+                   for n, i in enumerate(["dQw4w9WgXcQ", "M7lc1UVf-VE", "llPioQNSBLY"], 1)]
+        with patch("services.youtube_phat.dich_vu.search_youtube", return_value=ket_qua):
+            self.core.search("youtube", "x", 3)
+        self.urls = [k["url"] for k in ket_qua]
+        p = patch.object(self.core, "prepare_stream", side_effect=self._luong)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_moi_loa_mot_bai_chuyen_bai_dung_va_bo_loa(self) -> None:
+        a, b = GOOGLE_HOME["entity_id"], FPT["entity_id"]
+        self.phat_ha.phat("youtube", self.urls[0], [a], "http://x/yt", goi=self.goi)
+        pb = self.phat_ha.phat("youtube", self.urls[1], [b], "http://x/yt", goi=self.goi)["phien"]
+        phien = {tuple(p["output_entity_ids"]): p for p in self.phat_ha.cac_phien()}
+        self.assertEqual({(a,): "Bai 1", (b,): "Bai 2"}, {k: v["item"]["title"] for k, v in phien.items()})
+        self.assertEqual({"c2a"}, {p["controller"] for p in phien.values()})
+
+        self.cuoc_goi.clear()
+        self.phat_ha.chuyen_bai(pb["session_id"], 1, goi=self.goi)
+        self.assertEqual([b], [d["entity_id"] for _, s, d in self.cuoc_goi if s == "play_media"])
+        self.assertEqual("Bai 3", {tuple(p["output_entity_ids"]): p for p in self.phat_ha.cac_phien()}[(b,)]["item"]["title"])
+        with self.assertRaisesRegex(ValueError, "het_hang_doi"):
+            self.phat_ha.chuyen_bai(pb["session_id"], 1, goi=self.goi)
+
+        # Chung một bài rồi bỏ một loa: loa kia vẫn trong phiên.
+        chung = self.phat_ha.phat("youtube", self.urls[0], [a, b], "http://x/yt", goi=self.goi)["phien"]
+        self.assertEqual([sorted([a, b])], [sorted(p["output_entity_ids"]) for p in self.phat_ha.cac_phien()])
+        self.phat_ha.bo_loa([b], goi=self.goi)
+        self.assertEqual([[a]], [p["output_entity_ids"] for p in self.phat_ha.cac_phien()])
+        # Cho b nghe cùng: chỉ b nhận bài, a giữ trong phiên.
+        self.cuoc_goi.clear()
+        self.phat_ha.phat("youtube", self.urls[0], [b], "http://x/yt", session_id=chung["session_id"], join_ids=[a], goi=self.goi)
+        self.assertEqual([b], [d["entity_id"] for _, s, d in self.cuoc_goi if s == "play_media"])
+        self.assertEqual([sorted([a, b])], [sorted(p["output_entity_ids"]) for p in self.phat_ha.cac_phien()])
+        self.cuoc_goi.clear()
+        self.phat_ha.dung_phien(chung["session_id"], goi=self.goi)
+        self.assertEqual([], self.phat_ha.cac_phien())
+        # FPT Box mẫu (131968) không có bit STOP: chỉ loa dừng được mới nhận media_stop.
+        self.assertEqual([a], [d["entity_id"] for _, s, d in self.cuoc_goi if s == "media_stop"])
+
+    def test_tu_chuyen_bai_khi_loa_het_bai_khong_khi_dung_giua_bai(self) -> None:
+        from services.youtube_phat import tu_chuyen_bai
+
+        tu_chuyen_bai._theo_doi.clear()
+        a = GOOGLE_HOME["entity_id"]
+        phien = self.phat_ha.phat("youtube", self.urls[0], [a], "http://x/yt", goi=self.goi)["phien"]
+        trang_thai = {"trang_thai": "playing", "vi_tri": 190.0, "thoi_luong": 200.0}
+
+        with patch.object(self.phat_ha, "danh_sach", side_effect=lambda dung_bo_dem=True: [
+                {"entity_id": a, "youtube": "am_thanh", **trang_thai}]), \
+             patch.object(self.phat_ha, "chuyen_bai") as chuyen:
+            self.assertEqual([], tu_chuyen_bai.mot_vong(100.0))
+            trang_thai.update(trang_thai="idle")
+            self.assertEqual([phien["session_id"]], tu_chuyen_bai.mot_vong(105.0))
+            chuyen.assert_called_once_with(phien["session_id"], 1)
+            # Dừng tay giữa bài: không chuyển.
+            chuyen.reset_mock()
+            tu_chuyen_bai._theo_doi.clear()
+            trang_thai.update(trang_thai="playing", vi_tri=40.0)
+            tu_chuyen_bai.mot_vong(200.0)
+            trang_thai.update(trang_thai="idle")
+            self.assertEqual([], tu_chuyen_bai.mot_vong(203.0))
+            chuyen.assert_not_called()
+
+    def test_tivi_mo_youtube_goc_khong_lam_loa_dan(self) -> None:
+        from services.youtube_phat import tu_chuyen_bai
+
+        tu_chuyen_bai._theo_doi.clear()
+        phien = self.phat_ha.phat("youtube", self.urls[0], [LG["entity_id"]], "http://x/yt", goi=self.goi)["phien"]
+        with patch.object(self.phat_ha, "danh_sach", return_value=[
+                {"entity_id": LG["entity_id"], "youtube": "goc", "trang_thai": "idle", "vi_tri": None, "thoi_luong": None}]), \
+             patch.object(self.phat_ha, "chuyen_bai") as chuyen:
+            tu_chuyen_bai.mot_vong(1.0)
+            tu_chuyen_bai.mot_vong(2.0)
+        chuyen.assert_not_called()
+        self.assertTrue(phien["session_id"])
 
 
 class ApiTabTest(_CoSo):

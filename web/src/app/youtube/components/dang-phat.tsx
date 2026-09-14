@@ -1,17 +1,21 @@
 "use client";
 
 /**
- * Khối "Đang phát" — ảnh bìa hoặc video, tên bài, nút điều khiển, cỡ xem.
+ * Khối "Đang phát" — bài của loa đang xem (hoặc video), tiến độ, nút điều khiển, cỡ xem.
  *
- * Chủ máy 14/09/2026: "Khi xem video thì mục đang phát cũng là nó thì bỏ đi",
- * "nút điều khiển đang to", "khi xem video thì nút đó lại không sử dụng được",
- * "gộp các phần giống nhau lại". Video thay chỗ ảnh bìa; một hàng nút điều khiển
- * cả loa lẫn video. Khung iframe luôn nằm cùng một chỗ trong cây React (đổi cỡ
- * chỉ đổi lớp CSS), nên đổi Vừa / Rạp / Thu nhỏ không làm video nạp lại.
+ * Chủ máy 14/09/2026: "khi xem video thì mục đang phát cũng là nó thì bỏ đi",
+ * "nút điều khiển đang to", "mở mỗi bài 1 loa thì làm sao xem nó phát đến đâu,
+ * video đến đâu khi tích vào mỗi loa". Video thay chỗ ảnh bìa; thanh tiến độ theo
+ * loa dẫn của phiên đang xem; nhóm loa khác hiện thành nút để chuyển sang xem.
+ * Khung iframe luôn nằm cùng một chỗ trong cây React (đổi cỡ chỉ đổi lớp CSS), nên
+ * đổi Vừa / Rạp / Thu nhỏ không làm video nạp lại.
  */
 
-import { ListMusic, LoaderCircle, Maximize, Maximize2, Minimize2, MonitorPlay, Music2, Pause, PictureInPicture2, Play, RectangleHorizontal, SkipBack, SkipForward, Square, X } from "lucide-react";
-import { useRef } from "react";
+import {
+  ListMusic, LoaderCircle, Maximize, Maximize2, Minimize2, MonitorPlay, Music2, Pause, PictureInPicture2, Play,
+  RectangleHorizontal, SkipBack, SkipForward, Speaker, Square, Users, Volume2, VolumeX, X,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -19,11 +23,14 @@ import { cn } from "@/lib/utils";
 import { type BaiHat, type Phien, TEN_NGUON, type ThietBi, thoiLuong } from "./lib";
 import type { CheDoXem, VideoNhung } from "./video-nhung";
 
-export type VideoMo = { bai: BaiHat; src: string; theoLoa: boolean };
+export type VideoMo = { bai: BaiHat; src: string; theoLoa: boolean; ngheTrenMay: boolean };
+export type ViTri = { giay: number; tong: number } | null;
 
 type Props = {
   className?: string;
   phien: Phien | null;
+  cacPhienKhac: Phien[];
+  ngheCungTen: string[];
   thietBi: ThietBi[];
   video: VideoMo | null;
   nhung: VideoNhung;
@@ -32,11 +39,15 @@ type Props = {
   dongVideo: () => void;
   dangChay: boolean;
   dangGui: boolean;
+  layViTri: () => ViTri;
   truoc: (() => void) | null;
   tiep: (() => void) | null;
   phatTamDung: (() => void) | null;
   dung: (() => void) | null;
   xemTaiDay: (() => void) | null;
+  chonNhom: (p: Phien) => void;
+  ngheCung: (() => void) | null;
+  doiNgheTrenMay: () => void;
 };
 
 function NutPhu({ nhan, Icon, onClick, chiManHinhRong = false }: { nhan: string; Icon: typeof X; onClick: () => void; chiManHinhRong?: boolean }) {
@@ -55,6 +66,35 @@ function NutPhu({ nhan, Icon, onClick, chiManHinhRong = false }: { nhan: string;
   );
 }
 
+/** Thanh tiến độ tự nhích mỗi giây, đọc vị trí qua `layViTri`. */
+function TienDo({ layViTri }: { layViTri: () => ViTri }) {
+  const [vt, setVt] = useState<ViTri>(null);
+  const lay = useRef(layViTri);
+  useEffect(() => {
+    lay.current = layViTri;
+  });
+  useEffect(() => {
+    const cap = () => setVt(lay.current());
+    const dau = setTimeout(cap, 0);
+    const hen = setInterval(cap, 1000);
+    return () => {
+      clearTimeout(dau);
+      clearInterval(hen);
+    };
+  }, []);
+  if (!vt) return null;
+  const giay = vt.tong ? Math.min(vt.giay, vt.tong) : vt.giay;
+  return (
+    <div className="mt-2 grid grid-cols-[auto_1fr_auto] items-center gap-2 text-[11px] tabular-nums text-muted-foreground" aria-label="Tiến độ">
+      <span>{thoiLuong(giay) || "0:00"}</span>
+      <div className="h-1 overflow-hidden rounded-full bg-[var(--muted)]">
+        <div className="h-full rounded-full bg-[var(--primary)] transition-[width] duration-1000 ease-linear" style={{ width: vt.tong ? `${(giay / vt.tong) * 100}%` : "0%" }} />
+      </div>
+      <span>{thoiLuong(vt.tong) || "–"}</span>
+    </div>
+  );
+}
+
 export function DangPhat(p: Props) {
   const { video, nhung, cheDo } = p;
   const toanManHinh = useRef<HTMLDivElement>(null);
@@ -67,8 +107,8 @@ export function DangPhat(p: Props) {
 
   const meta = bai
     ? video
-      ? [bai.channel || bai.artist, thoiLuong(bai.duration), video.theoLoa && noiPhat.length ? `Tiếng ra ${noiPhat.join(", ")}` : "Xem trên trang"]
-      : [bai.artist || bai.channel, thoiLuong(bai.duration), TEN_NGUON[bai.source], noiPhat.length ? `Trên ${noiPhat.join(", ")}` : ""]
+      ? [bai.channel || bai.artist, video.theoLoa && noiPhat.length ? `Tiếng ra ${noiPhat.join(", ")}${video.ngheTrenMay ? " và máy này" : ""}` : "Xem trên trang"]
+      : [bai.artist || bai.channel, TEN_NGUON[bai.source], noiPhat.length ? `Trên ${noiPhat.join(", ")}` : ""]
     : [];
 
   const moToanManHinh = () => {
@@ -92,7 +132,7 @@ export function DangPhat(p: Props) {
         )}
         {!video && (
           <span className="absolute left-3 top-3 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur">
-            {bai && p.phien?.state === "playing" ? (p.dangChay ? "Đang phát" : "Đã gửi") : "Chưa phát"}
+            {bai ? (p.dangChay ? "Đang phát" : "Đã gửi") : "Chưa phát"}
           </span>
         )}
         {!video && hang && hang.items.length > 1 && hang.index >= 0 && (
@@ -150,8 +190,9 @@ export function DangPhat(p: Props) {
       <div className="px-3 pb-2 pt-3">
         <div className="line-clamp-2 text-sm font-semibold leading-snug">{bai?.title || "Chưa có bài nào"}</div>
         <div className="mt-0.5 truncate text-xs text-muted-foreground">
-          {bai ? meta.filter(Boolean).join(" · ") : "Chọn loa rồi bấm ▶ một bài, hoặc bấm ▶ khi chưa chọn loa để xem video ngay trên trang."}
+          {bai ? meta.filter(Boolean).join(" · ") : "Tích loa rồi bấm ▶ một bài, hoặc bấm ▶ khi chưa tích loa để xem video ngay trên trang."}
         </div>
+        {bai && <TienDo key={`${p.phien?.session_id ?? "video"}:${bai.id}`} layViTri={p.layViTri} />}
 
         <div className="mt-2 flex items-center justify-between gap-1">
           <div className="flex items-center gap-1">
@@ -172,12 +213,19 @@ export function DangPhat(p: Props) {
             <Button type="button" variant="ghost" size="icon" className="size-9 rounded-full" aria-label="Bài tiếp" title="Bài tiếp" disabled={!p.tiep || p.dangGui} onClick={() => p.tiep?.()}>
               <SkipForward className="size-4" />
             </Button>
-            <Button type="button" variant="ghost" size="icon" className="size-9 rounded-full text-red-600 hover:text-red-600 dark:text-red-400" aria-label="Dừng" title="Dừng" disabled={!p.dung} onClick={() => p.dung?.()}>
+            <Button type="button" variant="ghost" size="icon" className="size-9 rounded-full text-red-600 hover:text-red-600 dark:text-red-400" aria-label="Dừng" title="Dừng các loa đang tích" disabled={!p.dung} onClick={() => p.dung?.()}>
               <Square className="size-3.5 fill-current" />
             </Button>
           </div>
           {video && (
             <div className="flex items-center">
+              {video.theoLoa && (
+                <NutPhu
+                  nhan={video.ngheTrenMay ? "Tắt tiếng trên máy này (chỉ nghe loa)" : "Nghe cả trên máy này"}
+                  Icon={video.ngheTrenMay ? Volume2 : VolumeX}
+                  onClick={p.doiNgheTrenMay}
+                />
+              )}
               {cheDo !== "nho" && <NutPhu nhan="Thu nhỏ (khung nổi)" Icon={PictureInPicture2} onClick={() => p.doiCheDo("nho")} />}
               {cheDo === "rap" ? (
                 <NutPhu nhan="Cỡ vừa" Icon={Minimize2} onClick={() => p.doiCheDo("vua")} chiManHinhRong />
@@ -189,6 +237,42 @@ export function DangPhat(p: Props) {
             </div>
           )}
         </div>
+
+        {(p.ngheCung || p.cacPhienKhac.length > 0) && (
+          <div className="mt-2 flex flex-wrap gap-1.5 border-t border-[var(--border)] pt-2">
+            {p.ngheCung && (
+              <button
+                type="button"
+                onClick={p.ngheCung}
+                className="flex max-w-full items-center gap-1.5 rounded-full border border-dashed border-[var(--primary)] px-2.5 py-1 text-xs font-medium text-[var(--primary)]"
+              >
+                <Users className="size-3.5 shrink-0" />
+                <span className="truncate">Cho {p.ngheCungTen.join(", ")} nghe cùng</span>
+              </button>
+            )}
+            {p.cacPhienKhac.map((khac) => {
+              const ten = khac.output_entity_ids.map((id) => tenTheoMa.get(id) ?? id).join(", ");
+              const hinh = khac.item && /^https?:\/\//.test(khac.item.thumbnail || "") ? khac.item.thumbnail : "";
+              return (
+                <button
+                  key={khac.session_id}
+                  type="button"
+                  onClick={() => p.chonNhom(khac)}
+                  title={`${ten}: ${khac.item?.title ?? ""}`}
+                  className="flex max-w-full items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--muted)] py-0.5 pl-0.5 pr-2.5 text-xs hover:border-[var(--primary)]"
+                >
+                  {hinh ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={hinh} alt="" className="size-5 shrink-0 rounded-full object-cover" />
+                  ) : (
+                    <Speaker className="size-4 shrink-0 text-muted-foreground" />
+                  )}
+                  <span className="truncate">{ten} · {khac.item?.title}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
     </section>
   );

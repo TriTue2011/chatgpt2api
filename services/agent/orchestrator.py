@@ -676,7 +676,7 @@ _TAT_PHAT_LOA = re.compile(
     re.IGNORECASE | re.DOTALL)
 
 # Câu có chữ "loa" nhưng KHÔNG phải xin đọc thông báo:
-#   · mở nhạc → `play_music_on_speaker` lo, đừng giành
+#   · mở nhạc → `mo_nhac` / `play_music_on_speaker` lo, đừng giành
 #   · quản lý sổ loa (thêm/xoá/kiểm tra/danh sách), hỏi có loa nào
 _KHONG_PHAI_PHAT_LOA = re.compile(
     r"(nhạc|nhac|bài\s+hát|bai\s+hat|lofi|karaoke|"
@@ -1581,8 +1581,10 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
      "quyền này — cứ gọi tool, đừng trả lời suông."),
     ("tts_speaker", _KW_LOA,
      "- Loa thật trong nhà → speak_to_speaker (đọc một câu ra loa ngay); "
-     "play_music_on_speaker (mở nhạc tìm trên YouTube, vd 'mở lofi', 'phát "
-     "bài … trên loa R1'); announce_on_speaker (đọc ra loa — KHÔNG nhắc giờ "
+     "mo_nhac (mở nhạc YouTube/Zing ra loa, tivi Home Assistant: hiện 10 bài "
+     "rồi chọn loa); dieu_khien_nhac (tạm dừng/tiếp/bài kế/bài trước/dừng); "
+     "nhac_dang_phat (loa nào đang phát bài gì, tới đâu); "
+     "play_music_on_speaker (chỉ loa R1); announce_on_speaker (đọc ra loa — KHÔNG nhắc giờ "
      "thì đọc NGAY, có nêu mốc giờ/lịch lặp thì truyền `when`)."),
     ("office", _KW_OFFICE,
      "- Tài liệu Word/Excel/PowerPoint → office_files (liệt kê), office_view "
@@ -3064,6 +3066,30 @@ def _orchestrate_locked(user_text: str, user_id: str,
             _persist_history(user_id, hist)
             _journal(str(out_l.get("text") or ""), status="loa_fastpath")
             return out_l
+
+    # Nút menu mở nhạc (`nhac_chat` dựng: chọn bài → chọn loa). Nút mang đủ bài và
+    # loa nên chạy thẳng capability như nút menu loa ở trên: bấm nút đã là chọn.
+    from services.youtube_phat import nhac_chat
+
+    _nut_nhac = nhac_chat.doc_nut(user_text)
+    if _nut_nhac and (allow is None or "tts_speaker" in allow):
+        if approval_gate.is_blocked("mo_nhac", risk="change"):
+            return {"text": "Chế độ chỉ-đọc: em không được phát ra loa ạ."}
+        try:
+            _cap_nhac = caps.get("mo_nhac")
+            _kq_nhac = (_execute(_cap_nhac, dict(_nut_nhac), user_id,
+                                 user_text=user_text, is_admin=is_admin)
+                        if _cap_nhac else None)
+        except Exception as exc:
+            logger.warning({"event": "agent_nut_nhac_loi", "error": str(exc)[:150]})
+            _kq_nhac = None
+        if _kq_nhac and str(_kq_nhac.get("text") or "").strip():
+            logger.info({"event": "agent_nut_nhac", "loa": _nut_nhac.get("loa") or ""})
+            out_n = _finalize(user_id, _kq_nhac, ap_loi_dan=user_text)
+            hist.append({"role": "assistant", "content": out_n.get("text") or ""})
+            _persist_history(user_id, hist)
+            _journal(str(out_n.get("text") or ""), status="nhac_fastpath")
+            return out_n
 
     # 1.49) Câu NGƯỜI gõ xin đọc thông báo ra loa → xử lý bằng CODE, không nhờ
     # model định tuyến: thiếu thông tin thì hiện menu chọn loa, đủ thông tin thì

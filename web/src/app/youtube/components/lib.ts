@@ -18,6 +18,8 @@ export type ThietBi = {
   tua: boolean;
   /** Giây đang phát, máy chủ tính tới lúc trả lời; null nếu loa không báo. */
   vi_tri: number | null;
+  /** Độ dài bài loa báo (media_duration), giây. */
+  thoi_luong: number | null;
   tieu_de: string;
   nghe_si: string;
   an: boolean;
@@ -40,7 +42,10 @@ export type BaiHat = {
   media_content_type?: string;
 };
 
+/** Một phiên = một nhóm loa phát chung một bài (mỗi loa thuộc một phiên). */
 export type Phien = {
+  session_id: string;
+  controller?: string;
   revision: number;
   state: string;
   item: BaiHat | null;

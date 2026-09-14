@@ -32,6 +32,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from api.support import require_admin, resolve_image_base_url
 from services.ingress_guard import BodyTooLarge, read_json_limited
 from services.youtube_phat import dich_vu, phat_ha
+from services.youtube_phat.thong_bao import THONG_BAO as _THONG_BAO
 from services.youtube_phat.search import SearchUnavailableError
 from services.youtube_phat.streaming import (
     InvalidStreamTokenError,
@@ -42,7 +43,7 @@ from utils.log import logger
 
 TIEN_TO = "/yt"
 
-_KHA_NANG = ["history", "play", "search", "session", "status", "stop",
+_KHA_NANG = ["history", "play", "search", "session", "sessions", "status", "stop",
              "youtube_stream", "zing_stream"]
 
 
@@ -114,11 +115,11 @@ def create_router() -> APIRouter:
         if (loi := _xac_thuc(authorization)) is not None:
             return loi
         c = dich_vu.core()
-        session = c.get_session()
+        session, sessions = c.get_sessions()
         return _json(200, {
             "success": True, "api_version": dich_vu.API_VERSION, "app_version": dich_vu.APP_VERSION,
             "state": session["state"], "item": session["item"], "session": session,
-            "history_count": len(c.load_history()),
+            "sessions": sessions, "history_count": len(c.load_history()),
         })
 
     @router.get(f"{I}/history")
@@ -134,13 +135,18 @@ def create_router() -> APIRouter:
             return loi
         try:
             expected_revision = None
+            session_id = None
             if int(request.headers.get("content-length") or "0"):
                 payload = await _doc_json(request, 256)
                 expected_revision = payload.get("expected_revision")
-                if (isinstance(expected_revision, bool) or not isinstance(expected_revision, int)
+                session_id = payload.get("session_id") or None
+                if expected_revision is not None and (
+                        isinstance(expected_revision, bool) or not isinstance(expected_revision, int)
                         or expected_revision < 0):
                     raise ValueError("invalid_session_revision")
-            result = dich_vu.core().stop(expected_revision)
+                if expected_revision is None and session_id is None:
+                    raise ValueError("invalid_session_revision")
+            result = dich_vu.core().stop(expected_revision, session_id)
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
             return _json(400, {"error": "invalid_session_revision"})
         session = result["session"]
@@ -158,12 +164,15 @@ def create_router() -> APIRouter:
                 dich_vu.core().record_session, source, payload.get("target"),
                 output_entity_ids=payload.get("output_entity_ids"),
                 media_content_type=payload.get("media_content_type") or "",
-                volume_level=payload.get("volume_level"))
+                volume_level=payload.get("volume_level"),
+                session_id=payload.get("session_id") or None,
+                controller=payload.get("controller") or "",
+                auto_advance=payload.get("auto_advance") is not False)
         except ValueError as error:
             ma = str(error)
             if ma == "unverified_zing_target":
                 return _json(403, {"error": ma})
-            if ma not in {"invalid_http_audio_target", "invalid_output_entity_ids",
+            if ma not in {"invalid_http_audio_target", "invalid_output_entity_ids", "invalid_session_id",
                           "invalid_volume_level", "invalid_youtube_target",
                           "unsupported_session_source"}:
                 ma = "invalid_request"
@@ -171,6 +180,18 @@ def create_router() -> APIRouter:
         except (AttributeError, json.JSONDecodeError, UnicodeDecodeError):
             return _json(400, {"error": "invalid_request"})
         return _json(200, {"success": True, "session": ket_qua})
+
+    @router.post(f"{I}/session/outputs")
+    async def session_outputs(request: Request, authorization: str | None = Header(default=None)):
+        if (loi := _xac_thuc(authorization)) is not None:
+            return loi
+        try:
+            payload = await _doc_json(request, 4096)
+            ket_qua = dich_vu.core().set_session_outputs(payload.get("session_id"), payload.get("output_entity_ids"))
+        except ValueError as error:
+            ma = str(error) if str(error) in {"invalid_session_id", "invalid_output_entity_ids"} else "invalid_request"
+            return _json(400, {"error": ma})
+        return _json(200, {"success": True, **ket_qua})
 
     @router.post(f"{I}/stream")
     async def stream(request: Request, authorization: str | None = Header(default=None)):
@@ -326,7 +347,8 @@ def create_router() -> APIRouter:
         except (OSError, RuntimeError, ValueError) as exc:
             logger.warning({"event": "youtube_phat_thiet_bi_loi", "loi": str(exc)[:160]})
             return _loi("ha_khong_doc_duoc")
-        return {"ok": True, "items": items, "phien": dich_vu.core().get_session()}
+        return {"ok": True, "items": items, "phien": dich_vu.core().get_session(),
+                "cac_phien": phat_ha.cac_phien()}
 
     @router.post("/api/youtube-phat/an")
     async def an_thiet_bi(request: Request, authorization: str | None = Header(default=None)):
@@ -359,7 +381,9 @@ def create_router() -> APIRouter:
             ket_qua = await asyncio.to_thread(
                 phat_ha.phat, str(payload.get("source") or "").lower(), str(payload.get("target") or ""),
                 payload.get("entity_ids"), url_web(request),
-                media_content_type=payload.get("media_content_type") or None)
+                media_content_type=payload.get("media_content_type") or None,
+                session_id=payload.get("session_id") or None,
+                join_ids=payload.get("join_ids") if isinstance(payload.get("join_ids"), list) else None)
         except StreamUnavailableError:
             return _loi("stream_unavailable")
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as error:
@@ -368,6 +392,35 @@ def create_router() -> APIRouter:
             logger.warning({"event": "youtube_phat_phat_loi", "loi": str(exc)[:160]})
             return _loi("ha_khong_doc_duoc")
         return {"ok": True, **ket_qua}
+
+    async def _phien_lenh(request: Request, lam) -> dict:
+        try:
+            payload = await _doc_json(request, 4096)
+            ket_qua = await asyncio.to_thread(lam, payload)
+        except StreamUnavailableError:
+            return _loi("stream_unavailable")
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as error:
+            return _loi(str(error))
+        except (OSError, RuntimeError) as exc:
+            logger.warning({"event": "youtube_phat_phien_loi", "loi": str(exc)[:160]})
+            return _loi("ha_khong_doc_duoc")
+        return {"ok": True, "ket_qua": ket_qua, "cac_phien": phat_ha.cac_phien()}
+
+    @router.post("/api/youtube-phat/chuyen-bai")
+    async def chuyen_bai(request: Request, authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        base = url_web(request)
+        return await _phien_lenh(request, lambda p: phat_ha.chuyen_bai(p.get("session_id"), p.get("buoc"), base))
+
+    @router.post("/api/youtube-phat/dung-phien")
+    async def dung_phien(request: Request, authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        return await _phien_lenh(request, lambda p: phat_ha.dung_phien(p.get("session_id")))
+
+    @router.post("/api/youtube-phat/bo-loa")
+    async def bo_loa(request: Request, authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        return await _phien_lenh(request, lambda p: phat_ha.bo_loa(p.get("entity_ids")))
 
     @router.post("/api/youtube-phat/dieu-khien")
     async def dieu_khien(request: Request, authorization: str | None = Header(default=None)):
@@ -386,32 +439,6 @@ def create_router() -> APIRouter:
     return router
 
 
-# Mã lỗi → câu cho chủ máy đọc trên tab YouTube (web hiện nguyên câu này).
-_THONG_BAO = {
-    "url_lan_khong_hop_le": "Địa chỉ LAN phải dạng http://IP:cổng, không kèm đường dẫn.",
-    "ha_khong_doc_duoc": "Không đọc được Home Assistant — kiểm tra kết nối HA trong Cài đặt.",
-    "invalid_target_entity": "Thiết bị không hợp lệ.",
-    "invalid_target_entities": "Hãy chọn từ 1 tới 16 thiết bị.",
-    "invalid_search_query": "Nhập từ khoá (tối đa 120 ký tự) hoặc dán link YouTube.",
-    "invalid_search_source": "Nguồn tìm kiếm không hỗ trợ.",
-    "search_unavailable": "Không tìm được lúc này, thử lại sau.",
-    "stream_unavailable": "Không lấy được luồng nhạc của bài này.",
-    "unsupported_source": "Nguồn phát không hỗ trợ.",
-    "invalid_youtube_target": "Link hoặc mã YouTube không hợp lệ.",
-    "invalid_zing_target": "Link Zing MP3 không hợp lệ.",
-    "unverified_zing_target": "Bài Zing này đã hết hạn tìm kiếm — tìm lại rồi phát.",
-    "invalid_http_audio_target": "URL phải là file âm thanh trực tiếp (MP3, AAC, FLAC, OGG, HLS).",
-    "youtube_audio_requires_video": "Loa chỉ phát được một video, không phát cả danh sách.",
-    "webos_playlist_requires_video": "Tivi LG chỉ mở được một video, không mở cả danh sách.",
-    "cast_playlist_requires_video": "Tivi Cast chỉ mở được một video, không mở cả danh sách.",
-    "khong_co_thiet_bi_phat_duoc": "Không thiết bị nào đã chọn đang trực tuyến và nhận phát nhạc.",
-    "ha_tu_choi": "Home Assistant không nhận lệnh — thiết bị có thể đang tắt.",
-    "lenh_khong_ho_tro": "Lệnh điều khiển không hỗ trợ.",
-    "invalid_volume_level": "Âm lượng phải từ 0 tới 100%.",
-    "invalid_seek_position": "Vị trí tua không hợp lệ.",
-    "invalid_request": "Yêu cầu không hợp lệ.",
-    "public_base_url_required": "Chưa có địa chỉ LAN cho loa tải nhạc.",
-}
 
 
 def _loi(ma: str) -> dict:

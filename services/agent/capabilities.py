@@ -185,7 +185,7 @@ def _ask_media_provider(prompt: str, cap: str, *, verb: str, emoji: str) -> dict
     short = prompt if len(prompt) <= 60 else prompt[:59] + "…"
     lines = [f'{emoji} Anh/chị muốn {verb} "{short}" bằng model nào ạ?', "<<<ASK>>>",
              f"Mặc định (nhánh đang cài) | {verb} bằng mặc định: {prompt}"]
-    for mid in models:  # ask_choices tự cắt tối đa 8 lựa chọn
+    for mid in models:  # ask_choices tự cắt tối đa 10 lựa chọn
         lines.append(f"{_short_model_label(mid)} | {verb} bằng model {mid}: {prompt}")
     lines.append("<<<END>>>")
     return {"text": "\n".join(lines), "deliver_now": True}
@@ -776,7 +776,7 @@ def _ask_video_provider(prompt: str) -> dict:
     lines = [f'🎬 Anh/chị muốn tạo video "{short}" bằng model nào ạ? (giá tham khảo mỗi video)',
              "<<<ASK>>>",
              f"Mặc định (nhánh AI Video) | tạo video bằng mặc định: {prompt}"]
-    for mid in models:  # ask_choices tự cắt tối đa 8 lựa chọn
+    for mid in models:  # ask_choices tự cắt tối đa 10 lựa chọn
         lines.append(f"{_short_model_label(mid)} — {_nhan_gia_video(mid)} | "
                      f"tạo video bằng model {mid}: {prompt}")
     lines.append("<<<END>>>")
@@ -3873,6 +3873,10 @@ def con_thieu_thong_tin(name: str, args: dict, user_text: str = "") -> bool:
         if a.get("volume") not in (None, "") and _nguoi_co_neu_am_luong(user_text):
             return False
         return True
+    if str(name or "") == "mo_nhac":
+        # Chưa đủ bài + loa thì handler chỉ trả MENU chọn bài / chọn loa.
+        a = args if isinstance(args, dict) else {}
+        return not (str(a.get("bai") or "").strip() and str(a.get("loa") or "").strip())
     return False
 
 
@@ -4024,6 +4028,36 @@ def _h_play_music_on_speaker(args: dict, ctx: dict) -> dict:
         return {"text": f"Em mở nhạc không được ạ 😥 ({str(exc)[:120]})."}
     title = str((song or {}).get("title") or query)
     return {"text": f"[đang phát trên {chosen.get('name')}: {title}]"}
+
+
+def _loa_ha_duoc_phep(ctx: dict) -> set[str] | None:
+    """entity_id loa HA mà khung chat này được phát; None = mọi loa (chưa lọc)."""
+    from services.voice import permissions as vperm
+
+    plat, chat_id = _speaker_scope(ctx)
+    if vperm.ALL_SPEAKERS in vperm.allowed_speaker_ids(plat, "", chat_id):
+        return None
+    return {str(r["entity_id"]) for r in vperm.visible_speakers(plat, "", chat_id)
+            if r.get("kind") == "ha" and r.get("entity_id")}
+
+
+def _h_mo_nhac(args: dict, ctx: dict) -> dict:
+    """Mở nhạc YouTube/Zing ra loa/tivi HA: 10 bài → chọn loa → phát."""
+    from services.youtube_phat import nhac_chat
+
+    return nhac_chat.mo_nhac(args if isinstance(args, dict) else {}, _loa_ha_duoc_phep(ctx))
+
+
+def _h_dieu_khien_nhac(args: dict, ctx: dict) -> dict:
+    from services.youtube_phat import nhac_chat
+
+    return nhac_chat.dieu_khien(args if isinstance(args, dict) else {}, _loa_ha_duoc_phep(ctx))
+
+
+def _h_nhac_dang_phat(args: dict, ctx: dict) -> dict:
+    from services.youtube_phat import nhac_chat
+
+    return nhac_chat.dang_phat(_loa_ha_duoc_phep(ctx))
 
 
 _LOA_MUC_AM = (30, 50, 70, 100)
@@ -6320,9 +6354,9 @@ CAPABILITIES: dict[str, Capability] = {
         name="play_music_on_speaker", risk=CHANGE, handler=_h_play_music_on_speaker,
         emoji="🎵", label="Mở nhạc ra loa R1",
         description=(
-            "Mở NHẠC theo yêu cầu (tìm trên YouTube) trên loa R1. Dùng khi người "
-            "dùng nói 'mở nhạc…', 'bật nhạc không lời', 'phát bài … trên loa R1', "
-            "'mở lofi'. Có thể kèm âm lượng. Không rõ loa R1 nào thì cứ gọi, em hỏi lại."
+            "Mở NHẠC trên loa R1 (AiboxPlus) — CHỈ khi người dùng nói rõ loa R1. "
+            "Loa/tivi Home Assistant (Google Home, Cast, tivi) thì dùng mo_nhac. "
+            "Có thể kèm âm lượng. Không rõ loa R1 nào thì cứ gọi, em hỏi lại."
         ),
         parameters={"type": "object", "properties": {
             "query": {"type": "string",
@@ -6334,6 +6368,49 @@ CAPABILITIES: dict[str, Capability] = {
             "required": ["query"]},
         workflow=("Kết quả '[đang phát …]' là dữ liệu — báo lại tự nhiên. Nhiều loa R1 "
                   "mà chưa rõ → hỏi lại đúng danh sách, không tự chọn.")),
+    "mo_nhac": Capability(
+        name="mo_nhac", risk=CHANGE, handler=_h_mo_nhac,
+        emoji="🎵", label="Mở nhạc ra loa",
+        description=(
+            "Mở nhạc/bài hát YouTube hoặc Zing MP3 ra loa, tivi Home Assistant. Dùng khi "
+            "'mở nhạc …', 'phát bài … ra loa phòng khách', 'bật nhạc Sơn Tùng', dán link "
+            "YouTube. Chỉ cần tu_khoa (và loa nếu người dùng nêu): tool hiện 10 bài để "
+            "chọn, rồi danh sách loa (một, nhiều hoặc tất cả)."
+        ),
+        parameters={"type": "object", "properties": {
+            "tu_khoa": {"type": "string",
+                        "description": "Tên bài / ca sĩ / thể loại, hoặc link YouTube"},
+            "nguon": {"type": "string", "enum": ["youtube", "zing"],
+                      "description": "Mặc định youtube; 'zing' khi người dùng nói Zing MP3"},
+            "loa": {"type": "string",
+                    "description": "Tên loa người dùng nêu, nhiều loa cách dấu phẩy, hoặc "
+                                   "'tất cả'. Bỏ trống nếu họ không nêu."}},
+            "required": ["tu_khoa"]},
+        workflow=("Kết quả có <<<ASK>>> là menu — giữ nguyên, không tự chọn bài hay loa hộ. "
+                  "'[đang phát …]' là dữ liệu — báo lại ngắn gọn.")),
+    "dieu_khien_nhac": Capability(
+        name="dieu_khien_nhac", risk=CHANGE, handler=_h_dieu_khien_nhac,
+        emoji="⏯️", label="Điều khiển nhạc trên loa",
+        description=(
+            "Tạm dừng, phát tiếp, bài kế, bài trước, dừng nhạc đang phát ra loa/tivi "
+            "Home Assistant (nhạc mở bằng mo_nhac hoặc tab YouTube)."
+        ),
+        parameters={"type": "object", "properties": {
+            "lenh": {"type": "string",
+                     "enum": ["tam_dung", "tiep_tuc", "bai_ke", "bai_truoc", "dung"]},
+            "loa": {"type": "string",
+                    "description": "Tên loa người dùng nêu; bỏ trống = loa đang phát"}},
+            "required": ["lenh"]},
+        workflow="Kết quả '[đã …]' là dữ liệu — báo lại ngắn gọn."),
+    "nhac_dang_phat": Capability(
+        name="nhac_dang_phat", risk=READ, handler=_h_nhac_dang_phat,
+        emoji="🎶", label="Loa nào đang phát bài gì",
+        description=(
+            "Xem mỗi loa/tivi Home Assistant đang phát bài gì, tới phút nào, bài mấy "
+            "trong hàng đợi. Dùng khi hỏi 'loa đang phát bài gì', 'nhạc tới đâu rồi'."
+        ),
+        parameters={"type": "object", "properties": {}},
+        workflow="Báo lại ngắn gọn từng loa."),
     "announce_on_speaker": Capability(
         name="announce_on_speaker", risk=CHANGE, handler=_h_announce_on_speaker,
         emoji="🔊", label="Đọc thông báo ra loa",
@@ -7582,6 +7659,7 @@ _CAP_GROUP: dict[str, str] = {
     "tuya_thiet_bi": "homeassistant",
     "speak_to_speaker": "tts_speaker",
     "play_music_on_speaker": "tts_speaker",
+    "mo_nhac": "tts_speaker", "dieu_khien_nhac": "tts_speaker", "nhac_dang_phat": "tts_speaker",
     "announce_on_speaker": "tts_speaker",
     "create_automation": "homeassistant",
     "system_status": "server", "remote_system_status": "server",

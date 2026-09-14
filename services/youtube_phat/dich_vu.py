@@ -170,6 +170,14 @@ class PlayerCore:
         with self.player_lock:
             return self.playback_session.snapshot()
 
+    def get_sessions(self):
+        with self.player_lock:
+            return self.playback_session.snapshot(), self.playback_session.snapshots()
+
+    def set_session_outputs(self, session_id, output_entity_ids):
+        with self.player_lock:
+            return self.playback_session.set_outputs(session_id, output_entity_ids)
+
     def play(self, target, *, raw_target=""):
         with self.player_lock:
             session = self.playback_session.start(
@@ -186,6 +194,9 @@ class PlayerCore:
         output_entity_ids,
         media_content_type="",
         volume_level=None,
+        session_id=None,
+        controller="",
+        auto_advance=True,
     ):
         if source == "youtube":
             fallback = normalize_target(target)
@@ -204,13 +215,16 @@ class PlayerCore:
                 output_entity_ids=output_entity_ids,
                 media_content_type=media_content_type,
                 volume_level=volume_level,
+                session_id=session_id,
+                controller=controller,
+                auto_advance=auto_advance,
             )
         self.add_history(session["item"])
         return session
 
-    def stop(self, expected_revision=None):
+    def stop(self, expected_revision=None, session_id=None):
         with self.player_lock:
-            return self.playback_session.stop(expected_revision)
+            return self.playback_session.stop(expected_revision, session_id)
 
     def search(self, source, query, limit):
         """Run one metadata search at a time to bound child processes."""

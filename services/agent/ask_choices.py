@@ -168,8 +168,9 @@ def extract(text: str) -> tuple[str, list[dict[str, str]]]:
                 pass
 
     clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
-    # max 8 choices (Telegram row comfort)
-    return clean, choices[:8]
+    # Tối đa 10 lựa chọn: menu mở nhạc hiện đủ 10 bài (chủ máy 14/09/2026: "hiện list
+    # danh sách 10 bài nhạc để lựa chọn"). Telegram xếp mỗi nút một hàng nên 10 vẫn gọn.
+    return clean, choices[:10]
 
 
 def set_pending(user_id: str, choices: list[dict[str, str]]) -> None:

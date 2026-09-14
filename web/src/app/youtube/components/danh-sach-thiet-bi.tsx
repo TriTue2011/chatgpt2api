@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * Loa & tivi — chọn nơi phát, chỉnh âm lượng từng thiết bị, ẩn thiết bị không dùng.
+ * Loa & tivi — tích để xem/điều khiển loa (không tự phát hay tắt loa), chỉnh âm
+ * lượng từng thiết bị, ẩn thiết bị không dùng.
  *
  * Chủ máy 14/09/2026: "nhiều trường hợp hiển thị quá nhiều thiết bị không cần" →
  * nút ẩn trên từng thiết bị; sổ ẩn nằm ở máy chủ (DATA_DIR) nên khởi động lại hay
@@ -92,7 +93,7 @@ export function DanhSachThietBi({ className, thietBi, loi, chon, batTat, amLuong
         <div>
           <h2 className="text-sm font-semibold">Loa &amp; tivi</h2>
           <p className="text-xs text-muted-foreground">
-            {chon.size ? `${chon.size} đã chọn` : "Chạm để chọn nơi phát"}
+            {chon.size ? `${chon.size} đang tích` : "Tích loa để xem và phát"}
           </p>
         </div>
         <Button type="button" variant="ghost" size="icon" aria-label="Tải lại danh sách" onClick={taiLai}>
