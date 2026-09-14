@@ -517,8 +517,11 @@ def test_reachable(speaker: dict[str, Any], timeout: float = 4.0) -> tuple[bool,
     kind = str(speaker.get("kind") or "").lower()
     if kind == "ha":
         try:
-            from services.ha_client import get_state
-            st = get_state(str(speaker.get("entity_id") or ""))
+            # Như `import_from_ha`: loa chủ máy đã thêm vẫn kiểm được dù nằm
+            # trong sổ «Bỏ khỏi c2a» (`get_state` coi nó như không tồn tại).
+            from services.ha_client import doc_media_player_tho
+            eid = str(speaker.get("entity_id") or "")
+            st = next((s for s in doc_media_player_tho() if s.get("entity_id") == eid), None)
             if not st:
                 return False, "HA không có entity này."
             return True, f"HA ok (state={st.get('state')})"
@@ -831,12 +834,17 @@ def discover_lan(subnets: Optional[list[str]] = None,
 
 
 def import_from_ha() -> list[dict[str, Any]]:
-    """Nhập media_player từ HA thành loa kiểu 'ha' (bỏ qua cái đã có)."""
-    from services.ha_client import get_states
+    """Nhập media_player từ HA thành loa kiểu 'ha' (bỏ qua cái đã có).
+
+    Đọc thẳng HA (`doc_media_player_tho`), không qua sổ «Bỏ khỏi c2a»: sổ đó để
+    bot và tầng học không thấy thiết bị, còn đây là chủ máy tự chọn loa. Đo
+    14/09/2026: 9/10 media_player của nhà nằm trong sổ, nên đọc qua `get_states`
+    chỉ nhập được tivi LG. HA lỗi thì ném ra để trang báo, không "nhập 0 loa"."""
+    from services.ha_client import doc_media_player_tho
 
     added: list[dict[str, Any]] = []
     have = {str(r.get("entity_id") or "") for r in list_speakers()}
-    for st in (get_states() or []):
+    for st in doc_media_player_tho():
         eid = str(st.get("entity_id") or "")
         if not eid.startswith("media_player.") or eid in have:
             continue
