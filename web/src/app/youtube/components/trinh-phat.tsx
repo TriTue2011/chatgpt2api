@@ -273,6 +273,11 @@ export function TrinhPhat() {
       const ds = nguonHang?.items ?? ketQua;
       const i = ds.findIndex((k) => cungBai(k, bai));
       const hangMoi = i >= 0 ? { items: ds, index: i } : { items: [bai], index: 0 };
+      if (xem && laVideo(bai) && nghe && cungBai(nghe, bai)) {
+        // Đúng bài đang nghe: mở video tại giây đang nghe, tiếng chạy tiếp — không phát lại từ đầu.
+        if (!video) moVideo(nghe, false, mayNghe.thoiGian(), true);
+        return;
+      }
       if (xem && laVideo(bai)) {
         if (ngheNen) {
           // Nghe khi tắt màn hình: tiếng từ thẻ âm thanh, video tắt tiếng chạy theo.
@@ -295,6 +300,12 @@ export function TrinhPhat() {
     }
     if (!ids.length) {
       toast.error("Thiết bị đang tích không nhận phát nhạc.");
+      return;
+    }
+    if (xem && laVideo(bai) && !video && phienXem?.item && cungBai(phienXem.item, bai)
+        && ids.every((id) => phienXem.output_entity_ids.includes(id))) {
+      // Loa đang tích đã phát đúng bài này: mở hình theo vị trí loa, không gửi lại bài từ đầu.
+      moVideo(bai, true);
       return;
     }
     const ma = bai.url || bai.id;
