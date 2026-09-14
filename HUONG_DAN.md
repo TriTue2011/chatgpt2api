@@ -16,6 +16,7 @@ Tài liệu này dành cho người **mới cài lần đầu**. Đọc theo th�
 5. [Kết nối bot Telegram / Zalo](#5-kết-nối-bot-telegram--zalo)
 6. [Lọc chức năng theo thread — trái tim của phân quyền](#6-lọc-chức-năng-theo-thread)
 7. [Sự cố thường gặp](#7-sự-cố-thường-gặp)
+8. [Nghe nhạc YouTube / Zing ra loa (tab YouTube)](#8-nghe-nhạc-youtube--zing-ra-loa-tab-youtube)
 
 ---
 
@@ -81,6 +82,20 @@ services:
 | `/opt/c2a-data` (vế trái của volume) | Nơi lưu **toàn bộ** dữ liệu — tài khoản, cấu hình, model giọng nói. Thư mục này phải tồn tại và còn chỗ trống (khuyên ≥15 GB) |
 | `3030:80` | Nếu máy đã có dịch vụ khác dùng cổng 3030, đổi số bên trái, vd `8080:80` |
 | `10600-10604` / `10700-10704` / `3001` | **Không** bind `127.0.0.1` nếu Home Assistant / client nằm máy khác trong LAN (106xx = Wyoming ĐỌC, 107xx = NGHE — mỗi cổng một tiếng, xem 4.2c) |
+
+**Máy ít RAM, chạy chung với container khác?** Đặt trần RAM cho từng container bằng
+biến môi trường (trong tệp `.env` cạnh `docker-compose.yml`, hoặc ô **Environment
+variables** của Portainer). Bỏ trống = không giới hạn (mặc định):
+
+| Biến | Gợi ý | Ghi chú |
+|---|---|---|
+| `C2A_MEM_LIMIT` | `4g` | c2a gồm trình duyệt, giọng nói, MCP, Zalo — đo thật ~2,5 GB ngay sau khởi động, đặt dưới ~3,5g dễ bị tắt vì hết RAM |
+| `SEARXNG_MEM_LIMIT` | `512m` | đo ~110 MB |
+| `VN_TRANSLATE_MEM_LIMIT` | `1g` | model dịch nạp vào RAM khi dùng |
+| `LIBRETRANSLATE_MEM_LIMIT` | `2g` | chỉ khi bật profile `libretranslate` |
+
+Container chạm trần thì Docker tắt nó và tự bật lại — trần là để không kéo sập cả
+máy, không làm c2a nhẹ hơn.
 
 **Bước 3 — Chạy:**
 
@@ -336,6 +351,7 @@ lời” — thường thấy ngay tài khoản nào chết.
 | **Tạo video** | Sinh video (Veo 3.1 — Google DeepMind) |
 | **Quản lý video** | Thư viện video đã tạo |
 | **Dịch** | Dịch bằng máy dịch trong stack (không tốn lượt AI): chữ · link YouTube · ảnh · tài liệu · phụ đề `.srt/.vtt` · video/âm thanh. Tab con **Đàm thoại** = phiên dịch hai chiều qua mic. Xem 4.4b |
+| **YouTube** (chỉ quản trị) | Tìm YouTube · Zing MP3 · link audio rồi nghe/xem ngay trên máy hoặc phát ra loa, tivi trong nhà (loa trong Sổ loa c2a và loa Home Assistant). Xem Phần 8 |
 
 ### 📡 Kênh
 
@@ -848,6 +864,10 @@ Tab con **🔑 Tài khoản & QR** → bấm tạo mã QR → quét bằng app Z
 nên khởi động lại vẫn đăng nhập. Tab này cũng có webhook per-account, proxy, danh bạ
 để lấy Thread ID.
 
+Trong **nhóm**: bot trả lời thì **tag đúng người vừa hỏi** (họ nhận thông báo có phản
+hồi); gửi `@All` thì chỉ tag cả nhóm. Tag bot bằng tên hiển thị nhiều chữ vẫn nhận
+lệnh, vd `@Bot Ben Bắp /dich xin chào`.
+
 ### 5.4. Mỗi bot có gì riêng
 
 Trên thẻ từng bot: model AI riêng, Chat IDs riêng, **Thread ID admin riêng**, và ô
@@ -1024,3 +1044,94 @@ GET  /v1/models                    danh sách model
 ```
 
 Đều dùng header `Authorization: Bearer <CHATGPT2API_AUTH_KEY>`.
+
+---
+
+## 8. Nghe nhạc YouTube / Zing ra loa (tab YouTube)
+
+Tab **YouTube** (thanh bên, chỉ quản trị): tìm bài rồi nghe/xem ngay trên máy đang mở,
+hoặc phát ra loa và tivi trong nhà. Nhạc phát ra loa **chạy trên máy chủ** — đóng
+trình duyệt, tắt máy tính thì loa vẫn phát và vẫn tự sang bài kế.
+
+### 8.1. Tìm và phát
+
+- Chọn nguồn **YouTube**, **Zing MP3** (bài công khai, không VIP) hoặc **Link audio**
+  (link MP3/AAC/FLAC/OGG/HLS trực tiếp), gõ tên bài/ca sĩ hoặc **dán link YouTube**.
+- Mỗi bài YouTube có **hai nút**:
+
+| Nút | Chưa tích loa | Đang tích loa |
+|---|---|---|
+| 🎧 **Nghe** (chỉ tiếng) | Nghe trên máy này | Phát ra các loa đã tích, không mở video |
+| 🖥 **Xem video** | Xem video có tiếng trên trang | Phát ra loa, mở thêm video **tắt tiếng chạy theo loa** |
+
+- Zing và link audio chỉ có nút nghe (không có video). Link audio phải tích loa.
+- Thanh điều khiển: ⏮ bài trước · ⏯ · ⏭ bài kế · ⏹ dừng — hàng đợi là danh sách vừa tìm.
+
+### 8.2. Danh sách loa & tivi
+
+- Gộp **loa trong Sổ loa c2a** (Phần 4.3) với **media_player của Home Assistant**. Cùng
+  một thiết bị (nhận ra theo mã thiết bị, không theo tên) chỉ hiện **một dòng**, mang
+  **tên đặt trong Sổ loa**.
+- **Ưu tiên Sổ loa:** loa Google Cast trong sổ được c2a **nối thẳng** (nhãn
+  «Sổ loa c2a») — Home Assistant khởi động lại hay lỗi thì vẫn thấy loa và vẫn phát.
+  c2a chưa nối được mà HA còn thấy thì tạm đi qua HA (nhãn «Sổ loa c2a qua HA»).
+- Thiết bị **mất kết nối không hiện**; kết nối lại thì tự hiện. Đầu mục ghi số thiết bị
+  đang mất kết nối.
+- Nút 👁 ẩn thiết bị không muốn thấy; khôi phục ở mục **Đã ẩn** (gập sẵn, bấm mới mở).
+- Tích một loa có thanh âm lượng riêng.
+
+### 8.3. Mỗi loa một bài, nghe cùng một bài
+
+- Mỗi lần phát ra các loa đang tích tạo **một nhóm**; một loa chỉ thuộc một nhóm, nên
+  vừa phát chung một bài cho nhiều loa, vừa phát **mỗi loa một bài** được.
+- **Tích loa nào thì thấy của loa đó**: tên bài, tiến độ, video (tua tới đúng chỗ loa
+  đang phát). Các nhóm khác hiện thành nút nhỏ bên dưới — bấm để chuyển sang xem.
+- **Cho loa B nghe bài đang phát ở loa A**: tích B, rồi tích A → bấm **«Cho B nghe
+  cùng»** — B vào đúng bài, đúng chỗ của A.
+- ⏭ ⏮ ⏹ áp cho nhóm đang xem; ⏹ khi chỉ tích vài loa của nhóm thì chỉ các loa đó dừng.
+
+### 8.4. Tiếng trên máy đang mở trang
+
+- **Đang phát ra loa**: máy này mặc định **tắt tiếng**. Nút **«Nghe trên máy này»** mở
+  tiếng trên máy, chạy theo vị trí loa (tạm dừng/phát/sang bài theo loa); bấm lại để tắt.
+- **«Nghe khi tắt màn hình»** (bật/tắt, nhớ lựa chọn, mặc định tắt):
+  - **Tắt**: tắt màn hình hay chuyển sang ứng dụng khác thì tiếng trên máy dừng, mở lại
+    thì phát tiếp.
+  - **Bật**: vẫn nghe khi tắt màn hình, có nút điều khiển ở màn hình khoá; video trên
+    trang (nếu mở) tắt tiếng và chạy theo tiếng.
+- Nghe nền cần **trình duyệt** (Chrome/Safari trên điện thoại). Ứng dụng **AI Ben Bap**
+  là WebView — Android tạm dừng khi chuyển ứng dụng nên tiếng tắt sau ít giây; muốn
+  nghe nền thì mở trang c2a bằng Chrome.
+
+### 8.5. Xem video
+
+- Cỡ **Vừa** / **Rạp** (hết bề ngang) / **Thu nhỏ** (khung nổi góc màn hình, vẫn chạy
+  khi cuộn trang); đổi cỡ không làm video tải lại.
+- **Toàn màn hình** (nút trên thanh điều khiển của trang): điện thoại **tự xoay ngang**
+  (Chrome Android), video giữ tỉ lệ 16:9 vừa khít, không bị cắt.
+- Trình duyệt chặn tự phát có tiếng (điện thoại, WebView) thì khung video hiện
+  **«Chạm vào video để phát có tiếng»** — chạm vào chính khung video là có tiếng.
+
+### 8.6. Nối với Home Assistant
+
+- Khối **Kết nối Home Assistant** (đầu tab) có **URL** (dạng `http://IP:3030/yt`) và
+  **TOKEN** kèm nút sao chép. Trong HA cài tích hợp **TriTue YouTube Player** (HACS,
+  bản ≥ 0.9.4 mới nhận URL có `/yt`) → thêm tích hợp → dán URL và token.
+- Ô **Địa chỉ c2a trong LAN** (vd `http://172.16.10.38:3030`): loa tải nhạc qua địa chỉ
+  này. Để trống thì c2a dùng địa chỉ trình duyệt đang mở hoặc địa chỉ công khai.
+- **Assist của HA mở nhạc**: Cài đặt HA → Thiết bị & dịch vụ → mục trợ lý LLM đang dùng
+  (vd *chatgptapi → AI Agent*) → **Cấu hình** → tích **TriTue Music** → Lưu. Rồi nói
+  "mở bài người yêu cũ": trợ lý đưa 10 bài, hỏi loa (một, nhiều, tất cả) rồi phát.
+
+### 8.7. Mở nhạc qua bot Zalo / Telegram
+
+Khung chat cần quyền `📢 Được ra lệnh phát loa` (Phần 6); loa bot thấy là loa khung chat
+đó được phép.
+
+- **"mở nhạc Sơn Tùng"**, **"phát bài … ra loa phòng khách"**, hoặc dán link YouTube →
+  bot hiện **10 bài** → chọn bài → chọn **loa** (một loa, **Tất cả loa**, hoặc gõ nhiều
+  tên: `phòng khách, bếp`). Nói sẵn loa trong câu thì chọn bài xong là phát luôn.
+- **"tạm dừng nhạc"**, **"bài kế"** / **"bài trước"**, **"dừng nhạc ở bếp"** — nhiều nhóm
+  loa đang phát mà không nêu loa thì bot hỏi lại nhóm nào, không đoán.
+- **"loa nào đang phát bài gì"** — từng loa: bài, tới phút nào, bài mấy trong hàng đợi.
+
