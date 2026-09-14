@@ -15,6 +15,11 @@
  *   nhạc vẫn chạy.
  * - Loa kèm video: loa phát tiếng, video tắt tiếng và bám vị trí loa; nút "Nghe cả
  *   trên máy này". Đang xem một mình mà tích loa thì loa phát tiếng video đó.
+ * - Nút "Nghe khi tắt màn hình" (bật/tắt, nhớ lựa chọn). Bật: tiếng trên máy này
+ *   phát bằng thẻ <audio> qua luồng máy chủ — trình duyệt điện thoại nghe tiếp khi
+ *   tắt màn hình, có nút ở màn hình khoá; video (nếu mở) tắt tiếng và chạy theo
+ *   tiếng, như video chạy theo loa. Tắt: video trên trang có tiếng như cũ. Zing
+ *   chưa tích loa luôn nghe bằng <audio> (không có video).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -25,12 +30,16 @@ import { cn } from "@/lib/utils";
 
 import { DangPhat, type VideoMo, type ViTri } from "./dang-phat";
 import { DanhSachThietBi } from "./danh-sach-thiet-bi";
-import { type BaiHat, dangHoatDong, goi, type Nguon, type Phien, type ThietBi } from "./lib";
+import { type BaiHat, dangHoatDong, dangPhatBai, goi, type Nguon, type Phien, TEN_NGUON, type ThietBi } from "./lib";
 import { TimNhac } from "./tim-nhac";
 import { type CheDoXem, laVideo, srcNhung, useVideoNhung } from "./video-nhung";
 
 const KHOA_CHON = "c2a-youtube:chon";
 const KHOA_CHE_DO_XEM = "c2a-youtube:che-do-xem";
+const KHOA_NGHE_NEN = "c2a-youtube:nghe-khi-tat-man-hinh";
+// Nửa giây im lặng: phát ngay trong cú bấm để Safari/iOS mở khoá thẻ âm thanh, rồi
+// mới đổi sang luồng thật khi máy chủ trả link (lúc đó cú bấm đã qua).
+const AM_LANG = "data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA";
 const DUOI_AUDIO = /\.(aac|flac|m3u8|m4a|mp3|ogg|opus|wav)$/i;
 const DANG_CHAY = [1, 3];
 
@@ -107,7 +116,21 @@ export function TrinhPhat() {
       return "vua";
     }
   });
-  // Hàng đợi của video xem một mình trên trang. Loa dùng hàng đợi của phiên máy chủ.
+  const [ngheNen, setNgheNen] = useState(() => {
+    try {
+      return localStorage.getItem(KHOA_NGHE_NEN) === "1";
+    } catch {
+      return false;
+    }
+  });
+  // Bài đang nghe trên máy này bằng thẻ <audio> (nghe khi tắt màn hình, hoặc Zing).
+  const [nghe, setNghe] = useState<BaiHat | null>(null);
+  const [ngheChay, setNgheChay] = useState(false);
+  const am = useRef<HTMLAudioElement | null>(null);
+  const luotNghe = useRef(0);
+  // Trình duyệt chặn tiếng tự phát của khung video: bảo người xem chạm vào video.
+  const [canCham, setCanCham] = useState(false);
+  // Hàng đợi của video/bài nghe một mình trên trang. Loa dùng hàng đợi của phiên máy chủ.
   const [hangVideo, setHangVideo] = useState<Hang | null>(null);
   const daNapChon = useRef(false);
   const lucTai = useRef(0);
@@ -174,26 +197,28 @@ export function TrinhPhat() {
     ? daChon.filter((t) => !phienXem.output_entity_ids.includes(t.entity_id) && t.trang_thai !== "unavailable" && t.phat_duoc).map((t) => t.entity_id)
     : [];
 
-  const videoMotMinh = !!video && !video.theoLoa;
+  // Video tự phát tiếng trên trang (không theo loa, không theo thẻ âm thanh).
+  const videoMotMinh = !!video && !video.theoLoa && !video.theoMay;
   const loaPhien = phienXem ? phienXem.output_entity_ids.map((id) => theoMa.get(id)).filter((t): t is ThietBi => !!t) : daChon;
-  const dangChay = videoMotMinh ? DANG_CHAY.includes(nhung.trangThai) : loaPhien.some((t) => t.trang_thai === "playing");
+  const dangChay = nghe ? ngheChay : videoMotMinh ? DANG_CHAY.includes(nhung.trangThai) : loaPhien.some((t) => t.trang_thai === "playing");
 
   const doiChon = (moi: Set<string>) => {
     setChon(moi);
     luuChon(moi);
   };
 
-  const moVideo = (bai: BaiHat, voiLoa: boolean) => {
+  /** `theoMay` = tiếng do thẻ <audio> của máy này phát; video tắt tiếng và chạy theo. */
+  const moVideo = (bai: BaiHat, voiLoa: boolean, batDau = 0, theoMay = false) => {
     if (!laVideo(bai)) return;
-    const ngheTrenMay = voiLoa ? (video?.theoLoa ? video.ngheTrenMay : false) : true;
+    const ngheTrenMay = theoMay ? false : voiLoa ? (video?.theoLoa ? video.ngheTrenMay : false) : true;
     if (video && nhung.sanSang) {
       // Cùng khung: đổi bài không nạp lại, giữ nguyên cỡ xem và toàn màn hình.
-      nhung.lenh("loadVideoById", [{ videoId: bai.id, startSeconds: 0 }]);
+      if (video.bai.id !== bai.id) nhung.lenh("loadVideoById", [{ videoId: bai.id, startSeconds: batDau }]);
       nhung.lenh(ngheTrenMay ? "unMute" : "mute");
-      setVideo({ ...video, bai, theoLoa: voiLoa, ngheTrenMay });
+      setVideo({ ...video, bai, theoLoa: voiLoa, ngheTrenMay, theoMay });
     } else {
       nhung.datLai();
-      setVideo({ bai, src: srcNhung(bai.id, !ngheTrenMay), theoLoa: voiLoa, ngheTrenMay });
+      setVideo({ bai, src: srcNhung(bai.id, !ngheTrenMay, batDau), theoLoa: voiLoa, ngheTrenMay, theoMay });
     }
     dongBo.current.luiTuaDen = 0;
     if (cheDo !== "nho") {
@@ -207,6 +232,63 @@ export function TrinhPhat() {
     setVideo(null);
   };
 
+  const theAm = () => {
+    if (!am.current) {
+      const a = new Audio();
+      a.preload = "auto";
+      const that = () => !!a.getAttribute("src") && !a.getAttribute("src")!.startsWith("data:");
+      a.addEventListener("play", () => setNgheChay(true));
+      a.addEventListener("pause", () => setNgheChay(false));
+      a.addEventListener("ended", () => {
+        if (that()) moiNhat.current.hetNghe();
+      });
+      a.addEventListener("error", () => {
+        if (that()) toast.error("Không phát được bài này trên máy này.");
+      });
+      am.current = a;
+    }
+    return am.current;
+  };
+
+  /** Nghe một bài trên máy này bằng <audio>; `batDau` = giây bắt đầu (chuyển từ video sang). */
+  const ngheBai = async (bai: BaiHat, hangMoi: Hang, batDau = 0) => {
+    const a = theAm();
+    const luot = ++luotNghe.current;
+    a.src = AM_LANG;
+    void a.play().catch(() => undefined);
+    // Video đang mở thì theo bài mới, tắt tiếng, chạy theo tiếng; bài không có video thì đóng.
+    if (video && laVideo(bai)) moVideo(bai, false, batDau, true);
+    else if (video) dongVideo();
+    setHangVideo(hangMoi);
+    setNghe(bai);
+    const ke = hangMoi.items[hangMoi.index + 1];
+    const r = await goi<{ url: string }>("nghe", {
+      source: bai.source,
+      target: bai.url || bai.id,
+      ...(ke && ke.source !== "http" ? { ke } : {}),
+    });
+    if (luot !== luotNghe.current) return;
+    if (!r) {
+      dungNghe();
+      return;
+    }
+    a.src = r.url;
+    if (batDau >= 1) a.addEventListener("loadedmetadata", () => { a.currentTime = batDau; }, { once: true });
+    a.play().catch(() => toast.message("Trình duyệt chặn tự phát có tiếng — bấm ▶ để nghe."));
+  };
+
+  const dungNghe = () => {
+    luotNghe.current++;
+    const a = am.current;
+    if (a) {
+      a.pause();
+      a.removeAttribute("src");
+      a.load();
+    }
+    setNghe(null);
+    setNgheChay(false);
+  };
+
   const capNhatPhien = (r: { cac_phien?: Phien[] } | null) => {
     if (r?.cac_phien) setCacPhien(r.cac_phien);
     void taiThietBi(true);
@@ -215,14 +297,20 @@ export function TrinhPhat() {
   const phat = async (bai: BaiHat) => {
     const ids = [...chon].filter((id) => theoMa.get(id)?.phat_duoc);
     if (!chon.size) {
+      // Chưa tích loa: nghe hoặc xem ngay trên trang, với hàng đợi riêng.
+      const i = ketQua.findIndex((k) => cungBai(k, bai));
+      const hangMoi = i >= 0 ? { items: ketQua, index: i } : { items: [bai], index: 0 };
+      if (bai.source === "zing" || (ngheNen && laVideo(bai))) {
+        void ngheBai(bai, hangMoi);
+        return;
+      }
       if (laVideo(bai)) {
-        // Chưa tích loa: xem ngay trên trang, với hàng đợi riêng.
-        const i = ketQua.findIndex((k) => cungBai(k, bai));
-        setHangVideo(i >= 0 ? { items: ketQua, index: i } : { items: [bai], index: 0 });
+        if (nghe) dungNghe();
+        setHangVideo(hangMoi);
         moVideo(bai, false);
         return;
       }
-      toast.error("Tích loa hoặc tivi để phát Zing MP3 hoặc link audio.");
+      toast.error("Tích loa hoặc tivi để phát link audio.");
       return;
     }
     if (!ids.length) {
@@ -239,6 +327,7 @@ export function TrinhPhat() {
     });
     setDangGuiMa("");
     if (!r) return;
+    if (nghe) dungNghe();
     const ten = (id: string) => theoMa.get(id)?.ten ?? id;
     if (r.bo_qua.length) {
       toast.warning(`Đã gửi tới ${r.da_gui.map(ten).join(", ")}. Bỏ qua: ${r.bo_qua.map((b) => ten(b.entity_id)).join(", ")}.`);
@@ -253,10 +342,16 @@ export function TrinhPhat() {
     void taiThietBi(true);
   };
 
-  const hang = videoMotMinh ? hangVideo : phienXem?.queue ?? null;
+  const hang = videoMotMinh || nghe ? hangVideo : phienXem?.queue ?? null;
   const coBai = (buoc: number) => !!hang && hang.index >= 0 && !!hang.items[hang.index + buoc];
 
   const chuyenBai = async (buoc: number) => {
+    if (nghe) {
+      const bai = hangVideo?.items[hangVideo.index + buoc];
+      if (!hangVideo || !bai || bai.source === "http") return;
+      void ngheBai(bai, { ...hangVideo, index: hangVideo.index + buoc });
+      return;
+    }
     if (videoMotMinh) {
       if (!hangVideo) return;
       const bai = hangVideo.items[hangVideo.index + buoc];
@@ -273,17 +368,24 @@ export function TrinhPhat() {
   };
 
   // Mọi hàm chạy trong hẹn giờ đọc bản mới nhất qua ref này.
-  const moiNhat = useRef({ chuyenBai, video, thietBi, loaPhien, nhung });
+  const baiPhienXem = phienXem?.item ?? null;
+  const moiNhat = useRef({ chuyenBai, video, thietBi, loaPhien, nhung, baiPhienXem, nghe, dungNghe, hetNghe: () => undefined as void });
   useEffect(() => {
-    moiNhat.current = { chuyenBai, video, thietBi, loaPhien, nhung };
+    moiNhat.current = {
+      chuyenBai, video, thietBi, loaPhien, nhung, baiPhienXem, nghe, dungNghe,
+      // Hết bài đang nghe trên máy này: sang bài kế của hàng đợi trên trang.
+      hetNghe: () => {
+        if (moiNhat.current.nghe) void moiNhat.current.chuyenBai(1);
+      },
+    };
     hetVideo.current = () => {
       // Hết video xem một mình: tự sang bài kế trên trang. Có loa thì máy chủ lo.
-      if (moiNhat.current.video && !moiNhat.current.video.theoLoa) void moiNhat.current.chuyenBai(1);
+      const v = moiNhat.current.video;
+      if (v && !v.theoLoa && !v.theoMay) void moiNhat.current.chuyenBai(1);
     };
   });
 
   // Tích sang loa khác: video đổi sang bài của loa đó và tua theo loa.
-  const baiPhienXem = phienXem?.item ?? null;
   useEffect(() => {
     if (!video?.theoLoa || !baiPhienXem) return;
     if (baiPhienXem.id === video.bai.id) return;
@@ -300,14 +402,14 @@ export function TrinhPhat() {
   useEffect(() => {
     if (!theoLoa) return;
     const hen = setInterval(() => {
-      const { loaPhien: ds, nhung: n } = moiNhat.current;
+      const { loaPhien: ds, nhung: n, baiPhienXem: baiLoa, video: v } = moiNhat.current;
       if (!n.sanSang) return;
       const db = dongBo.current;
       if (db.choTua) {
         const loa = ds.find((t) => t.entity_id === db.choTua?.id);
         if (Date.now() - db.choTua.luc > 60000) {
           db.choTua = null;
-        } else if (loa?.trang_thai === "playing") {
+        } else if (loa?.trang_thai === "playing" && dangPhatBai(loa, v?.bai)) {
           const cho = db.choTua;
           db.choTua = null;
           if (loa.tua) {
@@ -319,7 +421,8 @@ export function TrinhPhat() {
         return;
       }
       const loa = ds.find((t) => dangHoatDong(t));
-      if (!loa || Date.now() < db.giuDen) return;
+      // Loa còn báo bài trước (vừa gửi bài mới): chưa bám theo, kẻo hình nhảy tới giây cũ.
+      if (!loa || Date.now() < db.giuDen || !dangPhatBai(loa, baiLoa)) return;
       if (loa.trang_thai === "paused" && DANG_CHAY.includes(n.trangThai)) n.lenh("pauseVideo");
       if (loa.trang_thai === "playing" && [-1, 2, 5].includes(n.trangThai)) n.lenh("playVideo");
       if (loa.trang_thai !== "playing" || loa.vi_tri === null || Date.now() < db.luiTuaDen) return;
@@ -333,11 +436,16 @@ export function TrinhPhat() {
   }, [theoLoa]);
 
   const layViTri = (): ViTri => {
+    if (nghe) {
+      const a = am.current;
+      if (!a || !a.getAttribute("src") || a.getAttribute("src")!.startsWith("data:")) return null;
+      return { giay: a.currentTime, tong: Number.isFinite(a.duration) && a.duration > 0 ? a.duration : Number(nghe.duration || 0) };
+    }
     if (videoMotMinh) {
       if (nhung.trangThai === -1) return null;
       return { giay: nhung.thoiGian(), tong: Number(video?.bai.duration || 0) };
     }
-    const dan = loaPhien.find((t) => t.vi_tri !== null);
+    const dan = loaPhien.find((t) => t.vi_tri !== null && dangPhatBai(t, phienXem?.item));
     if (!phienXem || !dan || dan.vi_tri === null) return null;
     const giay = dan.vi_tri + (dan.trang_thai === "playing" ? (Date.now() - lucTai.current) / 1000 : 0);
     return { giay, tong: Number(dan.thoi_luong || phienXem.item?.duration || 0) };
@@ -411,6 +519,12 @@ export function TrinhPhat() {
   };
 
   const phatTamDung = () => {
+    if (nghe) {
+      const a = am.current;
+      if (a?.paused) void a.play().catch(() => undefined);
+      else a?.pause();
+      return;
+    }
     if (videoMotMinh) {
       nhung.lenh(DANG_CHAY.includes(nhung.trangThai) ? "pauseVideo" : "playVideo");
       return;
@@ -429,6 +543,11 @@ export function TrinhPhat() {
   };
 
   const dung = async () => {
+    if (nghe) {
+      dungNghe();
+      if (video?.theoMay) dongVideo();
+      return;
+    }
     if (video) nhung.lenh("stopVideo");
     if (phienXem) {
       // Dừng các loa đang tích; phiên chỉ kết thúc khi mọi loa của nó dừng.
@@ -457,6 +576,109 @@ export function TrinhPhat() {
     setVideo({ ...video, ngheTrenMay: bat });
   };
 
+  const doiNgheNen = () => {
+    const bat = !ngheNen;
+    setNgheNen(bat);
+    try {
+      localStorage.setItem(KHOA_NGHE_NEN, bat ? "1" : "0");
+    } catch {
+      // Như trên.
+    }
+    if (bat && videoMotMinh && video) {
+      // Đang xem có tiếng: tiếng chuyển sang thẻ âm thanh từ giây đang xem, video tắt tiếng chạy theo.
+      void ngheBai(video.bai, hangVideo ?? { items: [video.bai], index: 0 }, nhung.thoiGian());
+    } else if (!bat && nghe && laVideo(nghe)) {
+      const tu = am.current?.currentTime ?? 0;
+      const bai = nghe;
+      dungNghe();
+      if (video?.theoMay) {
+        nhung.lenh("unMute");
+        setVideo({ ...video, theoMay: false, ngheTrenMay: true });
+      } else {
+        moVideo(bai, false, tu);
+      }
+    }
+    toast.message(bat
+      ? "Bật nghe khi tắt màn hình: tiếng trên máy này chạy tiếp khi tắt màn hình, video (nếu mở) chạy theo tiếng."
+      : "Đã tắt nghe khi tắt màn hình: video trên trang tự phát tiếng như cũ.");
+  };
+
+  // Video chạy theo thẻ âm thanh: tạm dừng/phát theo, tua khi lệch quá 2 giây. Mở lại
+  // màn hình sau khi nghe nền thì hình tự về đúng chỗ tiếng.
+  const theoMay = !!video?.theoMay;
+  useEffect(() => {
+    if (!theoMay) return;
+    const hen = setInterval(() => {
+      const n = moiNhat.current.nhung;
+      const a = am.current;
+      if (!n.sanSang || !a || !a.getAttribute("src") || a.getAttribute("src")!.startsWith("data:")) return;
+      if (a.paused && DANG_CHAY.includes(n.trangThai)) n.lenh("pauseVideo");
+      if (!a.paused && [-1, 2, 5].includes(n.trangThai)) n.lenh("playVideo");
+      if (a.paused || Date.now() < dongBo.current.luiTuaDen) return;
+      if (Math.abs(a.currentTime - n.thoiGian()) > 2) {
+        n.lenh("seekTo", [a.currentTime, true]);
+        dongBo.current.luiTuaDen = Date.now() + 4000;
+      }
+    }, 1000);
+    return () => clearInterval(hen);
+  }, [theoMay]);
+
+  // Thẻ âm thanh trên màn hình khoá / thanh thông báo của điện thoại.
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    const ms = navigator.mediaSession;
+    if (!nghe) {
+      ms.metadata = null;
+      return;
+    }
+    ms.metadata = new MediaMetadata({
+      title: nghe.title || nghe.id,
+      artist: nghe.channel || nghe.artist || TEN_NGUON[nghe.source],
+      artwork: /^https?:\/\//.test(nghe.thumbnail || "") ? [{ src: nghe.thumbnail }] : [],
+    });
+    const dat = (hanhDong: MediaSessionAction, lam: MediaSessionActionHandler | null) => {
+      try {
+        ms.setActionHandler(hanhDong, lam);
+      } catch {
+        // Trình duyệt không hỗ trợ hành động này.
+      }
+    };
+    dat("play", () => void am.current?.play().catch(() => undefined));
+    dat("pause", () => am.current?.pause());
+    dat("previoustrack", () => void moiNhat.current.chuyenBai(-1));
+    dat("nexttrack", () => void moiNhat.current.chuyenBai(1));
+    dat("stop", () => moiNhat.current.dungNghe());
+    return () => {
+      for (const h of ["play", "pause", "previoustrack", "nexttrack", "stop"] as MediaSessionAction[]) dat(h, null);
+    };
+  }, [nghe]);
+
+  // Video xem trên máy (có tiếng) mà trình duyệt chặn tiếng tự phát: thử bật tiếng
+  // một lần, vẫn chặn thì hiện "Chạm vào video" — chỉ cú chạm vào chính khung mới mở.
+  const muonTieng = !!video?.ngheTrenMay;
+  useEffect(() => {
+    setCanCham(false);
+    if (!muonTieng) return;
+    const chan = () => {
+      const n = moiNhat.current.nhung;
+      return n.tatTieng === true || [-1, 5].includes(n.trangThai);
+    };
+    let henLai: ReturnType<typeof setTimeout> | undefined;
+    const hen = setTimeout(() => {
+      if (!chan()) return;
+      moiNhat.current.nhung.lenh("unMute");
+      moiNhat.current.nhung.lenh("playVideo");
+      henLai = setTimeout(() => setCanCham(chan()), 1500);
+    }, 3500);
+    return () => {
+      clearTimeout(hen);
+      clearTimeout(henLai);
+    };
+  }, [muonTieng, video?.src, video?.bai.id]);
+  useEffect(() => {
+    if (canCham && nhung.trangThai === 1 && nhung.tatTieng !== true) setCanCham(false);
+  }, [canCham, nhung.trangThai, nhung.tatTieng]);
+
   const coDieuKhien = loaPhien.some((t) => t.trang_thai !== "unavailable" && (t.tam_dung || t.dung));
   const rap = !!video && cheDo === "rap";
 
@@ -469,6 +691,11 @@ export function TrinhPhat() {
         ngheCungTen={ngheCungIds.map((id) => theoMa.get(id)?.ten ?? id)}
         thietBi={thietBi ?? []}
         video={video}
+        nghe={nghe}
+        hang={hang}
+        ngheNen={ngheNen}
+        doiNgheNen={doiNgheNen}
+        canCham={canCham}
         nhung={nhung}
         cheDo={cheDo}
         doiCheDo={doiCheDo}
@@ -478,9 +705,15 @@ export function TrinhPhat() {
         layViTri={layViTri}
         truoc={coBai(-1) ? () => void chuyenBai(-1) : null}
         tiep={coBai(1) ? () => void chuyenBai(1) : null}
-        phatTamDung={video || coDieuKhien ? phatTamDung : null}
-        dung={video || phienXem || coDieuKhien ? () => void dung() : null}
-        xemTaiDay={!video && laVideo(phienXem?.item) ? () => moVideo(phienXem!.item!, loaPhien.some(dangHoatDong)) : null}
+        phatTamDung={nghe || video || coDieuKhien ? phatTamDung : null}
+        dung={nghe || video || phienXem || coDieuKhien ? () => void dung() : null}
+        xemTaiDay={
+          video
+            ? null
+            : nghe
+              ? laVideo(nghe) ? () => moVideo(nghe, false, am.current?.currentTime ?? 0, true) : null
+              : laVideo(phienXem?.item) ? () => moVideo(phienXem!.item!, loaPhien.some(dangHoatDong)) : null
+        }
         chonNhom={chonNhom}
         ngheCung={ngheCungIds.length ? () => void ngheCung() : null}
         doiNgheTrenMay={doiNgheTrenMay}
@@ -507,9 +740,10 @@ export function TrinhPhat() {
         tim={() => void tim()}
         dangTim={dangTim}
         ketQua={ketQua}
-        dangPhatMa={video ? video.bai.url || video.bai.id : phienXem?.item ? phienXem.item.url || phienXem.item.id : ""}
+        dangPhatMa={video ? video.bai.url || video.bai.id : nghe ? nghe.url || nghe.id : phienXem?.item ? phienXem.item.url || phienXem.item.id : ""}
         dangGuiMa={dangGuiMa}
         coLoa={chon.size > 0}
+        ngheNen={ngheNen}
         phat={(bai) => void phat(bai)}
       />
     </div>

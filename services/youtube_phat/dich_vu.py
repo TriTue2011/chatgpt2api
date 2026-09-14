@@ -32,6 +32,7 @@ from .streaming import (
     fetch_zing_web_keys,
     resolve_youtube_audio,
     resolve_zing_stream,
+    stream_cache_seconds,
     validate_stream_target,
     validate_zing_target,
 )
@@ -132,6 +133,8 @@ class PlayerCore:
         self.stream_lock = threading.Lock()
         self.zing_result_cache: dict[str, float] = {}
         self.stream_cache: dict[tuple[str, str], tuple[float, dict]] = {}
+        self.prefetching: set[tuple[str, str]] = set()
+        self.prefetch_streams = True
         self.playback_session = PlaybackSession()
 
     @property
@@ -220,7 +223,42 @@ class PlayerCore:
                 auto_advance=auto_advance,
             )
         self.add_history(session["item"])
+        self.prefetch_next(session)
         return session
+
+    def prefetch_next(self, session):
+        """Giải sẵn luồng bài kế của nhóm loa trong nền, để bấm bài kế và tự
+        chuyển bài bắt đầu ngay thay vì chờ yt-dlp."""
+        queue = (session or {}).get("queue") or {}
+        items = queue.get("items") or []
+        index = int(queue.get("index", -1)) + 1
+        if not self.prefetch_streams or not session.get("output_entity_ids") or not 0 < index < len(items):
+            return
+        self.prefetch(items[index])
+
+    def prefetch(self, item):
+        """Giải sẵn luồng của một bài (trong nền); bài không giải được thì bỏ qua."""
+        item = item if isinstance(item, dict) else {}
+        source = item.get("source")
+        target = item.get("url") or item.get("id")
+        if not self.prefetch_streams or source not in {"youtube", "zing"} or item.get("kind") not in {"video", "song"} or not target:
+            return
+        key = (source, target)
+        with self.stream_lock:
+            if key in self.prefetching:
+                return
+            self.prefetching.add(key)
+
+        def run():
+            try:
+                self.prepare_stream(source, target)
+            except (ValueError, StreamUnavailableError, OSError):
+                pass  # giải sẵn hỏng chỉ có nghĩa bài kế sẽ giải lúc bấm
+            finally:
+                with self.stream_lock:
+                    self.prefetching.discard(key)
+
+        threading.Thread(target=run, name="youtube-phat-giai-san", daemon=True).start()
 
     def stop(self, expected_revision=None, session_id=None):
         with self.player_lock:
@@ -363,8 +401,12 @@ class PlayerCore:
                 for cached_key, value in self.stream_cache.items()
                 if value[0] >= now
             }
-            self.stream_cache[key] = (now + 120, dict(resolved))
+            self.stream_cache[key] = (now + stream_cache_seconds(resolved.get("url")), dict(resolved))
         return dict(resolved)
+
+    def forget_stream(self, source, target):
+        with self.stream_lock:
+            self.stream_cache.pop((source, target), None)
 
     def resolve_stream(self, source, target):
         """Return the prepared stream, resolving again after cache expiry."""
@@ -435,4 +477,6 @@ def _reset_for_tests(data_dir: Path | None = None) -> PlayerCore:
     global _core
     with _core_lock:
         _core = PlayerCore(Path(data_dir) if data_dir else _THU_MUC)
+        # Giải sẵn bài kế chạy yt-dlp thật trong nền; test nào cần thì tự bật.
+        _core.prefetch_streams = False
         return _core

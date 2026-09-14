@@ -202,18 +202,18 @@ class ZingWebKeyTests(unittest.TestCase):
         mo.assert_not_called()
 
 
-class _FakeCompleted:
-    def __init__(self, returncode, stdout):
-        self.returncode = returncode
-        self.stdout = stdout
-
-
 class YouTubeAudioResolverTests(unittest.TestCase):
     def setUp(self):
         self.streaming = load_streaming_module()
 
-    def _runner(self, returncode, stdout):
-        return lambda *_args, **_kwargs: _FakeCompleted(returncode, stdout)
+    def _extractor(self, result):
+        def extract(watch_url, timeout):
+            self.asked = (watch_url, timeout)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        return extract
 
     def test_youtube_token_round_trip_is_bound_to_video_and_expiry(self):
         token = self.streaming.create_stream_token(
@@ -245,7 +245,7 @@ class YouTubeAudioResolverTests(unittest.TestCase):
             "http_headers": {"User-Agent": "yt-dlp-client"},
         }
         result = self.streaming.resolve_youtube_audio(
-            "dQw4w9WgXcQ", runner=self._runner(0, json.dumps(info))
+            "dQw4w9WgXcQ", extractor=self._extractor(info)
         )
 
         self.assertEqual(info["url"], result["url"])
@@ -258,7 +258,7 @@ class YouTubeAudioResolverTests(unittest.TestCase):
             "ext": "webm",
         }
         result = self.streaming.resolve_youtube_audio(
-            "dQw4w9WgXcQ", runner=self._runner(0, json.dumps(info))
+            "dQw4w9WgXcQ", extractor=self._extractor(info)
         )
         self.assertEqual("audio/webm", result["content_type"])
 
@@ -266,19 +266,32 @@ class YouTubeAudioResolverTests(unittest.TestCase):
         info = {"url": "https://evil.example/leak.m4a", "ext": "m4a"}
         with self.assertRaises(self.streaming.StreamUnavailableError):
             self.streaming.resolve_youtube_audio(
-                "dQw4w9WgXcQ", runner=self._runner(0, json.dumps(info))
+                "dQw4w9WgXcQ", extractor=self._extractor(info)
             )
 
     def test_resolver_fails_when_yt_dlp_exits_nonzero(self):
         with self.assertRaises(self.streaming.StreamUnavailableError):
             self.streaming.resolve_youtube_audio(
-                "dQw4w9WgXcQ", runner=self._runner(1, "")
+                "dQw4w9WgXcQ", extractor=self._extractor(RuntimeError("ERROR: Video unavailable"))
             )
+
+    def test_cache_time_follows_the_googlevideo_expiry(self):
+        seconds = self.streaming.stream_cache_seconds
+        url = "https://rr3---sn-abc.googlevideo.com/videoplayback?expire={}&mime=audio/mp4"
+        self.assertEqual(5 * 3600, seconds(url.format(1_000 + 6 * 3600), now=1_000))
+        self.assertEqual(1_800 - 600, seconds(url.format(1_000 + 1_800), now=1_000))
+        self.assertEqual(0, seconds(url.format(1_000 + 300), now=1_000))
+        self.assertEqual(120, seconds("https://zmdcdn.me/song.mp3?authen=x", now=1_000))
+
+    def test_resolver_asks_yt_dlp_for_the_watch_page_of_the_video(self):
+        info = {"url": "https://rr1---sn-xyz.googlevideo.com/videoplayback", "ext": "m4a"}
+        self.streaming.resolve_youtube_audio("dQw4w9WgXcQ", extractor=self._extractor(info))
+        self.assertEqual("https://www.youtube.com/watch?v=dQw4w9WgXcQ", self.asked[0])
 
     def test_resolver_rejects_an_invalid_video_id(self):
         with self.assertRaises(ValueError):
             self.streaming.resolve_youtube_audio(
-                "not-a-valid-id", runner=self._runner(0, "{}")
+                "not-a-valid-id", extractor=self._extractor({})
             )
 
 

@@ -14,11 +14,9 @@ import hmac
 import io
 import json
 import re
-import subprocess
-import sys
 import time
 from http.cookiejar import CookieJar
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import (
     HTTPCookieProcessor,
     HTTPRedirectHandler,
@@ -30,6 +28,9 @@ from urllib.request import (
 STREAM_SOURCES = ("zing", "youtube")
 YOUTUBE_VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 YOUTUBE_AUDIO_FORMAT = "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio"
+STREAM_CACHE_DEFAULT_SECONDS = 120
+STREAM_CACHE_MAX_SECONDS = 5 * 3600
+STREAM_EXPIRY_MARGIN_SECONDS = 600
 YOUTUBE_STREAM_HOSTS = ("googlevideo.com",)
 ZING_ID = re.compile(r"^[A-Za-z0-9]{8,16}$")
 ZING_API_BASE = "https://zingmp3.vn"
@@ -87,6 +88,26 @@ def _b64encode(value: bytes) -> str:
 def _b64decode(value: str) -> bytes:
     padding = "=" * (-len(value) % 4)
     return base64.urlsafe_b64decode(f"{value}{padding}")
+
+
+_STREAM_TOKEN = re.compile(r"/api/stream/([A-Za-z0-9_-]+)\.[A-Za-z0-9_-]+")
+
+
+def stream_target(media_content_id: object) -> str | None:
+    """Bài loa đang phát, đọc từ link luồng đã ký mà loa báo lên HA.
+
+    Phần payload của token là base64 JSON thường ({exp, source, target}); chỉ chữ
+    ký là bí mật. None = không phải luồng của trình phát (tivi mở ứng dụng
+    YouTube gốc, nguồn khác) nên không biết là bài nào."""
+    match = _STREAM_TOKEN.search(str(media_content_id or ""))
+    if not match:
+        return None
+    try:
+        data = json.loads(_b64decode(match.group(1)))
+    except (ValueError, TypeError):
+        return None
+    target = data.get("target") if isinstance(data, dict) else None
+    return str(target) if target else None
 
 
 def validate_zing_target(target_url: str) -> str:
@@ -400,41 +421,56 @@ def _youtube_audio_format(info: dict) -> dict:
     raise StreamUnavailableError("stream_provider_failed")
 
 
+def extract_with_yt_dlp(watch_url: str, timeout: int) -> dict:
+    """Chạy yt-dlp ngay trong tiến trình, trả đúng thứ ``--dump-single-json`` in ra.
+
+    Đo 14/09/2026 trong container c2a: mở tiến trình yt-dlp mới mất 4,8–7,1 giây
+    mỗi bài (riêng nạp yt_dlp 2,2 giây); cùng việc đó trong tiến trình sống lâu
+    chỉ 1,1–1,8 giây. Khoảng chờ đó là lúc loa chưa kêu và mỗi lần bấm bài kế.
+    """
+    import yt_dlp  # nạp lần đầu dùng, sau đó Python giữ sẵn
+
+    options = {
+        "format": YOUTUBE_AUDIO_FORMAT,
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "socket_timeout": timeout,
+        "extractor_retries": 1,
+    }
+    with yt_dlp.YoutubeDL(options) as ydl:
+        return ydl.sanitize_info(ydl.extract_info(watch_url, download=False))
+
+
+def stream_cache_seconds(stream_url: str, *, now: float | None = None) -> int:
+    """Link luồng đã giải được dùng lại bao lâu.
+
+    Link googlevideo tự mang hạn ``expire`` (khoảng 6 giờ tới); dùng lại tới sát
+    hạn đó thì phát lại, tua, loa hỏi từng đoạn không phải giải lại. Link không
+    có hạn giữ 2 phút như cũ."""
+    try:
+        expire = int(parse_qs(urlsplit(str(stream_url)).query).get("expire", [""])[0])
+    except ValueError:
+        return STREAM_CACHE_DEFAULT_SECONDS
+    remaining = expire - int(time.time() if now is None else now) - STREAM_EXPIRY_MARGIN_SECONDS
+    return max(0, min(remaining, STREAM_CACHE_MAX_SECONDS))
+
+
 def resolve_youtube_audio(
-    video_id: str, *, timeout: int = 45, runner=subprocess.run
+    video_id: str, *, timeout: int = 20, extractor=extract_with_yt_dlp
 ) -> dict:
     """Resolve one browser-free direct audio stream for a public YouTube video.
 
     yt-dlp extracts a short-lived, IP-bound ``googlevideo.com`` URL; the caller
-    relays it through the add-on so speakers never fetch YouTube directly.
+    relays it through c2a so speakers never fetch YouTube directly.
     """
     video_id = validate_stream_target("youtube", video_id)
     watch_url = f"https://www.youtube.com/watch?v={video_id}"
-    command = [
-        sys.executable, "-m", "yt_dlp",
-        "--format",
-        YOUTUBE_AUDIO_FORMAT,
-        "--no-playlist",
-        "--no-warnings",
-        "--dump-single-json",
-        watch_url,
-    ]
     try:
-        completed = runner(
-            command,
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=timeout,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
+        info = extractor(watch_url, timeout)
+    except Exception as error:  # yt-dlp ném nhiều loại lỗi khác nhau cho cùng một hỏng
         raise StreamUnavailableError("stream_provider_failed") from error
-    if completed.returncode != 0:
-        raise StreamUnavailableError("stream_provider_failed")
-    try:
-        info = json.loads(completed.stdout)
-    except (json.JSONDecodeError, TypeError) as error:
-        raise StreamUnavailableError("invalid_stream_response") from error
     if not isinstance(info, dict):
         raise StreamUnavailableError("invalid_stream_response")
 

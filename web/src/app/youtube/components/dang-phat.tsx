@@ -12,7 +12,7 @@
  */
 
 import {
-  ListMusic, LoaderCircle, Maximize, Maximize2, Minimize2, MonitorPlay, Music2, Pause, PictureInPicture2, Play,
+  ListMusic, LoaderCircle, MonitorOff, Maximize, Maximize2, Minimize2, MonitorPlay, Music2, Pause, PictureInPicture2, Play,
   RectangleHorizontal, SkipBack, SkipForward, Speaker, Square, Users, Volume2, VolumeX, X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
 import { type BaiHat, type Phien, TEN_NGUON, type ThietBi, thoiLuong } from "./lib";
 import type { CheDoXem, VideoNhung } from "./video-nhung";
 
-export type VideoMo = { bai: BaiHat; src: string; theoLoa: boolean; ngheTrenMay: boolean };
+export type VideoMo = { bai: BaiHat; src: string; theoLoa: boolean; ngheTrenMay: boolean; theoMay?: boolean };
 export type ViTri = { giay: number; tong: number } | null;
 
 type Props = {
@@ -33,6 +33,14 @@ type Props = {
   ngheCungTen: string[];
   thietBi: ThietBi[];
   video: VideoMo | null;
+  /** Bài đang nghe trên máy này bằng thẻ âm thanh (nghe khi tắt màn hình, hoặc Zing). */
+  nghe: BaiHat | null;
+  hang: { index: number; items: BaiHat[] } | null;
+  /** Nghe khi tắt màn hình: tiếng trên máy phát bằng thẻ âm thanh. */
+  ngheNen: boolean;
+  doiNgheNen: () => void;
+  /** Trình duyệt chặn tiếng tự phát: bảo người xem chạm vào khung video. */
+  canCham: boolean;
   nhung: VideoNhung;
   cheDo: CheDoXem;
   doiCheDo: (c: CheDoXem) => void;
@@ -98,17 +106,17 @@ function TienDo({ layViTri }: { layViTri: () => ViTri }) {
 export function DangPhat(p: Props) {
   const { video, nhung, cheDo } = p;
   const toanManHinh = useRef<HTMLDivElement>(null);
-  const bai = video?.bai ?? p.phien?.item ?? null;
+  const bai = video?.bai ?? p.nghe ?? p.phien?.item ?? null;
   const tenTheoMa = new Map(p.thietBi.map((t) => [t.entity_id, t.ten]));
-  const noiPhat = (p.phien?.output_entity_ids ?? []).map((id) => tenTheoMa.get(id) ?? id);
-  const hang = p.phien?.queue;
+  const noiPhat = p.nghe ? [] : (p.phien?.output_entity_ids ?? []).map((id) => tenTheoMa.get(id) ?? id);
+  const hang = p.hang;
   const anh = bai && /^https?:\/\//.test(bai.thumbnail || "") ? bai.thumbnail : "";
   const nho = !!video && cheDo === "nho";
 
   const meta = bai
     ? video
-      ? [bai.channel || bai.artist, video.theoLoa && noiPhat.length ? `Tiếng ra ${noiPhat.join(", ")}${video.ngheTrenMay ? " và máy này" : ""}` : "Xem trên trang"]
-      : [bai.artist || bai.channel, TEN_NGUON[bai.source], noiPhat.length ? `Trên ${noiPhat.join(", ")}` : ""]
+      ? [bai.channel || bai.artist, video.theoMay ? "Tiếng từ máy này (nghe cả khi tắt màn hình)" : video.theoLoa && noiPhat.length ? `Tiếng ra ${noiPhat.join(", ")}${video.ngheTrenMay ? " và máy này" : ""}` : "Xem trên trang"]
+      : [bai.artist || bai.channel, TEN_NGUON[bai.source], p.nghe ? "Nghe trên máy này (cả khi tắt màn hình)" : noiPhat.length ? `Trên ${noiPhat.join(", ")}` : ""]
     : [];
 
   const moToanManHinh = () => {
@@ -132,7 +140,7 @@ export function DangPhat(p: Props) {
         )}
         {!video && (
           <span className="absolute left-3 top-3 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur">
-            {bai ? (p.dangChay ? "Đang phát" : "Đã gửi") : "Chưa phát"}
+            {p.nghe ? (p.dangChay ? "Đang nghe trên máy này" : "Tạm dừng") : bai ? (p.dangChay ? "Đang phát" : "Đã gửi") : "Chưa phát"}
           </span>
         )}
         {!video && hang && hang.items.length > 1 && hang.index >= 0 && (
@@ -169,6 +177,11 @@ export function DangPhat(p: Props) {
                 // YouTube báo "Error 153" khi khung nhúng không kèm Referer (trang gửi no-referrer).
                 referrerPolicy="strict-origin-when-cross-origin"
               />
+              {p.canCham && (
+                <span className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/75 px-3 py-1 text-xs font-semibold text-white">
+                  {nhung.trangThai === 1 ? "🔇 Chạm vào video để bật tiếng" : "▶ Chạm vào video để phát có tiếng"}
+                </span>
+              )}
             </div>
             {nho && (
               <div className="flex items-center gap-0.5 px-2 py-1">
@@ -190,11 +203,13 @@ export function DangPhat(p: Props) {
       <div className="px-3 pb-2 pt-3">
         <div className="line-clamp-2 text-sm font-semibold leading-snug">{bai?.title || "Chưa có bài nào"}</div>
         <div className="mt-0.5 truncate text-xs text-muted-foreground">
-          {bai ? meta.filter(Boolean).join(" · ") : "Tích loa rồi bấm ▶ một bài, hoặc bấm ▶ khi chưa tích loa để xem video ngay trên trang."}
+          {bai
+            ? meta.filter(Boolean).join(" · ")
+            : `Tích loa rồi bấm ▶ một bài, hoặc bấm ▶ khi chưa tích loa để ${p.ngheNen ? "nghe trên máy này (cả khi tắt màn hình)" : "xem video ngay trên trang"}.`}
         </div>
-        {bai && <TienDo key={`${p.phien?.session_id ?? "video"}:${bai.id}`} layViTri={p.layViTri} />}
+        {bai && <TienDo key={`${p.nghe ? "nghe" : p.phien?.session_id ?? "video"}:${bai.id}`} layViTri={p.layViTri} />}
 
-        <div className="mt-2 flex items-center justify-between gap-1">
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-1">
           <div className="flex items-center gap-1">
             <Button type="button" variant="ghost" size="icon" className="size-9 rounded-full" aria-label="Bài trước" title="Bài trước" disabled={!p.truoc || p.dangGui} onClick={() => p.truoc?.()}>
               <SkipBack className="size-4" />
@@ -217,6 +232,24 @@ export function DangPhat(p: Props) {
               <Square className="size-3.5 fill-current" />
             </Button>
           </div>
+          {!video?.theoLoa && (
+            <button
+              type="button"
+              onClick={p.doiNgheNen}
+              aria-pressed={p.ngheNen}
+              title={p.ngheNen
+                ? "Đang bật: tiếng trên máy này chạy tiếp khi tắt màn hình. Bấm để tắt."
+                : "Bật để tiếng trên máy này chạy tiếp khi tắt màn hình (video nếu mở sẽ chạy theo tiếng)."}
+              className={cn(
+                "ml-auto flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition",
+                p.ngheNen
+                  ? "border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]"
+                  : "border-[var(--border)] text-muted-foreground hover:border-[var(--primary)]",
+              )}
+            >
+              <MonitorOff className="size-3.5" /> Nghe khi tắt màn hình
+            </button>
+          )}
           {video && (
             <div className="flex items-center">
               {video.theoLoa && (

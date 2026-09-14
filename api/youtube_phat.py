@@ -23,7 +23,9 @@ import asyncio
 import hmac
 import json
 import re
+from urllib.error import HTTPError
 from urllib.request import Request as UrlRequest
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 from fastapi import APIRouter, Header, Request
@@ -259,19 +261,31 @@ def create_router() -> APIRouter:
     async def proxy_stream(token: str, request: Request):
         """Tiếp sóng luồng âm thanh cho loa — loa không gọi thẳng googlevideo.com
         (URL gắn IP máy giải, loa tải là 403)."""
-        resolved, loi = await _mo_luong(token, request)
-        if loi is not None:
-            return loi
-        headers = {**resolved["headers"], "Accept-Encoding": "identity"}
-        if range_header := request.headers.get("range"):
-            if not re.fullmatch(r"bytes=\d*-\d*", range_header):
-                return _json(400, {"error": "invalid_range"})
-            headers["Range"] = range_header
-        try:
-            up = await asyncio.to_thread(urlopen, UrlRequest(resolved["url"], headers=headers), timeout=30)
-        except OSError as exc:
-            logger.warning({"event": "youtube_phat_luong_loi", "loi": str(exc)[:160]})
-            return _json(502, {"error": "stream_unavailable"})
+        range_header = request.headers.get("range")
+        if range_header and not re.fullmatch(r"bytes=\d*-\d*", range_header):
+            return _json(400, {"error": "invalid_range"})
+        for lan in (1, 2):
+            resolved, loi = await _mo_luong(token, request)
+            if loi is not None:
+                return loi
+            headers = {**resolved["headers"], "Accept-Encoding": "identity"}
+            if range_header:
+                headers["Range"] = range_header
+            try:
+                up = await asyncio.to_thread(urlopen, UrlRequest(resolved["url"], headers=headers), timeout=30)
+                break
+            except HTTPError as exc:
+                # Link được dùng lại hàng giờ (stream_cache_seconds): YouTube từ chối
+                # link cũ thì bỏ bản đệm, giải lại đúng một lần.
+                if lan == 1 and exc.code in {403, 404, 410}:
+                    source, target = verify_stream_token(token, dich_vu.core().integration_token)
+                    dich_vu.core().forget_stream(source, target)
+                    continue
+                logger.warning({"event": "youtube_phat_luong_loi", "loi": str(exc)[:160]})
+                return _json(502, {"error": "stream_unavailable"})
+            except OSError as exc:
+                logger.warning({"event": "youtube_phat_luong_loi", "loi": str(exc)[:160]})
+                return _json(502, {"error": "stream_unavailable"})
         out = {"Content-Type": up.headers.get("Content-Type", resolved.get("content_type", "audio/mpeg")),
                "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
         for ten in ("Content-Length", "Content-Range", "Accept-Ranges"):
@@ -392,6 +406,30 @@ def create_router() -> APIRouter:
             logger.warning({"event": "youtube_phat_phat_loi", "loi": str(exc)[:160]})
             return _loi("ha_khong_doc_duoc")
         return {"ok": True, **ket_qua}
+
+    @router.post("/api/youtube-phat/nghe")
+    async def nghe(request: Request, authorization: str | None = Header(default=None)):
+        """Chế độ Chỉ nghe: phát bằng thẻ <audio> ngay trên trình duyệt đang mở.
+
+        Trả đường luồng CÙNG NGUỒN với trang (CSP media-src 'self'), đã ký như
+        luồng cho loa. Trình duyệt điện thoại giữ tiếng <audio> khi tắt màn hình,
+        khung video YouTube thì không. `ke` = bài kế trong hàng đợi trên trang,
+        được giải sẵn để bấm bài kế không phải chờ."""
+        require_admin(authorization)
+        try:
+            payload = await _doc_json(request, 8192)
+            source = str(payload.get("source") or "").lower()
+            if source not in {"youtube", "zing"}:
+                raise ValueError("unsupported_source")
+            c = dich_vu.core()
+            ma, giai = await asyncio.to_thread(c.prepare_stream, source, str(payload.get("target") or ""))
+            url = c.create_stream_url(source, ma, f"{resolve_image_base_url(request)}{TIEN_TO}")
+        except StreamUnavailableError:
+            return _loi("stream_unavailable")
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as error:
+            return _loi(str(error))
+        c.prefetch(payload.get("ke"))
+        return {"ok": True, "url": urlsplit(url).path, "content_type": giai.get("content_type") or "audio/mpeg"}
 
     async def _phien_lenh(request: Request, lam) -> dict:
         try:

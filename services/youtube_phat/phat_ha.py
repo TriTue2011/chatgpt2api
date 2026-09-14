@@ -28,6 +28,7 @@ from urllib.parse import urlsplit
 from services import ha_client
 
 from . import dich_vu
+from .streaming import stream_target
 
 MEDIA_PLAYER = re.compile(r"^media_player\.[a-z0-9_]+$")
 TOI_DA_THIET_BI = 16
@@ -233,6 +234,7 @@ def danh_sach(dung_bo_dem: bool = True) -> list[dict[str, Any]]:
             "thoi_luong": float(a["media_duration"]) if isinstance(a.get("media_duration"), (int, float))
             and not isinstance(a.get("media_duration"), bool) else None,
             "tieu_de": str(a.get("media_title") or ""),
+            "muc_dang_phat": stream_target(a.get("media_content_id")),
             "nghe_si": str(a.get("media_artist") or a.get("media_channel") or ""),
             "an": eid in an,
             **kha_nang(nen_tang.get(eid), a.get("device_class"), features),
@@ -242,6 +244,19 @@ def danh_sach(dung_bo_dem: bool = True) -> list[dict[str, Any]]:
 
 
 # ── Phát và điều khiển ───────────────────────────────────────────────────────
+
+def dang_phat_bai(thiet_bi: dict[str, Any], item: dict[str, Any] | None) -> bool:
+    """Loa đã báo đúng bài này chưa (theo `muc_dang_phat`).
+
+    Vừa gửi bài mới, loa còn báo vị trí và thời lượng của bài cũ vài giây; đọc
+    chúng như của bài mới làm video và thanh tiến độ nhảy tới giây cũ rồi mới
+    chạy lại từ đầu, và có thể tính nhầm bài cũ hết là bài mới hết."""
+    muc = thiet_bi.get("muc_dang_phat")
+    if not muc or not item:
+        return True
+    ma = str(item.get("id") or "")
+    return muc in {ma, str(item.get("url") or "")} or bool(ma and ma in muc)
+
 
 def _chon(entity_ids: Any) -> list[str]:
     if not isinstance(entity_ids, list):

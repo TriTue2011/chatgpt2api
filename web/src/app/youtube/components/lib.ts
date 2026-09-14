@@ -21,6 +21,8 @@ export type ThietBi = {
   /** Độ dài bài loa báo (media_duration), giây. */
   thoi_luong: number | null;
   tieu_de: string;
+  /** Bài loa đang phát, đọc từ link luồng đã ký; null = không phải luồng của c2a. */
+  muc_dang_phat: string | null;
   nghe_si: string;
   an: boolean;
   transport: string;
@@ -94,6 +96,13 @@ export const NHAN_KET_NOI: Record<string, string> = {
 };
 
 export const TEN_NGUON: Record<Nguon, string> = { youtube: "YouTube", zing: "Zing MP3", http: "Link audio" };
+
+/** Loa đã báo đúng bài này chưa. Vừa gửi bài mới, loa còn báo vị trí của bài cũ vài
+ *  giây — dùng vị trí đó thì video và tiến độ nhảy tới giây cũ rồi mới về đầu. */
+export function dangPhatBai(tb: ThietBi, bai: BaiHat | null | undefined): boolean {
+  if (!tb.muc_dang_phat || !bai) return true;
+  return tb.muc_dang_phat === bai.id || tb.muc_dang_phat === bai.url || (!!bai.id && tb.muc_dang_phat.includes(bai.id));
+}
 
 export function dangHoatDong(tb: ThietBi): boolean {
   return ["playing", "paused", "buffering"].includes(tb.trang_thai);

@@ -23,9 +23,10 @@ export function laVideo(bai: BaiHat | null | undefined): bai is BaiHat {
   return !!bai && bai.source === "youtube" && MA_VIDEO.test(bai.id);
 }
 
-export function srcNhung(id: string, tatTieng: boolean): string {
+export function srcNhung(id: string, tatTieng: boolean, batDau = 0): string {
   const p = new URLSearchParams({ enablejsapi: "1", autoplay: "1", rel: "0", playsinline: "1", origin: window.location.origin });
   if (tatTieng) p.set("mute", "1");
+  if (batDau >= 1) p.set("start", String(Math.floor(batDau)));
   return `${GOC_NHUNG}/embed/${id}?${p}`;
 }
 
@@ -35,6 +36,8 @@ export type VideoNhung = {
   ganKhung: (el: HTMLIFrameElement | null) => void;
   sanSang: boolean;
   trangThai: number;
+  /** Khung báo đang tắt tiếng (null = chưa báo). */
+  tatTieng: boolean | null;
   lenh: (func: string, args?: unknown[]) => void;
   thoiGian: () => number;
   khiNap: () => void;
@@ -45,6 +48,7 @@ export function useVideoNhung(khiHet: () => void): VideoNhung {
   const khung = useRef<HTMLIFrameElement>(null);
   const [sanSang, setSanSang] = useState(false);
   const [trangThai, setTrangThai] = useState(-1);
+  const [tatTieng, setTatTieng] = useState<boolean | null>(null);
   const moc = useRef({ t: 0, luc: 0, trangThai: -1, sanSang: false });
   const khiHetMoi = useRef(khiHet);
   const henBatTay = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
@@ -79,8 +83,9 @@ export function useVideoNhung(khiHet: () => void): VideoNhung {
         moc.current.sanSang = true;
         setSanSang(true);
       }
-      const info = d.info as { currentTime?: unknown; playerState?: unknown } | null;
+      const info = d.info as { currentTime?: unknown; playerState?: unknown; muted?: unknown } | null;
       if ((d.event === "infoDelivery" || d.event === "initialDelivery") && info && typeof info === "object") {
+        if (typeof info.muted === "boolean") setTatTieng(info.muted);
         if (typeof info.currentTime === "number") {
           moc.current.t = info.currentTime;
           moc.current.luc = Date.now();
@@ -120,6 +125,7 @@ export function useVideoNhung(khiHet: () => void): VideoNhung {
     moc.current = { t: 0, luc: 0, trangThai: -1, sanSang: false };
     setSanSang(false);
     setTrangThai(-1);
+    setTatTieng(null);
   }, []);
 
   const thoiGian = useCallback(
@@ -127,5 +133,5 @@ export function useVideoNhung(khiHet: () => void): VideoNhung {
     [],
   );
 
-  return { ganKhung, sanSang, trangThai, lenh, thoiGian, khiNap, datLai };
+  return { ganKhung, sanSang, trangThai, tatTieng, lenh, thoiGian, khiNap, datLai };
 }

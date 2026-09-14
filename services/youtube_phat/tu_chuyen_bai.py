@@ -68,6 +68,8 @@ def mot_vong(bay_gio: float | None = None) -> list[str]:
         khoa = (p["session_id"], (p.get("item") or {}).get("id"), hang.get("index"), dan["entity_id"])
         song.add(khoa)
         tracker = _theo_doi.setdefault(khoa, {})
+        if dan["trang_thai"] in DANG_PHAT and not phat_ha.dang_phat_bai(dan, p.get("item")):
+            continue  # loa còn báo bài trước: chưa phải bài của phiên này
         if not quan_sat(tracker, dan["trang_thai"], dan.get("vi_tri"), dan.get("thoi_luong") or (p.get("item") or {}).get("duration"), bay_gio):
             continue
         if int(hang.get("index", -1)) + 1 >= len(hang.get("items") or []):

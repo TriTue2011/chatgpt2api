@@ -338,5 +338,97 @@ class ApiTabTest(_CoSo):
         self.assertEqual("invalid_search_query", d["ma"])
 
 
+def _luong_da_ky(video_id: str) -> str:
+    import base64
+    import json
+
+    payload = base64.urlsafe_b64encode(json.dumps({"exp": 1, "source": "youtube", "target": video_id}).encode()).decode().rstrip("=")
+    return f"https://gpt.vi-du.vn/yt/api/stream/{payload}.Y2hla3k"
+
+
+class NghePhatNhanhVaDungBaiTest(_CoSo):
+    """Chủ máy 14/09/2026: "chỉ phát âm thanh", "phát không video chờ lâu quá, khi
+    next cũng vậy", "chạy ngay ở giây của video trước 1 lúc mới chạy lại từ đầu"."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from api import youtube_phat
+
+        p = patch("api.youtube_phat.require_admin", lambda *a, **k: None)
+        p.start()
+        self.addCleanup(p.stop)
+        app = FastAPI()
+        app.include_router(youtube_phat.create_router())
+        self.client = TestClient(app)
+
+    def test_nghe_tren_trinh_duyet_tra_duong_cung_nguon_va_giai_san_bai_ke(self) -> None:
+        self.core.prefetch_streams = True
+        giai = []
+        with patch.object(self.core, "prepare_stream", side_effect=lambda nguon, ma: (giai.append(ma) or ma[-11:], {"content_type": "audio/mp4"})):
+            d = self.client.post("/api/youtube-phat/nghe", headers={"host": "gpt.vi-du.vn", "x-forwarded-proto": "https"}, json={
+                "source": "youtube", "target": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                "ke": {"source": "youtube", "kind": "video", "id": "M7lc1UVf-VE", "url": "https://www.youtube.com/watch?v=M7lc1UVf-VE"}}).json()
+            for _ in range(50):
+                if len(giai) == 2:
+                    break
+                __import__("time").sleep(0.02)
+        self.assertTrue(d["ok"], d)
+        self.assertTrue(d["url"].startswith("/yt/api/stream/"), d)       # cùng nguồn trang: CSP media-src 'self'
+        self.assertEqual("audio/mp4", d["content_type"])
+        self.assertEqual(["https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://www.youtube.com/watch?v=M7lc1UVf-VE"], giai)
+        from services.youtube_phat.streaming import stream_target
+        self.assertEqual("dQw4w9WgXcQ", stream_target(d["url"]))
+        self.assertFalse(self.client.post("/api/youtube-phat/nghe", json={"source": "http", "target": "x"}).json()["ok"])
+
+    def test_loa_bao_bai_cu_thi_khong_dung_vi_tri_va_khong_tinh_het_bai(self) -> None:
+        from services.youtube_phat import tu_chuyen_bai
+
+        moi = {"id": "M7lc1UVf-VE", "url": "https://www.youtube.com/watch?v=M7lc1UVf-VE"}
+        self.assertFalse(self.phat_ha.dang_phat_bai({"muc_dang_phat": "dQw4w9WgXcQ"}, moi))
+        self.assertTrue(self.phat_ha.dang_phat_bai({"muc_dang_phat": "M7lc1UVf-VE"}, moi))
+        self.assertTrue(self.phat_ha.dang_phat_bai({"muc_dang_phat": None}, moi))   # tivi app gốc: không biết
+
+        cu = dict(GOOGLE_HOME, state="playing", attributes={**GOOGLE_HOME["attributes"], "media_content_id": _luong_da_ky("dQw4w9WgXcQ")})
+        with patch.object(self.phat_ha.ha_client, "doc_media_player_tho", side_effect=lambda: [cu]):
+            self.phat_ha._xoa_bo_dem()
+            self.assertEqual("dQw4w9WgXcQ", self.phat_ha.danh_sach(dung_bo_dem=False)[0]["muc_dang_phat"])
+
+        tu_chuyen_bai._theo_doi.clear()
+        a = GOOGLE_HOME["entity_id"]
+        with patch.object(self.core, "prepare_stream", side_effect=lambda nguon, ma: (ma[-11:], {"content_type": "audio/mp4"})), \
+             patch.object(self.phat_ha.ha_client, "call_service", side_effect=self.goi):
+            self.phat_ha.phat("youtube", "https://www.youtube.com/watch?v=M7lc1UVf-VE", [a], "http://x/yt")
+        bao = {"entity_id": a, "youtube": "am_thanh", "trang_thai": "playing", "vi_tri": 195.0, "thoi_luong": 200.0,
+               "muc_dang_phat": "dQw4w9WgXcQ"}
+        with patch.object(self.phat_ha, "danh_sach", side_effect=lambda dung_bo_dem=True: [bao]), \
+             patch.object(self.phat_ha, "chuyen_bai") as chuyen:
+            tu_chuyen_bai.mot_vong(100.0)                       # còn báo bài cũ sát cuối...
+            bao.update(trang_thai="idle", vi_tri=None, muc_dang_phat=None)
+            tu_chuyen_bai.mot_vong(106.0)                       # ...rồi idle lúc nạp bài mới
+            chuyen.assert_not_called()
+
+    def test_prefetch_bai_ke_chi_cho_phien_co_loa(self) -> None:
+        self.core.prefetch_streams = True
+        ket_qua = [{"source": "youtube", "kind": "video", "id": i, "url": f"https://www.youtube.com/watch?v={i}", "title": i}
+                   for i in ("dQw4w9WgXcQ", "M7lc1UVf-VE")]
+        with patch("services.youtube_phat.dich_vu.search_youtube", return_value=ket_qua):
+            self.core.search("youtube", "x", 2)
+        giai = []
+        with patch.object(self.core, "prepare_stream", side_effect=lambda nguon, ma: giai.append(ma)):
+            self.core.record_session("youtube", ket_qua[0]["url"], output_entity_ids=[])
+            __import__("time").sleep(0.2)
+            self.assertEqual([], giai)
+            self.core.record_session("youtube", ket_qua[0]["url"], output_entity_ids=[GOOGLE_HOME["entity_id"]])
+            for _ in range(50):
+                if giai:
+                    break
+                __import__("time").sleep(0.02)
+        self.assertEqual([ket_qua[1]["url"]], giai)
+
+
+
 if __name__ == "__main__":
     unittest.main()

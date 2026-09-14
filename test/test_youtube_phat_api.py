@@ -273,6 +273,30 @@ class YouTubePhatApiTest(unittest.TestCase):
         r = self.get(f"/api/stream/{token}", headers={"Range": "chu"})
         self.assertEqual((400, {"error": "invalid_range"}), (r.status_code, r.json()))
 
+    @patch("api.youtube_phat.urlopen")
+    @patch("services.youtube_phat.dich_vu.resolve_youtube_audio")
+    def test_link_cu_bi_youtube_tu_choi_thi_giai_lai_mot_lan(self, giai, mo) -> None:
+        from urllib.error import HTTPError
+
+        giai.side_effect = [
+            {"url": "https://rr3---sn-cu.googlevideo.com/videoplayback", "headers": {}, "content_type": "audio/mp4"},
+            {"url": "https://rr3---sn-moi.googlevideo.com/videoplayback", "headers": {}, "content_type": "audio/mp4"},
+        ]
+        up = io.BytesIO(b"M4A!")
+        up.headers = {"Content-Type": "audio/mp4", "Content-Length": "4"}
+        up.getcode = lambda: 200
+
+        def mo_url(req, timeout):
+            if "sn-cu" in req.full_url:
+                raise HTTPError(req.full_url, 403, "Forbidden", {}, None)
+            return up
+
+        mo.side_effect = mo_url
+        d = self.post("/api/integration/stream", {"source": "youtube", "target": "dQw4w9WgXcQ"}, headers=H).json()
+        r = self.get(f"/api/stream/{d['stream_url'].rsplit('/', 1)[-1]}")
+        self.assertEqual((200, b"M4A!"), (r.status_code, r.content))
+        self.assertEqual(2, giai.call_count)
+
     def test_youtube_playlist_va_nguon_la_bi_tu_choi(self) -> None:
         r = self.post("/api/integration/stream", {
             "source": "youtube", "target": "https://www.youtube.com/playlist?list=PL1234567890"}, headers=H)

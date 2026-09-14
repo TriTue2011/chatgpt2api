@@ -196,8 +196,8 @@ def dang_phat(cho_phep: set[str] | None) -> dict[str, Any]:
     dong = []
     for p in phien:
         loa = [theo_ma[e] for e in p["output_entity_ids"] if e in theo_ma]
-        dan = next((d for d in loa if d["vi_tri"] is not None), None)
         item = p.get("item") or {}
+        dan = next((d for d in loa if d["vi_tri"] is not None and phat_ha.dang_phat_bai(d, item)), None)
         tien_do = ""
         if dan:
             tien_do = " · " + "/".join(x for x in (thoi_gian(dan["vi_tri"]) or "0:00",

@@ -1,6 +1,6 @@
 "use client";
 
-import { AudioLines, Link2, LoaderCircle, MonitorPlay, Music2, Play, Search, Youtube } from "lucide-react";
+import { AudioLines, Headphones, Link2, LoaderCircle, MonitorPlay, Music2, Play, Search, Youtube } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,10 +27,12 @@ type Props = {
   dangGuiMa: string;
   /** Có chọn loa: ▶ phát ra loa; chưa chọn: ▶ bài YouTube mở video trên trang. */
   coLoa: boolean;
+  /** Nghe khi tắt màn hình đang bật: chưa tích loa thì ▶ phát tiếng trên máy này. */
+  ngheNen: boolean;
   phat: (bai: BaiHat) => void;
 };
 
-export function TimNhac({ className, nguon, doiNguon, tuKhoa, setTuKhoa, tim, dangTim, ketQua, dangPhatMa, dangGuiMa, coLoa, phat }: Props) {
+export function TimNhac({ className, nguon, doiNguon, tuKhoa, setTuKhoa, tim, dangTim, ketQua, dangPhatMa, dangGuiMa, coLoa, ngheNen, phat }: Props) {
   const goiY = NUT_NGUON.find((n) => n.khoa === nguon)?.goiY;
   return (
     <section className={cn("rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 sm:p-5", className)}>
@@ -77,7 +79,11 @@ export function TimNhac({ className, nguon, doiNguon, tuKhoa, setTuKhoa, tim, da
       </form>
       <p className="mt-2 text-xs text-muted-foreground">
         {goiY}
-        {nguon === "youtube" && !coLoa ? " · chưa chọn loa: bấm ▶ để xem ngay trên trang" : ""}
+        {coLoa || nguon === "http"
+          ? ""
+          : nguon === "youtube" && !ngheNen
+            ? " · chưa chọn loa: bấm ▶ để xem ngay trên trang"
+            : " · chưa chọn loa: bấm ▶ để nghe trên máy này"}
       </p>
 
       <div className="mt-4 space-y-1.5">
@@ -144,14 +150,16 @@ export function TimNhac({ className, nguon, doiNguon, tuKhoa, setTuKhoa, tim, da
                   variant={dangPhat ? "default" : "outline"}
                   className="shrink-0 rounded-full"
                   aria-label={`Phát ${bai.title || bai.id}`}
-                  title={coLoa || bai.source !== "youtube" ? "Phát ra loa đã chọn" : "Xem video trên trang"}
+                  title={coLoa || bai.source === "http" ? "Phát ra loa đã chọn" : bai.source === "youtube" && !ngheNen ? "Xem video trên trang" : "Nghe trên máy này"}
                   disabled={!!dangGuiMa}
                   onClick={() => phat(bai)}
                 >
                   {dangGui ? (
                     <LoaderCircle className="animate-spin" />
-                  ) : !coLoa && bai.source === "youtube" ? (
+                  ) : !coLoa && bai.source === "youtube" && !ngheNen ? (
                     <MonitorPlay />
+                  ) : !coLoa && bai.source !== "http" ? (
+                    <Headphones />
                   ) : (
                     <Play className="translate-x-px" />
                   )}
