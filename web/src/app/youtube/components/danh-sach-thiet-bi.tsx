@@ -76,8 +76,11 @@ function ThanhAmLuong({ tb, amLuong }: { tb: ThietBi; amLuong: Props["amLuong"] 
 export function DanhSachThietBi({ className, thietBi, loi, chon, batTat, amLuong, an, taiLai }: Props) {
   const [moAn, setMoAn] = useState(false);
   const [dangAn, setDangAn] = useState("");
-  const hien = (thietBi ?? []).filter((t) => !t.an);
-  const daAn = (thietBi ?? []).filter((t) => t.an);
+  // Thiết bị mất kết nối không hiện, tự hiện lại khi HA báo kết nối.
+  const conKetNoi = (thietBi ?? []).filter((t) => t.trang_thai !== "unavailable");
+  const soMatKetNoi = (thietBi?.length ?? 0) - conKetNoi.length;
+  const hien = conKetNoi.filter((t) => !t.an);
+  const daAn = conKetNoi.filter((t) => t.an);
 
   const doiAn = async (ids: string[], giaTri: boolean) => {
     setDangAn(ids.join(","));
@@ -94,6 +97,7 @@ export function DanhSachThietBi({ className, thietBi, loi, chon, batTat, amLuong
           <h2 className="text-sm font-semibold">Loa &amp; tivi</h2>
           <p className="text-xs text-muted-foreground">
             {chon.size ? `${chon.size} đang tích` : "Tích loa để xem và phát"}
+            {soMatKetNoi > 0 ? ` · ${soMatKetNoi} mất kết nối, tự hiện khi kết nối lại` : ""}
           </p>
         </div>
         <Button type="button" variant="ghost" size="icon" aria-label="Tải lại danh sách" onClick={taiLai}>
@@ -107,7 +111,11 @@ export function DanhSachThietBi({ className, thietBi, loi, chon, batTat, amLuong
         <div className="flex h-24 items-center justify-center"><LoaderCircle className="size-4 animate-spin text-muted-foreground" /></div>
       ) : !hien.length ? (
         <p className="px-4 pb-4 text-sm text-muted-foreground">
-          {daAn.length ? "Mọi thiết bị đang ẩn — mở mục Đã ẩn để khôi phục." : "Home Assistant chưa có loa hay tivi nào."}
+          {daAn.length
+            ? "Mọi thiết bị đang ẩn — mở mục Đã ẩn để khôi phục."
+            : soMatKetNoi
+              ? "Chưa có loa hay tivi nào đang kết nối."
+              : "Home Assistant chưa có loa hay tivi nào."}
         </p>
       ) : (
         <ul className="space-y-1 px-2 pb-2">
@@ -147,6 +155,7 @@ export function DanhSachThietBi({ className, thietBi, loi, chon, batTat, amLuong
                         <span className={cn("size-1.5 shrink-0 rounded-full", mauCham(tb.trang_thai))} />
                         <span className="truncate">
                           {TRANG_THAI[tb.trang_thai] ?? tb.trang_thai} · {NHAN_KET_NOI[tb.transport] ?? tb.transport}
+                          {tb.so_loa ? " · Sổ loa c2a" : ""}
                           {tb.trang_thai === "playing" && tb.tieu_de ? ` · ${tb.tieu_de}` : ""}
                         </span>
                       </span>

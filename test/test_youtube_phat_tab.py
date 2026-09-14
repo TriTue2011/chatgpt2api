@@ -48,6 +48,10 @@ class _CoSo(unittest.TestCase):
             p = patch.object(phat_ha.ha_client, dich, side_effect=gia_tri)
             p.start()
             self.addCleanup(p.stop)
+        # Sổ loa c2a thật và mã Cast hỏi qua mạng: test nào cần thì tự đặt.
+        p = patch("services.voice.speakers.list_speakers", return_value=[])
+        p.start()
+        self.addCleanup(p.stop)
         # Luồng tự chuyển bài chạy nền: test gọi thẳng `mot_vong`, không bật luồng thật.
         p = patch("services.youtube_phat.tu_chuyen_bai.dam_bao_chay")
         p.start()
@@ -427,6 +431,72 @@ class NghePhatNhanhVaDungBaiTest(_CoSo):
                     break
                 __import__("time").sleep(0.02)
         self.assertEqual([ket_qua[1]["url"]], giai)
+
+
+class GopSoLoaC2aTest(_CoSo):
+    """Chủ máy 14/09/2026: "gộp rồi lọc trùng nhau, ưu tiên trên dự án" — loa trong Sổ
+    loa c2a và media_player HA là cùng thiết bị thì một dòng, mang tên trong sổ."""
+
+    SO_LOA = [
+        {"id": "a1", "name": "loa phòng khách", "kind": "cast", "host": "172.16.10.249", "port": 8009},
+        {"id": "b2", "name": "Tivi LG nhà", "kind": "ha", "entity_id": LG["entity_id"]},
+        {"id": "c3", "name": "R1 đen", "kind": "r1", "host": "172.16.10.17"},
+        {"id": "d4", "name": "Loa lạ", "kind": "cast", "host": "172.16.10.99"},
+    ]
+
+    def test_gop_theo_ma_thiet_bi_ten_theo_so_loa(self) -> None:
+        chi_muc = {"entity_platform": NEN_TANG, "entity_device_ids": {
+            GOOGLE_HOME["entity_id"]: ["cast:a8a623b97677b5afe205aa191cfbb9b6"],
+            FPT["entity_id"]: ["cast:187108f0043231559b6dbde5982077c5"],
+        }}
+        hoi = []
+
+        class _Tra:
+            def __init__(self, body):
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self, n):
+                return self.body
+
+        def mo(url, timeout):
+            hoi.append(url)
+            if "172.16.10.249" in url:
+                return _Tra(b'{"ssdp_udn": "a8a623b9-7677-b5af-e205-aa191cfbb9b6"}')
+            raise OSError("No route to host")
+
+        self.phat_ha._ma_cast.clear()
+        with patch("services.voice.speakers.list_speakers", return_value=self.SO_LOA), \
+             patch.object(self.phat_ha.ha_client, "get_ha_area_index", side_effect=lambda use_cache=True: chi_muc), \
+             patch.object(self.phat_ha, "urlopen", side_effect=mo):
+            ds = {d["entity_id"]: d for d in self.phat_ha.danh_sach(dung_bo_dem=False)}
+            self.phat_ha.danh_sach(dung_bo_dem=False)          # lần hai: mã Cast lấy từ bộ đệm
+        self.assertEqual(("loa phòng khách", "a1"), (ds[GOOGLE_HOME["entity_id"]]["ten"], ds[GOOGLE_HOME["entity_id"]]["so_loa"]))
+        self.assertEqual(("Tivi LG nhà", "b2"), (ds[LG["entity_id"]]["ten"], ds[LG["entity_id"]]["so_loa"]))
+        # Không cùng mã: giữ tên HA, không gộp nhầm (loa lạ không trả mã, R1 không có mã chung).
+        self.assertEqual(("FPT Box", ""), (ds[FPT["entity_id"]]["ten"], ds[FPT["entity_id"]]["so_loa"]))
+        self.assertEqual(1, len([d for d in ds.values() if d["so_loa"] == "a1"]))
+        self.assertEqual(2, len(hoi))                             # 2 loa Cast, mỗi loa hỏi một lần
+
+    def test_chi_muc_registry_mang_dinh_danh_thiet_bi(self) -> None:
+        from services.ha_client import _chi_muc_registry
+
+        idx = _chi_muc_registry(
+            [],
+            [{"entity_id": GOOGLE_HOME["entity_id"], "device_id": "d1", "platform": "cast"},
+             {"entity_id": "media_player.r1", "device_id": "d2", "platform": "dlna_dmr"},
+             {"entity_id": "media_player.nhom", "platform": "group"}],
+            [{"id": "d1", "identifiers": [["cast", "A8A623B97677B5AFE205AA191CFBB9B6"]], "connections": []},
+             {"id": "d2", "identifiers": [], "connections": [["upnp", "uuid:98bb993f912f"], ["mac", "98:BB:99:3F:91:2F"]]}])
+        self.assertEqual(["cast:a8a623b97677b5afe205aa191cfbb9b6"], idx["entity_device_ids"][GOOGLE_HOME["entity_id"]])
+        self.assertEqual(["mac:98:bb:99:3f:91:2f", "upnp:uuid:98bb993f912f"], idx["entity_device_ids"]["media_player.r1"])
+        self.assertNotIn("media_player.nhom", idx["entity_device_ids"])
+        self.assertEqual("group", idx["entity_platform"]["media_player.nhom"])
 
 
 

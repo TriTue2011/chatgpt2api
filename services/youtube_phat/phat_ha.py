@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
+from urllib.request import urlopen
 
 from services import ha_client
 
@@ -204,14 +205,75 @@ def vi_tri_phat(trang_thai: str, a: dict[str, Any], bay_gio: datetime | None = N
     return float(vi_tri) + max(0.0, troi)
 
 
+# Mã UDN của loa Cast theo IP: (mã, hết hạn). Hỏi được thì giữ 1 ngày, hỏi hỏng
+# (loa tắt) thì 5 phút — danh sách thiết bị được đọc vài giây một lần.
+_ma_cast: dict[str, tuple[str, float]] = {}
+HOST_LOA = re.compile(r"[A-Za-z0-9.-]{1,253}")
+
+
+def ma_cast(host: str) -> str:
+    """Mã thiết bị của loa Cast, đúng mã HA lưu ở định danh "cast" (bỏ gạch nối).
+
+    Đọc `ssdp_udn` ở http://IP:8008/setup/eureka_info. Đo 14/09/2026: loa
+    172.16.10.249 trả a8a623b9-7677-b5af-e205-aa191cfbb9b6, HA lưu
+    ["cast", "a8a623b97677b5afe205aa191cfbb9b6"] cho media_player.googlehome5802."""
+    if not HOST_LOA.fullmatch(host or ""):
+        return ""
+    bay_gio = time.monotonic()
+    cu = _ma_cast.get(host)
+    if cu and bay_gio < cu[1]:
+        return cu[0]
+    ma = ""
+    try:
+        with urlopen(f"http://{host}:8008/setup/eureka_info?params=ssdp_udn", timeout=1.5) as r:  # nosec B310 - IP loa chủ máy khai
+            ma = str(json.loads(r.read(65536)).get("ssdp_udn") or "").replace("-", "").lower()
+    except (OSError, ValueError, AttributeError):
+        ma = ""
+    _ma_cast[host] = (ma, bay_gio + (86400 if ma else 300))
+    return ma
+
+
+def dinh_danh_so_loa(loa: dict[str, Any]) -> set[str]:
+    """Định danh thiết bị của một loa trong Sổ loa c2a, cùng dạng `entity_device_ids` của HA."""
+    kieu = str(loa.get("kind") or "")
+    if kieu == "ha" and loa.get("entity_id"):
+        return {f"entity:{loa['entity_id']}"}
+    if kieu == "cast":
+        ma = ma_cast(str(loa.get("host") or "").strip())
+        return {f"cast:{ma}"} if ma else set()
+    return set()
+
+
+def so_loa_theo_thuc_the(entity_ids: list[str], ma_thiet_bi: dict[str, list[str]]) -> dict[str, dict[str, Any]]:
+    """entity_id HA → loa trong Sổ loa c2a là CÙNG thiết bị (theo mã, không theo tên).
+
+    Chủ máy 14/09/2026: "gộp rồi lọc trùng nhau, ưu tiên trên dự án" — dòng đã gộp
+    mang tên chủ máy đặt trong Sổ loa. Loa R1/DLNA trong sổ chưa có mã chung với HA
+    nên chưa gộp."""
+    from services.voice import speakers as vspk
+
+    so_loa = [(loa, dinh_danh_so_loa(loa)) for loa in vspk.list_speakers()]
+    ket_qua: dict[str, dict[str, Any]] = {}
+    for eid in entity_ids:
+        khoa = {f"entity:{eid}", *ma_thiet_bi.get(eid, [])}
+        loa = next((loa for loa, ma in so_loa if ma & khoa), None)
+        if loa is not None:
+            ket_qua[eid] = loa
+    return ket_qua
+
+
 def danh_sach(dung_bo_dem: bool = True) -> list[dict[str, Any]]:
-    nen_tang = ha_client.get_ha_area_index().get("entity_platform") or {}
+    chi_muc = ha_client.get_ha_area_index()
+    nen_tang = chi_muc.get("entity_platform") or {}
     an = set(doc_an())
+    trang_thai = [s for s in _trang_thai_tho(dung_bo_dem)
+                  if MEDIA_PLAYER.fullmatch(str(s.get("entity_id") or ""))
+                  and nen_tang.get(str(s.get("entity_id"))) not in NEN_TANG_AO]
+    so_loa = so_loa_theo_thuc_the([str(s["entity_id"]) for s in trang_thai], chi_muc.get("entity_device_ids") or {})
     ket_qua = []
-    for s in _trang_thai_tho(dung_bo_dem):
+    for s in trang_thai:
         eid = str(s.get("entity_id") or "")
-        if not MEDIA_PLAYER.fullmatch(eid) or nen_tang.get(eid) in NEN_TANG_AO:
-            continue
+        loa_c2a = so_loa.get(eid)
         a = s.get("attributes") or {}
         try:
             features = int(a.get("supported_features") or 0)
@@ -220,7 +282,9 @@ def danh_sach(dung_bo_dem: bool = True) -> list[dict[str, Any]]:
         am_luong = a.get("volume_level")
         ket_qua.append({
             "entity_id": eid,
-            "ten": str(a.get("friendly_name") or eid),
+            # Ưu tiên tên chủ máy đặt trong Sổ loa c2a khi đó là cùng thiết bị.
+            "ten": str(loa_c2a.get("name") or "") if loa_c2a and loa_c2a.get("name") else str(a.get("friendly_name") or eid),
+            "so_loa": str(loa_c2a.get("id") or "") if loa_c2a else "",
             "trang_thai": str(s.get("state") or "unknown"),
             "loai": "tivi" if a.get("device_class") == "tv" else "loa",
             "device_class": str(a.get("device_class") or ""),

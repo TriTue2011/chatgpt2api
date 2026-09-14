@@ -595,39 +595,53 @@ def _ws_fetch_registries(url: str, token: str) -> dict[str, Any]:
             if msg.get("type") == "result" and msg.get("id") in wanted:
                 results[msg["id"]] = msg.get("result") or []
 
-        areas = results.get(1, [])
-        ents = results.get(2, [])
-        devs = results.get(3, [])
-        id2area = {a.get("area_id"): a.get("name") for a in areas if a.get("area_id")}
-        dev2area = {d.get("id"): d.get("area_id") for d in devs}
-        entity_area: dict[str, str] = {}
-        entity_aliases: dict[str, list[str]] = {}
-        # Tích hợp sinh ra thực thể (cast, webostv, androidtv…) — tab YouTube cần
-        # để biết tivi nào mở được ứng dụng YouTube gốc, loa nào chỉ nhận âm thanh.
-        entity_platform: dict[str, str] = {}
-        for e in ents:
-            eid = e.get("entity_id")
-            if not eid:
-                continue
-            if e.get("platform"):
-                entity_platform[eid] = str(e["platform"])
-            aid = e.get("area_id") or dev2area.get(e.get("device_id"))
-            name = id2area.get(aid)
-            if name:
-                entity_area[eid] = name
-            # User-defined alternate names exposed to Assist — fold for matching.
-            al = [_fold_diacritics(a).strip() for a in (e.get("aliases") or []) if a]
-            if al:
-                entity_aliases[eid] = [a for a in al if a]
-        area_names = {_fold_diacritics(a.get("name", "")).strip(): a.get("name")
-                      for a in areas if a.get("name")}
-        return {"entity_area": entity_area, "area_names": area_names,
-                "entity_aliases": entity_aliases, "entity_platform": entity_platform}
+        return _chi_muc_registry(results.get(1, []), results.get(2, []), results.get(3, []))
     finally:
         try:
             s.close()
         except Exception:
             pass
+
+
+def _chi_muc_registry(areas: list[dict], ents: list[dict], devs: list[dict]) -> dict[str, Any]:
+    """Registry thô → chỉ mục tra cứu (phòng, bí danh, tích hợp, định danh thiết bị)."""
+    id2area = {a.get("area_id"): a.get("name") for a in areas if a.get("area_id")}
+    dev2area = {d.get("id"): d.get("area_id") for d in devs}
+    entity_area: dict[str, str] = {}
+    entity_aliases: dict[str, list[str]] = {}
+    # Tích hợp sinh ra thực thể (cast, webostv, androidtv…) — tab YouTube cần
+    # để biết tivi nào mở được ứng dụng YouTube gốc, loa nào chỉ nhận âm thanh.
+    entity_platform: dict[str, str] = {}
+    # Định danh phần cứng của thiết bị chứa thực thể ("cast:<uuid>", "upnp:uuid:…",
+    # "mac:…") — tab YouTube dùng để nhận ra loa trong Sổ loa c2a là cùng thiết bị.
+    dev_ids = {
+        d.get("id"): sorted({f"{str(k).lower()}:{str(v).lower()}"
+                             for k, v in [*(d.get("identifiers") or []), *(d.get("connections") or [])]
+                             if k and v})
+        for d in devs if d.get("id")
+    }
+    entity_device_ids: dict[str, list[str]] = {}
+    for e in ents:
+        eid = e.get("entity_id")
+        if not eid:
+            continue
+        if e.get("platform"):
+            entity_platform[eid] = str(e["platform"])
+        if dev_ids.get(e.get("device_id")):
+            entity_device_ids[eid] = dev_ids[e["device_id"]]
+        aid = e.get("area_id") or dev2area.get(e.get("device_id"))
+        name = id2area.get(aid)
+        if name:
+            entity_area[eid] = name
+        # User-defined alternate names exposed to Assist — fold for matching.
+        al = [_fold_diacritics(a).strip() for a in (e.get("aliases") or []) if a]
+        if al:
+            entity_aliases[eid] = [a for a in al if a]
+    area_names = {_fold_diacritics(a.get("name", "")).strip(): a.get("name")
+                  for a in areas if a.get("name")}
+    return {"entity_area": entity_area, "area_names": area_names,
+            "entity_aliases": entity_aliases, "entity_platform": entity_platform,
+            "entity_device_ids": entity_device_ids}
 
 
 def get_ha_area_index(use_cache: bool = True) -> dict[str, Any]:

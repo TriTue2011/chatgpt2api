@@ -6,7 +6,10 @@ export type Nguon = "youtube" | "zing" | "http";
 
 export type ThietBi = {
   entity_id: string;
+  /** Tên trong Sổ loa c2a nếu loa đó là cùng thiết bị, không thì tên HA. */
   ten: string;
+  /** Mã loa trong Sổ loa c2a đã gộp với thiết bị HA này ("" = không có). */
+  so_loa: string;
   trang_thai: string;
   loai: "tivi" | "loa";
   nen_tang: string;
