@@ -35,7 +35,9 @@ _CHI_THI: tuple[str, ...] = (
     # data:/blob: cần cho ảnh xem trước và audio phát tại chỗ — đây là dữ liệu
     # do chính trang tạo ra, không phải nguồn ngoài.
     "img-src 'self' data: blob:",
-    "media-src 'self' data: blob:",
+    # googlevideo: hình của video YouTube bị chặn nhúng, máy trong nhà tải thẳng
+    # (link gắn IP mạng nhà) thay vì đi vòng qua máy chủ.
+    "media-src 'self' data: blob: https://*.googlevideo.com",
     "font-src 'self' data:",
     "connect-src 'self'",
     # style nội tuyến thì gần như không tránh được với CSS-in-JS, và rủi ro

@@ -241,6 +241,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "cryptography" },
     { name = "curl-cffi" },
+    { name = "deno" },
     { name = "fastapi" },
     { name = "firecrawl-anydoc" },
     { name = "gemini-webapi" },
@@ -262,6 +263,7 @@ dependencies = [
     { name = "uvicorn" },
     { name = "websockets" },
     { name = "yt-dlp" },
+    { name = "yt-dlp-ejs" },
 ]
 
 [package.dev-dependencies]
@@ -278,6 +280,7 @@ dev = [
 requires-dist = [
     { name = "cryptography", specifier = ">=50.0.0" },
     { name = "curl-cffi", specifier = ">=0.15.0" },
+    { name = "deno", specifier = ">=2.9.6", index = "https://pypi.org/simple" },
     { name = "fastapi", specifier = ">=0.136.0" },
     { name = "firecrawl-anydoc", specifier = ">=0.1.8" },
     { name = "gemini-webapi", git = "https://github.com/luuquangvu/Gemini-API.git?rev=b38110e82fe0e41bbf53a03646ef87ddc88a996a" },
@@ -299,6 +302,7 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.44.0" },
     { name = "websockets", specifier = ">=15.0" },
     { name = "yt-dlp", specifier = ">=2026.8.19", index = "https://pypi.org/simple" },
+    { name = "yt-dlp-ejs", specifier = ">=0.8.0", index = "https://pypi.org/simple" },
 ]
 
 [package.metadata.requires-dev]
@@ -412,6 +416,19 @@ wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/c5/f5/089e00306984ba13e593f531b44083b31ecc1b1b482e23a9976b29155b2e/curl_cffi-0.16.0-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:75e5898b3066b64a68fa1eb72552a2e027d61c9d2020657ee2fc3e73d4b39db0" },
     { url = "https://mirrors.aliyun.com/pypi/packages/49/e5/16fe4881f4155afd5013e7d937fe9a204ee948db032f2adc0c34da2a7494/curl_cffi-0.16.0-cp314-cp314t-win_amd64.whl", hash = "sha256:3a1c8a7469453d09b500c47c83945179c4dd31c327906791e54292a06fec080a" },
     { url = "https://mirrors.aliyun.com/pypi/packages/86/57/c52fc76510a9ccd5629bc981bde877403562fc643dc68c5f06cd0b4c41c8/curl_cffi-0.16.0-cp314-cp314t-win_arm64.whl", hash = "sha256:c3dd33eaf267d017bfac09b4f71af1d94045dee5518ce18af380462e29f92fad" },
+]
+
+[[package]]
+name = "deno"
+version = "2.9.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3b/fa/04bdb9b54ee425a9708c82c61e3acf5796405718756600c7aab79910b712/deno-2.9.6.tar.gz", hash = "sha256:0dba7666e7d3db62ff1e73f7f69fc74b63a551a198c311d2ffb409d1dc96167f", size = 8167, upload-time = "2026-08-27T17:32:04.397Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f6/89/a50877162323e98129329a3a54555ac164d8cc911b2a6b8e5ccefc498c54/deno-2.9.6-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:845831e26d98553fb17b7baf9af4949857c5d78965c35890e7a0af9425e63734", size = 42274922, upload-time = "2026-08-27T17:31:43.39Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/09/c46e566dd9f8dbc09c376c9c273e27da61d89e4e7e7d03b5be35720ecfb3/deno-2.9.6-py3-none-macosx_11_0_arm64.whl", hash = "sha256:ecf7b5d938562e4227a5ee5b5b1025094ad44cf92d829917a3d3060bface5093", size = 38462382, upload-time = "2026-08-27T17:31:48.132Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/22/7cccf9010e036a8d9be61cf8c2747a3e429d25e20dceace43f2c399522fc/deno-2.9.6-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:f8e1f6c053d3376388b61e658a2438ba45904a62b261988f2b858efefdc0aaad", size = 39823223, upload-time = "2026-08-27T17:31:52.629Z" },
+    { url = "https://files.pythonhosted.org/packages/49/22/f3cb68c5b46140eafec610c763062d147bf73050c1d24ab8180902d8ba93/deno-2.9.6-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:037458003a1c76382e41baa1cd152b3325d9a13b2678f75cc653c893c0b2dfec", size = 41593942, upload-time = "2026-08-27T17:31:57.197Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/d1/085d2f83ec0a55346c9b6cd96f74fc5b69d4edbdd9575f84ee1b08b4218f/deno-2.9.6-py3-none-win_amd64.whl", hash = "sha256:ad65ac596e53f7275d783070be2fd96a47f4a478e67ecd0584e6b744804ed863", size = 41516258, upload-time = "2026-08-27T17:32:01.818Z" },
 ]
 
 [[package]]
@@ -1673,6 +1690,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/1e/e0/832fa4ca334b766a06933a196066edc3dba37cdb6f14cd98d59bcc69a4b4/yt_dlp-2026.8.19.tar.gz", hash = "sha256:9e213e48cea35c66b378e4447903f118f6392a5fa380a2b6d7070ec86f4e0af1", size = 3052025, upload-time = "2026-08-19T23:48:59.291Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/69/b2/8cd1613f56eed7ceb64fbd4df3f1c01246bfb098e6f398228bafda22b80b/yt_dlp-2026.8.19-py3-none-any.whl", hash = "sha256:1d57897e94c6665a0a6f9bc54b34e584284e32c034ffab3a7df25d8f7b24eedf", size = 3185533, upload-time = "2026-08-19T23:48:56.925Z" },
+]
+
+[[package]]
+name = "yt-dlp-ejs"
+version = "0.8.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d3/e6/cceb9530e8f4e5940f6f7822d90e9d94f1b85343329a16baaf47bbbb3de1/yt_dlp_ejs-0.8.0.tar.gz", hash = "sha256:d5fa1639f63b5c4af8d932495f60689d5370f1a095782c944f7f62a303eb104e", size = 96571, upload-time = "2026-03-17T22:49:19.299Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e3/bd/520769863744b669440a924271a6159ddd82ad5ae26b4ac4d4b69e9f8d44/yt_dlp_ejs-0.8.0-py3-none-any.whl", hash = "sha256:79300e5fca7f937a1eeede11f0456862c1b41107ce1d726871e0207424f4bdb4", size = 53443, upload-time = "2026-03-17T22:49:17.736Z" },
 ]
 
 [[package]]

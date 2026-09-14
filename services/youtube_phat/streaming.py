@@ -14,8 +14,11 @@ import hmac
 import io
 import json
 import re
+import shutil
+import sys
 import time
 from http.cookiejar import CookieJar
+from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import (
     HTTPCookieProcessor,
@@ -25,8 +28,14 @@ from urllib.request import (
 )
 
 
-STREAM_SOURCES = ("zing", "youtube")
+STREAM_SOURCES = ("zing", "youtube", "youtube_video")
 YOUTUBE_VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
+# Luồng HÌNH (không tiếng) của một video, cho trình duyệt khi YouTube không cho nhúng:
+# đích "ID:chiều cao tối đa". Tiếng đi riêng (loa hoặc thẻ <audio>), hình chạy theo.
+YOUTUBE_VIDEO_HEIGHTS = (360, 480, 720, 1080)
+YOUTUBE_VIDEO_TARGET = re.compile(r"^([A-Za-z0-9_-]{11}):(360|480|720|1080)$")
+# Trình duyệt nào cũng giải được avc1/mp4 (kể cả Safari cũ); vp9 rồi av1 chỉ khi thiếu.
+YOUTUBE_VIDEO_CODECS = ("avc1", "vp9", "vp09", "av01")
 YOUTUBE_AUDIO_FORMAT = "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio"
 STREAM_CACHE_DEFAULT_SECONDS = 120
 STREAM_CACHE_MAX_SECONDS = 5 * 3600
@@ -59,6 +68,7 @@ CONTENT_TYPES = {
     "wav": "audio/wav",
     "webm": "audio/webm",
 }
+VIDEO_CONTENT_TYPES = {"mp4": "video/mp4", "webm": "video/webm"}
 ZING_CDN_HOSTS = ("zmdcdn.me", "zadn.vn", "zing.vn", "zingmp3.vn")
 
 
@@ -159,7 +169,22 @@ def validate_stream_target(source: str, target: str) -> str:
         if not YOUTUBE_VIDEO_ID.fullmatch(video_id):
             raise ValueError("invalid_youtube_target")
         return video_id
+    if source == "youtube_video":
+        value = str(target or "").strip()
+        if not YOUTUBE_VIDEO_TARGET.fullmatch(value):
+            raise ValueError("invalid_youtube_target")
+        return value
     raise ValueError("unsupported_stream_source")
+
+
+def youtube_video_target(video_id: str, max_height) -> str:
+    """Đích luồng hình: chiều cao chuẩn gần nhất không vượt `max_height` (360–1080)."""
+    try:
+        wanted = int(max_height)
+    except (TypeError, ValueError):
+        wanted = 720
+    height = max([h for h in YOUTUBE_VIDEO_HEIGHTS if h <= wanted] or [YOUTUBE_VIDEO_HEIGHTS[0]])
+    return validate_stream_target("youtube_video", f"{video_id}:{height}")
 
 
 def create_stream_token(
@@ -504,8 +529,22 @@ def extract_with_yt_dlp(watch_url: str, timeout: int) -> dict:
         "socket_timeout": timeout,
         "extractor_retries": 1,
     }
+    if deno := deno_path():
+        options["js_runtimes"] = {"deno": {"path": deno}}
     with yt_dlp.YoutubeDL(options) as ydl:
         return ydl.sanitize_info(ydl.extract_info(watch_url, download=False))
+
+
+def deno_path() -> str:
+    """Deno cho yt-dlp giải thử thách JS của YouTube.
+
+    yt-dlp 2026.8 báo "YouTube extraction without a JS runtime has been deprecated,
+    and some formats may be missing" khi không có. Gói `deno` (PyPI) đặt tệp chạy cạnh
+    python của venv — không nằm trên PATH của container — nên chỉ đường thẳng."""
+    beside = Path(sys.executable).with_name("deno")
+    if beside.is_file():
+        return str(beside)
+    return shutil.which("deno") or ""
 
 
 def stream_cache_seconds(stream_url: str, *, now: float | None = None) -> int:
@@ -520,6 +559,57 @@ def stream_cache_seconds(stream_url: str, *, now: float | None = None) -> int:
         return STREAM_CACHE_DEFAULT_SECONDS
     remaining = expire - int(time.time() if now is None else now) - STREAM_EXPIRY_MARGIN_SECONDS
     return max(0, min(remaining, STREAM_CACHE_MAX_SECONDS))
+
+
+def _youtube_video_format(info: dict, max_height: int) -> dict:
+    """Luồng chỉ-hình tải thẳng (https, không m3u8) cao nhất không vượt `max_height`."""
+    candidates = []
+    for item in info.get("formats") or []:
+        if not isinstance(item, dict) or not item.get("url") or item.get("protocol") not in ("https", "http"):
+            continue
+        codec = str(item.get("vcodec") or "none").lower()
+        height = item.get("height")
+        if codec == "none" or not isinstance(height, int) or height > max_height:
+            continue
+        if str(item.get("ext") or "").lower() not in VIDEO_CONTENT_TYPES:
+            continue
+        rank = next((len(YOUTUBE_VIDEO_CODECS) - i for i, name in enumerate(YOUTUBE_VIDEO_CODECS) if codec.startswith(name)), 0)
+        # Cao nhất trước; cùng cao thì mã hoá dễ giải hơn; chỉ-hình trước bản kèm tiếng.
+        candidates.append((height, rank, item.get("acodec") in (None, "none"), float(item.get("tbr") or 0), item))
+    if not candidates:
+        raise StreamUnavailableError("unsupported_stream_format")
+    return max(candidates, key=lambda c: c[:4])[4]
+
+
+def resolve_youtube_video(target: str, *, timeout: int = 20, extractor=extract_with_yt_dlp) -> dict:
+    """Luồng hình (không tiếng) của một video YouTube cho thẻ <video> của trình duyệt.
+
+    Dùng khi YouTube từ chối khung nhúng (video hãng đĩa khi trang mở bằng địa chỉ IP).
+    Đo 14/09/2026 trong Chrome: luồng chỉ-hình avc1/vp9/av1 1080p phát thẳng bằng
+    <video> (1920×1080, ~30 hình/giây); bài M2M bị chặn nhúng phát 640×480 (bản gốc)."""
+    video_id, max_height = validate_stream_target("youtube_video", target).split(":")
+    try:
+        info = extractor(f"https://www.youtube.com/watch?v={video_id}", timeout)
+    except Exception as error:  # yt-dlp ném nhiều loại lỗi khác nhau cho cùng một hỏng
+        raise StreamUnavailableError("stream_provider_failed") from error
+    if not isinstance(info, dict):
+        raise StreamUnavailableError("invalid_stream_response")
+    selected = _youtube_video_format(info, int(max_height))
+    stream_url = str(selected["url"])
+    stream_host = (urlsplit(stream_url).hostname or "").lower()
+    if not any(stream_host == suffix or stream_host.endswith(f".{suffix}") for suffix in YOUTUBE_STREAM_HOSTS):
+        raise StreamUnavailableError("unsupported_stream_format")
+    headers = {"User-Agent": ZING_USER_AGENT}
+    upstream_headers = selected.get("http_headers") or info.get("http_headers")
+    if isinstance(upstream_headers, dict):
+        headers = {str(key): str(value) for key, value in upstream_headers.items() if key and value} or headers
+    return {
+        "url": stream_url,
+        "headers": headers,
+        "content_type": VIDEO_CONTENT_TYPES[str(selected.get("ext")).lower()],
+        "height": selected.get("height"),
+        "bitrate_kbps": round(float(selected.get("tbr") or 0)),
+    }
 
 
 def resolve_youtube_audio(

@@ -77,6 +77,8 @@ class ChinhSachTests(unittest.TestCase):
         s = csp.chuoi_chinh_sach(co_report_uri=False)
         self.assertIn("img-src 'self' data: blob:", s)
         self.assertIn("media-src 'self' data: blob:", s)
+        # Hình video YouTube bị chặn nhúng: máy trong nhà tải thẳng từ googlevideo.
+        self.assertIn("https://*.googlevideo.com", s)
 
 
 class GopBaoCaoTests(unittest.TestCase):

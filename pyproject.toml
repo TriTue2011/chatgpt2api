@@ -29,6 +29,13 @@ dependencies = [
     # Lần sau gặp 403 thì việc cần làm là: uv lock --upgrade-package yt-dlp,
     # rồi dựng lại image (image cài từ uv.lock, sửa mỗi pyproject là không ăn).
     "yt-dlp>=2026.8.19",
+    # yt-dlp 2026.8 cần trình chạy JavaScript để giải thử thách của YouTube: thiếu nó
+    # thì báo "YouTube extraction without a JS runtime has been deprecated, and some
+    # formats may be missing". `deno` (PyPI) đặt tệp chạy cạnh python của venv —
+    # services/youtube_phat/streaming.py::deno_path chỉ thẳng tới đó; `yt-dlp-ejs`
+    # là bộ script giải. Đo 14/09/2026: có hai gói này yt-dlp -v báo "JS runtimes: deno".
+    "yt-dlp-ejs>=0.8.0",
+    "deno>=2.9.6",
     "fastapi>=0.136.0",
     # JSON nhanh (ORJSONResponse mặc định của app — gateway stream JSON lớn liên tục)
     "orjson>=3.10.0",
@@ -146,3 +153,5 @@ explicit = true
 [tool.uv.sources]
 gemini-webapi = { git = "https://github.com/luuquangvu/Gemini-API.git", rev = "b38110e82fe0e41bbf53a03646ef87ddc88a996a" }
 yt-dlp = { index = "pypi" }
+yt-dlp-ejs = { index = "pypi" }
+deno = { index = "pypi" }

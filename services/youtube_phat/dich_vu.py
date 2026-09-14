@@ -33,10 +33,12 @@ from .streaming import (
     fetch_zing_playlist,
     fetch_zing_web_keys,
     resolve_youtube_audio,
+    resolve_youtube_video,
     resolve_zing_stream,
     stream_cache_seconds,
     validate_stream_target,
     validate_zing_target,
+    youtube_video_target,
     zing_playlist_id,
 )
 
@@ -388,15 +390,17 @@ class PlayerCore:
             ttl=3600,
         )
 
-    def prepare_stream(self, source, target):
-        """Authorize, resolve and briefly cache one stream before a speaker uses it."""
+    def prepare_stream(self, source, target, max_height=720):
+        """Authorize, resolve and briefly cache one stream before a speaker uses it.
+
+        `youtube_video` = the picture only (no sound) for a browser, up to `max_height`."""
         if source == "zing":
             target = self.require_public_zing_result(target)
-        elif source == "youtube":
+        elif source in {"youtube", "youtube_video"}:
             normalized = normalize_target(target)
             if normalized.get("kind") != "video" or not normalized.get("id"):
                 raise ValueError("youtube_audio_requires_video")
-            target = normalized["id"]
+            target = normalized["id"] if source == "youtube" else youtube_video_target(normalized["id"], max_height)
         else:
             raise ValueError("unsupported_stream_source")
         return target, self._resolve_stream(source, target)
@@ -449,6 +453,8 @@ class PlayerCore:
                 return dict(cached[1])
         if source == "youtube":
             resolved = resolve_youtube_audio(target)
+        elif source == "youtube_video":
+            resolved = resolve_youtube_video(target)
         else:
             try:
                 resolved = resolve_zing_stream(target, **self.zing_keys())

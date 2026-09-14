@@ -235,9 +235,11 @@ def create_router() -> APIRouter:
         try:
             payload = await _doc_json(request, 4096)
             source = payload.get("source")
-            if source not in {"zing", "youtube"}:
+            if source not in {"zing", "youtube", "youtube_video"}:
                 raise ValueError("unsupported_stream_source")
-            target, resolved = await asyncio.to_thread(c.prepare_stream, source, payload.get("target"))
+            # youtube_video: chỉ hình, cho thẻ HA khi YouTube không cho nhúng.
+            chieu_cao = [payload.get("max_height") or 720] if source == "youtube_video" else []
+            target, resolved = await asyncio.to_thread(c.prepare_stream, source, payload.get("target"), *chieu_cao)
             stream_url = c.create_stream_url(source, target, url_goc(request))
         except StreamUnavailableError:
             return _json(502, {"error": "stream_unavailable"})
@@ -255,7 +257,8 @@ def create_router() -> APIRouter:
             return _json(400, {"error": "invalid_request"})
         return _json(200, {"success": True, "source": source, "stream_url": stream_url,
                            "media_content_type": resolved.get("content_type", "audio/mpeg"),
-                           "expires_in": 3600})
+                           "expires_in": 3600,
+                           **(_luong_hinh(resolved) if source == "youtube_video" else {})})
 
     @router.post(f"{I}/play")
     async def play(request: Request, authorization: str | None = Header(default=None)):
@@ -274,6 +277,13 @@ def create_router() -> APIRouter:
         ket_qua = await asyncio.to_thread(dich_vu.core().play, target, raw_target=raw_target)
         return _json(200, {"success": True, "item": ket_qua["item"],
                            "session_revision": ket_qua["revision"]})
+
+    def _luong_hinh(giai: dict) -> dict:
+        """Thông tin luồng hình cho trình duyệt. `direct_url` là link googlevideo gắn IP
+        mạng nhà: máy trong nhà (cùng IP ra Internet) tải thẳng, không qua c2a; tải thẳng
+        hỏng nghĩa là đang ở ngoài nhà — khi đó hình phải đi qua link đã ký (tốn băng
+        thông tải lên của nhà), trang hỏi người xem trước."""
+        return {"height": giai.get("height"), "bitrate_kbps": giai.get("bitrate_kbps"), "direct_url": giai.get("url")}
 
     async def _mo_luong(token: str, request: Request):
         """(nguồn đã giải, phản hồi thượng nguồn) hoặc JSONResponse lỗi."""
@@ -469,17 +479,20 @@ def create_router() -> APIRouter:
         try:
             payload = await _doc_json(request, 8192)
             source = str(payload.get("source") or "").lower()
-            if source not in {"youtube", "zing"}:
+            if source not in {"youtube", "zing", "youtube_video"}:
                 raise ValueError("unsupported_source")
             c = dich_vu.core()
-            ma, giai = await asyncio.to_thread(c.prepare_stream, source, str(payload.get("target") or ""))
+            # youtube_video: chỉ hình, khi YouTube không cho nhúng video trên trang.
+            chieu_cao = [payload.get("max_height") or 720] if source == "youtube_video" else []
+            ma, giai = await asyncio.to_thread(c.prepare_stream, source, str(payload.get("target") or ""), *chieu_cao)
             url = c.create_stream_url(source, ma, f"{resolve_image_base_url(request)}{TIEN_TO}")
         except StreamUnavailableError:
             return _loi("stream_unavailable")
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as error:
             return _loi(str(error))
         c.prefetch(payload.get("ke"))
-        return {"ok": True, "url": urlsplit(url).path, "content_type": giai.get("content_type") or "audio/mpeg"}
+        return {"ok": True, "url": urlsplit(url).path, "content_type": giai.get("content_type") or "audio/mpeg",
+                **(_luong_hinh(giai) if source == "youtube_video" else {})}
 
     async def _phien_lenh(request: Request, lam) -> dict:
         try:
