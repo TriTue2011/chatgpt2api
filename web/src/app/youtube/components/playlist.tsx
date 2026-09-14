@@ -91,6 +91,9 @@ export function useKhoPlaylist(): KhoPlaylist {
   return { ds, tai, lenh, nhan };
 }
 
+/** Chữ trông như link hay mã (kể cả link không hỗ trợ): gửi máy chủ để nó báo đọc được không. */
+const giongLink = (text: string) => /^(https?:\/\/|TTPL)/i.test(text.trim());
+
 /** Link mà máy chủ lưu được cả playlist (máy chủ kiểm lại kỹ). */
 export function laLinkPlaylist(text: string): boolean {
   const t = text.trim();
@@ -210,14 +213,15 @@ export function DanhSachPlaylist({ kho, coLoa, dangPhatMa, dangGuiMa, phat, moSa
     const t = chu.trim();
     if (!t) return;
     setDangLuu(true);
-    const r = laLinkPlaylist(t)
+    const nhap = laLinkPlaylist(t) || giongLink(t);
+    const r = nhap
       ? await lenh({ action: "import", text: t })
       : await lenh({ action: "create", name: t, items: [] });
     setDangLuu(false);
     if (!r?.playlist) return;
     setChu("");
     setMo(r.playlist.id);
-    toast.success(laLinkPlaylist(t)
+    toast.success(nhap
       ? `Đã lưu “${r.playlist.name}” (${r.playlist.items.length} bài).`
       : `Đã tạo “${r.playlist.name}”. Bấm + ở kết quả tìm để thêm bài.`);
   };
@@ -264,8 +268,8 @@ export function DanhSachPlaylist({ kho, coLoa, dangPhatMa, dangGuiMa, phat, moSa
           className="h-10 min-w-0 flex-1"
         />
         <Button type="submit" className="h-10 shrink-0" disabled={dangLuu || !chu.trim()}>
-          {dangLuu ? <LoaderCircle className="animate-spin" /> : laLinkPlaylist(chu) ? <ListPlus /> : <Plus />}
-          <span className="hidden sm:inline">{laLinkPlaylist(chu) ? "Lưu cả playlist" : "Tạo"}</span>
+          {dangLuu ? <LoaderCircle className="animate-spin" /> : laLinkPlaylist(chu) || giongLink(chu) ? <ListPlus /> : <Plus />}
+          <span className="hidden sm:inline">{laLinkPlaylist(chu) || giongLink(chu) ? "Lưu cả playlist" : "Tạo"}</span>
         </Button>
       </form>
       {dangLuu && laLinkPlaylist(chu) && (
