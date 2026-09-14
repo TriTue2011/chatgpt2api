@@ -21,6 +21,8 @@
  *   hình" (nhớ lựa chọn, mặc định tắt): tắt thì trang bị ẩn (tắt màn hình, đổi ứng
  *   dụng) là tiếng trên máy dừng, mở lại thì phát tiếp; bật thì nghe tiếp, có nút ở
  *   màn hình khoá, và video xem trên máy (nếu mở) tắt tiếng chạy theo tiếng.
+ * - YouTube từ chối video trong khung nhúng: đóng khung, xem một mình thì nghe tiếng
+ *   bài đó trên máy, có loa hay đang nghe bằng thẻ âm thanh thì tiếng vẫn chạy.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -33,6 +35,7 @@ import { DangPhat, type VideoMo, type ViTri } from "./dang-phat";
 import { DanhSachThietBi } from "./danh-sach-thiet-bi";
 import { type BaiHat, dangHoatDong, dangPhatBai, goi, type Nguon, type Phien, type ThietBi } from "./lib";
 import * as mayNghe from "./nghe-tren-may";
+import { DanhSachPlaylist, type NguonHang, useKhoPlaylist } from "./playlist";
 import { TimNhac } from "./tim-nhac";
 import { type CheDoXem, laVideo, srcNhung, useVideoNhung } from "./video-nhung";
 
@@ -45,7 +48,7 @@ type KetQuaPhat = { da_gui: string[]; bo_qua: { entity_id: string; ly_do: string
 type Hang = mayNghe.Hang;
 
 // Ô tìm và kết quả giữ theo trang web: chuyển sang tab khác rồi quay lại vẫn còn.
-const ghiNhoTim = { nguon: "youtube" as Nguon, tuKhoa: "", ketQua: [] as BaiHat[] };
+const ghiNhoTim = { nguon: "youtube" as Nguon, tuKhoa: "", ketQua: [] as BaiHat[], xemPlaylist: false };
 
 function docChon(): Set<string> {
   try {
@@ -105,6 +108,13 @@ export function TrinhPhat() {
     Object.assign(ghiNhoTim, { nguon, tuKhoa, ketQua });
   }, [nguon, tuKhoa, ketQua]);
   const [dangTim, setDangTim] = useState(false);
+  const khoPlaylist = useKhoPlaylist();
+  const [xemPlaylist, setXemPlaylist] = useState(ghiNhoTim.xemPlaylist);
+  const [playlistMoSan, setPlaylistMoSan] = useState("");
+  const [dangLuuPlaylist, setDangLuuPlaylist] = useState(false);
+  useEffect(() => {
+    ghiNhoTim.xemPlaylist = xemPlaylist;
+  }, [xemPlaylist]);
   const [thietBi, setThietBi] = useState<ThietBi[] | null>(null);
   const [loiHa, setLoiHa] = useState("");
   const [cacPhien, setCacPhien] = useState<Phien[]>([]);
@@ -143,7 +153,8 @@ export function TrinhPhat() {
   const dongBo = useRef({ luiTuaDen: 0, luiTuaAm: 0, giuDen: 0, choTua: null as null | { id: string; tu: number; luc: number } });
 
   const hetVideo = useRef<() => void>(() => undefined);
-  const nhung = useVideoNhung(() => hetVideo.current());
+  const loiVideo = useRef<() => void>(() => undefined);
+  const nhung = useVideoNhung(() => hetVideo.current(), () => loiVideo.current());
 
   const taiThietBi = useCallback(async (imLang: boolean) => {
     try {
@@ -254,13 +265,14 @@ export function TrinhPhat() {
     void taiThietBi(true);
   };
 
-  /** `xem` = nút xem video; không thì chỉ nghe. */
-  const phat = async (bai: BaiHat, xem = false) => {
+  /** `xem` = nút xem video; không thì chỉ nghe. `nguonHang` = hàng đợi khác kết quả tìm (playlist). */
+  const phat = async (bai: BaiHat, xem = false, nguonHang?: NguonHang) => {
     const ids = [...chon].filter((id) => theoMa.get(id)?.phat_duoc);
     if (!chon.size) {
       // Chưa tích loa: nghe hoặc xem ngay trên máy này, với hàng đợi riêng.
-      const i = ketQua.findIndex((k) => cungBai(k, bai));
-      const hangMoi = i >= 0 ? { items: ketQua, index: i } : { items: [bai], index: 0 };
+      const ds = nguonHang?.items ?? ketQua;
+      const i = ds.findIndex((k) => cungBai(k, bai));
+      const hangMoi = i >= 0 ? { items: ds, index: i } : { items: [bai], index: 0 };
       if (xem && laVideo(bai)) {
         if (ngheNen) {
           // Nghe khi tắt màn hình: tiếng từ thẻ âm thanh, video tắt tiếng chạy theo.
@@ -292,6 +304,8 @@ export function TrinhPhat() {
       target: ma,
       entity_ids: ids,
       ...(bai.media_content_type ? { media_content_type: bai.media_content_type } : {}),
+      // Hàng đợi của loa là cả playlist; máy chủ tự chuyển bài.
+      ...(nguonHang?.playlist_id ? { playlist_id: nguonHang.playlist_id } : {}),
     });
     setDangGuiMa("");
     if (!r) return;
@@ -344,6 +358,22 @@ export function TrinhPhat() {
       // Hết video xem một mình: tự sang bài kế trên trang. Có loa thì máy chủ lo.
       const v = moiNhat.current.video;
       if (v && !v.theoLoa && !v.theoMay) void moiNhat.current.chuyenBai(1);
+    };
+    loiVideo.current = () => {
+      // Không để khung chết: tiếng bài đó vẫn phát.
+      if (!video) return;
+      const bai = video.bai;
+      const host = window.location.hostname;
+      const lyDo = /^[\d.]+$/.test(host) || host.includes(":")
+        ? `YouTube không cho xem hình “${bai.title || bai.id}” khi mở trang bằng địa chỉ IP (mở bằng tên máy/tên miền thì xem được).`
+        : `YouTube không cho xem hình “${bai.title || bai.id}” trên trang.`;
+      dongVideo();
+      if (video.theoLoa || video.theoMay) {
+        toast.message(`${lyDo} ${video.theoLoa ? "Loa" : "Máy này"} vẫn phát tiếng.`);
+        return;
+      }
+      void mayNghe.ngheBai(bai, hangVideo ?? { items: [bai], index: 0 });
+      toast.message(`${lyDo} Đang nghe tiếng trên máy này.`);
     };
   });
 
@@ -427,6 +457,16 @@ export function TrinhPhat() {
     if (!r) return;
     setKetQua(r.items);
     if (!r.items.length) toast.message("Không tìm thấy bài phù hợp.");
+  };
+
+  const luuCaPlaylist = async () => {
+    setDangLuuPlaylist(true);
+    const r = await khoPlaylist.lenh({ action: "import", text: tuKhoa.trim() });
+    setDangLuuPlaylist(false);
+    if (!r?.playlist) return;
+    toast.success(`Đã lưu “${r.playlist.name}” (${r.playlist.items.length} bài) vào Playlist.`);
+    setPlaylistMoSan(r.playlist.id);
+    setXemPlaylist(true);
   };
 
   const loaNhapVideo = async (tb: ThietBi, v: VideoMo) => {
@@ -728,6 +768,21 @@ export function TrinhPhat() {
         dangGuiMa={dangGuiMa}
         coLoa={chon.size > 0}
         phat={(bai, xem) => void phat(bai, xem)}
+        kho={khoPlaylist}
+        xemPlaylist={xemPlaylist}
+        doiXemPlaylist={setXemPlaylist}
+        luuCaPlaylist={() => void luuCaPlaylist()}
+        dangLuuPlaylist={dangLuuPlaylist}
+        bangPlaylist={
+          <DanhSachPlaylist
+            kho={khoPlaylist}
+            coLoa={chon.size > 0}
+            dangPhatMa={video ? video.bai.url || video.bai.id : nghe ? nghe.url || nghe.id : phienXem?.item ? phienXem.item.url || phienXem.item.id : ""}
+            dangGuiMa={dangGuiMa}
+            phat={(bai, xem, hang) => void phat(bai, xem, hang)}
+            moSan={playlistMoSan}
+          />
+        }
       />
     </div>
   );

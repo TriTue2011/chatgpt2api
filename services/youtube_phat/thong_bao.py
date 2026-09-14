@@ -28,6 +28,16 @@ THONG_BAO = {
     "invalid_seek_position": "Vị trí tua không hợp lệ.",
     "invalid_request": "Yêu cầu không hợp lệ.",
     "public_base_url_required": "Chưa có địa chỉ LAN cho loa tải nhạc.",
+    "playlist_not_found": "Playlist không còn — tải lại danh sách.",
+    "playlist_name_required": "Đặt tên cho playlist.",
+    "too_many_playlists": "Đã đủ 100 playlist — xoá bớt rồi tạo mới.",
+    "playlist_full": "Playlist đã đủ 500 bài.",
+    "invalid_playlist_index": "Vị trí bài trong playlist không hợp lệ.",
+    "invalid_playlist_action": "Lệnh playlist không hỗ trợ.",
+    "invalid_playlist_link": "Dán link playlist YouTube, link album/playlist Zing MP3 hoặc mã chia sẻ (TTPL1.…).",
+    "invalid_share_code": "Mã chia sẻ không đúng hoặc bị cắt mất một phần.",
+    "playlist_unavailable": "Không đọc được playlist này — link sai, playlist riêng tư, hoặc YouTube/Zing đang lỗi; thử lại sau.",
+    "playlist_empty": "Playlist này không có bài nào nghe được (riêng tư, VIP hoặc đã xoá).",
 }
 
 

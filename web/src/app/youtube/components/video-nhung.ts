@@ -8,6 +8,10 @@
  * thì khung gửi trạng thái (`infoDelivery`: playerState, currentTime) và nhận
  * lệnh playVideo / pauseVideo / seekTo / mute / unMute / loadVideoById (đổi bài
  * không nạp lại khung), báo hết bài bằng playerState 0.
+ *
+ * YouTube từ chối một số video trong khung nhúng (video hãng đĩa như VEVO khi trang
+ * mở bằng địa chỉ IP — đo 14/09/2026: "M2M - The Day You Went Away" bị chặn, mở bằng
+ * tên máy thì phát được): khung gửi `onError`, `khiLoi` báo cho trình phát.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -44,17 +48,19 @@ export type VideoNhung = {
   datLai: () => void;
 };
 
-export function useVideoNhung(khiHet: () => void): VideoNhung {
+export function useVideoNhung(khiHet: () => void, khiLoi: () => void): VideoNhung {
   const khung = useRef<HTMLIFrameElement>(null);
   const [sanSang, setSanSang] = useState(false);
   const [trangThai, setTrangThai] = useState(-1);
   const [tatTieng, setTatTieng] = useState<boolean | null>(null);
   const moc = useRef({ t: 0, luc: 0, trangThai: -1, sanSang: false });
   const khiHetMoi = useRef(khiHet);
+  const khiLoiMoi = useRef(khiLoi);
   const henBatTay = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
   useEffect(() => {
     khiHetMoi.current = khiHet;
+    khiLoiMoi.current = khiLoi;
   });
 
   const gui = useCallback((o: Record<string, unknown>) => {
@@ -82,6 +88,10 @@ export function useVideoNhung(khiHet: () => void): VideoNhung {
       if (!moc.current.sanSang) {
         moc.current.sanSang = true;
         setSanSang(true);
+      }
+      if (d.event === "onError") {
+        khiLoiMoi.current();
+        return;
       }
       const info = d.info as { currentTime?: unknown; playerState?: unknown; muted?: unknown } | null;
       if ((d.event === "infoDelivery" || d.event === "initialDelivery") && info && typeof info === "object") {
@@ -113,6 +123,7 @@ export function useVideoNhung(khiHet: () => void): VideoNhung {
       }
       gui({ event: "listening" });
       lenh("addEventListener", ["onStateChange"]);
+      lenh("addEventListener", ["onError"]);
     }, 250);
   }, [gui, lenh]);
 

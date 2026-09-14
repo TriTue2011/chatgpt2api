@@ -24,17 +24,20 @@ from urllib.parse import parse_qs, urlsplit
 from services.config import DATA_DIR
 from utils.log import logger
 
-from .search import search_youtube, search_zing
+from .playlists import PlaylistError, PlaylistStore, is_share_code, read_share_code, share_code
+from .search import fetch_youtube_playlist, search_youtube, search_zing, youtube_playlist_id
 from .session import PlaybackSession
 from .streaming import (
     StreamUnavailableError,
     build_signed_stream_url,
+    fetch_zing_playlist,
     fetch_zing_web_keys,
     resolve_youtube_audio,
     resolve_zing_stream,
     stream_cache_seconds,
     validate_stream_target,
     validate_zing_target,
+    zing_playlist_id,
 )
 
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
@@ -136,6 +139,7 @@ class PlayerCore:
         self.prefetching: set[tuple[str, str]] = set()
         self.prefetch_streams = True
         self.playback_session = PlaybackSession()
+        self.playlists = PlaylistStore(self.data_dir / "playlists.json")
 
     @property
     def history_path(self):
@@ -200,7 +204,9 @@ class PlayerCore:
         session_id=None,
         controller="",
         auto_advance=True,
+        playlist_id=None,
     ):
+        queue_items = self.playlists.get(playlist_id)["items"] if playlist_id else None
         if source == "youtube":
             fallback = normalize_target(target)
         elif source == "zing":
@@ -221,6 +227,7 @@ class PlayerCore:
                 session_id=session_id,
                 controller=controller,
                 auto_advance=auto_advance,
+                queue_items=queue_items,
             )
         self.add_history(session["item"])
         self.prefetch_next(session)
@@ -264,6 +271,60 @@ class PlayerCore:
         with self.player_lock:
             return self.playback_session.stop(expected_revision, session_id)
 
+    def playlist_action(self, payload):
+        """Một lệnh playlist từ tab c2a hoặc tích hợp HA. Trả {"playlists": [...], ...}.
+
+        list · create {name, items} · rename {id, name} · delete {id} · add {id | name, items}
+        · remove {id, index} · move {id, index, to} · export {id} → code · import {text, name}
+        (link playlist YouTube, link album/playlist Zing MP3, hoặc mã chia sẻ)."""
+        payload = payload if isinstance(payload, dict) else {}
+        action = str(payload.get("action") or "list")
+        store = self.playlists
+        extra = {}
+        items = payload.get("items") if isinstance(payload.get("items"), list) else []
+        if action == "list":
+            pass
+        elif action == "create":
+            extra["playlist"] = store.create(payload.get("name"), items)
+        elif action == "rename":
+            extra["playlist"] = store.rename(payload.get("id"), payload.get("name"))
+        elif action == "delete":
+            store.delete(payload.get("id"))
+        elif action == "add":
+            playlist_id = payload.get("id") or store.create(payload.get("name"))["id"]
+            extra["playlist"], extra["added"] = store.add(playlist_id, items)
+        elif action == "remove":
+            extra["playlist"] = store.remove(payload.get("id"), payload.get("index"))
+        elif action == "move":
+            extra["playlist"] = store.move(payload.get("id"), payload.get("index"), payload.get("to"))
+        elif action == "export":
+            extra["code"] = share_code(store.get(payload.get("id")))
+        elif action == "import":
+            name, found, source_url = self._read_playlist_source(str(payload.get("text") or ""))
+            if not found:
+                raise PlaylistError("playlist_empty")
+            extra["playlist"] = store.create(str(payload.get("name") or "").strip() or name, found, source_url=source_url)
+        else:
+            raise PlaylistError("invalid_playlist_action")
+        return {"playlists": store.list(), **extra}
+
+    def _read_playlist_source(self, text):
+        text = text.strip()
+        if is_share_code(text):
+            name, found = read_share_code(text)
+            return name or "Playlist chia sẻ", found, ""
+        if youtube_playlist_id(text):
+            name, found = fetch_youtube_playlist(text)
+            return name, found, text
+        if zing_playlist_id(text):
+            keys = self.zing_keys()
+            try:
+                name, found = fetch_zing_playlist(text, **keys)
+            except StreamUnavailableError:
+                name, found = fetch_zing_playlist(text, **self.zing_keys(lam_moi=True))
+            return name, found, text
+        raise PlaylistError("invalid_playlist_link")
+
     def search(self, source, query, limit):
         """Run one metadata search at a time to bound child processes."""
         with self.search_lock:
@@ -303,8 +364,10 @@ class PlayerCore:
                 self.zing_result_cache[target_url] = now + int(ttl)
 
     def require_public_zing_result(self, target_url):
-        """Accept only a Zing URL recently returned by public search."""
+        """Accept only a Zing URL recently returned by public search (or saved in a playlist)."""
         target_url = validate_zing_target(target_url)
+        if self.playlists.contains("zing", target_url):
+            return target_url
         now = time.monotonic()
         with self.zing_result_lock:
             expiry = self.zing_result_cache.get(target_url, 0)

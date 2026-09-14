@@ -213,6 +213,7 @@ class PlaybackSession:
         session_id=None,
         controller="",
         auto_advance=True,
+        queue_items=None,
     ):
         outputs = validate_output_entity_ids(output_entity_ids or [])
         session_id = self._session_id_for(session_id, outputs)
@@ -252,7 +253,14 @@ class PlaybackSession:
             # even after someone searched for something else.
             existing = self._sessions.get(session_id)
             queue = existing["queue"]["items"] if existing else []
-            index = find(queue)
+            index = -1
+            if queue_items:
+                # Playing a saved playlist: its songs are the queue.
+                queue = [dict(candidate) for candidate in queue_items if isinstance(candidate, dict)]
+                index = find(queue)
+            if index < 0:
+                queue = existing["queue"]["items"] if existing else []
+                index = find(queue)
             if index < 0:
                 queue = self._search_queues.get(source, [])
                 index = find(queue)

@@ -384,8 +384,10 @@ def phat(source: str, target: str, entity_ids: Any, base_url: str, *,
          media_content_type: str | None = None,
          session_id: str | None = None,
          join_ids: list[str] | None = None,
+         playlist_id: str | None = None,
          goi: Callable[[str, str, dict], bool] | None = None) -> dict[str, Any]:
     """Gửi một bài tới các loa/tivi đã chọn. Trả {da_gui, bo_qua, phien}.
+    `playlist_id`: hàng đợi của nhóm loa là cả playlist đó (bài kế, tự chuyển bài).
 
     Các loa thành một phiên (rời phiên cũ). `session_id` giữ phiên và hàng đợi
     của nó (bài kế/trước); `join_ids` là loa đang nghe bài này, giữ trong phiên
@@ -467,7 +469,7 @@ def phat(source: str, target: str, entity_ids: Any, base_url: str, *,
     _xoa_bo_dem()
     giu = [e for e in (join_ids or []) if e not in da_gui and MEDIA_PLAYER.fullmatch(str(e))]
     phien = core.record_session(source, target, output_entity_ids=giu + da_gui, media_content_type=loai,
-                                session_id=session_id, controller=CONTROLLER)
+                                session_id=session_id, controller=CONTROLLER, playlist_id=playlist_id)
     _url_theo_phien[str(phien.get("session_id") or "")] = base_url
     from . import tu_chuyen_bai
     tu_chuyen_bai.dam_bao_chay()

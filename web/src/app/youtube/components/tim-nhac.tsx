@@ -1,12 +1,14 @@
 "use client";
 
-import { AudioLines, Headphones, Link2, LoaderCircle, MonitorPlay, Music2, Play, Search, Youtube } from "lucide-react";
+import { AudioLines, Headphones, Link2, ListMusic, ListPlus, LoaderCircle, MonitorPlay, Music2, Play, Search, Youtube } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 import { type BaiHat, type Nguon, TEN_NGUON, thoiLuong } from "./lib";
+import { type KhoPlaylist, laLinkPlaylist, ThemVaoPlaylist } from "./playlist";
 
 const NUT_NGUON: { khoa: Nguon; Icon: typeof Youtube; goiY: string }[] = [
   { khoa: "youtube", Icon: Youtube, goiY: "Dán link YouTube để ra đúng video · tivi mở ứng dụng YouTube, loa nhận tiếng" },
@@ -29,12 +31,41 @@ type Props = {
   coLoa: boolean;
   /** `xem` = nút xem video; không thì chỉ nghe. */
   phat: (bai: BaiHat, xem?: boolean) => void;
+  kho: KhoPlaylist;
+  /** Đang xem playlist thay cho tìm nhạc. */
+  xemPlaylist: boolean;
+  doiXemPlaylist: (v: boolean) => void;
+  /** Ô tìm đang là link playlist: lưu cả playlist. */
+  luuCaPlaylist: () => void;
+  dangLuuPlaylist: boolean;
+  bangPlaylist: ReactNode;
 };
 
-export function TimNhac({ className, nguon, doiNguon, tuKhoa, setTuKhoa, tim, dangTim, ketQua, dangPhatMa, dangGuiMa, coLoa, phat }: Props) {
+export function TimNhac({
+  className, nguon, doiNguon, tuKhoa, setTuKhoa, tim, dangTim, ketQua, dangPhatMa, dangGuiMa, coLoa, phat,
+  kho, xemPlaylist, doiXemPlaylist, luuCaPlaylist, dangLuuPlaylist, bangPlaylist,
+}: Props) {
   const goiY = NUT_NGUON.find((n) => n.khoa === nguon)?.goiY;
+  const tab = (dang: boolean, nhan: string, Icon: typeof Search, bam: () => void) => (
+    <button
+      type="button"
+      aria-pressed={dang}
+      onClick={bam}
+      className={cn(
+        "flex items-center gap-1.5 border-b-2 px-1 pb-1.5 text-sm font-semibold transition",
+        dang ? "border-[var(--primary)] text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+      )}
+    >
+      <Icon className="size-4" /> {nhan}
+    </button>
+  );
   return (
     <section className={cn("rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 sm:p-5", className)}>
+      <div className="mb-3 flex gap-4">
+        {tab(!xemPlaylist, "Tìm nhạc", Search, () => doiXemPlaylist(false))}
+        {tab(xemPlaylist, `Playlist${kho.ds?.length ? ` (${kho.ds.length})` : ""}`, ListMusic, () => doiXemPlaylist(true))}
+      </div>
+      {xemPlaylist ? bangPlaylist : (<>
       <div role="group" aria-label="Nguồn nhạc" className="grid grid-cols-3 gap-1 rounded-xl bg-[var(--muted)] p-1">
         {NUT_NGUON.map(({ khoa, Icon }) => (
           <button
@@ -84,6 +115,12 @@ export function TimNhac({ className, nguon, doiNguon, tuKhoa, setTuKhoa, tim, da
             ? " · chưa chọn loa: nút tai nghe để nghe trên máy này, nút màn hình để xem video"
             : " · chưa chọn loa: bấm nút tai nghe để nghe trên máy này"}
       </p>
+      {nguon !== "http" && laLinkPlaylist(tuKhoa) && (
+        <Button type="button" variant="outline" className="mt-2 h-9 w-full" disabled={dangLuuPlaylist} onClick={luuCaPlaylist}>
+          {dangLuuPlaylist ? <LoaderCircle className="animate-spin" /> : <ListPlus />}
+          Lưu cả playlist này vào Playlist
+        </Button>
+      )}
 
       <div className="mt-4 space-y-1.5">
         {dangTim && !ketQua.length ? (
@@ -143,6 +180,7 @@ export function TimNhac({ className, nguon, doiNguon, tuKhoa, setTuKhoa, tim, da
                     <span className="truncate">{bai.channel || bai.artist || TEN_NGUON[bai.source]}</span>
                   </div>
                 </div>
+                {bai.source !== "http" && <ThemVaoPlaylist bai={bai} kho={kho} />}
                 {bai.source === "youtube" && (
                   <Button
                     type="button"
@@ -180,6 +218,7 @@ export function TimNhac({ className, nguon, doiNguon, tuKhoa, setTuKhoa, tim, da
           })
         )}
       </div>
+      </>)}
     </section>
   );
 }

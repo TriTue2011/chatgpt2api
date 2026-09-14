@@ -246,6 +246,43 @@ def search_youtube(query, *, limit=20, timeout=30):
     return parse_search_payload(payload, limit=limit)
 
 
+def youtube_playlist_id(text):
+    """ID playlist trong một link YouTube (trang /playlist hoặc link xem có `list=`)."""
+    raw = str(text or "").strip()
+    if not raw or len(raw) > MAX_URL_LENGTH or any(char.isspace() for char in raw):
+        return None
+    parsed = urlsplit(raw if "://" in raw else f"https://{raw}")
+    if parsed.scheme not in {"http", "https"} or (parsed.hostname or "").lower() not in YOUTUBE_URL_HOSTS:
+        return None
+    playlist_id = parse_qs(parsed.query).get("list", [""])[0]
+    return playlist_id if PLAYLIST_ID.fullmatch(playlist_id) else None
+
+
+def fetch_youtube_playlist(text, *, limit=500, timeout=120):
+    """(tên, các bài) của cả một playlist YouTube công khai — để lưu nguyên playlist."""
+    playlist_id = youtube_playlist_id(text)
+    if playlist_id is None:
+        raise ValueError("invalid_playlist_link")
+    command = [
+        sys.executable, "-m", "yt_dlp",
+        "--flat-playlist", "--dump-single-json", "--skip-download", "--no-warnings", "--ignore-errors",
+        "--playlist-end", str(int(limit)),
+        f"https://www.youtube.com/playlist?list={playlist_id}",
+    ]
+    try:
+        completed = subprocess.run(command, capture_output=True, check=False, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SearchUnavailableError("search_process_failed") from error
+    if completed.returncode != 0:
+        raise SearchUnavailableError("search_provider_failed")
+    try:
+        payload = json.loads(completed.stdout)
+    except (json.JSONDecodeError, TypeError) as error:
+        raise SearchUnavailableError("invalid_search_response") from error
+    title = str(payload.get("title") or "").strip() if isinstance(payload, dict) else ""
+    return title or "Playlist YouTube", parse_search_payload(payload, limit=int(limit))
+
+
 def search_zing(query, *, limit=20, timeout=10):
     """Search public Zing song metadata through its autocomplete endpoint."""
     query, limit = _validated_query_and_limit(query, limit)

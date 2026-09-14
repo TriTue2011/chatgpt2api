@@ -169,9 +169,12 @@ def create_router() -> APIRouter:
                 volume_level=payload.get("volume_level"),
                 session_id=payload.get("session_id") or None,
                 controller=payload.get("controller") or "",
-                auto_advance=payload.get("auto_advance") is not False)
+                auto_advance=payload.get("auto_advance") is not False,
+                playlist_id=payload.get("playlist_id") or None)
         except ValueError as error:
             ma = str(error)
+            if ma == "playlist_not_found":
+                return _json(404, {"error": ma})
             if ma == "unverified_zing_target":
                 return _json(403, {"error": ma})
             if ma not in {"invalid_http_audio_target", "invalid_output_entity_ids", "invalid_session_id",
@@ -182,6 +185,35 @@ def create_router() -> APIRouter:
         except (AttributeError, json.JSONDecodeError, UnicodeDecodeError):
             return _json(400, {"error": "invalid_request"})
         return _json(200, {"success": True, "session": ket_qua})
+
+    async def _playlist(payload: dict) -> tuple[int, dict]:
+        try:
+            ket_qua = await asyncio.to_thread(dich_vu.core().playlist_action, payload)
+        except (SearchUnavailableError, StreamUnavailableError):
+            # Đọc playlist từ YouTube/Zing hỏng: link sai, playlist riêng tư hoặc nguồn lỗi.
+            return 502, {"error": "playlist_unavailable"}
+        except ValueError as error:
+            return 400, {"error": str(error)}
+        return 200, ket_qua
+
+    # Playlist chung cả nhà: tích hợp HA (token) và tab YouTube (quản trị) cùng một kho.
+    @router.get(f"{I}/playlists")
+    async def playlists_integration(authorization: str | None = Header(default=None)):
+        if (loi := _xac_thuc(authorization)) is not None:
+            return loi
+        ma, body = await _playlist({"action": "list"})
+        return _json(ma, {"success": ma == 200, **body})
+
+    @router.post(f"{I}/playlists")
+    async def playlist_integration(request: Request, authorization: str | None = Header(default=None)):
+        if (loi := _xac_thuc(authorization)) is not None:
+            return loi
+        try:
+            payload = await _doc_json(request, 400_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
+            return _json(400, {"error": "invalid_request"})
+        ma, body = await _playlist(payload)
+        return _json(ma, {"success": ma == 200, **body})
 
     @router.post(f"{I}/session/outputs")
     async def session_outputs(request: Request, authorization: str | None = Header(default=None)):
@@ -388,6 +420,22 @@ def create_router() -> APIRouter:
             return _loi("search_unavailable")
         return {"ok": True, "items": items}
 
+    @router.get("/api/youtube-phat/playlist")
+    async def playlist_tab(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        ma, body = await _playlist({"action": "list"})
+        return {"ok": True, **body} if ma == 200 else _loi(body["error"])
+
+    @router.post("/api/youtube-phat/playlist")
+    async def playlist_lenh_tab(request: Request, authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        try:
+            payload = await _doc_json(request, 400_000)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
+            return _loi("invalid_request")
+        ma, body = await _playlist(payload)
+        return {"ok": True, **body} if ma == 200 else _loi(body["error"])
+
     @router.post("/api/youtube-phat/phat")
     async def phat(request: Request, authorization: str | None = Header(default=None)):
         require_admin(authorization)
@@ -398,7 +446,8 @@ def create_router() -> APIRouter:
                 payload.get("entity_ids"), url_web(request),
                 media_content_type=payload.get("media_content_type") or None,
                 session_id=payload.get("session_id") or None,
-                join_ids=payload.get("join_ids") if isinstance(payload.get("join_ids"), list) else None)
+                join_ids=payload.get("join_ids") if isinstance(payload.get("join_ids"), list) else None,
+                playlist_id=payload.get("playlist_id") or None)
         except StreamUnavailableError:
             return _loi("stream_unavailable")
         except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as error:
