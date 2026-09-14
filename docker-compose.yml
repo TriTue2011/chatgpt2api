@@ -24,6 +24,18 @@
 #   - "127.0.0.1:10600-10604:10600-10604"
 # Chỉ làm vậy khi client thật sự chạy trên cùng máy host Docker.
 #
+# Giới hạn RAM (máy ít RAM, chia với container khác) — đặt biến trong .env hoặc
+# ô Environment của Portainer, bỏ trống/0 = không giới hạn (mặc định):
+#   C2A_MEM_LIMIT=4g            c2a gồm cả trình duyệt, giọng nói, MCP, Zalo.
+#                               Đo 14/09/2026 trên máy chủ thật: 2,45 GiB ngay
+#                               sau khởi động — đặt dưới ~3,5g là dễ bị tắt vì
+#                               hết RAM (OOM) khi mở trình duyệt/nạp model.
+#   SEARXNG_MEM_LIMIT=512m      đo: ~110 MiB.
+#   VN_TRANSLATE_MEM_LIMIT=1g   đo lúc rảnh ~35 MiB; model dịch nạp khi dùng.
+#   LIBRETRANSLATE_MEM_LIMIT=2g model argos nạp vào RAM.
+# Container chạm trần thì Docker tắt nó rồi `restart: unless-stopped` bật lại —
+# giới hạn là để không kéo sập máy, không làm c2a nhẹ hơn.
+#
 # Sidecar (không gộp vào service c2a):
 #   OfficeCLI  — binary trong image + MCP preset "officecli" (hub /officecli/mcp)
 #   DeepTutor  — docker compose -f deploy/deeptutor/docker-compose.yml up -d
@@ -38,6 +50,8 @@ services:
     image: c2a:latest
     container_name: c2a
     restart: unless-stopped
+    # Giới hạn RAM: xem đầu tệp. 0 = không giới hạn.
+    mem_limit: ${C2A_MEM_LIMIT:-0}
 
     # Docker json-file không tự xoay theo mặc định. Gateway gom log của API,
     # browser, MCP và solver vào stdout nên để vô hạn sẽ làm đầy đĩa host.
@@ -303,6 +317,7 @@ services:
     image: docker.io/searxng/searxng:latest
     container_name: searxng
     restart: unless-stopped
+    mem_limit: ${SEARXNG_MEM_LIMIT:-0}
 
     logging:
       driver: json-file
@@ -358,6 +373,7 @@ services:
     image: ghcr.io/tritue2011/vn-translate:latest
     container_name: vn-translate
     restart: unless-stopped
+    mem_limit: ${VN_TRANSLATE_MEM_LIMIT:-0}
     logging:
       driver: json-file
       options: {max-size: "10m", max-file: "5"}
@@ -401,6 +417,7 @@ services:
     image: libretranslate/libretranslate:latest
     container_name: libretranslate
     restart: unless-stopped
+    mem_limit: ${LIBRETRANSLATE_MEM_LIMIT:-0}
 
     logging:
       driver: json-file
