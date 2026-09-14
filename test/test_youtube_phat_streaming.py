@@ -142,6 +142,66 @@ class SignedZingStreamTests(unittest.TestCase):
         self.assertEqual([expected_signature], query["sig"])
 
 
+class ZingWebKeyTests(unittest.TestCase):
+    """c2a: khoá web Zing lấy từ mã trang lúc chạy, không để trong git."""
+
+    def setUp(self):
+        self.streaming = load_streaming_module()
+
+    def test_trich_cap_khoa_tu_ma_web(self):
+        # Đúng dạng đo trong main.min.js 1.20.4 (giá trị ở đây là giả).
+        js = 'n.d(t,"c",(function(){return a}));var r="' + "A" * 32 + '",i="' + "b1" * 16 + '",a={pub:1}'
+        self.assertEqual({"api_key": "A" * 32, "api_secret": "b1" * 16}, self.streaming.extract_zing_web_keys(js))
+        self.assertIsNone(self.streaming.extract_zing_web_keys('var r="ngan",i="' + "b" * 32 + '"'))
+
+    def _mo(self, *than, url="https://zingmp3.vn/"):
+        class Resp(io.BytesIO):
+            headers = {}
+
+            def geturl(self_inner):
+                return self_inner._url
+
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *_):
+                self_inner.close()
+
+        phan_hoi = []
+        for i, b in enumerate(than):
+            r = Resp(b)
+            r._url = url if i == 0 else "https://zmdjs.zmdcdn.me/zmp3-desktop/v1.20.4/static/js/main.min.js"
+            phan_hoi.append(r)
+        opener = unittest.mock.Mock()
+        opener.open.side_effect = phan_hoi
+        return opener
+
+    def test_tai_trang_chu_roi_bo_ma_main(self):
+        html = b'<script src="https://zmdjs.zmdcdn.me/zmp3-desktop/v1.20.4/static/js/main.min.js"></script>'
+        js = ('var r="' + "K" * 32 + '",i="' + "S" * 32 + '"').encode()
+        opener = self._mo(html, js)
+        with patch.object(self.streaming, "build_opener", return_value=opener):
+            keys = self.streaming.fetch_zing_web_keys(timeout=5)
+        self.assertEqual({"api_key": "K" * 32, "api_secret": "S" * 32}, keys)
+        self.assertEqual("https://zmdjs.zmdcdn.me/zmp3-desktop/v1.20.4/static/js/main.min.js",
+                         opener.open.call_args_list[1].args[0].full_url)
+
+    def test_khong_thay_bo_ma_hoac_bi_chuyen_huong_la(self):
+        with patch.object(self.streaming, "build_opener", return_value=self._mo(b"<html></html>")):
+            with self.assertRaisesRegex(self.streaming.StreamUnavailableError, "zing_keys_unavailable"):
+                self.streaming.fetch_zing_web_keys()
+        with patch.object(self.streaming, "build_opener", return_value=self._mo(b"x", url="https://evil.example/")):
+            with self.assertRaisesRegex(self.streaming.StreamUnavailableError, "unsafe_stream_redirect"):
+                self.streaming.fetch_zing_web_keys()
+
+    def test_thieu_khoa_thi_khong_goi_mang(self):
+        with patch.object(self.streaming, "build_opener") as mo:
+            with self.assertRaisesRegex(self.streaming.StreamUnavailableError, "zing_keys_missing"):
+                self.streaming.resolve_zing_stream(
+                    "https://zingmp3.vn/bai-hat/Thuc-Giac-Da-LAB/ZZ90FD0B.html", api_key="", api_secret="")
+        mo.assert_not_called()
+
+
 class _FakeCompleted:
     def __init__(self, returncode, stdout):
         self.returncode = returncode

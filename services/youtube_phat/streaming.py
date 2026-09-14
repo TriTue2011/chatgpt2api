@@ -35,8 +35,14 @@ ZING_ID = re.compile(r"^[A-Za-z0-9]{8,16}$")
 ZING_API_BASE = "https://zingmp3.vn"
 ZING_API_PATH = "/api/v2/song/get/streaming"
 # c2a: apiKey/secret ký yêu cầu của web zingmp3.vn KHÔNG nằm trong mã — gitleaks
-# chặn commit, và khoá thuộc Zing chứ không phải của dự án. Người gọi truyền vào;
-# lõi (`dich_vu.PlayerCore.zing_keys`) đọc từ `zing_keys.json` trong thư mục dữ liệu.
+# chặn commit. Khoá là của chính trang web Zing, công khai trong mã JavaScript
+# của trang: `fetch_zing_web_keys` lấy về lúc chạy (ai cài cũng dùng được, Zing đổi
+# khoá thì tự theo); lõi (`dich_vu.PlayerCore.zing_keys`) lưu đệm và truyền vào.
+ZING_HOME_URL = "https://zingmp3.vn/"
+ZING_WEB_BUNDLE = re.compile(r'src="(https://[a-z0-9.-]+\.zmdcdn\.me/[^"]+/main\.min\.js)"')
+# Đo 14/09/2026 trong main.min.js bản 1.20.4: `var r="<apiKey>",i="<secret>",a={…}`.
+ZING_WEB_KEY_PAIR = re.compile(r'="([A-Za-z0-9]{32})",[A-Za-z_$][\w$]{0,3}="([A-Za-z0-9]{32})"')
+ZING_WEB_HOSTS = ("zingmp3.vn", "zmdcdn.me")
 ZING_WEB_VERSION = "1.20.4"
 ZING_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -215,6 +221,39 @@ def _read_limited_response(response, *, limit=1_000_000) -> bytes:
         if len(body) > limit:
             raise StreamUnavailableError("stream_response_too_large")
     return body
+
+
+def extract_zing_web_keys(script: str) -> dict | None:
+    """apiKey/secret từ mã JavaScript của web Zing, hoặc None nếu không thấy."""
+    match = ZING_WEB_KEY_PAIR.search(str(script or ""))
+    if not match:
+        return None
+    return {"api_key": match.group(1), "api_secret": match.group(2)}
+
+
+def fetch_zing_web_keys(*, timeout: int = 20) -> dict:
+    """Tải trang chủ zingmp3.vn, tìm bó mã main.min.js, trích apiKey/secret."""
+
+    def _get(url: str, limit: int) -> str:
+        with build_opener().open(
+            Request(url, headers={"Accept-Encoding": "gzip", "User-Agent": ZING_USER_AGENT}),
+            timeout=timeout,
+        ) as response:
+            host = (urlsplit(response.geturl()).hostname or "").lower()
+            if not any(host == h or host.endswith(f".{h}") for h in ZING_WEB_HOSTS):
+                raise StreamUnavailableError("unsafe_stream_redirect")
+            return _read_limited_response(response, limit=limit).decode("utf-8", "replace")
+
+    try:
+        bundle = ZING_WEB_BUNDLE.search(_get(ZING_HOME_URL, 1_000_000))
+        keys = extract_zing_web_keys(_get(bundle.group(1), 8_000_000)) if bundle else None
+    except StreamUnavailableError:
+        raise
+    except (OSError, ValueError) as error:
+        raise StreamUnavailableError("zing_keys_unavailable") from error
+    if not keys:
+        raise StreamUnavailableError("zing_keys_unavailable")
+    return keys
 
 
 def _cookie_web_version(cookie_jar: CookieJar) -> str:

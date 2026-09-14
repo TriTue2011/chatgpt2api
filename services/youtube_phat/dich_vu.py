@@ -29,6 +29,7 @@ from .session import PlaybackSession
 from .streaming import (
     StreamUnavailableError,
     build_signed_stream_url,
+    fetch_zing_web_keys,
     resolve_youtube_audio,
     resolve_zing_stream,
     validate_stream_target,
@@ -285,23 +286,43 @@ class PlayerCore:
             raise ValueError("unsupported_stream_source")
         return target, self._resolve_stream(source, target)
 
-    def zing_keys(self):
-        """apiKey/secret của web zingmp3.vn, đọc từ `zing_keys.json` trong thư mục
-        dữ liệu (`{"api_key": "...", "api_secret": "..."}`), không để trong git.
-        Lấy giá trị ở `youtube_player/app/streaming.py` của repo TriTue2011/youtube.
-        Thiếu thì chỉ Zing không phát được; YouTube không cần khoá này."""
+    ZING_KEYS_TTL = 24 * 3600
+
+    def _doc_khoa(self, ten):
         try:
-            value = json.loads((self.data_dir / "zing_keys.json").read_text(encoding="utf-8"))
+            value = json.loads((self.data_dir / ten).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            value = {}
-        keys = {
-            "api_key": str(value.get("api_key") or "") if isinstance(value, dict) else "",
-            "api_secret": str(value.get("api_secret") or "") if isinstance(value, dict) else "",
-        }
-        if not keys["api_key"] or not keys["api_secret"]:
-            logger.warning({"event": "youtube_phat_thieu_khoa_zing",
-                            "tep": str(self.data_dir / "zing_keys.json")})
-            raise StreamUnavailableError("zing_keys_missing")
+            return None
+        if not isinstance(value, dict) or not value.get("api_key") or not value.get("api_secret"):
+            return None
+        return value
+
+    def zing_keys(self, *, lam_moi=False):
+        """apiKey/secret của web zingmp3.vn — công khai trong mã trang, không phải
+        khoá riêng, nhưng không để trong git (gitleaks chặn).
+
+        Thứ tự: `zing_keys.json` do chủ máy đặt tay (nếu có) → bản tự lấy lưu đệm
+        24 giờ (`zing_keys_web.json`) → tải lại từ zingmp3.vn. Tải hỏng thì dùng
+        bản đệm cũ nếu còn; không có gì thì chỉ Zing không phát được."""
+        tay = self._doc_khoa("zing_keys.json")
+        if tay:
+            return {"api_key": str(tay["api_key"]), "api_secret": str(tay["api_secret"])}
+        dem = self._doc_khoa("zing_keys_web.json")
+        if dem and not lam_moi and time.time() - float(dem.get("luc") or 0) < self.ZING_KEYS_TTL:
+            return {"api_key": str(dem["api_key"]), "api_secret": str(dem["api_secret"])}
+        try:
+            keys = fetch_zing_web_keys()
+        except StreamUnavailableError as error:
+            logger.warning({"event": "youtube_phat_khong_lay_duoc_khoa_zing", "loi": str(error),
+                            "dung_ban_dem_cu": bool(dem)})
+            if dem:
+                return {"api_key": str(dem["api_key"]), "api_secret": str(dem["api_secret"])}
+            raise
+        path = self.data_dir / "zing_keys_web.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tam = path.with_suffix(".json.tmp")
+        tam.write_text(json.dumps({**keys, "luc": time.time()}), encoding="utf-8")
+        tam.replace(path)
         return keys
 
     def _resolve_stream(self, source, target):
@@ -311,11 +332,16 @@ class PlayerCore:
             cached = self.stream_cache.get(key)
             if cached and cached[0] >= time.monotonic():
                 return dict(cached[1])
-        resolved = (
-            resolve_youtube_audio(target)
-            if source == "youtube"
-            else resolve_zing_stream(target, **self.zing_keys())
-        )
+        if source == "youtube":
+            resolved = resolve_youtube_audio(target)
+        else:
+            try:
+                resolved = resolve_zing_stream(target, **self.zing_keys())
+            except StreamUnavailableError as error:
+                if str(error) != "stream_provider_failed":
+                    raise
+                # Zing có thể đã đổi khoá trong mã web: lấy lại một lần rồi thử lại.
+                resolved = resolve_zing_stream(target, **self.zing_keys(lam_moi=True))
         with self.stream_lock:
             now = time.monotonic()
             self.stream_cache = {

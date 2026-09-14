@@ -192,9 +192,43 @@ class YouTubePhatApiTest(unittest.TestCase):
         (Path(self._tmp.name) / "zing_keys.json").unlink()
         self.core.stream_cache.clear()
         giai.reset_mock()
-        r = self.post("/api/integration/stream", {"source": "zing", "target": target}, headers=H)
+        from services.youtube_phat.streaming import StreamUnavailableError
+
+        with patch("services.youtube_phat.dich_vu.fetch_zing_web_keys",
+                   side_effect=StreamUnavailableError("zing_keys_unavailable")):
+            r = self.post("/api/integration/stream", {"source": "zing", "target": target}, headers=H)
         self.assertEqual((502, {"error": "stream_unavailable"}), (r.status_code, r.json()))
         giai.assert_not_called()
+
+    def test_khoa_zing_tu_lay_luu_dem_24_gio_va_lay_lai_khi_zing_doi_khoa(self) -> None:
+        from services.youtube_phat.streaming import StreamUnavailableError
+
+        (Path(self._tmp.name) / "zing_keys.json").unlink()  # ai cài cũng chạy: không có tệp đặt tay
+        k1 = {"api_key": "khoa-1", "api_secret": "bi-mat-1"}
+        k2 = {"api_key": "khoa-2", "api_secret": "bi-mat-2"}
+        with patch("services.youtube_phat.dich_vu.fetch_zing_web_keys", side_effect=[k1, k2]) as lay:
+            self.assertEqual(k1, self.core.zing_keys())
+            self.assertEqual(k1, self.core.zing_keys())          # trong 24 giờ: dùng bản đệm
+            self.assertEqual(1, lay.call_count)
+            dem = Path(self._tmp.name) / "zing_keys_web.json"
+            import json as _json
+            cu = _json.loads(dem.read_text(encoding="utf-8"))
+            dem.write_text(_json.dumps({**cu, "luc": 0}), encoding="utf-8")   # đệm quá hạn
+            self.assertEqual(k2, self.core.zing_keys())
+        with patch("services.youtube_phat.dich_vu.fetch_zing_web_keys",
+                   side_effect=StreamUnavailableError("zing_keys_unavailable")):
+            self.assertEqual(k2, self.core.zing_keys(lam_moi=True))   # mạng hỏng: dùng bản đệm cũ
+
+        target = "https://zingmp3.vn/bai-hat/Thuc-Giac/ZZ90FD0B.html"
+        self.nho_zing(target)
+        ok = {"url": "https://audio.zmdcdn.me/song.mp3", "headers": {}, "content_type": "audio/mpeg"}
+        with patch("services.youtube_phat.dich_vu.fetch_zing_web_keys", return_value=k1) as lay, \
+             patch("services.youtube_phat.dich_vu.resolve_zing_stream",
+                   side_effect=[StreamUnavailableError("stream_provider_failed"), ok]) as giai:
+            r = self.post("/api/integration/stream", {"source": "zing", "target": target}, headers=H)
+        self.assertEqual(200, r.status_code, r.text)
+        self.assertEqual(1, lay.call_count)   # khoá cũ bị Zing từ chối → lấy lại đúng một lần
+        self.assertEqual([k2["api_key"], k1["api_key"]], [c.kwargs["api_key"] for c in giai.call_args_list])
 
     @patch("services.youtube_phat.dich_vu.resolve_zing_stream")
     def test_zing_khong_phat_duoc_502(self, giai) -> None:
