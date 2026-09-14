@@ -882,9 +882,14 @@ def _la_admin_nguoi_gui(account_id: str, thread_id: str, sender_id: str = "",
 _NHAN_ALL = "@All"      # Zalo hiển thị tag cả nhóm là '@All' (ảnh người dùng 01/08)
 
 
+def _do_dai_js(s: str) -> int:
+    """Độ dài theo JS/UTF-16 — đơn vị Zalo dùng cho vị trí style và mention."""
+    return len(str(s).encode("utf-16-le")) // 2
+
+
 def send_message(thread_id: str, text: str, thread_type: int = 0, account: str = "",
                  *, rich: bool = True, mention_all: bool = False,
-                 co_nut_chon: bool = False) -> dict:
+                 co_nut_chon: bool = False, mention_uid: str = "", mention_name: str = "") -> dict:
     """Gửi text (tự cắt khúc ~2000). Styles RTF zca-js (giống Zalo Bot: đậm+màu+cỡ).
 
     thread_type: 0=user, 1=group.
@@ -895,6 +900,10 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
         {pos:0, uid:'-1', len:4} — uid '-1' là mã Zalo hiểu là 'nhắc mọi người'
         (đã xác minh trong zca-js: type = uid=='-1' ? 1 : 0). Chỉ áp cho NHÓM
         (thread_type=1) và chỉ khúc ĐẦU; chat 1-1 thì bỏ qua, gửi chữ thường.
+    mention_uid + mention_name: tag MỘT người ở đầu tin (khúc đầu, chỉ nhóm). Không
+        truyền thì lấy người đang hỏi bot trong lượt này (`_msg_ctx`, do `_process_ai`
+        đặt) — chủ máy 14/09/2026: "trả lời người hỏi bot, để họ biết được phản hồi".
+        Chỉ áp khi gửi vào ĐÚNG nhóm người đó vừa hỏi; @All thắng tag một người.
     """
     acc = _account_for_send(account)
     if not acc:
@@ -1023,6 +1032,11 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
     # Tag cả nhóm CHỈ ở khúc đầu, và chỉ khi là NHÓM. Chat 1-1 thì Zalo bỏ
     # mention nên không chèn (khỏi lòi chữ '@All' vô nghĩa vào tin riêng).
     con_tag = bool(mention_all) and int(thread_type or 0) == 1
+    if not (mention_uid and mention_name) and str(getattr(_msg_ctx, "hoi_thread", "") or "") == str(thread_id):
+        mention_uid = str(getattr(_msg_ctx, "hoi_uid", "") or "")
+        mention_name = str(getattr(_msg_ctx, "hoi_ten", "") or "")
+    con_nguoi = (not con_tag and int(thread_type or 0) == 1
+                 and bool(str(mention_uid).strip()) and bool(str(mention_name).strip()))
     for ch in chunks[:_MAX_CHUNKS]:
         ban_dung = _cac_ban_dung(ch)
         for thu, (msg, styles) in enumerate(ban_dung):
@@ -1038,6 +1052,14 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
                 for s in (msg_obj.get("styles") or []):
                     s["start"] = int(s.get("start") or 0) + len(_tien)
                 msg_obj["mentions"] = [{"pos": 0, "uid": "-1", "len": len(_NHAN_ALL)}]
+            elif con_nguoi:
+                # '@Tên ' đầu tin, mention đúng uid người hỏi. Vị trí theo UTF-16 như @All.
+                _nhan = "@" + str(mention_name).strip()
+                _tien = _nhan + " "
+                msg_obj["msg"] = _tien + str(msg_obj.get("msg") or "")
+                for s in (msg_obj.get("styles") or []):
+                    s["start"] = int(s.get("start") or 0) + _do_dai_js(_tien)
+                msg_obj["mentions"] = [{"pos": 0, "uid": str(mention_uid).strip(), "len": _do_dai_js(_nhan)}]
             last = _request("POST", "/api/sendMessageByAccount", {
                 "message": msg_obj,
                 "threadId": str(thread_id),
@@ -1053,6 +1075,7 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
                             "so_vung": len(styles), "dai": len(msg),
                             "error": str(last.get("error") or "")[:200]})
         con_tag = False
+        con_nguoi = False
         if not last.get("ok"):
             break
     return last
@@ -3097,6 +3120,11 @@ def _process_ai(ev: dict) -> None:
     from services.agent import capabilities as _caps
     # Tầng lọc: nhóm (thread_id) ∩ user (sender_id) — User ID theo từng nhóm.
     _sender = str(ev.get("sender_id") or "")
+    # Người đang hỏi bot trong lượt này: mọi câu bot trả lời vào nhóm này tag họ
+    # (xem `send_message`). Đặt lại MỖI tin vì threading.local sống theo luồng.
+    _msg_ctx.hoi_thread = str(thread_id) if int(thread_type or 0) == 1 else ""
+    _msg_ctx.hoi_uid = _sender if not ev.get("is_self") else ""
+    _msg_ctx.hoi_ten = str(ev.get("display_name") or "").strip()
     # NHẬT KÝ NHÓM: ghi MỌI tin nhận được (nếu phạm vi BẬT) — TRƯỚC mọi cổng
     # lọc/tag, tách hẳn với việc trả lời. Mặc định TẮT nên không bật thì không ghi.
     try:

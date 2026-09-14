@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 import json
 import re
+import unicodedata
 import time
 import uuid
 from typing import Any, Iterable, Iterator
@@ -6725,18 +6726,35 @@ _HOME_NOUNS = [
 ]
 
 
+def _co_tu(cau: str, tu: str) -> bool:
+    """`tu` có đứng thành TỪ (hoặc cụm từ) trong `cau` không.
+
+    So chuỗi con khớp nhầm giữa chừng một từ khác: "khoá" nằm trong "chứng khoán",
+    "log" trong "blog", "pin" trong "ping" — câu hỏi giá chứng khoán bị coi là lệnh
+    nhà thông minh và mất công cụ tra cứu. Ranh giới là ký tự không phải chữ/số
+    (`\\w` nhận cả chữ tiếng Việt có dấu), nên dấu câu liền sau vẫn khớp ("tắt đèn.").
+    Mục viết kèm dấu cách để giả ranh giới ("set ", "turn ") được bỏ dấu cách."""
+    tu = tu.strip()
+    return bool(tu) and re.search(r"(?<!\w)" + re.escape(tu) + r"(?!\w)", cau) is not None
+
+
+def _chu_thuong(text: str) -> str:
+    # NFC: chữ có dấu gõ kiểu tổ hợp (dấu rời) thì \w coi dấu là ranh giới.
+    return unicodedata.normalize("NFC", text or "").lower()
+
+
 def _is_status_only_query(text: str) -> bool:
     """True for a pure status/listing question with NO control verb. Such a
     query is answered entirely from the prefetched live context, so we can ship
     ZERO tools — HA otherwise attaches ~40 control tools whose schemas bloat the
     free-account payload past chatgpt.com's limit (→ 413 → generic reply)."""
-    t = (text or "").lower()
+    t = _chu_thuong(text)
     complex_kws = ["automation", "tự động", "tu dong", "log", "nhật ký", "nhat ky", "kịch bản", "kich ban", "script", "yaml", "config", "cài đặt", "cai dat", "home assistant", "hass", "dịch vụ", "service", "thông báo", "notify"]
-    if any(kw in t for kw in complex_kws):
+    if any(_co_tu(t, kw) for kw in complex_kws):
         return False
     if not any(k in t for k in _STATUS_QUERY_KEYWORDS):
         return False
-    if any(v in t for v in _CONTROL_VERBS):
+    if any(_co_tu(t, v) for v in _CONTROL_VERBS):
         return False
     return True
 
@@ -6749,8 +6767,8 @@ def _is_smarthome_query(text: str) -> bool:
     cần tool điều khiển của HA, không cần ~43 MCP info tools → skip để nhẹ
     payload. Câu hỏi info (thời tiết/vàng/luật…) không có verb lẫn danh từ thiết
     bị → giữ MCP."""
-    t = (text or "").lower()
-    return any(v in t for v in _CONTROL_VERBS) or any(n in t for n in _HOME_NOUNS)
+    t = _chu_thuong(text)
+    return any(_co_tu(t, v) for v in _CONTROL_VERBS) or any(_co_tu(t, n) for n in _HOME_NOUNS)
 
 
 def _inject_server_admin_context(messages: list[dict[str, Any]], user_text: str) -> list[dict[str, Any]]:

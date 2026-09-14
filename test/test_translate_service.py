@@ -740,3 +740,21 @@ def test_troi_xuong_tro_ly_thi_duoc_coi_la_mo_ho():
     """Nhả xuống trợ lý mà trợ lý không đoán thì cũng vô ích."""
     from services.agent.tham_chieu import _la_mo_ho
     assert _la_mo_ho("Dịch sang tiếng anh") is True
+
+
+
+def test_bo_tag_bot_nhieu_chu_theo_ten_da_biet(monkeypatch):
+    """Tag nhóm Zalo là tên hiển thị nhiều chữ: "@Bot Ben Bắp /dich …" (đo trên main
+    14/09/2026: bóc một chữ còn "Ben Bắp /dich …", lệnh dịch không nhận ra)."""
+    monkeypatch.setattr(ts, "_ten_bot_da_biet", lambda: ["Bot Ben Bắp", "Ben Bắp"])
+    assert ts._bo_tag_dau("@Bot Ben Bắp /dich xin chào") == "/dich xin chào"
+    assert ts._bo_tag_dau("@bot ben bắp tin tức hôm nay") == "tin tức hôm nay"
+    assert ts.la_lenh_dich("@Bot Ben Bắp /dich xin chào")
+    assert ts._bo_tag_dau("@Bot Ben Bắpxyz hi") == "Ben Bắpxyz hi"
+
+
+def test_bo_tag_la_nhieu_chu_truoc_lenh_va_mot_chu_nhu_cu(monkeypatch):
+    monkeypatch.setattr(ts, "_ten_bot_da_biet", lambda: [])
+    assert ts._bo_tag_dau("@Ai Đó Lạ Kia /dich hello") == "/dich hello"
+    assert ts._bo_tag_dau("@BenBap tin tức") == "tin tức"
+    assert ts._bo_tag_dau("/dich gửi mail cho john@example.com") == "/dich gửi mail cho john@example.com"

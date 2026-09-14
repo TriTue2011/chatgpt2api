@@ -798,8 +798,44 @@ def _bo_dau(s: str) -> str:
     return fold(s)
 
 
+_TEN_BOT_DEM: tuple[float, list[str]] = (0.0, [])
+
+
+def _ten_bot_da_biet() -> list[str]:
+    """Tên các bot của c2a có thể bị tag ở đầu tin, dài trước.
+
+    Tag trong nhóm Zalo là TÊN HIỂN THỊ, thường nhiều chữ ("@Bot Ben Bắp") — bóc
+    một chữ thì còn "Ben Bắp /dich …" và lệnh không nhận ra (đo trên main
+    14/09/2026). Nguồn: tên trợ lý, nhãn các bot Zalo, tên getMe đã lấy sẵn trong
+    bộ nhớ — không hỏi mạng. Tên lạ nhiều chữ trước lệnh "/…" vẫn bóc được nhờ luật
+    thứ hai của `_bo_tag_dau`. Giữ 60 giây."""
+    global _TEN_BOT_DEM
+    import time as _time
+
+    if _TEN_BOT_DEM[1] and _time.monotonic() - _TEN_BOT_DEM[0] < 60:
+        return _TEN_BOT_DEM[1]
+    ten: set[str] = set()
+    try:
+        ten.add(str(config.agent_name or ""))
+        ten.update(str(b.get("label") or "") for b in config.zalo_bots())
+    except Exception:  # cấu hình hỏng thì chỉ mất phần tên này
+        pass
+    try:
+        from services import zalo_bot as _zb
+        ten.update(str(v or "") for v in getattr(_zb, "_bot_name_cache", {}).values())
+    except Exception:
+        pass
+    ds = sorted({x.strip() for x in ten if x and x.strip()}, key=len, reverse=True)
+    _TEN_BOT_DEM = (_time.monotonic(), ds)
+    return ds
+
+
 def _bo_tag_dau(text: str) -> str:
-    """Bỏ ĐÚNG MỘT tag bot ở đầu tin ("@BenBap /dich xin chào").
+    """Bỏ tag bot ở đầu tin ("@Bot Ben Bắp /dich xin chào" → "/dich xin chào").
+
+    Thứ tự: tên bot đã biết (dài trước, phải hết từ); không khớp tên nào mà trong
+    vài chữ đầu có lệnh "/…" thì bỏ hết phần trước lệnh (tag lạ nhiều chữ); còn lại
+    bỏ một chữ như cũ ("@BenBap tin tức").
 
     Cố ý không dùng ``photo_intent.bo_tag``: hàm đó xoá MỌI cụm ``@…`` trong
     câu, tức là "/dich gửi mail cho john@example.com" bị mất luôn tên miền —
@@ -808,6 +844,14 @@ def _bo_tag_dau(text: str) -> str:
     s = (text or "").strip()
     if not s.startswith("@"):
         return s
+    than = s[1:]
+    for ten in _ten_bot_da_biet():
+        if than[:len(ten)].casefold() == ten.casefold() and not re.match(r"\w", than[len(ten):len(ten) + 1]):
+            return than[len(ten):].strip()
+    phan = s.split()
+    for i, chu in enumerate(phan[1:5], 1):
+        if chu.startswith("/"):
+            return s.split(None, i)[i].strip()
     phan = s.split(maxsplit=1)
     return phan[1].strip() if len(phan) > 1 else ""
 
