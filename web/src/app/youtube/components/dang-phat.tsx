@@ -55,6 +55,8 @@ type Props = {
   xemTaiDay: (() => void) | null;
   chonNhom: (p: Phien) => void;
   ngheCung: (() => void) | null;
+  /** Đang phát ra loa: máy này có nghe cùng không (null = không áp dụng, ẩn nút). */
+  tiengTrenMay: boolean | null;
   doiNgheTrenMay: () => void;
 };
 
@@ -115,8 +117,8 @@ export function DangPhat(p: Props) {
 
   const meta = bai
     ? video
-      ? [bai.channel || bai.artist, video.theoMay ? "Tiếng từ máy này (nghe cả khi tắt màn hình)" : video.theoLoa && noiPhat.length ? `Tiếng ra ${noiPhat.join(", ")}${video.ngheTrenMay ? " và máy này" : ""}` : "Xem trên trang"]
-      : [bai.artist || bai.channel, TEN_NGUON[bai.source], p.nghe ? "Nghe trên máy này (cả khi tắt màn hình)" : noiPhat.length ? `Trên ${noiPhat.join(", ")}` : ""]
+      ? [bai.channel || bai.artist, video.theoMay ? "Tiếng từ máy này (nghe cả khi tắt màn hình)" : video.theoLoa && noiPhat.length ? `Tiếng ra ${noiPhat.join(", ")}${p.tiengTrenMay ? " và máy này" : ""}` : "Xem trên trang"]
+      : [bai.artist || bai.channel, TEN_NGUON[bai.source], p.nghe ? "Nghe trên máy này (cả khi tắt màn hình)" : noiPhat.length ? `Trên ${noiPhat.join(", ")}${p.tiengTrenMay ? " và máy này" : ""}` : ""]
     : [];
 
   const moToanManHinh = () => {
@@ -232,7 +234,24 @@ export function DangPhat(p: Props) {
               <Square className="size-3.5 fill-current" />
             </Button>
           </div>
-          {!video?.theoLoa && (
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
+            {p.tiengTrenMay !== null && (
+              <button
+                type="button"
+                onClick={p.doiNgheTrenMay}
+                aria-pressed={p.tiengTrenMay}
+                aria-label={p.tiengTrenMay ? "Tắt tiếng trên máy này (chỉ nghe loa)" : "Nghe cả trên máy này"}
+                title={p.tiengTrenMay ? "Tắt tiếng trên máy này — chỉ nghe loa" : "Nghe cả trên máy này, chạy theo loa"}
+                className={cn(
+                  "flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition",
+                  p.tiengTrenMay
+                    ? "border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]"
+                    : "border-[var(--border)] text-muted-foreground hover:border-[var(--primary)]",
+                )}
+              >
+                {p.tiengTrenMay ? <Volume2 className="size-3.5" /> : <VolumeX className="size-3.5" />} Nghe trên máy này
+              </button>
+            )}
             <button
               type="button"
               onClick={p.doiNgheNen}
@@ -241,7 +260,7 @@ export function DangPhat(p: Props) {
                 ? "Đang bật: tiếng trên máy này chạy tiếp khi tắt màn hình. Bấm để tắt."
                 : "Bật để tiếng trên máy này chạy tiếp khi tắt màn hình (video nếu mở sẽ chạy theo tiếng)."}
               className={cn(
-                "ml-auto flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition",
+                "flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition",
                 p.ngheNen
                   ? "border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]"
                   : "border-[var(--border)] text-muted-foreground hover:border-[var(--primary)]",
@@ -249,16 +268,9 @@ export function DangPhat(p: Props) {
             >
               <MonitorOff className="size-3.5" /> Nghe khi tắt màn hình
             </button>
-          )}
+          </div>
           {video && (
             <div className="flex items-center">
-              {video.theoLoa && (
-                <NutPhu
-                  nhan={video.ngheTrenMay ? "Tắt tiếng trên máy này (chỉ nghe loa)" : "Nghe cả trên máy này"}
-                  Icon={video.ngheTrenMay ? Volume2 : VolumeX}
-                  onClick={p.doiNgheTrenMay}
-                />
-              )}
               {cheDo !== "nho" && <NutPhu nhan="Thu nhỏ (khung nổi)" Icon={PictureInPicture2} onClick={() => p.doiCheDo("nho")} />}
               {cheDo === "rap" ? (
                 <NutPhu nhan="Cỡ vừa" Icon={Minimize2} onClick={() => p.doiCheDo("vua")} chiManHinhRong />
