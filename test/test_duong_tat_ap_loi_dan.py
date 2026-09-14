@@ -217,7 +217,10 @@ class MoiChoTraKetQuaDeuPhaiChonCoY(unittest.TestCase):
     def test_so_cho_ap_loi_dan(self):
         # 11 gồm cả bản tin CHỦ ĐỀ ĐANG THEO DÕI: câu gửi thẳng cho người dùng
         # nên phải mang giọng và lời dặn của họ như mọi câu trả lời khác.
-        self.assertEqual(len(self.co), 11,
+        # 12 từ 14/09/2026: nút menu MỞ NHẠC — cùng quyết định với nút menu loa
+        # đọc thông báo: kết quả "[đang phát …]" là văn bản đường tắt nên áp;
+        # khi nó là menu thì `_ap_so_thich` tự bỏ qua khối <<<ASK>>>.
+        self.assertEqual(len(self.co), 12,
                          "thêm/bớt đường trả kết quả thì phải quyết định có áp "
                          "lời dặn hay không, rồi sửa con số này")
 

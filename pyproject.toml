@@ -99,6 +99,11 @@ dev = [
     # nên nhóm này không làm image nặng thêm.
     "pymupdf>=1.24.0",
     "python-docx>=1.1.0",
+    # CHỈ để chạy test_gold_source_parser: test nạp thẳng
+    # vn-mcp-hub/src/vn/currency.py, mà vn-mcp-hub khai bs4 trong pyproject
+    # riêng của nó. Job test của CI chỉ `uv sync --frozen` gốc repo nên thiếu
+    # (đo 14/09/2026: "ModuleNotFoundError: No module named 'bs4'" chặn cả bộ).
+    "beautifulsoup4>=4.12.0",
 ]
 
 [tool.pytest.ini_options]
