@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Users, Cpu, Combine, ImageIcon, Search, Archive, Settings,
   LogOut, ChevronRight, Sparkles, PanelLeftClose, Languages,
   Video, Film, Plug, MessageSquare, MessageCircle, Activity, GraduationCap,
-  ScrollText, BookOpen,
+  ScrollText, BookOpen, Youtube,
 } from "lucide-react";
 import webConfig from "@/constants/common-env";
 import { getValidatedAuthSession } from "@/lib/auth-session";
@@ -50,6 +50,8 @@ export const navGroups: NavGroup[] = [
       { href: "/video", labelKey: "nav_video" as TranslationKey, icon: Video },
       { href: "/video-manager", labelKey: "nav_videoLibrary" as TranslationKey, icon: Film },
       { href: "/dich", labelKey: "nav_dich" as TranslationKey, icon: Languages },
+      // Chỉ quản trị (điều khiển loa/tivi trong nhà) — không nằm trong studioPaths.
+      { href: "/youtube", labelKey: "nav_youtube" as TranslationKey, icon: Youtube },
     ],
   },
   {
@@ -99,6 +101,7 @@ export const adminOnlyPaths = [
   "/agent-runs",
   "/logs",
   "/hoc-hoi",
+  "/youtube",
   "/zalo",
   "/register",
 ];

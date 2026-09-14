@@ -8,7 +8,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from api import accounts, ai, browser_auth, camera, captcha_proxy, channels, claude, devices, dich, hoc_hoi, image_tasks, mcp, mcp_admin, mqtt, novnc_proxy, oauth, ollama_compat, rclone, register, system, thong_bao, voice, zalo_bot, zalo_personal
+from api import accounts, ai, browser_auth, camera, captcha_proxy, channels, claude, devices, dich, hoc_hoi, image_tasks, mcp, mcp_admin, mqtt, novnc_proxy, oauth, ollama_compat, rclone, register, system, thong_bao, voice, youtube_phat, zalo_bot, zalo_personal
 from api.support import resolve_web_asset, start_limited_account_watcher, require_admin
 from api.veo_video import handle_video_generation
 from services.backup_service import backup_service
@@ -434,6 +434,7 @@ def create_app() -> FastAPI:
     app.include_router(mqtt.create_router())  # MQTT nhà: thiết bị + điều khiển, không cần Home Assistant
     app.include_router(hoc_hoi.create_router())  # tab Học hỏi: xem/sửa/xoá + tự thêm những gì bot học
     app.include_router(thong_bao.create_router())  # Cài đặt → Thông báo: bật/tắt + chọn kênh cho TỪNG tin
+    app.include_router(youtube_phat.create_router())  # /yt: trình phát YouTube/Zing cho HA, thay add-on TriTue
     app.include_router(devices.create_router())  # device agent (WS quay ra) + REST cho MCP device_fs
     app.include_router(rclone.create_router())  # kho lưu trữ đám mây qua rclone (Drive, OneDrive, S3…)
     app.include_router(system.create_router(app_version))

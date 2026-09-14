@@ -35,6 +35,7 @@ const pageTitles: Record<string, string> = {
   "/logs": "Nhật ký",
   "/agent-runs": "Agent runs",
   "/hoc-hoi": "Học hỏi",
+  "/youtube": "YouTube",
 };
 
 // Mục "hot" bottom-nav mobile. User thường chỉ studio (app-shell lọc thêm).

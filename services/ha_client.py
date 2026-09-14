@@ -356,6 +356,23 @@ def doc_thuc_the_da_bo(ma: set[str]) -> dict[str, dict[str, Any]]:
     return {str(s.get("entity_id")): s for s in data if s.get("entity_id") in ma}
 
 
+def doc_media_player_tho() -> list[dict[str, Any]]:
+    """Mọi `media_player.*` của HA, KHÔNG qua sổ «Bỏ khỏi c2a» — chỉ cho tab
+    YouTube của web, nơi chủ máy chọn loa/tivi để phát nhạc. Đo 14/09/2026:
+    9/10 media_player của nhà nằm trong sổ bỏ (bỏ cho bot và tầng học), gồm cả
+    Google Home, R1, FPT Box. Vẫn ẩn thực thể mang mật khẩu. Không dùng cho bot.
+    Lỗi mạng / chưa cấu hình HA thì ném ra để trang báo đúng lý do."""
+    cfg = _get_ha_config()
+    if not cfg:
+        raise RuntimeError("ha_chua_cau_hinh")
+    req = urllib.request.Request(
+        f"{cfg['url']}/api/states",
+        headers={"Authorization": f"Bearer {cfg['token']}", "Content-Type": "application/json"},
+    )
+    data = _an_thuc_the_mang_mat_khau(json.loads(urllib.request.urlopen(req, timeout=10).read()))
+    return [s for s in data if str(s.get("entity_id") or "").startswith("media_player.")]
+
+
 def get_states(use_cache: bool = True) -> list[dict[str, Any]]:
     """Fetch all entity states from HA. Cache respects configurable TTL.
 
@@ -585,10 +602,15 @@ def _ws_fetch_registries(url: str, token: str) -> dict[str, Any]:
         dev2area = {d.get("id"): d.get("area_id") for d in devs}
         entity_area: dict[str, str] = {}
         entity_aliases: dict[str, list[str]] = {}
+        # Tích hợp sinh ra thực thể (cast, webostv, androidtv…) — tab YouTube cần
+        # để biết tivi nào mở được ứng dụng YouTube gốc, loa nào chỉ nhận âm thanh.
+        entity_platform: dict[str, str] = {}
         for e in ents:
             eid = e.get("entity_id")
             if not eid:
                 continue
+            if e.get("platform"):
+                entity_platform[eid] = str(e["platform"])
             aid = e.get("area_id") or dev2area.get(e.get("device_id"))
             name = id2area.get(aid)
             if name:
@@ -600,7 +622,7 @@ def _ws_fetch_registries(url: str, token: str) -> dict[str, Any]:
         area_names = {_fold_diacritics(a.get("name", "")).strip(): a.get("name")
                       for a in areas if a.get("name")}
         return {"entity_area": entity_area, "area_names": area_names,
-                "entity_aliases": entity_aliases}
+                "entity_aliases": entity_aliases, "entity_platform": entity_platform}
     finally:
         try:
             s.close()
