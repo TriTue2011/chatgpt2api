@@ -121,9 +121,37 @@ export function DangPhat(p: Props) {
       : [bai.artist || bai.channel, TEN_NGUON[bai.source], p.nghe ? "Nghe trên máy này (cả khi tắt màn hình)" : noiPhat.length ? `Trên ${noiPhat.join(", ")}${p.tiengTrenMay ? " và máy này" : ""}` : ""]
     : [];
 
-  const moToanManHinh = () => {
-    void toanManHinh.current?.requestFullscreen?.();
+  // Toàn màn hình trên điện thoại: xoay ngang cho video 16:9. Chỉ trình duyệt hỗ trợ
+  // khoá hướng (Chrome Android, khi đang toàn màn hình) mới xoay; nơi khác vẫn toàn
+  // màn hình, video giữ nguyên tỉ lệ nằm giữa (không cắt). Thoát thì trả hướng tự do.
+  const moToanManHinh = async () => {
+    const khung = toanManHinh.current as (HTMLDivElement & { webkitRequestFullscreen?: () => Promise<void> }) | null;
+    if (!khung) return;
+    if (document.fullscreenElement) {
+      await document.exitFullscreen?.().catch(() => undefined);
+      return;
+    }
+    try {
+      await (khung.requestFullscreen ? khung.requestFullscreen({ navigationUI: "hide" }) : khung.webkitRequestFullscreen?.());
+    } catch {
+      return;
+    }
+    const huong = screen.orientation as (ScreenOrientation & { lock?: (o: string) => Promise<void> }) | undefined;
+    await huong?.lock?.("landscape").catch(() => undefined);
   };
+
+  useEffect(() => {
+    const doi = () => {
+      if (document.fullscreenElement) return;
+      try {
+        screen.orientation?.unlock?.();
+      } catch {
+        // Trình duyệt không khoá hướng thì không có gì để mở.
+      }
+    };
+    document.addEventListener("fullscreenchange", doi);
+    return () => document.removeEventListener("fullscreenchange", doi);
+  }, []);
 
   return (
     <section id="khoi-dang-phat" className={cn("overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)]", p.className)}>
@@ -167,13 +195,20 @@ export function DangPhat(p: Props) {
                 : "absolute inset-0 bg-black",
             )}
           >
-            <div ref={toanManHinh} className={nho ? "relative aspect-video bg-black" : "absolute inset-0"}>
+            <div
+              ref={toanManHinh}
+              className={cn(
+                nho ? "relative aspect-video bg-black" : "absolute inset-0",
+                // Toàn màn hình: nền đen, video 16:9 vừa khít màn hình ở giữa (dọc hay ngang đều không cắt).
+                "[&:fullscreen]:flex [&:fullscreen]:items-center [&:fullscreen]:justify-center [&:fullscreen]:bg-black",
+              )}
+            >
               <iframe
                 ref={nhung.ganKhung}
                 src={video.src}
                 onLoad={nhung.khiNap}
                 title={video.bai.title || "Video YouTube"}
-                className="absolute inset-0 size-full"
+                className="absolute inset-0 size-full [:fullscreen>&]:static [:fullscreen>&]:h-[min(100dvh,calc(100vw*9/16))] [:fullscreen>&]:w-[min(100vw,calc(100dvh*16/9))]"
                 allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
                 allowFullScreen
                 // YouTube báo "Error 153" khi khung nhúng không kèm Referer (trang gửi no-referrer).
