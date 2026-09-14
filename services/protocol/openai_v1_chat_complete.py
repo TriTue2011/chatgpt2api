@@ -6736,8 +6736,10 @@ def _is_status_only_query(text: str) -> bool:
         return False
     if not any(k in t for k in _STATUS_QUERY_KEYWORDS):
         return False
-    if any(v in t for v in _CONTROL_VERBS):
-        return False
+    # Word-boundary matching để tránh false positive: "khoá" ≠ "khoán" (chứng khoán)
+    for v in _CONTROL_VERBS:
+        if re.search(r'(?<!\S)' + re.escape(v) + r'(?!\S)', t):
+            return False
     return True
 
 
@@ -6748,9 +6750,18 @@ def _is_smarthome_query(text: str) -> bool:
     điều khiển luôn gọi tên thiết bị → bắt được dù động từ lạ. Những câu này chỉ
     cần tool điều khiển của HA, không cần ~43 MCP info tools → skip để nhẹ
     payload. Câu hỏi info (thời tiết/vàng/luật…) không có verb lẫn danh từ thiết
-    bị → giữ MCP."""
+    bị → giữ MCP.
+
+    Dùng word-boundary matching ((?<!\S)…(?!\S)) thay vì `in` substring để tránh
+    false positive: "khoá" (điều khiển) ≠ "khoán" (chứng khoán)."""
     t = (text or "").lower()
-    return any(v in t for v in _CONTROL_VERBS) or any(n in t for n in _HOME_NOUNS)
+    for v in _CONTROL_VERBS:
+        if re.search(r'(?<!\S)' + re.escape(v) + r'(?!\S)', t):
+            return True
+    for n in _HOME_NOUNS:
+        if re.search(r'(?<!\S)' + re.escape(n) + r'(?!\S)', t):
+            return True
+    return False
 
 
 def _inject_server_admin_context(messages: list[dict[str, Any]], user_text: str) -> list[dict[str, Any]]:
