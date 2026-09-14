@@ -39,6 +39,12 @@ services:
     container_name: c2a
     restart: unless-stopped
 
+    # Giới hạn RAM: không có giới hạn thì 1 chỗ rò rỉ (browser automation,
+    # curl_cffi, ...) có thể ăn hết RAM host và kéo sập cả các container khác
+    # trên cùng máy. 3g đủ rộng cho tải bình thường + spike request — đo thật
+    # trên máy 10GB RAM baseline ~300MB lúc rảnh; tự chỉnh theo RAM máy bạn.
+    mem_limit: 3g
+
     # Docker json-file không tự xoay theo mặc định. Gateway gom log của API,
     # browser, MCP và solver vào stdout nên để vô hạn sẽ làm đầy đĩa host.
     logging:
@@ -150,6 +156,7 @@ services:
       # Cookie session Secure: đặt =1 khi chạy chỉ-HTTPS (tunnel). Mặc định 0 để
       # không phá đăng nhập LAN qua HTTP.
       ZALO_COOKIE_SECURE: ${ZALO_COOKIE_SECURE:-0}
+      ZALO_DEV_ENDPOINTS: ${ZALO_DEV_ENDPOINTS:-0}
       JSON_BODY_LIMIT: ${ZALO_JSON_BODY_LIMIT:-2mb}
       FORM_BODY_LIMIT: ${ZALO_FORM_BODY_LIMIT:-2mb}
       FILE_DOWNLOAD_MAX_BYTES: ${ZALO_FILE_DOWNLOAD_MAX_BYTES:-157286400}
@@ -303,6 +310,7 @@ services:
     image: docker.io/searxng/searxng:latest
     container_name: searxng
     restart: unless-stopped
+    mem_limit: 512m  # baseline thực đo ~11MB — chừa dư, xem giải thích ở service c2a
 
     logging:
       driver: json-file
@@ -358,6 +366,7 @@ services:
     image: ghcr.io/tritue2011/vn-translate:latest
     container_name: vn-translate
     restart: unless-stopped
+    mem_limit: 1g  # model dịch tải vào RAM, chừa dư hơn searxng
     logging:
       driver: json-file
       options: {max-size: "10m", max-file: "5"}

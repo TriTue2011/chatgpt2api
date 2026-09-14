@@ -884,7 +884,8 @@ _NHAN_ALL = "@All"      # Zalo hiển thị tag cả nhóm là '@All' (ảnh ng�
 
 def send_message(thread_id: str, text: str, thread_type: int = 0, account: str = "",
                  *, rich: bool = True, mention_all: bool = False,
-                 co_nut_chon: bool = False) -> dict:
+                 co_nut_chon: bool = False,
+                 mention_uid: str = "", mention_name: str = "") -> dict:
     """Gửi text (tự cắt khúc ~2000). Styles RTF zca-js (giống Zalo Bot: đậm+màu+cỡ).
 
     thread_type: 0=user, 1=group.
@@ -895,6 +896,10 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
         {pos:0, uid:'-1', len:4} — uid '-1' là mã Zalo hiểu là 'nhắc mọi người'
         (đã xác minh trong zca-js: type = uid=='-1' ? 1 : 0). Chỉ áp cho NHÓM
         (thread_type=1) và chỉ khúc ĐẦU; chat 1-1 thì bỏ qua, gửi chữ thường.
+    mention_uid + mention_name: tag một người dùng cụ thể trong nhóm
+        (vd mention_uid='12345', mention_name='Nguyễn Văn A').
+        Chỉ dùng cho NHÓM, ưu tiên thấp hơn mention_all (nếu mention_all=True
+        thì bỏ qua mention_uid).
     """
     acc = _account_for_send(account)
     if not acc:
@@ -1023,6 +1028,16 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
     # Tag cả nhóm CHỈ ở khúc đầu, và chỉ khi là NHÓM. Chat 1-1 thì Zalo bỏ
     # mention nên không chèn (khỏi lòi chữ '@All' vô nghĩa vào tin riêng).
     con_tag = bool(mention_all) and int(thread_type or 0) == 1
+    # Tag cá nhân: chỉ nhóm, không dùng đồng thời với @All.
+    # Nếu không set explicit, fallback về context thread-local (do _process_ai đặt).
+    if not con_tag and not mention_uid and not mention_name and int(thread_type or 0) == 1:
+        _ctx_uid = str(getattr(_msg_ctx, "mention_uid", "") or "")
+        _ctx_name = str(getattr(_msg_ctx, "mention_name", "") or "")
+        if _ctx_uid and _ctx_name:
+            mention_uid = _ctx_uid
+            mention_name = _ctx_name
+    con_mention = (not con_tag and bool(mention_uid) and bool(mention_name)
+                   and int(thread_type or 0) == 1)
     for ch in chunks[:_MAX_CHUNKS]:
         ban_dung = _cac_ban_dung(ch)
         for thu, (msg, styles) in enumerate(ban_dung):
@@ -1038,6 +1053,14 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
                 for s in (msg_obj.get("styles") or []):
                     s["start"] = int(s.get("start") or 0) + len(_tien)
                 msg_obj["mentions"] = [{"pos": 0, "uid": "-1", "len": len(_NHAN_ALL)}]
+            if con_mention:
+                # Tag @Tên_Người_Dùng đầu tin (giống @All nhưng uid là của user).
+                _tien = f"@{mention_name} "
+                msg_obj["msg"] = _tien + str(msg_obj.get("msg") or "")
+                for s in (msg_obj.get("styles") or []):
+                    s["start"] = int(s.get("start") or 0) + len(_tien)
+                msg_obj["mentions"] = [{"pos": 0, "uid": str(mention_uid),
+                                        "len": len(mention_name) + 1}]
             last = _request("POST", "/api/sendMessageByAccount", {
                 "message": msg_obj,
                 "threadId": str(thread_id),
@@ -1053,6 +1076,7 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
                             "so_vung": len(styles), "dai": len(msg),
                             "error": str(last.get("error") or "")[:200]})
         con_tag = False
+        con_mention = False
         if not last.get("ok"):
             break
     return last
@@ -1117,6 +1141,23 @@ def send_photo(thread_id: str, image_url: str, caption: str = "",
         "message": (caption or "")[:1000],
         "ttl": ttl_luot_nay(),
     }, timeout=60.0)
+
+
+def add_reaction(icon: str, msg_id: str, account: str = "") -> dict:
+    """Thả tim/heart reaction vào tin nhắn Zalo (chỉ Zalo Cá Nhân zca-js).
+
+    ``icon``: emoji reaction (vd ``❤``, ``👍``, ``😊``).
+    ``msg_id``: msgId của tin cần reaction.
+    ``account``: ownId tài khoản (để trống = dùng mặc định).
+    """
+    acc = _account_for_send(account)
+    if not acc:
+        return {"ok": False, "error": "Chưa có tài khoản Zalo nào đăng nhập"}
+    return _request("POST", "/api/addReactionByAccount", {
+        "icon": icon,
+        "dest": msg_id,
+        "accountSelection": acc,
+    })
 
 
 def send_file(thread_id: str, file_url: str, caption: str = "",
@@ -3094,6 +3135,17 @@ def _process_ai(ev: dict) -> None:
     text = (ev.get("text") or "").strip()
     acc_id = str(ev.get("account_id") or "").strip()
 
+    # Auto-reaction ❤: thả tim ngay khi nhận tin (luồng nền, không block).
+    _msg_id = str(ev.get("msg_id") or "").strip()
+    if _msg_id and not ev.get("is_self") and acc_id:
+        try:
+            # Chạy nền để không delay xử lý AI
+            threading.Thread(
+                target=add_reaction, args=("❤", _msg_id, acc_id), daemon=True,
+            ).start()
+        except Exception:
+            pass
+
     from services.agent import capabilities as _caps
     # Tầng lọc: nhóm (thread_id) ∩ user (sender_id) — User ID theo từng nhóm.
     _sender = str(ev.get("sender_id") or "")
@@ -3355,6 +3407,7 @@ def _process_ai(ev: dict) -> None:
         if _dang_cho:
             _req = False
             _phi_cho.het_cho_anh(pkey)   # dùng một lần, tránh mở cổng mãi
+            _cst.dong(pkey)              # dùng một lần: 1 tin sau tag, không rep hết mọi tin
         _native = is_bot_tagged(ev, "")
         if _native:
             # TAG là mở cửa sổ chờ — bất kể tin này có kèm yêu cầu hay không.
@@ -3893,6 +3946,11 @@ def _process_ai(ev: dict) -> None:
     if not text:
         return
 
+    # Bóc @Hdc Tech (tag bot) khỏi đầu tin trước khi xử lý, để nội dung
+    # không bị nhiễu: "Tin tức bão sáng nay" chứ không phải "@Hdc Tech bão sáng".
+    from services.translate_service import _bo_tag_dau as _bo_tag
+    text = _bo_tag(text) or ""
+
     send_typing(thread_id, thread_type)
     try:
         from services.agent import orchestrate
@@ -3902,6 +3960,15 @@ def _process_ai(ev: dict) -> None:
         _msg_ctx.account = _acc
         _msg_ctx.thread_id = str(thread_id)
         _msg_ctx.thread_type = int(thread_type or 0)
+        # Tag user: set mention context để send_message tự tag người gửi trong nhóm.
+        _sender_id = str(_sender or "").strip()
+        _sender_name = str(ev.get("display_name") or "").strip()
+        if int(thread_type or 0) == 1 and _sender_id and _sender_name:
+            _msg_ctx.mention_uid = _sender_id
+            _msg_ctx.mention_name = _sender_name
+        else:
+            _msg_ctx.mention_uid = ""
+            _msg_ctx.mention_name = ""
         # Xoá TTL của lượt TRƯỚC. threading.local sống theo THREAD, mà thread
         # được dùng lại cho tin sau — không xoá thì một lần "trả lời rồi xoá sau
         # 1 phút" sẽ âm thầm áp cho mọi câu trả lời tiếp theo trên cùng luồng.

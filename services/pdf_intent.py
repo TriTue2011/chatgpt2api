@@ -32,6 +32,11 @@ RAG_KNOWLEDGE = "rag_knowledge"
 RAG_TEACHER = "rag_teacher"
 WORD = "word"
 EXCEL = "excel"
+#: Đẩy file vào workspace OfficeCLI để xem/sửa/truy vấn bằng lệnh — xem
+#: services/zalo_bot.py::_do_pdf_intent. CHƯA có trong ALL_INTENTS/INTENT_ORDER:
+#: chưa rõ có bộ phân loại nào từng gán intent này chưa, để nguyên như hằng số
+#: cho code gọi tới không còn crash, không tự thêm vào menu chọn.
+OFFICE_CLI = "office_cli"
 TOM_TAT = "tom_tat"
 #: Dịch tài liệu bằng máy chủ dịch TỰ DỰNG (LibreTranslate trong stack). KHÔNG
 #: nằm trong `ALL_INTENTS`; `allowed_intents` tự thêm khi đã cấu hình

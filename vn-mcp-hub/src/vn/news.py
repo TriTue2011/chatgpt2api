@@ -556,6 +556,8 @@ _TU_CHUNG = {
     "gi", "trong", "ngay", "hnay", "vn", "nong", "hot", "a", "cai", "nhung",
     "cac", "va", "la", "gium", "giup", "voi", "the", "nao", "ra", "sao",
     "update", "news", "khong", "ko", "k", "muon", "biet",
+    # Thời gian — không nên làm từ khoá tìm kiếm vì gây AND quá hẹp
+    "sang", "chieu", "trua", "som", "khuya", "mai", "tuan", "thang", "nam",
 }
 
 
@@ -592,20 +594,24 @@ def _tim_theo_chu_de(kw: str, limit: int = 12) -> str:
                 gom.extend(f.result())
             except Exception as exc:
                 logger.warning("tim chu de, mot muc loi: %s", exc)
-    thay: list[dict[str, Any]] = []
-    da_co: set[str] = set()
-    for it in gom:
-        tde = str(it.get("title") or "")
-        hay = (tde + " " + str(it.get("summary") or "")).lower()
-        if all(t in hay for t in toks):
-            khoa = _bo_dau(tde)
-            if khoa not in da_co:
-                da_co.add(khoa)
-                thay.append(it)
-    if not thay:
-        return (f"Chưa tìm thấy tin nào về '{kw}' lúc này. "
-                f"Anh/chị thử lại sau hoặc hỏi tin tức chung nhé.")
-    return _format_items(thay, limit)
+    # Thử với tất cả từ khoá, nếu không có kết quả thì bớt dần từ cuối
+    # (từ cuối thường là bổ nghĩa, ít quan trọng hơn từ đầu)
+    for n in range(len(toks), 0, -1):
+        ctoks = toks[:n]
+        thay: list[dict[str, Any]] = []
+        da_co: set[str] = set()
+        for it in gom:
+            tde = str(it.get("title") or "")
+            hay = (tde + " " + str(it.get("summary") or "")).lower()
+            if all(t in hay for t in ctoks):
+                khoa = _bo_dau(tde)
+                if khoa not in da_co:
+                    da_co.add(khoa)
+                    thay.append(it)
+        if thay:
+            return _format_items(thay, limit)
+    return (f"Chưa tìm thấy tin nào về '{kw}' lúc này. "
+            f"Anh/chị thử lại sau hoặc hỏi tin tức chung nhé.")
 
 
 @mcp.tool()
@@ -731,13 +737,25 @@ def search_news(keyword: str, topic: str = "moi_nhat", limit: int = 10) -> str:
     limit = max(1, min(30, limit))
     feeds = _get_feeds(topic.lower()) or _get_feeds("moi_nhat")
     kw = keyword.lower().strip()
+    # Lọc từ chung (thời gian, từ vô nghĩa) để tránh AND quá hẹp
+    goc = [t for t in kw.split() if t]
+    toks = [t for t in goc if _bo_dau(t) and _bo_dau(t) not in _TU_CHUNG] or goc
     all_items: list[dict[str, Any]] = []
     for source, url in feeds:
         all_items.extend(_fetch_feed(source, url))
     matched = [
         it for it in all_items
-        if kw in it["title"].lower() or kw in it["summary"].lower()
-    ]
+        if all(t in it["title"].lower() or t in it["summary"].lower() for t in toks)
+    ] if toks else []
     if not matched:
+        # Thử fallback: bớt dần từ cuối (từ cuối ít quan trọng hơn)
+        for n in range(len(toks) - 1, 0, -1):
+            ctoks = toks[:n]
+            fb = [
+                it for it in all_items
+                if all(t in it["title"].lower() or t in it["summary"].lower() for t in ctoks)
+            ]
+            if fb:
+                return _format_items(fb, limit)
         return f"Không tìm thấy tin nào chứa '{keyword}' trong chủ đề '{topic}'."
     return _format_items(matched, limit)
