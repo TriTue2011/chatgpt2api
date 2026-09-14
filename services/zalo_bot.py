@@ -1520,7 +1520,21 @@ def _do_pdf_intent(
     err = ""
     _api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
     try:
-        if intent in {_pi.WORD, _pi.EXCEL, "word", "excel"}:
+        if intent in {_pi.OFFICE_CLI, "office_cli"}:
+            kind = "pdf_office_cli"
+            import shutil as _shutil
+            from services import officecli as _oc
+            ws = _oc.workspace()
+            dest = ws / name
+            _shutil.copy2(path, str(dest))
+            reply = (
+                f"🛠 File **{name}** đã vào workspace OfficeCLI.\n"
+                f"• Đường dẫn: `{dest}`\n"
+                f"• Dùng các lệnh: `xem`, `sửa`, `truy vấn`, `merge`…\n"
+                f"• Gõ `office help` để xem tất cả lệnh."
+            )
+            send_message(chat_id, reply)
+        elif intent in {_pi.WORD, _pi.EXCEL, "word", "excel"}:
             kind = "pdf_excel" if intent in {_pi.EXCEL, "excel"} else "pdf_word"
             reply = (
                 "📎 Zalo Bot không gửi file Word/Excel. "
@@ -2356,6 +2370,9 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
             if _intent in {_pi.WORD, _pi.EXCEL}:
                 _do_pdf_intent(chat_id, _pi.pop_pending(_pkey), _intent, user_id=user_id)
                 return
+            if _intent == _pi.OFFICE_CLI:
+                _do_pdf_intent(chat_id, _pi.pop_pending(_pkey), _intent, user_id=user_id)
+                return
             if _intent == _pi.LUU_ONLINE:
                 from services.agent import luu_tru_day as _ltd
                 _pend_lo = _pi.pop_pending(_pkey) or {}
@@ -2557,6 +2574,12 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
         from services.agent import trich_dan as _trichdan
         _td = _trichdan.mo_ta(trich_dan if isinstance(trich_dan, dict) else None,
                               session_key=_skey)
+        # Bỏ @mention khỏi text trước khi gửi AI, tránh rò rỉ vào MCP search
+        try:
+            from services import translate_service as _ts
+            text = _ts._bo_tag_dau(text) or ""
+        except Exception:
+            pass
         out = orchestrate(text, _skey, allow=_allow, ha_fastpath=_fp, model=_model,
                           is_admin=_la_admin, trich_dan=_td, message_id=message_id)
         try:

@@ -799,7 +799,10 @@ def _bo_dau(s: str) -> str:
 
 
 def _bo_tag_dau(text: str) -> str:
-    """Bỏ ĐÚNG MỘT tag bot ở đầu tin ("@BenBap /dich xin chào").
+    """Bỏ tag bot multi-word ở đầu tin ("@Hdc Tech tin tức" → "tin tức").
+
+    Dùng ``config.agent_name`` để strip chính xác, không chỉ first word.
+    Fallback: strip 1 từ nếu không khớp agent_name.
 
     Cố ý không dùng ``photo_intent.bo_tag``: hàm đó xoá MỌI cụm ``@…`` trong
     câu, tức là "/dich gửi mail cho john@example.com" bị mất luôn tên miền —
@@ -808,6 +811,15 @@ def _bo_tag_dau(text: str) -> str:
     s = (text or "").strip()
     if not s.startswith("@"):
         return s
+
+    # Strip exact bot name từ config (case-insensitive) để handle multi-word
+    agent_name = config.agent_name
+    if agent_name:
+        rest = s[1:].strip()  # bỏ @
+        if rest.lower().startswith(agent_name.lower()):
+            return rest[len(agent_name):].strip()
+
+    # Fallback: strip 1 từ đầu
     phan = s.split(maxsplit=1)
     return phan[1].strip() if len(phan) > 1 else ""
 
