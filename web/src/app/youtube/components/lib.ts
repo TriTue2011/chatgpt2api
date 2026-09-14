@@ -8,8 +8,10 @@ export type ThietBi = {
   entity_id: string;
   /** Tên trong Sổ loa c2a nếu loa đó là cùng thiết bị, không thì tên HA. */
   ten: string;
-  /** Mã loa trong Sổ loa c2a đã gộp với thiết bị HA này ("" = không có). */
+  /** Mã loa trong Sổ loa c2a ("" = loa chỉ có ở HA). */
   so_loa: string;
+  /** Đường điều khiển: "c2a" nối thẳng tới loa trong sổ, "ha" qua Home Assistant. */
+  qua: "c2a" | "ha";
   trang_thai: string;
   loai: "tivi" | "loa";
   nen_tang: string;

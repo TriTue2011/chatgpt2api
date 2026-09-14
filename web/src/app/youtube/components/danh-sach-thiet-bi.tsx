@@ -155,7 +155,7 @@ export function DanhSachThietBi({ className, thietBi, loi, chon, batTat, amLuong
                         <span className={cn("size-1.5 shrink-0 rounded-full", mauCham(tb.trang_thai))} />
                         <span className="truncate">
                           {TRANG_THAI[tb.trang_thai] ?? tb.trang_thai} · {NHAN_KET_NOI[tb.transport] ?? tb.transport}
-                          {tb.so_loa ? " · Sổ loa c2a" : ""}
+                          {tb.so_loa ? (tb.qua === "c2a" ? " · Sổ loa c2a" : " · Sổ loa c2a qua HA") : ""}
                           {tb.trang_thai === "playing" && tb.tieu_de ? ` · ${tb.tieu_de}` : ""}
                         </span>
                       </span>

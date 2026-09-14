@@ -362,7 +362,8 @@ def create_router() -> APIRouter:
             logger.warning({"event": "youtube_phat_thiet_bi_loi", "loi": str(exc)[:160]})
             return _loi("ha_khong_doc_duoc")
         return {"ok": True, "items": items, "phien": dich_vu.core().get_session(),
-                "cac_phien": phat_ha.cac_phien()}
+                "cac_phien": phat_ha.cac_phien(),
+                "canh_bao": "Không đọc được Home Assistant — đang dùng loa trong Sổ loa c2a." if phat_ha.loi_ha else ""}
 
     @router.post("/api/youtube-phat/an")
     async def an_thiet_bi(request: Request, authorization: str | None = Header(default=None)):

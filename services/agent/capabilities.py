@@ -4034,11 +4034,14 @@ def _loa_ha_duoc_phep(ctx: dict) -> set[str] | None:
     """entity_id loa HA mà khung chat này được phát; None = mọi loa (chưa lọc)."""
     from services.voice import permissions as vperm
 
+    from services.youtube_phat import loa_c2a
+
     plat, chat_id = _speaker_scope(ctx)
     if vperm.ALL_SPEAKERS in vperm.allowed_speaker_ids(plat, "", chat_id):
         return None
-    return {str(r["entity_id"]) for r in vperm.visible_speakers(plat, "", chat_id)
-            if r.get("kind") == "ha" and r.get("entity_id")}
+    duoc = vperm.visible_speakers(plat, "", chat_id)
+    return ({str(r["entity_id"]) for r in duoc if r.get("kind") == "ha" and r.get("entity_id")}
+            | {loa_c2a.ma_loa(r) for r in duoc if r.get("kind") in loa_c2a.KIEU_HO_TRO and r.get("id")})
 
 
 def _h_mo_nhac(args: dict, ctx: dict) -> dict:

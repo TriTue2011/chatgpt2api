@@ -28,7 +28,7 @@ from urllib.request import urlopen
 
 from services import ha_client
 
-from . import dich_vu
+from . import dich_vu, loa_c2a
 from .streaming import stream_target
 
 MEDIA_PLAYER = re.compile(r"^media_player\.[a-z0-9_]+$")
@@ -57,6 +57,8 @@ LENH = {"phat_tam_dung": "media_play_pause", "tam_dung": "media_pause", "tiep_tu
 
 _BO_DEM_GIAY = 3.0
 _bo_dem: tuple[float, list[dict[str, Any]]] = (0.0, [])
+# Lỗi đọc HA ở lần đọc gần nhất ("" = đọc được) — tab báo mà vẫn hiện loa trong Sổ loa c2a.
+loi_ha = ""
 _khoa = threading.Lock()
 
 
@@ -171,12 +173,25 @@ def dat_an(entity_ids: Any, an: bool) -> list[str]:
 # ── Danh sách thiết bị ───────────────────────────────────────────────────────
 
 def _trang_thai_tho(dung_bo_dem: bool = True) -> list[dict[str, Any]]:
-    """`/api/states` nặng ~580 KB; trang hỏi lại vài giây một lần nên đệm ngắn."""
-    global _bo_dem
+    """State của media_player HA cộng loa Cast trong Sổ loa c2a.
+
+    `/api/states` nặng ~580 KB; trang hỏi lại vài giây một lần nên đệm ngắn. HA
+    không đọc được thì vẫn trả loa trong sổ (ghi lỗi vào `loi_ha`); chỉ ném lỗi
+    khi không còn loa nào để phát."""
+    global _bo_dem, loi_ha
     now = time.monotonic()
     if dung_bo_dem and _bo_dem[0] and now - _bo_dem[0] < _BO_DEM_GIAY:
         return _bo_dem[1]
-    data = ha_client.doc_media_player_tho()
+    loa_so = loa_c2a.trang_thai_tat_ca()
+    try:
+        tu_ha = ha_client.doc_media_player_tho()
+        loi_ha = ""
+    except (OSError, RuntimeError, ValueError) as error:
+        if not loa_so:
+            raise
+        tu_ha = []
+        loi_ha = str(error)[:160]
+    data = [*loa_so, *tu_ha]
     _bo_dem = (now, data)
     return data
 
@@ -269,11 +284,26 @@ def danh_sach(dung_bo_dem: bool = True) -> list[dict[str, Any]]:
     trang_thai = [s for s in _trang_thai_tho(dung_bo_dem)
                   if MEDIA_PLAYER.fullmatch(str(s.get("entity_id") or ""))
                   and nen_tang.get(str(s.get("entity_id"))) not in NEN_TANG_AO]
-    so_loa = so_loa_theo_thuc_the([str(s["entity_id"]) for s in trang_thai], chi_muc.get("entity_device_ids") or {})
+    ha_ids = [str(s["entity_id"]) for s in trang_thai if not loa_c2a.la_loa_c2a(s["entity_id"])]
+    so_loa = so_loa_theo_thuc_the(ha_ids, chi_muc.get("entity_device_ids") or {})
+    # Ưu tiên loa trong Sổ loa c2a: nối thẳng được thì bỏ bản HA của cùng thiết bị;
+    # chưa nối được mà HA còn thấy thì dùng bản HA (mang tên trong sổ) và ẩn bản sổ.
+    san_sang = {str(s["entity_id"]) for s in trang_thai
+                if loa_c2a.la_loa_c2a(s["entity_id"]) and s.get("state") != "unavailable"}
+    bo = set()
+    for eid, loa in so_loa.items():
+        if str(loa.get("kind")) not in loa_c2a.KIEU_HO_TRO:
+            continue
+        ban_so = loa_c2a.ma_loa(loa)
+        bo.add(eid if ban_so in san_sang else ban_so)
+    so_theo_ma = {loa_c2a.ma_loa(l): l for l in loa_c2a.cac_loa()}
     ket_qua = []
     for s in trang_thai:
         eid = str(s.get("entity_id") or "")
-        loa_c2a = so_loa.get(eid)
+        if eid in bo:
+            continue
+        thang = loa_c2a.la_loa_c2a(eid)
+        loa_so = so_theo_ma.get(eid) if thang else so_loa.get(eid)
         a = s.get("attributes") or {}
         try:
             features = int(a.get("supported_features") or 0)
@@ -283,12 +313,14 @@ def danh_sach(dung_bo_dem: bool = True) -> list[dict[str, Any]]:
         ket_qua.append({
             "entity_id": eid,
             # Ưu tiên tên chủ máy đặt trong Sổ loa c2a khi đó là cùng thiết bị.
-            "ten": str(loa_c2a.get("name") or "") if loa_c2a and loa_c2a.get("name") else str(a.get("friendly_name") or eid),
-            "so_loa": str(loa_c2a.get("id") or "") if loa_c2a else "",
+            "ten": str(loa_so.get("name") or "") if loa_so and loa_so.get("name") else str(a.get("friendly_name") or eid),
+            "so_loa": str(loa_so.get("id") or "") if loa_so else "",
+            # "c2a" = c2a nối thẳng tới loa; "ha" = qua Home Assistant.
+            "qua": "c2a" if thang else "ha",
             "trang_thai": str(s.get("state") or "unknown"),
             "loai": "tivi" if a.get("device_class") == "tv" else "loa",
             "device_class": str(a.get("device_class") or ""),
-            "nen_tang": nen_tang.get(eid) or "",
+            "nen_tang": "cast" if thang else nen_tang.get(eid) or "",
             "am_luong": float(am_luong) if isinstance(am_luong, (int, float)) else None,
             "chinh_am_luong": bool(features & VOLUME_SET),
             "tam_dung": bool(features & (PAUSE | PLAY)),
@@ -301,13 +333,20 @@ def danh_sach(dung_bo_dem: bool = True) -> list[dict[str, Any]]:
             "muc_dang_phat": stream_target(a.get("media_content_id")),
             "nghe_si": str(a.get("media_artist") or a.get("media_channel") or ""),
             "an": eid in an,
-            **kha_nang(nen_tang.get(eid), a.get("device_class"), features),
+            **kha_nang("cast" if thang else nen_tang.get(eid), a.get("device_class"), features),
         })
     ket_qua.sort(key=lambda d: (d["an"], d["ten"].lower()))
     return ket_qua
 
 
 # ── Phát và điều khiển ───────────────────────────────────────────────────────
+
+def goi_loa(domain: str, service: str, data: dict[str, Any]) -> bool:
+    """Gửi lệnh tới đúng đường của loa: loa trong Sổ loa c2a đi thẳng, còn lại qua HA."""
+    if loa_c2a.la_loa_c2a(data.get("entity_id")):
+        return loa_c2a.goi(domain, service, data)
+    return ha_client.call_service(domain, service, data)
+
 
 def dang_phat_bai(thiet_bi: dict[str, Any], item: dict[str, Any] | None) -> bool:
     """Loa đã báo đúng bài này chưa (theo `muc_dang_phat`).
@@ -352,7 +391,7 @@ def phat(source: str, target: str, entity_ids: Any, base_url: str, *,
     của nó (bài kế/trước); `join_ids` là loa đang nghe bài này, giữ trong phiên
     mà không phát lại. Thiết bị không phát được hoặc HA từ chối thì vào `bo_qua`
     kèm lý do; không gửi được tới thiết bị nào thì ném ValueError."""
-    goi = goi or ha_client.call_service
+    goi = goi or goi_loa
     if source not in {"youtube", "zing", "http"}:
         raise ValueError("unsupported_source")
     chon = _chon(entity_ids)
@@ -480,7 +519,7 @@ def chuyen_bai(session_id: Any, buoc: Any, base_url: str | None = None, *,
 
 def dung_phien(session_id: Any, *, goi: Callable[[str, str, dict], bool] | None = None) -> list[str]:
     """Dừng các loa của phiên và kết thúc phiên."""
-    goi = goi or ha_client.call_service
+    goi = goi or goi_loa
     phien = _phien_hoac_loi(session_id)
     theo_ma = {d["entity_id"]: d for d in danh_sach(dung_bo_dem=False)}
     da_dung = [e for e in phien["output_entity_ids"]
@@ -493,7 +532,7 @@ def dung_phien(session_id: Any, *, goi: Callable[[str, str, dict], bool] | None 
 
 def bo_loa(entity_ids: Any, *, goi: Callable[[str, str, dict], bool] | None = None) -> list[str]:
     """Dừng các loa này và bỏ khỏi phiên của chúng; loa khác trong phiên phát tiếp."""
-    goi = goi or ha_client.call_service
+    goi = goi or goi_loa
     chon = _chon(entity_ids)
     core = dich_vu.core()
     for phien in cac_phien():
@@ -511,7 +550,7 @@ def bo_loa(entity_ids: Any, *, goi: Callable[[str, str, dict], bool] | None = No
 def dieu_khien(lenh: str, entity_ids: Any, am_luong: Any = None, *, vi_tri: Any = None,
                goi: Callable[[str, str, dict], bool] | None = None) -> list[str]:
     """Phát/tạm dừng, dừng, đặt âm lượng, tua; trả các thiết bị HA đã nhận lệnh."""
-    goi = goi or ha_client.call_service
+    goi = goi or goi_loa
     service = LENH.get(lenh)
     if service is None:
         raise ValueError("lenh_khong_ho_tro")

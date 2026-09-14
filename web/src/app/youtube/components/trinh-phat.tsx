@@ -145,14 +145,14 @@ export function TrinhPhat() {
 
   const taiThietBi = useCallback(async (imLang: boolean) => {
     try {
-      const r = await httpRequest<{ ok: boolean; error?: string; items: ThietBi[]; phien: Phien; cac_phien: Phien[] }>(
+      const r = await httpRequest<{ ok: boolean; error?: string; canh_bao?: string; items: ThietBi[]; phien: Phien; cac_phien: Phien[] }>(
         "/api/youtube-phat/thiet-bi", { method: "GET" });
       if (!r?.ok) {
         setLoiHa(r?.error || "Không đọc được danh sách thiết bị.");
         return;
       }
       lucTai.current = Date.now();
-      setLoiHa("");
+      setLoiHa(r.canh_bao || "");
       setThietBi(r.items);
       setCacPhien(r.cac_phien ?? []);
       if (!daNapChon.current) {

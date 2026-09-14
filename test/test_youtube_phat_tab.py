@@ -499,6 +499,148 @@ class GopSoLoaC2aTest(_CoSo):
         self.assertEqual("group", idx["entity_platform"]["media_player.nhom"])
 
 
+class _TrangThaiCast:
+    def __init__(self, **kw):
+        self.player_state = kw.get("player_state", "UNKNOWN")
+        self.content_id = kw.get("content_id")
+        self.duration = kw.get("duration")
+        self.current_time = kw.get("current_time", 0.0)
+        self.last_updated = kw.get("last_updated")
+        self.title = None
+
+
+class _MediaGia:
+    def __init__(self):
+        self.status = _TrangThaiCast()
+        self.lenh = []
+
+    def play_media(self, url, kieu, stream_type=None):
+        from datetime import datetime, timezone
+
+        self.lenh.append(("play_media", url, kieu))
+        self.status = _TrangThaiCast(player_state="PLAYING", content_id=url, duration=200.0, current_time=12.0,
+                                     last_updated=datetime.now(timezone.utc))
+
+    def play(self):
+        self.lenh.append(("play",))
+
+    def pause(self):
+        self.lenh.append(("pause",))
+
+    def stop(self):
+        self.lenh.append(("stop",))
+
+    def seek(self, giay):
+        self.lenh.append(("seek", giay))
+
+
+class _CastGia:
+    def __init__(self):
+        from types import SimpleNamespace
+
+        self.socket_client = SimpleNamespace(is_connected=True)
+        self.status = SimpleNamespace(volume_level=0.4)
+        self.media_controller = _MediaGia()
+        self.am_luong = []
+
+    def set_volume(self, muc):
+        self.am_luong.append(muc)
+
+    def disconnect(self, timeout=None):
+        pass
+
+
+class LoaSoC2aNoiThangTest(_CoSo):
+    """Chủ máy 14/09/2026: "ha lỗi, không thấy loa, nên ưu tiên loa trên dự án"."""
+
+    LOA = {"id": "d13d4004e6", "name": "loa phòng khách", "kind": "cast", "host": "172.16.10.249", "port": 8009}
+    MA = "media_player.c2a_d13d4004e6"
+
+    def setUp(self) -> None:
+        super().setUp()
+        from services.youtube_phat import loa_c2a
+
+        self.loa_c2a = loa_c2a
+        self.cast = _CastGia()
+        self.noi_duoc = True
+
+        def tao(loa):
+            if not self.noi_duoc:
+                raise OSError("No route to host")
+            return self.cast
+
+        loa_c2a._reset_for_tests(tao)
+        self.addCleanup(loa_c2a._reset_for_tests)
+        p = patch("services.voice.speakers.list_speakers", return_value=[self.LOA])
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _cho_noi(self):
+        for _ in range(100):
+            self.phat_ha._xoa_bo_dem()
+            ds = {d["entity_id"]: d for d in self.phat_ha.danh_sach(dung_bo_dem=False)}
+            if self.MA in ds and ds[self.MA]["trang_thai"] != "unavailable":
+                return ds
+            __import__("time").sleep(0.01)
+        return ds
+
+    def test_ha_loi_van_con_loa_trong_so_va_phat_dieu_khien_thang(self) -> None:
+        with patch.object(self.phat_ha.ha_client, "doc_media_player_tho", side_effect=OSError("Connection refused")):
+            ds = self._cho_noi()
+            loa = ds[self.MA]
+            self.assertEqual(("loa phòng khách", "c2a", "d13d4004e6", True, "am_thanh"),
+                             (loa["ten"], loa["qua"], loa["so_loa"], loa["phat_duoc"], loa["youtube"]))
+            self.assertIn("Connection refused", self.phat_ha.loi_ha)
+
+            with patch.object(self.core, "prepare_stream", side_effect=lambda nguon, ma: (ma[-11:], {"content_type": "audio/mp4"})), \
+                 patch.object(self.phat_ha.ha_client, "call_service", side_effect=AssertionError("không được gọi HA")):
+                kq = self.phat_ha.phat("youtube", "https://www.youtube.com/watch?v=dQw4w9WgXcQ", [self.MA], "http://x/yt")
+                self.assertEqual([self.MA], kq["da_gui"])
+                lenh = self.cast.media_controller.lenh[-1]
+                self.assertEqual(("play_media", "audio/mp4"), (lenh[0], lenh[2]))
+                self.assertIn("/api/stream/", lenh[1])
+
+                self.phat_ha._xoa_bo_dem()
+                loa = {d["entity_id"]: d for d in self.phat_ha.danh_sach(dung_bo_dem=False)}[self.MA]
+                self.assertEqual(("playing", "dQw4w9WgXcQ", 200.0), (loa["trang_thai"], loa["muc_dang_phat"], loa["thoi_luong"]))
+                self.assertGreaterEqual(loa["vi_tri"], 12.0)
+                self.assertEqual([[self.MA]], [p["output_entity_ids"] for p in self.phat_ha.cac_phien()])
+
+                self.phat_ha.dieu_khien("tam_dung", [self.MA])
+                self.phat_ha.dieu_khien("tua", [self.MA], vi_tri=42)
+                self.phat_ha.dieu_khien("am_luong", [self.MA], 0.3)
+                self.assertEqual([("pause",), ("seek", 42.0)], self.cast.media_controller.lenh[1:])
+                self.assertEqual([0.3], self.cast.am_luong)
+
+    def test_uu_tien_ban_so_loa_ha_du_phong_khi_khong_noi_duoc(self) -> None:
+        chi_muc = {"entity_platform": NEN_TANG, "entity_device_ids": {
+            GOOGLE_HOME["entity_id"]: ["cast:a8a623b97677b5afe205aa191cfbb9b6"]}}
+        with patch.object(self.phat_ha.ha_client, "get_ha_area_index", side_effect=lambda use_cache=True: chi_muc), \
+             patch.object(self.phat_ha, "ma_cast", return_value="a8a623b97677b5afe205aa191cfbb9b6"):
+            ds = self._cho_noi()
+            self.assertIn(self.MA, ds)
+            self.assertNotIn(GOOGLE_HOME["entity_id"], ds)             # cùng thiết bị: bỏ bản HA
+
+            self.noi_duoc = False
+            self.loa_c2a._reset_for_tests(lambda loa: (_ for _ in ()).throw(OSError("No route to host")))
+            for _ in range(100):
+                self.phat_ha._xoa_bo_dem()
+                ds = {d["entity_id"]: d for d in self.phat_ha.danh_sach(dung_bo_dem=False)}
+                if GOOGLE_HOME["entity_id"] in ds:
+                    break
+                __import__("time").sleep(0.01)
+            self.assertNotIn(self.MA, ds)                                # sổ không nối được: dùng bản HA
+            self.assertEqual(("loa phòng khách", "ha"), (ds[GOOGLE_HOME["entity_id"]]["ten"], ds[GOOGLE_HOME["entity_id"]]["qua"]))
+            self.assertFalse(self.loa_c2a.goi("media_player", "media_play", {"entity_id": self.MA}))
+
+    def test_ha_loi_va_khong_co_loa_trong_so_thi_bao_loi_nhu_cu(self) -> None:
+        with patch("services.voice.speakers.list_speakers", return_value=[]), \
+             patch.object(self.phat_ha.ha_client, "doc_media_player_tho", side_effect=OSError("Connection refused")):
+            self.phat_ha._xoa_bo_dem()
+            with self.assertRaises(OSError):
+                self.phat_ha.danh_sach(dung_bo_dem=False)
+
+
 
 if __name__ == "__main__":
     unittest.main()
