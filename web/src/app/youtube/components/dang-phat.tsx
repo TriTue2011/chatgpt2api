@@ -207,7 +207,7 @@ export function DangPhat(p: Props) {
         <div className="mt-0.5 truncate text-xs text-muted-foreground">
           {bai
             ? meta.filter(Boolean).join(" · ")
-            : `Tích loa rồi bấm ▶ một bài, hoặc bấm ▶ khi chưa tích loa để ${p.ngheNen ? "nghe trên máy này (cả khi tắt màn hình)" : "xem video ngay trên trang"}.`}
+            : "Tích loa rồi phát một bài ra loa, hoặc chưa tích loa thì nghe hay xem video ngay trên máy này."}
         </div>
         {bai && <TienDo key={`${p.nghe ? "nghe" : p.phien?.session_id ?? "video"}:${bai.id}`} layViTri={p.layViTri} />}
 
@@ -257,8 +257,8 @@ export function DangPhat(p: Props) {
               onClick={p.doiNgheNen}
               aria-pressed={p.ngheNen}
               title={p.ngheNen
-                ? "Đang bật: tiếng trên máy này chạy tiếp khi tắt màn hình. Bấm để tắt."
-                : "Bật để tiếng trên máy này chạy tiếp khi tắt màn hình (video nếu mở sẽ chạy theo tiếng)."}
+                ? "Đang bật: tắt màn hình vẫn nghe tiếp trên máy này. Bấm để tắt."
+                : "Đang tắt: tắt màn hình thì tiếng trên máy này dừng. Bấm để nghe tiếp cả khi tắt màn hình."}
               className={cn(
                 "flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition",
                 p.ngheNen

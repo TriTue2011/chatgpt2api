@@ -27,12 +27,11 @@ type Props = {
   dangGuiMa: string;
   /** Có chọn loa: ▶ phát ra loa; chưa chọn: ▶ bài YouTube mở video trên trang. */
   coLoa: boolean;
-  /** Nghe khi tắt màn hình đang bật: chưa tích loa thì ▶ phát tiếng trên máy này. */
-  ngheNen: boolean;
-  phat: (bai: BaiHat) => void;
+  /** `xem` = nút xem video; không thì chỉ nghe. */
+  phat: (bai: BaiHat, xem?: boolean) => void;
 };
 
-export function TimNhac({ className, nguon, doiNguon, tuKhoa, setTuKhoa, tim, dangTim, ketQua, dangPhatMa, dangGuiMa, coLoa, ngheNen, phat }: Props) {
+export function TimNhac({ className, nguon, doiNguon, tuKhoa, setTuKhoa, tim, dangTim, ketQua, dangPhatMa, dangGuiMa, coLoa, phat }: Props) {
   const goiY = NUT_NGUON.find((n) => n.khoa === nguon)?.goiY;
   return (
     <section className={cn("rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 sm:p-5", className)}>
@@ -81,9 +80,9 @@ export function TimNhac({ className, nguon, doiNguon, tuKhoa, setTuKhoa, tim, da
         {goiY}
         {coLoa || nguon === "http"
           ? ""
-          : nguon === "youtube" && !ngheNen
-            ? " · chưa chọn loa: bấm ▶ để xem ngay trên trang"
-            : " · chưa chọn loa: bấm ▶ để nghe trên máy này"}
+          : nguon === "youtube"
+            ? " · chưa chọn loa: nút tai nghe để nghe trên máy này, nút màn hình để xem video"
+            : " · chưa chọn loa: bấm nút tai nghe để nghe trên máy này"}
       </p>
 
       <div className="mt-4 space-y-1.5">
@@ -144,20 +143,32 @@ export function TimNhac({ className, nguon, doiNguon, tuKhoa, setTuKhoa, tim, da
                     <span className="truncate">{bai.channel || bai.artist || TEN_NGUON[bai.source]}</span>
                   </div>
                 </div>
+                {bai.source === "youtube" && (
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="shrink-0 rounded-full text-muted-foreground"
+                    aria-label={`Xem video ${bai.title || bai.id}`}
+                    title={coLoa ? "Phát ra loa đã chọn và xem video trên trang" : "Xem video trên trang"}
+                    disabled={!!dangGuiMa}
+                    onClick={() => phat(bai, true)}
+                  >
+                    <MonitorPlay />
+                  </Button>
+                )}
                 <Button
                   type="button"
                   size="icon"
                   variant={dangPhat ? "default" : "outline"}
                   className="shrink-0 rounded-full"
                   aria-label={`Phát ${bai.title || bai.id}`}
-                  title={coLoa || bai.source === "http" ? "Phát ra loa đã chọn" : bai.source === "youtube" && !ngheNen ? "Xem video trên trang" : "Nghe trên máy này"}
+                  title={coLoa || bai.source === "http" ? "Phát ra loa đã chọn (chỉ tiếng)" : "Nghe trên máy này (chỉ tiếng)"}
                   disabled={!!dangGuiMa}
                   onClick={() => phat(bai)}
                 >
                   {dangGui ? (
                     <LoaderCircle className="animate-spin" />
-                  ) : !coLoa && bai.source === "youtube" && !ngheNen ? (
-                    <MonitorPlay />
                   ) : !coLoa && bai.source !== "http" ? (
                     <Headphones />
                   ) : (
