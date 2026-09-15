@@ -1273,6 +1273,14 @@ _MA_TIN_VAO: _ctxvars.ContextVar[str] = _ctxvars.ContextVar(
     "agent_ma_tin_vao", default="")
 
 
+def _nen_phien_cu(user_id: str, hist: list[dict[str, Any]]) -> None:
+    """Nén đuôi hội thoại đã đóng vào tóm tắt — chạy ở luồng nền."""
+    try:
+        compact.dong_phien(user_id, hist)
+    except Exception as exc:
+        logger.debug("agent: nén khi đóng phiên lỗi: %s", exc)
+
+
 def _muc_nghi(user_id: str) -> str:
     """Người này im lặng tới mức nào rồi: "" / "soft" / "hard".
 
@@ -2690,10 +2698,14 @@ def _orchestrate_locked(user_text: str, user_id: str,
         except Exception:
             pass
         if _muc == "hard" and hist:
-            try:
-                compact.dong_phien(user_id, list(hist))
-            except Exception as exc:
-                logger.debug("agent: nén khi đóng phiên lỗi: %s", exc)
+            # Nén CHẠY NỀN, không bắt lượt này chờ. Tóm tắt là để nhớ cho SAU;
+            # câu vừa gõ sau 2 giờ nghỉ (hay là "tắt đèn") không cần tới nó,
+            # vì đuôi cũ bị dọn ngay bên dưới. Đo 15/09/2026 trên 30 ngày: lệnh
+            # đường tắt HA tới sau ≥2h nghỉ có trung vị 20,3 s, nghỉ ngắn hơn
+            # thì 5,3 s; lượt 14:02 «Đèn đang bật» có 22,8 s trước khi tới
+            # đường tắt, trùng khít lượt gọi tóm tắt 22,7 s.
+            threading.Thread(target=_nen_phien_cu, args=(user_id, list(hist)),
+                             daemon=True, name="nen-phien-cu").start()
             logger.info({"event": "phien_dong_do_nghi", "muc": "hard",
                          "user_id": str(user_id)[:40], "bo_luot": len(hist),
                          "session_id": _sid_moi})

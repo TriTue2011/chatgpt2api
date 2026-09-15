@@ -131,6 +131,44 @@ class MocMemVaCungTests(unittest.TestCase):
         with self._im_lang(sess.hard_idle_s() + 60):
             self.assertEqual(self.orch._muc_nghi("u1"), "hard")
 
+    def test_dong_phien_khong_bat_lenh_nha_cho_tom_tat(self):
+        """Đo 15/09/2026: lệnh HA sau ≥2h nghỉ chờ 20 s vì tóm tắt chạy TRƯỚC.
+
+        Tóm tắt giả chậm 2 giây; đường tắt nhà phải tới trong chưa đầy 1 giây,
+        và tóm tắt vẫn phải được ghi sau đó.
+        """
+        import threading as _th
+        from services.agent import compaction as compact
+        from services.agent import state
+        import services.protocol.openai_v1_chat_complete as api
+
+        sess.save_history("u1", [{"role": "user", "content": "mai nhắc anh họp 9h"},
+                                 {"role": "assistant", "content": "dạ em nhớ rồi ạ"}])
+        bat_dau = time.time()
+        moc = {}
+
+        def _tom_tat_cham(*a, **k):
+            time.sleep(2)
+            moc["tom_tat_xong"] = time.time() - bat_dau
+            return "- có hẹn họp 9h mai"
+
+        def _den(*a, **k):
+            moc["den"] = time.time() - bat_dau
+            return ("Đã thực hiện xong lệnh điều khiển thiết bị.", True, "_ha_local_intent")
+
+        with self._im_lang(sess.hard_idle_s() + 60), \
+             patch.object(compact, "summarize", side_effect=_tom_tat_cham), \
+             patch.object(api, "ha_local_fastpath_chi_tiet", side_effect=_den), \
+             patch.object(self.orch, "call_model",
+                          return_value={"choices": [{"message": {"content": "Dạ em tắt rồi ạ"}}]}), \
+             patch.object(state, "load_memory", return_value=""):
+            self.orch._orchestrate_locked("tắt đèn bếp", "u1", ha_fastpath=True)
+            for t in _th.enumerate():
+                if t.name == "nen-phien-cu":
+                    t.join(5)
+        self.assertLess(moc["den"], 1.0, "lệnh nhà vẫn phải chờ tóm tắt xong")
+        self.assertIn("họp 9h", sess.load_summary("u1"))
+
     def test_moc_cung_luon_lon_hon_hoac_bang_moc_mem(self):
         self.assertGreaterEqual(sess.hard_idle_s(), sess.soft_idle_s())
 
