@@ -67,11 +67,19 @@ class GiuFileCuaLichTests(unittest.TestCase):
 
 
 class XoaFilePhatNgayTests(unittest.TestCase):
-    """Phát ngay xong là xoá — và phải CHỜ loa đọc hết mới xoá."""
+    """Phát ngay xong là xoá — và phải CHỜ loa đọc hết mới xoá.
+
+    Các test ở đây đi đường CHỜ THEO ĐỘ DÀI: loa Cast giả không hỏi được trạng
+    thái (như khi mất kết nối). Đường hỏi loa có lớp test riêng bên dưới.
+    """
 
     def setUp(self):
         import tempfile
         self.tmp = Path(tempfile.mkdtemp(prefix="loa-ngay-"))
+        self.p = mock.patch("services.voice.speakers.cho_cast_doc_xong",
+                            side_effect=RuntimeError("không nối được loa"))
+        self.p.start()
+        self.addCleanup(self.p.stop)
 
     def _file(self, ten: str) -> Path:
         p = self.tmp / ten
@@ -108,6 +116,128 @@ class XoaFilePhatNgayTests(unittest.TestCase):
             if not f.is_file():
                 break
             time.sleep(0.02)
+        self.assertFalse(f.is_file())
+
+
+class DoDaiTheoUrlKyTests(unittest.TestCase):
+    """`_do_dai_audio` phải đọc được URL THẬT mà `media_url` phát ra.
+
+    Các test trên đều giả `_do_dai_audio`, nên từ 08/08 (URL media có chữ ký)
+    không test nào thấy hàm thật trả 0 với URL kèm `?exp=…&sig=…` — loa bị trả
+    âm lượng và xoá file ngay lúc vừa phát (đo 15/09/2026: loa phòng khách im).
+    """
+
+    def setUp(self):
+        import io
+        import tempfile
+        import wave
+        self.tmp = Path(tempfile.mkdtemp(prefix="loa-ky-"))
+        self.p = mock.patch("services.voice.config.media_dir", lambda: self.tmp)
+        self.p.start()
+        self.addCleanup(self.p.stop)
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(48000)
+            w.writeframes(b"\x00\x00" * 42240)          # 0,88 giây
+        self.wav = buf.getvalue()
+
+    def test_url_co_chu_ky_van_ra_dung_do_dai(self):
+        p = voice.save_media(self.wav)
+        with mock.patch("services.voice.config.public_base_url",
+                        lambda: "https://gpt.example.vn"):
+            url = voice.media_url(p)
+        self.assertIn("sig=", url, "media_url phải ký URL — test này dựng trên giả định đó")
+        self.assertAlmostEqual(ann._do_dai_audio(url), 0.88, places=2)
+
+
+class ChoLoaCastDocXongTests(unittest.TestCase):
+    """Loa Cast: trả âm lượng khi LOA báo đọc xong, không theo độ dài file.
+
+    Đo 15/09/2026: `play_on` trả về 0,66 giây TRƯỚC khi loa sang PLAYING, nên
+    chờ «độ dài + 0,4 giây» trả âm lượng 0% lúc loa còn đọc chữ cuối.
+    """
+
+    URL = "https://gpt.example.vn/media/voice/a.wav?exp=1&sig=x&scope=voice"
+
+    class _Status:
+        def __init__(self, state, content_id="", idle_reason=None):
+            self.player_state, self.content_id, self.idle_reason = state, content_id, idle_reason
+
+    def _cast_gia(self, chuoi):
+        """Cast giả trả lần lượt các trạng thái; hết chuỗi thì giữ trạng thái cuối."""
+        buoc = iter(chuoi)
+        cuoi = [chuoi[-1]]
+
+        class _MC:
+            status = None
+
+            def update_status(self_mc):
+                try:
+                    cuoi[0] = next(buoc)
+                except StopIteration:
+                    pass
+                self_mc.status = cuoi[0]
+
+        cast = mock.Mock()
+        cast.media_controller = _MC()
+        return cast
+
+    def _cho(self, chuoi, toi_da=5.0):
+        from services.voice import speakers as vspk
+        cast = self._cast_gia(chuoi)
+        with mock.patch.object(vspk, "_cast_connect", lambda rec, timeout=10: cast):
+            t = time.monotonic()
+            kq = vspk.cho_cast_doc_xong(LOA, self.URL, toi_da=toi_da)
+            return kq, time.monotonic() - t
+
+    def test_doi_tu_luc_bat_dau_toi_luc_xong(self):
+        S = self._Status
+        kq, giay = self._cho([S("IDLE"), S("BUFFERING", self.URL),
+                              S("PLAYING", self.URL), S("IDLE", self.URL, "FINISHED")])
+        self.assertTrue(kq)
+        self.assertLess(giay, 2.0)
+
+    def test_IDLE_truoc_khi_bat_dau_KHONG_tinh_la_xong(self):
+        """Ngay sau lệnh phát loa báo IDLE không lý do — chưa đọc chữ nào."""
+        S = self._Status
+        kq, giay = self._cho([S("IDLE", self.URL)], toi_da=1.0)
+        self.assertFalse(kq)
+        self.assertGreaterEqual(giay, 1.0)
+
+    def test_cau_ngan_doc_xong_truoc_khi_ket_noi_kip_mo(self):
+        S = self._Status
+        self.assertTrue(self._cho([S("IDLE", self.URL, "FINISHED")])[0])
+
+    def test_nguoi_khac_phat_chen_vao_thi_thoi_cho(self):
+        S = self._Status
+        self.assertTrue(self._cho([S("PLAYING", self.URL), S("PLAYING", "https://nhac/b.mp3")])[0])
+
+    def test_tra_am_luong_sau_khi_loa_bao_xong(self):
+        """Việc trả âm lượng + xoá file chạy SAU khi hàm hỏi loa trả về."""
+        import tempfile
+        import threading
+        tmp = Path(tempfile.mkdtemp(prefix="loa-cast-"))
+        f = tmp / "a.wav"
+        f.write_bytes(b"RIFF....")
+        cho = threading.Event()
+        dat: list[float] = []
+        with mock.patch("services.voice.speakers.cho_cast_doc_xong",
+                        lambda rec, url, toi_da: cho.wait(5)), \
+             mock.patch("services.voice.speakers.set_volume",
+                        lambda rec, level: dat.append(level)), \
+             mock.patch.object(ann, "_do_dai_audio", lambda url: 5.0):
+            ann._tra_am_luong_sau_khi_phat(LOA, 0.0, self.URL, [f])
+            time.sleep(0.1)
+            self.assertEqual(dat, [], "trả âm lượng khi loa chưa báo xong")
+            self.assertTrue(f.is_file())
+            cho.set()
+            for _ in range(50):
+                if dat and not f.is_file():
+                    break
+                time.sleep(0.02)
+        self.assertEqual(dat, [0.0])
         self.assertFalse(f.is_file())
 
 
@@ -182,6 +312,9 @@ class PhatKhiToiGioTests(unittest.TestCase):
         self.p3 = mock.patch.object(voice, "play_on",
                                     lambda rec, url: self.da_phat.append(url))
         self.p3.start(); self.addCleanup(self.p3.stop)
+        self.p4 = mock.patch("services.voice.speakers.cho_cast_doc_xong",
+                             lambda rec, url, toi_da: True)
+        self.p4.start(); self.addCleanup(self.p4.stop)
 
     def _meta(self, **over) -> dict:
         m = {"speaker_id": "spk1", "audio_path": str(self.f), "voice": "", "volume": None}

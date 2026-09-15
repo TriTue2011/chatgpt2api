@@ -529,11 +529,15 @@ class TraAmLuongVeMucCuTests(unittest.TestCase):
         v.play_text_on = _play
         vspk.get_volume = lambda rec: muc_cu
         vspk.set_volume = lambda rec, level: dat.append(round(float(level), 3))
+        # Loa Cast giả báo đọc xong ngay — không nối mạng tới loa thật.
+        goc["cho"] = vspk.cho_cast_doc_xong
+        vspk.cho_cast_doc_xong = lambda rec, url, toi_da: True
 
         def _tra_lai():
             if goc["play"] is not None:
                 v.play_text_on = goc["play"]
             vspk.get_volume, vspk.set_volume = goc["get"], goc["set"]
+            vspk.cho_cast_doc_xong = goc["cho"]
         self.addCleanup(_tra_lai)
         # Độ dài audio = 0 để phép đo không phải ngủ thật.
         self.ann._do_dai_audio = lambda url: 0.0

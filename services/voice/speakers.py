@@ -391,6 +391,48 @@ def get_volume(rec: dict[str, Any]) -> float | None:
     return None
 
 
+def cho_cast_doc_xong(rec: dict[str, Any], url: str, toi_da: float) -> bool:
+    """Chờ loa Cast phát XONG đúng `url`. True = loa báo xong, False = hết giờ.
+
+    `_play_cast` trả về khi phiên media vừa mở (`block_until_active`), CHƯA phát:
+    đo 15/09/2026 trên loa phòng khách, trả về xong 0,66 giây sau loa mới sang
+    PLAYING. Chờ theo độ dài file tính từ lúc đó thì trả âm lượng cũ khi loa còn
+    đọc dở — câu 0,88 giây mất trọn chữ cuối. Nên hỏi chính loa.
+
+    Xong = đã thấy `url` ở BUFFERING/PLAYING/PAUSED rồi loa rời trạng thái đó
+    (IDLE, hoặc sang nội dung khác vì có người phát thứ khác chen vào). Câu quá
+    ngắn có thể đọc hết trước khi kết nối này kịp mở — lúc đó loa đang IDLE với
+    đúng `url` kèm lý do dừng, cũng tính là xong.
+    """
+    import time as _time
+
+    cast = _cast_connect(rec)
+    try:
+        mc = cast.media_controller
+        het = _time.monotonic() + max(1.0, float(toi_da))
+        da_phat = False
+        while _time.monotonic() < het:
+            try:
+                mc.update_status()
+            except Exception:
+                pass
+            st = mc.status
+            trang_thai = str(getattr(st, "player_state", "") or "")
+            cua_minh = str(getattr(st, "content_id", "") or "") == url
+            if trang_thai in ("BUFFERING", "PLAYING", "PAUSED") and cua_minh:
+                da_phat = True
+            elif da_phat or (cua_minh and trang_thai == "IDLE"
+                             and getattr(st, "idle_reason", None)):
+                return True
+            _time.sleep(0.2)
+        return False
+    finally:
+        try:
+            cast.disconnect(timeout=2)
+        except Exception:
+            pass
+
+
 def speaker_status(rec: dict[str, Any]) -> dict[str, Any]:
     """Trạng thái loa Cast: âm lượng, mute, đang phát gì."""
     if str(rec.get("kind") or "") != "cast":

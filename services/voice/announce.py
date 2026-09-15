@@ -43,11 +43,19 @@ def _do_dai_audio(url: str) -> float:
     `time.sleep(độ dài câu 1)` mới dám push câu sau để Cast không cắt giữa. Nên
     muốn trả âm lượng về mức cũ thì phải chờ đúng độ dài này, không thì thông báo
     bị tụt tiếng ngay giữa câu.
+
+    Tên file lấy từ PHẦN ĐƯỜNG DẪN của URL. Từ 08/08 `media_url` luôn ký URL
+    (`…/x.wav?exp=…&sig=…&scope=voice`); cắt theo "/" trên cả chuỗi thì tên dính
+    luôn `?exp=…`, không thấy file, trả 0 — và loa bị trả âm lượng cũ + xoá file
+    NGAY lúc vừa phát. Đo 15/09/2026 trên loa phòng khách: loa báo IDLE/ERROR
+    0,4 giây sau lệnh phát, còn âm lượng cũ của loa là 0% nên hoàn toàn im.
     """
     try:
+        from urllib.parse import urlsplit
+
         from services.voice import config as vcfg
         from services.voice import _wav_duration_s  # type: ignore[attr-defined]
-        ten = str(url or "").rstrip("/").rsplit("/", 1)[-1]
+        ten = urlsplit(str(url or "")).path.rstrip("/").rsplit("/", 1)[-1]
         if not ten:
             return 0.0
         p = vcfg.media_dir() / ten
@@ -72,7 +80,17 @@ def _tra_am_luong_sau_khi_phat(rec: dict[str, Any], muc_cu: Optional[float], url
 
     def _cho_roi_don() -> None:
         cho = _do_dai_audio(url)
-        if cho > 0:
+        da_hoi_loa = False
+        if str(rec.get("kind") or "") == "cast" and url:
+            # Hỏi chính loa đã đọc xong chưa (xem `cho_cast_doc_xong`). Nối loa
+            # hỏng thì mới rơi về chờ theo độ dài file như loa không hỏi được.
+            try:
+                vspk.cho_cast_doc_xong(rec, url, toi_da=cho + 15)
+                da_hoi_loa = True
+            except Exception as exc:
+                logger.info("announce: không hỏi được trạng thái %s (%s)",
+                            rec.get("name"), str(exc)[:80])
+        if not da_hoi_loa and cho > 0:
             time.sleep(cho + 0.4)      # thêm chút để câu cuối không bị tụt tiếng
         if muc_cu is not None:
             try:
