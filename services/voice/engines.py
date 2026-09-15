@@ -536,6 +536,122 @@ def _nghi_tts(text: str, voice: str) -> bytes:
     return _pcm_to_wav(_float_to_pcm16(samples), int(audio.sample_rate), 2, 1)
 
 
+# ── TTS: Kokoro tiếng Việt + vig2p (14 giọng, 24 kHz, ONNX) ─────────────────
+# Xem services/voice/kokoro_vi.py: vì sao thêm họ này (giữ thanh điệu tốt nhất
+# trong các họ đo được) và vì sao phiên âm cả mệnh đề thay vì từng từ.
+
+_kokoro_vi_lock = threading.Lock()
+_kokoro_vi: tuple | None = None           # (session, vocab, context_length)
+_kokoro_vi_vp: dict[str, object] = {}     # mã giọng → voicepack numpy (500 KB/giọng)
+
+
+def _get_kokoro_vi(voice_id: str):
+    from services.voice import kokoro_vi as kv
+
+    if kv.get(voice_id) is None:
+        raise VoiceError(f"Không có giọng Kokoro Việt '{voice_id}' trong danh mục.")
+    base = vcfg.kokoro_vi_dir()
+    if base is None or voice_id not in vcfg.kokoro_vi_downloaded_ids():
+        raise VoiceError(
+            f"Giọng Kokoro Việt '{voice_id}' chưa tải "
+            f"(chạy scripts/download_kokoro_vi.py {voice_id}).")
+    global _kokoro_vi
+    with _kokoro_vi_lock:
+        if _kokoro_vi is None:
+            try:
+                import onnxruntime as ort
+            except Exception as exc:
+                raise VoiceError("Chưa cài onnxruntime trong image.") from exc
+            so = ort.SessionOptions()
+            so.intra_op_num_threads = vcfg.tts_threads()
+            so.inter_op_num_threads = 1
+            sess = ort.InferenceSession(str(base / kv.MODEL_FILE), so,
+                                        providers=["CPUExecutionProvider"])
+            cfg = json.loads((base / kv.CONFIG_FILE).read_text(encoding="utf-8"))
+            _kokoro_vi = (sess, cfg["vocab"], int(cfg["plbert"]["max_position_embeddings"]))
+        if voice_id not in _kokoro_vi_vp:
+            import numpy as np
+            _kokoro_vi_vp[voice_id] = np.load(base / kv.get(voice_id).npy_file)
+        return _kokoro_vi + (_kokoro_vi_vp[voice_id],)
+
+
+def _kokoro_vi_tts(text: str, voice: str) -> bytes:
+    """Giọng "kokorovi:<mã>" → WAV 24 kHz."""
+    import numpy as np
+    from services.voice import kokoro_vi as kv
+
+    vid = voice[len(vcfg.KOKORO_VI_PREFIX):].strip() or kv.DEFAULT_ID
+    sess, vocab, ctx_len, voicepack = _get_kokoro_vi(vid)
+    parts = []
+    # Kokoro nhận tối đa ~510 âm vị một lượt; mẩu 160 ký tự còn cách xa trần.
+    for seg in _split_sentences(text, max_chars=160):
+        ps = kv.phien_am(seg)
+        if not ps:
+            continue
+        with _kokoro_vi_lock:
+            wav, _dur = sess.run(None, {
+                "input_ids": kv.input_ids(ps, vocab, ctx_len),
+                "ref_s": kv.chon_style(voicepack, len(ps)),
+                "speed": np.asarray(1.0, dtype=np.float32),
+            })
+        parts.append(np.asarray(wav, dtype=np.float32).reshape(-1))
+    if not parts:
+        raise VoiceError("Kokoro Việt không tạo được âm thanh.")
+    audio = np.concatenate(parts)
+    # Model thả biên độ vượt 1,0 (đo 15/09/2026: đỉnh 1,16 ở câu thử) — để
+    # nguyên thì _float_to_pcm16 cắt đỉnh, nghe rè. Hạ cả câu cho vừa khung.
+    dinh = float(np.abs(audio).max())
+    if dinh > 0.99:
+        audio = audio * (0.99 / dinh)
+    return _pcm_to_wav(_float_to_pcm16(audio), kv.SAMPLE_RATE, 2, 1)
+
+
+# ── TTS: ZeroTTS (8 giọng tiếng Việt, 48 kHz, ONNX) ─────────────────────────
+# Đo 15/09/2026 trên máy chủ: sai thanh 0/1409 âm tiết trong câu thường (ngang
+# Kokoro Việt), nhưng CPU này chạy chậm hơn thời gian thực (RTF ~1,1–1,3 ở 4
+# luồng) — hợp tin nhắn thoại hơn là đọc loa tức thì.
+
+_zerotts_lock = threading.Lock()
+_zerotts = None
+
+
+def _get_zerotts():
+    base = vcfg.zerotts_model_dir()
+    if base is None:
+        raise VoiceError("Model ZeroTTS chưa tải (chạy scripts/download_zerotts.py).")
+    global _zerotts
+    with _zerotts_lock:
+        if _zerotts is None:
+            try:
+                from zerotts import ZeroTTS
+            except Exception as exc:
+                raise VoiceError("Chưa cài gói zerotts trong image.") from exc
+            _zerotts = ZeroTTS(base, intra_op_num_threads=vcfg.zerotts_threads())
+        return _zerotts
+
+
+def _zerotts_tts(text: str, voice: str) -> bytes:
+    """Giọng "zerotts:<mã>" → WAV 48 kHz."""
+    import numpy as np
+    from zerotts import normalize_vi_text
+    from zerotts.chunking import chunk_text, clean_segment_punctuation, normalize_punctuation
+
+    vid = voice[len(vcfg.ZEROTTS_PREFIX):].strip() or vcfg.ZEROTTS_VOICES[0][0]
+    tts = _get_zerotts()
+    # synthesize() KHÔNG tự chuẩn hoá số/ngày; model học trên từng câu nên đoạn
+    # dài phải cắt — đúng hai bước README của ZeroTTS dặn.
+    parts = []
+    for seg in chunk_text(normalize_punctuation(normalize_vi_text(text)), max_chunk_sec=15):
+        seg = clean_segment_punctuation(seg)
+        if not seg.strip():
+            continue
+        with _zerotts_lock:
+            parts.append(np.asarray(tts.synthesize(seg, voice=vid), dtype=np.float32).reshape(-1))
+    if not parts:
+        raise VoiceError("ZeroTTS không tạo được âm thanh.")
+    return _pcm_to_wav(_float_to_pcm16(np.concatenate(parts)), int(tts.sample_rate), 2, 1)
+
+
 # ── TTS ──────────────────────────────────────────────────────────────────────
 
 
@@ -620,6 +736,20 @@ def _synthesize_one(text: str, voice: str = "", *, style: str = "") -> bytes:
         except Exception as exc:
             errors.append(f"nghitts: {str(exc)[:120]}")
             logger.warning("voice: TTS nghitts that bai: %s", str(exc)[:160])
+            v = ""          # fallback: giọng Piper mặc định
+    elif v.startswith(vcfg.KOKORO_VI_PREFIX):
+        try:
+            return _done(_kokoro_vi_tts(text, v))
+        except Exception as exc:
+            errors.append(f"kokorovi: {str(exc)[:120]}")
+            logger.warning("voice: TTS kokoro viet that bai: %s", str(exc)[:160])
+            v = ""          # fallback: giọng Piper mặc định
+    elif v.startswith(vcfg.ZEROTTS_PREFIX):
+        try:
+            return _done(_zerotts_tts(text, v))
+        except Exception as exc:
+            errors.append(f"zerotts: {str(exc)[:120]}")
+            logger.warning("voice: TTS zerotts that bai: %s", str(exc)[:160])
             v = ""          # fallback: giọng Piper mặc định
     for mode in _backend_order(backend):
         try:

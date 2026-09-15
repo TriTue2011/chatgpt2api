@@ -87,6 +87,13 @@ soxr>=0.5                # resample clip tham chiếu khi clone giọng
 huggingface_hub>=0.25    # tải/tra cache model (HF_HOME=data/hf)
 sentencepiece>=0.2.0     # sinh tokens.txt từ bpe.model (STT Zipformer tiếng Việt)
 
+# ── Kokoro tiếng Việt + vig2p (giọng "kokorovi:") và ZeroTTS (giọng "zerotts:") ──
+# Đo 15/09/2026: hai họ giọng GIỮ THANH tốt nhất (sai thanh 0,04% và 0% trong câu
+# thường, so với 0,65–0,80% của VieNeu/Piper/NghiTTS) — xem services/voice/kokoro_vi.py.
+# Model không nằm trong image: scripts/download_kokoro_vi.py, scripts/download_zerotts.py.
+vig2p==0.1.2             # bảng ký hiệu Kokoro Việt (dùng lại sea-g2p ở trên)
+zerotts==0.1.5           # runtime ONNX của ZeroTTS (numpy/onnxruntime/tokenizers)
+
 # ── PostgreSQL storage backend ──
 sqlalchemy>=2.0.0
 psycopg2-binary>=2.9.0

@@ -559,6 +559,10 @@ docker exec -it c2a python scripts/download_piper_voices.py --pack minimal
 docker exec -it c2a python scripts/download_stt_model.py
 docker exec -it c2a python scripts/download_vieneu_model.py
 
+# Giọng Việt GIỮ THANH ĐIỆU tốt nhất (tuỳ chọn, xem mục 4.2g)
+docker exec -it c2a python scripts/download_kokoro_vi.py --all   # Kokoro Việt, 14 giọng ~330 MB
+docker exec -it c2a python scripts/download_zerotts.py           # ZeroTTS, 8 giọng ~900 MB
+
 # Tiếng Anh (tuỳ chọn) — giọng Kokoro + bộ nghe Parakeet
 docker exec -it c2a python scripts/download_kokoro_model.py
 docker exec -it c2a python scripts/download_stt_en_model.py
@@ -587,7 +591,7 @@ wget https://github.com/TriTue2011/chatgpt2api/releases/download/piper-voices-v1
 wget https://github.com/TriTue2011/chatgpt2api/releases/download/piper-voices-v1/minhkhang.onnx.json
 ```
 
-File lưu vào `data/piper/`, `data/stt/`, `data/hf/`, `data/stt-en/`, `data/kokoro/`,
+File lưu vào `data/piper/`, `data/stt/`, `data/hf/`, `data/kokoro-vi/`, `data/zerotts/`, `data/stt-en/`, `data/kokoro/`,
 `data/stt-{zh,ja,ko}/`, `data/kokoro-zh/`, `data/supertonic/`.
 **Không** nằm trong image nên cập nhật image không mất, và image không nặng thêm.
 Tải tiếng nào thì tiếng đó dùng được — chưa tải thì mục tương ứng trong Cài đặt
@@ -599,7 +603,7 @@ hiện `✗` và cổng Wyoming của tiếng đó không mở.
 |---|---|
 | **Theo từng tiếng** | Năm mục thu gọn (Việt · Anh · Nhật · Trung · Hàn), bấm để xoè: chọn **giọng đọc** của tiếng đó, **Nghe thử**, và hai ô **cổng Wyoming** (đọc/nghe). Tiêu đề mỗi mục hiện `đọc ✓ · nghe ✓` = model đã tải |
 | **Backend đọc (TTS)** | `Tự động` (khuyên dùng) · `Chỉ local` · `Chỉ Wyoming` · `Tắt` |
-| **Giọng đọc** | Chọn trong các giọng đã tải về. Giọng `vieneu:*` = VieNeu 48 kHz (Việt + Anh xen kẽ); `kokoro:*` = tiếng Anh; còn lại = Piper. Giọng VieNeu/Kokoro lỗi sẽ tự rơi về Piper để trợ lý không bao giờ "câm" |
+| **Giọng đọc** | Chọn trong các giọng đã tải về. Giọng `vieneu:*` = VieNeu 48 kHz (Việt + Anh xen kẽ); `kokorovi:*` = Kokoro Việt 24 kHz và `zerotts:*` = ZeroTTS 48 kHz (hai họ giữ thanh điệu tốt nhất — mục 4.2g); `kokoro:*` = tiếng Anh; còn lại = Piper. Giọng các họ này lỗi sẽ tự rơi về Piper để trợ lý không bao giờ "câm" |
 | **Wyoming TTS / STT** | Tuỳ chọn — trỏ tới máy chủ giọng nói sẵn có trong nhà |
 | **Nghe (STT) — tin nhắn thoại & API** | Khối này CHỈ chi phối tin nhắn thoại gửi bot và `/v1/audio/transcriptions`. Home Assistant **không** dùng nó (HA đi cổng nghe riêng từng tiếng — mục 4.2c) |
 | **URL công khai của gateway** | **Bắt buộc nếu muốn phát ra loa.** Loa trong nhà tải file từ địa chỉ này nên **không dùng `localhost`** — điền `http://<ip-máy>:3030` |
@@ -773,6 +777,63 @@ Hai chỗ cần lưu ý khi làm phụ đề:
   nhiều, còn giọng đọc bản tin câu dài thì hay trả rỗng. Đã kiểm: model đọc đúng
   bộ thử của chính nó, cắt ngắn audio vẫn rỗng, và bản fp32 cho kết quả y hệt bản
   int8 — nên không phải lỗi cấu hình bên ta.
+
+### 4.2g. Giọng giữ thanh điệu: Kokoro Việt (`kokorovi:`) và ZeroTTS (`zerotts:`)
+
+Nhiều giọng cũ đọc **mất thanh**: thanh ngang đọc trầm nên nghe thành huyền
+(«nay→này», «may→mày»), thanh nặng thiếu độ hụt nên nghe thành hỏi («chị→chỉ»).
+Hai họ giọng dưới đây được thêm để chữa đúng chỗ đó.
+
+**Tải model** (không nằm trong image, tải một lần vào volume):
+
+```bash
+# Kokoro Việt — model chung ~326 MB + mỗi giọng ~0,5 MB
+docker exec -it c2a python scripts/download_kokoro_vi.py              # chỉ giọng hung_thinh
+docker exec -it c2a python scripts/download_kokoro_vi.py mai_linh     # thêm một giọng
+docker exec -it c2a python scripts/download_kokoro_vi.py --all        # cả 14 giọng
+docker exec -it c2a python scripts/download_kokoro_vi.py --list       # xem giọng nào đã có
+
+# ZeroTTS — cả gói ~900 MB, đủ 8 giọng
+docker exec -it c2a python scripts/download_zerotts.py
+docker exec -it c2a python scripts/download_zerotts.py --check        # chỉ kiểm tra
+```
+
+Tải xong vào **Cài đặt → Giọng nói & Loa → Tiếng Việt**, chọn giọng `kokorovi:<mã>`
+hoặc `zerotts:<mã>` rồi bấm **Nghe thử**. Chưa tải thì giọng vẫn hiện trong danh
+sách nhưng nút nghe thử báo đúng lệnh cần chạy.
+
+**Đo ngày 15/09/2026 trên máy chủ** (10 nhân Xeon E5 v4). Mỗi giọng đọc 18 câu
+thường, STT của máy nghe lại, đếm âm tiết đúng vần mà sai dấu thanh. Mốc của
+chính STT trên 120 bản thu giọng người thật (FLEURS) là 0,14%.
+
+| Họ giọng | Sai thanh (câu thường) | Đọc đúng dãy «ma má mà mả mã mạ» | Tốc độ (RTF, <1 là nhanh hơn thời gian thực) |
+|---|---|---|---|
+| **Kokoro Việt** (`kokorovi:`) | **0,04%** | **45%** | 0,75–0,80 (2 luồng) |
+| **ZeroTTS** (`zerotts:`) | **0%** | 30% | 1,1–1,3 (4 luồng) — chậm hơn thời gian thực |
+| VieNeu (`vieneu:`) | 0,65% | 23% | 1,25–1,53 |
+| Piper (`manhdung`…) | 0,73% | 4% | 0,27–0,43 |
+| NghiTTS (`nghi:`) | 0,80% | 4% | nhanh |
+
+**Nên chọn giọng nào:**
+
+- **Đọc loa, trả lời thoại hằng ngày:** `kokorovi:hung_thinh` — giữ thanh tốt nhất
+  (dãy sáu thanh chỉ sai 1/11) và vẫn nhanh hơn thời gian thực. Giọng nữ:
+  `kokorovi:mai_linh` (sai 3/12).
+- **Tin nhắn thoại, không cần tức thì:** `zerotts:baotrang`, `zerotts:maichi` hoặc
+  `zerotts:huuduc` — không sai thanh, không rụng âm; nhưng CPU này đọc chậm hơn
+  thời gian thực nên không hợp phát loa theo dòng chảy.
+- So với giọng mặc định `manhdung`: Kokoro Việt **chậm hơn khoảng gấp đôi** (câu
+  ngắn ~1,9 giây so với ~1,2 giây) nhưng **ít sai thanh hơn khoảng 18 lần**.
+
+Ghi chú kỹ thuật:
+
+- Kokoro Việt phiên âm bằng **vig2p** nhưng đưa CẢ MỆNH ĐỀ vào sea-g2p thay vì
+  từng từ: tách từng từ thì từ không dấu trùng tiếng Anh bị đọc kiểu Anh («máy
+  bay» ra `beɪ`, «may» ra `meɪ`). Số, giờ, ngày được chuẩn hoá thành chữ trước.
+- espeak `vi` của Piper/NghiTTS phiên ĐỦ sáu thanh (đo trên 7.500 âm tiết) — giọng
+  cũ mất thanh do chính model, nên thay bộ phiên âm cho giọng cũ không chữa được.
+- Số luồng ZeroTTS: `voice.tts.zerotts_threads` (mặc định 4 — đo trên máy chủ: 2
+  luồng RTF 1,7, 8 luồng 2,3). Kokoro Việt dùng chung `voice.tts.num_threads`.
 
 ### 4.3. Khai báo loa
 

@@ -248,6 +248,16 @@ def create_router() -> APIRouter:
                 raise HTTPException(
                     404, "Thiếu espeak-ng-data cho NghiTTS "
                          "(chạy scripts/download_nghitts_voices.py --espeak).")
+        elif vname.startswith(vcfg.KOKORO_VI_PREFIX):
+            vid = vname[len(vcfg.KOKORO_VI_PREFIX):].strip()
+            if vid not in vcfg.kokoro_vi_downloaded_ids():
+                raise HTTPException(
+                    404, f"Giọng Kokoro Việt '{vid}' chưa tải "
+                         f"(chạy scripts/download_kokoro_vi.py {vid}).")
+        elif vname.startswith(vcfg.ZEROTTS_PREFIX):
+            if vcfg.zerotts_model_dir() is None:
+                raise HTTPException(
+                    404, "Model ZeroTTS chưa tải (chạy scripts/download_zerotts.py).")
         elif vname and vcfg.voice_model_path(vname) is None:
             raise HTTPException(
                 404, f"Giọng '{vname}' chưa tải về (chạy download_piper_voices.py --pack full).")

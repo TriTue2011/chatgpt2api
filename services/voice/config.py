@@ -55,6 +55,10 @@ KOKORO_DIR = Path(DATA_DIR) / "kokoro"   # Kokoro-82M (TTS tiếng Anh)
 KOKORO_ZH_DIR = Path(DATA_DIR) / "kokoro-zh"     # Kokoro đa ngữ v1.1 (100 giọng Trung)
 SUPERTONIC_DIR = Path(DATA_DIR) / "supertonic"   # Supertonic-3 (31 tiếng, dùng ja/ko)
 NGHI_DIR = Path(DATA_DIR) / "nghitts"    # 19 giọng NghiTTS (VITS tiếng Việt)
+#: Kokoro tiếng Việt + vig2p (14 giọng, 24 kHz) — scripts/download_kokoro_vi.py.
+KOKORO_VI_DIR = Path(DATA_DIR) / "kokoro-vi"
+#: ZeroTTS (8 giọng tiếng Việt, 48 kHz) — scripts/download_zerotts.py.
+ZEROTTS_DIR = Path(DATA_DIR) / "zerotts"
 #: Silero VAD — dò giọng nói bằng mạng nơ-ron, dùng chung cho phần nghe
 #: video và tin nhắn thoại. Tải bằng scripts/download_silero_vad.py.
 VAD_DIR = Path(DATA_DIR) / "vad"
@@ -71,6 +75,14 @@ VIENEU_BACKBONE_REPO = "pnnbao-ump/VieNeu-TTS-v3-Turbo"
 VIENEU_CODEC_REPO = "OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX"
 KOKORO_PREFIX = "kokoro:"
 NGHI_PREFIX = "nghi:"        # "nghi:<mã giọng>" → NghiTTS, xem nghitts_voices.py
+KOKORO_VI_PREFIX = "kokorovi:"   # "kokorovi:<mã>" → Kokoro tiếng Việt, xem kokoro_vi.py
+ZEROTTS_PREFIX = "zerotts:"      # "zerotts:<mã>" → ZeroTTS
+#: 8 giọng dựng sẵn của ZeroTTS (docs/VOICES.md của repo zeroweight-ai/ZeroTTS).
+ZEROTTS_VOICES = (
+    ("maichi", "Mai Chi"), ("baotrang", "Bảo Trang"), ("kimoanh", "Kim Oanh"),
+    ("hamy", "Hà My"), ("giahuy", "Gia Huy"), ("huuduc", "Hữu Đức"),
+    ("quangminh", "Quang Minh"), ("tiendat", "Tiến Đạt"),
+)
 # 11 giọng của gói kokoro-en-v0_19 (sherpa-onnx) — thứ tự = speaker id (sid).
 KOKORO_VOICE_NAMES = [
     "af", "af_bella", "af_nicole", "af_sarah", "af_sky",
@@ -139,6 +151,28 @@ def voice_catalog() -> list[dict[str, Any]]:
             "language_label": f"NghiTTS 22kHz · {nvoice.name} · "
                               + _LANG_LABEL.get(nvoice.language, nvoice.language),
             "downloaded": nvoice.id in nghi_have,
+            "default": False,
+        })
+    # Kokoro tiếng Việt + vig2p — id "kokorovi:<mã>". Model chung, mỗi giọng một
+    # voicepack nhỏ nên xét đã-tải theo TỪNG giọng.
+    from services.voice import kokoro_vi as _kv
+    kv_have = set(kokoro_vi_downloaded_ids())
+    for kvoice in _kv.VOICES:
+        out.append({
+            "id": f"{KOKORO_VI_PREFIX}{kvoice.id}",
+            "language": "vi",
+            "language_label": f"Kokoro Việt 24kHz · {kvoice.name}",
+            "downloaded": kvoice.id in kv_have,
+            "default": False,
+        })
+    # ZeroTTS — id "zerotts:<mã>"; cả gói tải một lần.
+    zt_ready = zerotts_model_dir() is not None
+    for zid, zname in ZEROTTS_VOICES:
+        out.append({
+            "id": f"{ZEROTTS_PREFIX}{zid}",
+            "language": "vi",
+            "language_label": f"ZeroTTS 48kHz · {zname}",
+            "downloaded": zt_ready,
             "default": False,
         })
     # Giọng Kokoro tiếng Anh — id "kokoro:<tên>" (af=nữ Mỹ, am=nam Mỹ,
@@ -220,7 +254,7 @@ def piper_binary() -> str:
 def voice_model_path(name: str = "") -> Path | None:
     """File .onnx của giọng trong data/piper (None nếu chưa tải)."""
     v = (name or tts_voice()).strip()
-    if v.startswith((VIENEU_PREFIX, KOKORO_PREFIX, NGHI_PREFIX)):
+    if v.startswith((VIENEU_PREFIX, KOKORO_PREFIX, NGHI_PREFIX, KOKORO_VI_PREFIX, ZEROTTS_PREFIX)):
         v = _DEFAULT_VOICE   # giọng namespaced không phải file Piper — fallback
     if not v:
         return None
@@ -767,6 +801,51 @@ def nghi_all_ids() -> list[str]:
 def nghi_ready() -> bool:
     """Có ít nhất một giọng đã tải VÀ có espeak-ng-data để đọc."""
     return bool(nghi_downloaded_ids()) and nghi_espeak_data_dir() is not None
+
+
+def kokoro_vi_dir() -> Path | None:
+    """Thư mục Kokoro tiếng Việt khi đã có model + config, None nếu chưa."""
+    from services.voice import kokoro_vi as kv
+
+    d = str(_sub("tts").get("kokoro_vi_dir") or "").strip()
+    base = Path(d) if d else KOKORO_VI_DIR
+    ok = (base / kv.MODEL_FILE).is_file() and (base / kv.CONFIG_FILE).is_file()
+    return base if ok else None
+
+
+def kokoro_vi_downloaded_ids() -> list[str]:
+    """Mã các giọng Kokoro tiếng Việt dùng được (có model + voicepack .npy)."""
+    from services.voice import kokoro_vi as kv
+
+    base = kokoro_vi_dir()
+    if base is None:
+        return []
+    return [v.id for v in kv.VOICES if (base / v.npy_file).is_file()]
+
+
+def zerotts_model_dir() -> Path | None:
+    """Thư mục ZeroTTS khi đủ file để nạp (`zerotts.hub.REQUIRED_FILES` cộng
+    tokenizer và danh mục giọng dựng sẵn), None nếu chưa."""
+    d = str(_sub("tts").get("zerotts_dir") or "").strip()
+    base = Path(d) if d else ZEROTTS_DIR
+    need = ("config.json", "tokenizer.json", "null_voice_emb.npy", "onnx/text_encoder.onnx",
+            "onnx/prefix_step.onnx", "onnx/local_frame_decode.onnx", "voices/index.json")
+    return base if all((base / n).is_file() for n in need) else None
+
+
+def zerotts_threads() -> int:
+    """Intra-op threads ZeroTTS (mặc định 4; ép bằng ``voice.tts.zerotts_threads``).
+
+    Không dùng chung `tts_threads()`: ZeroTTS gọi hai graph nhỏ cho MỖI khung
+    80 ms nên số luồng đổi tốc độ rất khác các engine khác. Đo 15/09/2026 trên
+    máy chủ (10 nhân Xeon E5 v4): 1 luồng RTF 2,7 · 2 luồng 1,7 · 4 luồng 1,2 ·
+    8 luồng 2,3 — nhiều luồng hơn thì tốn điều phối hơn là được lợi.
+    """
+    raw = _sub("tts").get("zerotts_threads")
+    try:
+        return max(1, int(raw)) if raw not in (None, "") else 4
+    except (TypeError, ValueError):
+        return 4
 
 
 def nghi_max_loaded() -> int:
