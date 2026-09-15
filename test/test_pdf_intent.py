@@ -235,3 +235,14 @@ class MdIntoDocxTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_giai_so_theo_khuon_khong_theo_bang_liet_ke():
+    """Bảng số liệt kê tay từng dừng ở 4 rồi ở 7 — đọc số theo khuôn."""
+    import services.pdf_intent as pi
+    full = set(pi.INTENT_ORDER)
+    for i, ma in enumerate(pi.INTENT_ORDER, 1):
+        for cach in (f"{i}", f"{i}.", f"{i})", f"{i}️⃣"):
+            assert pi.parse_intent(cach, full) == ma, cach
+    assert pi.parse_intent(str(len(pi.INTENT_ORDER) + 1), full) is None
+    assert pi.parse_intent("0", full) is None

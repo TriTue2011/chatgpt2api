@@ -3028,6 +3028,13 @@ def _do_photo_request(
             send_message(thread_id, _r.get("text") or "", thread_type)
             return
 
+        if it in (_phi.NHAN_MAT, _phi.DAY_MAT):
+            # «Đây là ai?» / «Dạy khuôn mặt» — chạy trên máy (so_mat_nha), không gọi model.
+            kind = "photo_khuon_mat"
+            reply = _phi.xu_ly_mat(it, file_data, request_text)
+            send_message(thread_id, reply, thread_type)
+            return
+
         kind = "photo_analyze"
         answer = _phi.analyze_photo(file_data, request_text, channel="zalop")
         reply = answer or ""
@@ -3672,7 +3679,7 @@ def _process_ai(ev: dict) -> None:
                 _phi.update_pending(pkey, stage="need_prompt", intent=intent)
                 send_message(
                     thread_id,
-                    _phi.ASK_PROMPT_GENERATE if intent == _phi.GENERATE else _phi.ASK_PROMPT_ANALYZE,
+                    _phi.ask_prompt(intent),
                     thread_type,
                 )
                 return
@@ -3868,11 +3875,11 @@ def _process_ai(ev: dict) -> None:
             _phi.set_pending(pkey, data, stage="teacher_meta", intent=intent)
             send_message(thread_id, _phi.ASK_TEACHER, thread_type)
             return
-        if intent in {_phi.ANALYZE, _phi.GENERATE} and _phi.needs_prompt(intent, caption):
+        if intent in _phi.CAN_HOI_THEM and _phi.needs_prompt(intent, caption):
             _phi.set_pending(pkey, data, stage="need_prompt", intent=intent)
             send_message(
                 thread_id,
-                _phi.ASK_PROMPT_GENERATE if intent == _phi.GENERATE else _phi.ASK_PROMPT_ANALYZE,
+                _phi.ask_prompt(intent),
                 thread_type,
             )
             return

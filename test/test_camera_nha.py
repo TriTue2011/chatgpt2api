@@ -457,6 +457,67 @@ class XemCameraTests(unittest.TestCase):
         self.assertIn("bùm", ra["text"])
         self.assertNotIn("image_url", ra)
 
+    # ── nhan_dang: YOLO + nhận mặt trên máy ────────────────────────────────
+    def _khung(self):
+        from services import nhin_nha, yolo_nha
+        return nhin_nha.KhungDaXem(1920, 1080, [
+            yolo_nha.VatThe("person", 0.91, (100, 200, 400, 1000)),
+            yolo_nha.VatThe("chair", 0.6, (1500, 600, 1700, 900))],
+            [{"hop": [200, 250, 280, 340], "diem_do": 0.8, "nho": False,
+              "nguoi_id": "a1", "ten": "Việt", "do_giong": 71.2, "loai": "quen",
+              "nguoi_so": 0}])
+
+    def test_nhan_dang_doc_luong_chinh_gui_anh_ve_khung_va_ke_ten(self) -> None:
+        from pathlib import Path
+
+        from services import nhin_nha, yolo_nha
+        with mock.patch.object(cam, "chup_tho", return_value=("Bếp", b"nguyen-co")) as tho, \
+             mock.patch.object(cam, "chup") as chup, \
+             mock.patch.object(cam, "_thu_nho", lambda b, canh: b), \
+             mock.patch.object(yolo_nha, "doc_anh", return_value="khung"), \
+             mock.patch.object(nhin_nha, "phan_tich_khung", return_value=self._khung()), \
+             mock.patch.object(nhin_nha, "co_mat", return_value=True), \
+             mock.patch.object(nhin_nha, "ve_khung", return_value=b"anh-ve-khung"), \
+             mock.patch.object(self.C, "_hoi_ve_anh") as vision:
+            ra = self._goi({"camera": "bếp", "nhan_dang": True})
+        tho.assert_called_once()
+        self.assertEqual(tho.call_args.kwargs.get("phu", False), False)   # luồng CHÍNH
+        chup.assert_not_called()
+        vision.assert_not_called()
+        self.assertIn("Thấy: 1 người, 1 ghế.", ra["text"])
+        self.assertIn("1. người — bên trái, khung (100,200)–(400,1000), 91% · mặt: Việt (71/100)",
+                      ra["text"])
+        rel = ra["image_url"].split("/images/", 1)[1]
+        self.assertEqual((Path(self.tmp.name) / rel).read_bytes(), b"anh-ve-khung")
+
+    def test_chua_tai_model_van_gui_anh_thuong_kem_lenh_tai(self) -> None:
+        from pathlib import Path
+
+        from services import nhin_nha, yolo_nha
+        with mock.patch.object(cam, "chup_tho", return_value=("Bếp", b"nguyen-co")), \
+             mock.patch.object(cam, "_thu_nho", lambda b, canh: b), \
+             mock.patch.object(yolo_nha, "doc_anh", return_value="khung"), \
+             mock.patch.object(nhin_nha, "phan_tich_khung",
+                               side_effect=nhin_nha.ChuaCoModel("Chưa tải model nhận vật thể yolo26n. Chạy: X")):
+            ra = self._goi({"nhan_dang": True})
+        self.assertIn("Chưa tải model", ra["text"])
+        rel = ra["image_url"].split("/images/", 1)[1]
+        self.assertEqual((Path(self.tmp.name) / rel).read_bytes(), b"nguyen-co")
+
+    def test_co_nguoi_ma_chua_tai_model_mat_thi_noi_ro(self) -> None:
+        from services import nhin_nha, yolo_nha
+        k = self._khung()
+        k.mat = []
+        with mock.patch.object(cam, "chup_tho", return_value=("Bếp", b"x")), \
+             mock.patch.object(cam, "_thu_nho", lambda b, canh: b), \
+             mock.patch.object(yolo_nha, "doc_anh", return_value="khung"), \
+             mock.patch.object(nhin_nha, "phan_tich_khung", return_value=k), \
+             mock.patch.object(nhin_nha, "co_mat", return_value=False), \
+             mock.patch.object(nhin_nha, "ve_khung", return_value=b"v"):
+            ra = self._goi({"nhan_dang": True})
+        self.assertIn("Chưa tải model nhận khuôn mặt", ra["text"])
+        self.assertIn("download_nhin_nha.py --mat buffalo_s", ra["text"])
+
 
 @pytest.mark.pure
 class HoiVeAnhTests(unittest.TestCase):

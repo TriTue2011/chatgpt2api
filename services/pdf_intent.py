@@ -215,26 +215,16 @@ def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
     if any(w in t for w in ("convert", "chuyển file", "chuyen file")) and "word" in t:
         return WORD
 
-    # numbered — theo INTENT_ORDER ∩ allowed
-    num_map = {
-        "1": 1, "1️⃣": 1, "1.": 1, "1)": 1,
-        "2": 2, "2️⃣": 2, "2.": 2, "2)": 2,
-        "3": 3, "3️⃣": 3, "3.": 3, "3)": 3,
-        "4": 4, "4️⃣": 4, "4.": 4, "4)": 4,
-        # Bảng này từng dừng ở 4 — thêm mục thứ 5 (tóm tắt) mà quên đây thì gõ
-        # "5" ra None, bot im lặng đúng lúc người dùng vừa bấm chọn.
-        "5": 5, "5️⃣": 5, "5.": 5, "5)": 5,
-        "6": 6, "6️⃣": 6, "6.": 6, "6)": 6,
-        # Menu nay dài tới 7 mục (thêm 🌐 Dịch tài liệu).
-        "7": 7, "7️⃣": 7, "7.": 7, "7)": 7,
-    }
-    if t in num_map:
+    # numbered — theo INTENT_ORDER ∩ allowed. Đọc số theo KHUÔN ("6", "6.",
+    # "6)", "6️⃣"), không liệt kê: bảng liệt kê tay từng dừng ở 4 — thêm mục thứ
+    # 5 (tóm tắt) mà quên bảng thì gõ "5" ra None, bot im lặng đúng lúc người
+    # dùng vừa bấm chọn; menu ảnh vấp lại đúng lỗi đó khi lên 9 mục (15/09/2026).
+    so = re.fullmatch(r"([1-9])(?:️?⃣|[.)])?", t)
+    if so:
         opts = [c for c in INTENT_ORDER if allowed is None or c in allowed]
-        idx = num_map[t] - 1
+        idx = int(so.group(1)) - 1
         if 0 <= idx < len(opts):
             return opts[idx]
-        # full catalog fixed numbers when all 4 present still works via opts
-        return None
     return None
 
 

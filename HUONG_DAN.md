@@ -511,6 +511,53 @@ Camera mập mờ tên thì bot **hỏi lại** chứ không chụp đại. Có 
 «sân» mà bạn chỉ nói «xem camera sân» thì nó liệt kê ra để bạn chọn — chụp nhầm
 camera phòng ngủ khi người ta hỏi camera sân là chuyện không sửa lại được.
 
+#### Nhận vật thể (YOLO26) và khuôn mặt — chạy ngay trên máy, không cần Frigate
+
+Hai model chạy bằng CPU trong chính container, không gửi ảnh đi đâu:
+
+| Model | Làm gì | Nguồn · giấy phép |
+|---|---|---|
+| **YOLO26** (`yolo26n` mặc định) | 80 loại vật thể (người, xe máy, ô tô, chó, mèo, tivi, ghế…) kèm **toạ độ khung** | Ultralytics, bản ONNX chính thức · AGPL-3.0 |
+| **InsightFace** (`buffalo_s` mặc định) | Dò khuôn mặt + nhận ra **là ai** — đúng cách của IRIS (github.com/anhnvme/facedetect) | deepinsight · model chỉ dùng phi thương mại |
+
+COCO không có lớp «khuôn mặt», nên YOLO (kể cả trên Coral của Frigate) chỉ biết
+«có người». Nhận mặt là bước riêng: YOLO tìm người → dò mặt trong vùng người →
+so với mặt đã dạy.
+
+**Tải model (một lần):**
+
+```bash
+docker exec c2a /app/.venv/bin/python scripts/download_nhin_nha.py          # yolo26n + buffalo_s (~26 MB giữ lại)
+docker exec c2a /app/.venv/bin/python scripts/download_nhin_nha.py --list   # xem các bản khác
+docker exec c2a /app/.venv/bin/python scripts/download_nhin_nha.py --mat buffalo_l   # mặt nhỏ/xa, chậm gấp ~10 lần
+```
+
+Không cần khởi động lại — model nạp ở lần dùng đầu. Mọi tệp đều so SHA-256 đã ghim.
+
+Đo 15/09/2026 trên máy chủ (Xeon E5-2630L v4, 2 luồng), 4 camera thật: lấy khung
+luồng chính 0,4–2 giây, YOLO26n 90–140 ms, dò + nhận mặt thêm 50–150 ms mỗi khung
+có người. Bộ `buffalo_l` chậm hơn khoảng 10 lần (dò 321 ms, mỗi mặt 310 ms).
+
+**Dùng — cần tích 📷 Camera nhà cho hội thoại (xem ô 🔐 phía trên):**
+
+- Hỏi: «bếp có mấy người», «ai đang ở cửa», «xe máy ở chỗ nào» → bot chụp luồng
+  chính, gửi ảnh có **khung đánh số** và liệt kê từng vật: loại, vị trí, toạ độ,
+  độ tin cậy, và tên người nếu đã dạy mặt.
+- Gửi ảnh vào chat → menu ảnh có thêm **👤 Đây là ai?** và **🧑 Dạy khuôn mặt**
+  (chỉ hiện khi hội thoại đã tích camera **và** đã tải model mặt).
+- Dạy mặt: gửi ảnh chỉ có mặt người đó (hoặc mặt đó to rõ nhất), chọn «Dạy khuôn
+  mặt», nhắn tên. Nên dạy 3–4 ảnh khác góc, khác ánh sáng.
+- Ngưỡng giống như IRIS: từ **55/100** là nhận chắc, **40–55** là «có thể là»,
+  dưới 40 là người lạ. Mặt đã giống hẳn một người khác thì bot hỏi lại trước khi
+  dạy — nhắn «<tên> chắc chắn» nếu đúng là người đó.
+
+Cấu hình (khoá `nhin_nha` trong config): `yolo.model`, `yolo.nguong` (mặc định
+0.35), `khuon_mat.bo`, `khuon_mat.nguong_co_the` / `nguong_chac`. Đổi bộ mặt thì
+vector của mọi người được tính lại từ ảnh mặt đã lưu, không phải dạy lại.
+
+Ảnh mặt đã dạy nằm ở `data/agent/khuon_mat/`, sổ ở `data/agent/khuon_mat.sqlite`
+— dữ liệu sinh trắc, không gửi model, không ghi vào log.
+
 ### 3.8. Email & Lịch
 
 | Ô | Ý nghĩa |

@@ -48,8 +48,13 @@ DICH = "dich"
 #: trong `ALL_INTENTS` — chỉ hiện khi nhóm chức năng 'facebook' bật cho thread
 #: VÀ đã kết nối Page (xem `them_dang_facebook`).
 FACEBOOK = "facebook"
-INTENT_ORDER = (RAG_KNOWLEDGE, RAG_TEACHER, ANALYZE, GENERATE, DICH, LUU_ONLINE,
-                FACEBOOK)
+#: Nhận / dạy KHUÔN MẶT (services/so_mat_nha.py). KHÔNG nằm trong `ALL_INTENTS`:
+#: `allowed_intents` chỉ thêm khi thread TÍCH nhóm 📷 camera và đã tải model mặt
+#: — xem `_mat_neu_co`. Mặt người là dữ liệu sinh trắc, cùng cửa với camera nhà.
+NHAN_MAT = "nhan_mat"
+DAY_MAT = "day_mat"
+INTENT_ORDER = (RAG_KNOWLEDGE, RAG_TEACHER, ANALYZE, GENERATE, DICH, NHAN_MAT,
+                DAY_MAT, LUU_ONLINE, FACEBOOK)
 ALL_INTENTS = {RAG_KNOWLEDGE, RAG_TEACHER, ANALYZE, GENERATE}
 
 #: Đuôi tệp ẢNH. Zalo hay chuyển ảnh chụp màn hình / ảnh lưu sẵn dưới dạng
@@ -75,6 +80,21 @@ ASK_PROMPT_GENERATE = (
     "Ví dụ: `vẽ lại anime` · `đổi nền bãi biển` · `làm nét, tông ấm`\n"
     "→ Trả lời trong 10 phút."
 )
+ASK_TEN_MAT = (
+    "🧑 Người trong ảnh tên gì ạ? Nhắn tên để em nhớ mặt, vd `Việt`.\n"
+    "→ Trả lời trong 10 phút."
+)
+#: Ý định phải hỏi thêm một câu trước khi làm (xem `needs_prompt`).
+CAN_HOI_THEM = {ANALYZE, GENERATE, DAY_MAT}
+
+
+def ask_prompt(intent: str) -> str:
+    """Câu hỏi thêm cho ý định đang chờ — một chỗ, cả ba kênh dùng chung."""
+    if intent == GENERATE:
+        return ASK_PROMPT_GENERATE
+    if intent == DAY_MAT:
+        return ASK_TEN_MAT
+    return ASK_PROMPT_ANALYZE
 # Nhãn loại tài liệu — soi chiếu `sgk_taphuan.DOC_KIND_LABEL` chứ không giữ bảng
 # thứ hai: hai bảng song song là lý do thêm loại một chỗ mà chỗ kia vẫn nhãn cũ.
 try:  # pragma: no cover — import vòng thì rơi về bảng tối thiểu
@@ -213,7 +233,25 @@ def allowed_intents(allow: set[str] | None) -> set[str]:
     out.add(ANALYZE)
     if "image" in allow:
         out.add(GENERATE)
-    return out | _dich_neu_co()
+    return out | _dich_neu_co() | _mat_neu_co(allow)
+
+
+def _mat_neu_co(allow: set[str]) -> set[str]:
+    """{NHAN_MAT, DAY_MAT} khi thread tích nhóm `camera` VÀ đã tải model mặt.
+
+    Gác ngay trong `allowed_intents` như `_dich_neu_co`: menu, bước giải số và
+    chốt chặn ở `_do_photo_request` của cả ba kênh đều đi qua hàm này, nên không
+    kênh nào lệch. Thread không lọc (`allow=None`) KHÔNG có: `camera` thuộc
+    nhóm phải tích tường minh (`capabilities._NHOM_PHAI_TICH`).
+    """
+    if "camera" not in allow:
+        return set()
+    try:
+        from services import nhin_nha
+        return {NHAN_MAT, DAY_MAT} if nhin_nha.co_mat() else set()
+    except Exception as exc:  # pragma: no cover
+        logger.debug("photo: bỏ qua mục khuôn mặt: %s", exc)
+        return set()
 
 
 def _dich_neu_co() -> set[str]:
@@ -304,6 +342,8 @@ def ask_text(intents: set[str] | None = None) -> str:
         ANALYZE: "🔍 **Phân tích ảnh** (hỏi thêm yêu cầu)",
         GENERATE: "🎨 **Tạo ảnh** từ ảnh này (hỏi thêm mô tả)",
         DICH: "🌐 **Dịch chữ trong ảnh** (đọc chữ → hỏi dịch sang tiếng gì)",
+        NHAN_MAT: "👤 **Đây là ai?** (nhận khuôn mặt đã dạy)",
+        DAY_MAT: "🧑 **Dạy khuôn mặt** (hỏi tên người trong ảnh để em nhớ)",
         LUU_ONLINE: "☁️ **Lưu lên kho đám mây** (không phân tích, không tạo)",
         FACEBOOK: "📘 **Đăng lên Facebook** (gửi thêm ảnh được, chốt caption sau)",
     }
@@ -358,6 +398,15 @@ def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
     # lẫn "ảnh này" nên nhánh phân tích sẽ nuốt nếu xét sau.
     if any(w in t for w in ("dịch", "dich", "translate", "chuyển ngữ", "chuyen ngu")):
         return DICH
+    # Khuôn mặt — chỉ khi menu CÓ mục đó (thread tích camera + đã tải model);
+    # không thì «ảnh này là ai» vẫn rơi xuống phân tích ảnh như trước. «là ai»
+    # xét trước «đây là» vì «đây là ai» chứa cả hai.
+    if allowed is not None and NHAN_MAT in allowed and re.search(
+            r"\b(là ai|la ai|ai đây|ai day|ai vậy|ai vay|nhận mặt|nhan mat|nhận diện|nhan dien)\b", t):
+        return NHAN_MAT
+    if allowed is not None and DAY_MAT in allowed and re.search(
+            r"(dạy|day|nhớ|nho)\s+(khuôn\s+|khuon\s+)?(mặt|mat)\b|^đây là\s|^day la\s", t):
+        return DAY_MAT
     if any(w in t for w in (
         "phân tích", "phan tich", "mô tả", "mo ta", "ocr", "đọc chữ", "doc chu",
         "ảnh này", "anh nay", "analyze", "describe", "what is",
@@ -366,20 +415,13 @@ def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
     if _looks_generate(t):
         return GENERATE
 
-    num_map = {
-        "1": 1, "1️⃣": 1, "1.": 1, "1)": 1,
-        "2": 2, "2️⃣": 2, "2.": 2, "2)": 2,
-        "3": 3, "3️⃣": 3, "3.": 3, "3)": 3,
-        "4": 4, "4️⃣": 4, "4.": 4, "4)": 4,
-        # Menu nay dài tới 7 mục (thêm ☁️ kho đám mây + 📘 Facebook + 🌐 dịch) —
-        # thiếu số là mục cuối hiện ra mà gõ số không chọn được.
-        "5": 5, "5️⃣": 5, "5.": 5, "5)": 5,
-        "6": 6, "6️⃣": 6, "6.": 6, "6)": 6,
-        "7": 7, "7️⃣": 7, "7.": 7, "7)": 7,
-    }
-    if t in num_map:
+    # Số mục: "6", "6.", "6)", "6️⃣". Menu nay dài tới 9 mục (☁️ kho, 📘
+    # Facebook, 🌐 dịch, 👤🧑 khuôn mặt) — bảng số liệt kê tay cũ dừng ở 7 nên
+    # thêm mục là mục cuối hiện ra mà gõ số không chọn được; đọc số theo khuôn.
+    so = re.fullmatch(r"([1-9])(?:️?⃣|[.)])?", t)
+    if so:
         opts = [c for c in INTENT_ORDER if allowed is None or c in allowed]
-        idx = num_map[t] - 1
+        idx = int(so.group(1)) - 1
         if 0 <= idx < len(opts):
             return opts[idx]
     return None
@@ -439,7 +481,73 @@ def needs_prompt(intent: str, text: str = "") -> bool:
         }:
             return True
         return False
+    if intent == DAY_MAT:
+        return not ten_nguoi_tu_loi(t)
     return False
+
+
+#: Phần mở đầu người ta hay gõ trước TÊN khi dạy mặt — bóc đi để còn đúng tên.
+_DAU_TEN = re.compile(
+    r"^\s*(?:[1-9](?:️?⃣|[.)])?\s*)?"
+    r"(?:(?:dạy|day|nhớ|nho)\s+(?:khuôn\s+|khuon\s+)?(?:mặt|mat)\s*)?"
+    r"(?:(?:đây|day|người này|nguoi nay)\s+là\s+|(?:tên|ten)(?:\s+là)?\s+|là\s+)?"
+    r"[:\-–]?\s*", re.IGNORECASE)
+#: Cụm xác nhận dạy dù mặt đã giống người khác (xem `so_mat_nha.day(ep=)`).
+_CHAC_CHAN = re.compile(r"\s*[,(]?\s*(chắc chắn|chac chan)\s*\)?\s*$", re.IGNORECASE)
+
+
+def ten_nguoi_tu_loi(text: str) -> str:
+    """Tên người trong câu dạy mặt: «dạy mặt Việt», «đây là Việt», «6. Lan»."""
+    t = _CHAC_CHAN.sub("", str(text or ""))
+    return _DAU_TEN.sub("", t, count=1).strip(" .,:;!?\"'«»")
+
+
+def xu_ly_mat(intent: str, image_bytes: bytes, text: str = "") -> str:
+    """Chạy «Đây là ai?» / «Dạy khuôn mặt» cho một ảnh — trả câu trả lời.
+
+    Chung cho cả ba kênh; kênh chỉ việc gửi chuỗi này đi.
+    """
+    from services import nhin_nha, so_mat_nha
+
+    try:
+        if intent == DAY_MAT:
+            ten = ten_nguoi_tu_loi(text)
+            if not ten:
+                return ASK_TEN_MAT
+            try:
+                kq = so_mat_nha.day(ten, image_bytes, nguon="chat",
+                                    ep=bool(_CHAC_CHAN.search(str(text or ""))))
+            except so_mat_nha.LoiSoMat as exc:
+                loi = str(exc)
+                if "chắc chắn đây là" in loi:
+                    loi += (f"\nĐúng là {ten} thì gửi lại ảnh, chọn «Dạy khuôn mặt» và "
+                            f"nhắn «{ten} chắc chắn».")
+                return f"🧑 {loi}"
+            if kq["nguoi_moi"]:
+                return (f"✅ Em đã nhớ mặt «{kq['ten']}». Gửi thêm 2–3 ảnh khác góc, "
+                        "khác ánh sáng để em nhận chắc hơn ạ.")
+            return f"✅ Đã thêm ảnh mặt cho «{kq['ten']}» — giờ em có {kq['so_mat']} ảnh mặt của người này."
+
+        kq = so_mat_nha.nhan_dien(image_bytes)
+        mats = kq["mat"]
+        if not mats:
+            return "👤 Em không thấy khuôn mặt nào trong ảnh ạ."
+        dong = [f"👤 Em thấy {len(mats)} khuôn mặt" + (" (trái → phải):" if len(mats) > 1 else ":")]
+        for i, m in enumerate(mats, 1):
+            if m["loai"] == "quen":
+                mo = f"{m['ten']} — giống {m['do_giong']:.0f}/100"
+            elif m["loai"] == "co_the":
+                mo = f"có thể là {m['ten']} ({m['do_giong']:.0f}/100, chưa chắc)"
+            else:
+                mo = "người lạ — em chưa được dạy mặt này"
+            dong.append(f"{i}. {mo}" + (" · mặt nhỏ, kém chắc" if m["nho"] else ""))
+        if any(m["loai"] != "quen" for m in mats):
+            dong.append("Muốn em nhớ ai: gửi ảnh chỉ có mặt người đó rồi chọn «Dạy khuôn mặt».")
+        return "\n".join(dong)
+    except nhin_nha.ChuaCoModel as exc:
+        return f"👤 {exc}"
+    except so_mat_nha.LoiSoMat as exc:
+        return f"👤 {exc}"
 
 
 def prepare_incoming(image_bytes: bytes | None) -> tuple[bytes | None, str]:

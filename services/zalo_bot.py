@@ -1735,6 +1735,13 @@ def _do_photo_request(
             send_message(chat_id, _r.get("text") or "")
             return
 
+        if it in (_phi.NHAN_MAT, _phi.DAY_MAT):
+            # «Đây là ai?» / «Dạy khuôn mặt» — chạy trên máy (so_mat_nha), không gọi model.
+            kind = "photo_khuon_mat"
+            reply = _phi.xu_ly_mat(it, file_data, request)
+            send_message(chat_id, reply)
+            return
+
         # analyze — nhánh vision
         kind = "photo_analyze"
         answer = _phi.analyze_photo(file_data, request, channel="zalo")
@@ -2436,7 +2443,7 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
                 _phi.update_pending(_phkey, stage="need_prompt", intent=intent)
                 send_message(
                     chat_id,
-                    _phi.ASK_PROMPT_GENERATE if intent == _phi.GENERATE else _phi.ASK_PROMPT_ANALYZE,
+                    _phi.ask_prompt(intent),
                 )
                 return
             full = _phi.pop_pending_full(_phkey)
@@ -2519,11 +2526,11 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
             _phi.set_pending(_phkey, data, stage="teacher_meta", intent=intent)
             send_message(chat_id, _phi.ASK_TEACHER)
             return
-        if intent in {_phi.ANALYZE, _phi.GENERATE} and _phi.needs_prompt(intent, caption):
+        if intent in _phi.CAN_HOI_THEM and _phi.needs_prompt(intent, caption):
             _phi.set_pending(_phkey, data, stage="need_prompt", intent=intent)
             send_message(
                 chat_id,
-                _phi.ASK_PROMPT_GENERATE if intent == _phi.GENERATE else _phi.ASK_PROMPT_ANALYZE,
+                _phi.ask_prompt(intent),
             )
             return
         _do_photo_request(chat_id, data, caption, _allow, intent=intent,

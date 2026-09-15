@@ -5389,9 +5389,16 @@ def _h_xem_camera(args: dict, ctx: dict) -> dict:
     # cấu hình bộ lọc KHÔNG có tool này — không cần chốt riêng ở đây nữa.
     ten = str(args.get("camera") or "").strip()
     hoi = str(args.get("hoi") or "").strip()
+    nhan_dang = args.get("nhan_dang") in (True, "true", "1", 1)
 
     try:
-        if hoi:
+        if nhan_dang:
+            # Nhận dạng đọc LUỒNG CHÍNH nguyên cỡ: mặt người ở luồng phụ 640×480
+            # chỉ còn vài pixel, không nhận ra ai. Ảnh gửi và ảnh model đọc đều
+            # thu nhỏ từ chính khung này — cùng một khoảnh khắc với khung vẽ.
+            ten_that, tho = camera_nha.chup_tho(ten or "camera")
+            anh_gui, anh_ai = tho, (camera_nha._thu_nho(tho, camera_nha.CANH_AI) if hoi else b"")
+        elif hoi:
             ten_that, anh_gui, anh_ai = camera_nha.chup_hai_co(ten or "camera")
         else:
             # Không hỏi gì thì khỏi bấm luồng phụ: tốn thêm một lượt gọi camera
@@ -5403,6 +5410,10 @@ def _h_xem_camera(args: dict, ctx: dict) -> dict:
     except Exception as exc:                       # nguồn lạ, lỗi ngoài dự tính
         logger.warning("xem_camera lỗi: %s", exc)
         return {"deliver_now": True, "text": f"Em chụp chưa được ạ: {str(exc)[:160]}"}
+
+    nhan_xet = ""
+    if nhan_dang:
+        nhan_xet, anh_gui = _nhan_dang_khung_camera(anh_gui)
 
     # Lưu vào THƯ VIỆN ẢNH — cùng chỗ ảnh AI và ảnh webcam, để "gửi lại ảnh" tìm được.
     import time as _t
@@ -5424,13 +5435,42 @@ def _h_xem_camera(args: dict, ctx: dict) -> dict:
         return {"deliver_now": True,
                 "text": f"Em chụp được nhưng lưu ảnh lỗi 😥 ({str(exc)[:100]})."}
 
+    if nhan_xet and not hoi:
+        return {"text": f"📷 Camera {ten_that}:\n{nhan_xet}", "image_url": cd}
     if not hoi:
         return {"text": f"📷 Camera {ten_that} ạ.", "image_url": cd}
 
     mo_ta = _hoi_ve_anh(anh_ai, hoi)
+    if nhan_xet:
+        return {"text": f"📷 Camera {ten_that}:\n{nhan_xet}\n\n{mo_ta or '(em chưa đọc được ảnh).'}",
+                "image_url": cd}
     return {"text": f"📷 Camera {ten_that}: {mo_ta}" if mo_ta
                     else f"📷 Camera {ten_that} ạ (em chưa đọc được ảnh).",
             "image_url": cd}
+
+
+def _nhan_dang_khung_camera(tho: bytes) -> tuple[str, bytes]:
+    """YOLO + nhận mặt trên khung nguyên cỡ → ``(lời mô tả, ảnh đã vẽ khung, thu nhỏ)``.
+
+    Nhận dạng hỏng thì vẫn gửi ẢNH THƯỜNG kèm lý do: người dùng tự nhìn được,
+    đừng để model cục bộ chết nuốt luôn tấm ảnh.
+    """
+    from services import camera_nha, nhin_nha, yolo_nha
+
+    try:
+        khung = yolo_nha.doc_anh(tho)
+        k = nhin_nha.phan_tich_khung(khung)
+        loi = nhin_nha.mo_ta(k)
+        if any(v.nhan == "person" for v in k.vat_the) and not nhin_nha.co_mat():
+            loi += ("\n(Chưa tải model nhận khuôn mặt nên em chưa biết là ai — chạy: "
+                    f"{nhin_nha.LENH_TAI} --mat {nhin_nha.bo_mat().ma})")
+        return loi, camera_nha._thu_nho(nhin_nha.ve_khung(khung, k), camera_nha.CANH_GUI)
+    except nhin_nha.ChuaCoModel as exc:
+        return str(exc), camera_nha._thu_nho(tho, camera_nha.CANH_GUI)
+    except Exception as exc:
+        logger.warning("nhận dạng khung camera lỗi: %s", exc)
+        return (f"Em chưa nhận dạng được ({str(exc)[:120]}).",
+                camera_nha._thu_nho(tho, camera_nha.CANH_GUI))
 
 
 def _hoi_ve_anh(jpeg: bytes, hoi: str) -> str:
@@ -6572,12 +6612,22 @@ CAPABILITIES: dict[str, Capability] = {
                                    "phải nhìn ảnh mới trả lời được (vd 'có ai không', "
                                    "'xe còn đó không'). Người dùng chỉ bảo chụp/gửi "
                                    "ảnh thì BỎ TRỐNG — bỏ trống là chỉ gửi ảnh, "
-                                   "KHÔNG chạy model phân tích."}},
+                                   "KHÔNG chạy model phân tích."},
+            "nhan_dang": {"type": "boolean",
+                          "description": "true khi người dùng muốn biết CÓ NHỮNG GÌ, "
+                                         "BAO NHIÊU, Ở ĐÂU hoặc AI trong camera (vd "
+                                         "'bếp có mấy người', 'ai đang ở cửa', 'xe ở "
+                                         "chỗ nào'). Chạy YOLO + nhận khuôn mặt ngay "
+                                         "trên máy: trả loại vật thể, vị trí, toạ độ "
+                                         "khung và tên người đã dạy mặt; ảnh gửi về "
+                                         "có khung đánh số."}},
             "required": []},
         workflow=("Kết quả gồm ảnh và (nếu có hỏi) câu trả lời — thuật lại ngắn, "
                   "ĐỪNG mô tả lại ảnh mà em không nhìn thấy. Báo 'chưa rõ camera "
                   "nào' kèm danh sách nghĩa là tên mập mờ: HỎI LẠI người dùng chọn "
-                  "camera nào, KHÔNG tự chụp đại một cái.")),
+                  "camera nào, KHÔNG tự chụp đại một cái. Có nhận dạng thì TÊN "
+                  "NGƯỜI chỉ lấy đúng từ kết quả nhận mặt ('người lạ' là chưa dạy "
+                  "mặt) — không đoán tên từ dáng người hay quần áo.")),
     "device_power": Capability(
         name="device_power", risk=CHANGE, handler=_h_device_power,
         emoji="🔌", label="Tắt / khởi động lại / khoá máy tính đã cài agent",
