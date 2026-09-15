@@ -11,7 +11,9 @@
  *
  * YouTube từ chối một số video trong khung nhúng (video hãng đĩa như VEVO khi trang
  * mở bằng địa chỉ IP — đo 14/09/2026: "M2M - The Day You Went Away" bị chặn, mở bằng
- * tên máy thì phát được): khung gửi `onError`, `khiLoi` báo cho trình phát.
+ * tên máy thì phát được): khung gửi `onError`, `khiLoi` báo cho trình phát. Khi đó
+ * trang phát HÌNH RIÊNG (luồng chỉ-hình qua máy chủ) bằng thẻ <video> gắn qua `ganHinh`:
+ * mọi lệnh và trạng thái chuyển sang thẻ đó, phần còn lại của trình phát không đổi.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -46,6 +48,8 @@ export type VideoNhung = {
   thoiGian: () => number;
   khiNap: () => void;
   datLai: () => void;
+  /** Gắn thẻ <video> hình riêng (null = bỏ). */
+  ganHinh: (el: HTMLVideoElement | null) => void;
 };
 
 export function useVideoNhung(khiHet: () => void, khiLoi: () => void): VideoNhung {
@@ -56,6 +60,7 @@ export function useVideoNhung(khiHet: () => void, khiLoi: () => void): VideoNhun
   const moc = useRef({ t: 0, luc: 0, trangThai: -1, sanSang: false });
   const khiHetMoi = useRef(khiHet);
   const khiLoiMoi = useRef(khiLoi);
+  const hinh = useRef<HTMLVideoElement | null>(null);
   const henBatTay = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
   useEffect(() => {
@@ -67,17 +72,46 @@ export function useVideoNhung(khiHet: () => void, khiLoi: () => void): VideoNhun
     khung.current?.contentWindow?.postMessage(JSON.stringify({ ...o, id: 1, channel: "widget" }), GOC_NHUNG);
   }, []);
 
-  const lenh = useCallback((func: string, args: unknown[] = []) => gui({ event: "command", func, args }), [gui]);
+  const lenh = useCallback((func: string, args: unknown[] = []) => {
+    const h = hinh.current;
+    if (!h) {
+      gui({ event: "command", func, args });
+      return;
+    }
+    // Hình riêng không có tiếng: chỉ phát, dừng, tua.
+    if (func === "playVideo") void h.play().catch(() => undefined);
+    else if (func === "pauseVideo") h.pause();
+    else if (func === "stopVideo") {
+      h.pause();
+      h.currentTime = 0;
+    } else if (func === "seekTo" && typeof args[0] === "number") h.currentTime = args[0];
+  }, [gui]);
+
+  const doi = useCallback((s: number) => {
+    if (!Number.isFinite(s) || s === moc.current.trangThai) return;
+    moc.current.trangThai = s;
+    setTrangThai(s);
+    if (s === 0) khiHetMoi.current();
+  }, []);
+
+  const ganHinh = useCallback((el: HTMLVideoElement | null) => {
+    hinh.current = el;
+    if (!el) return;
+    for (const [ten, s] of [["playing", 1], ["pause", 2], ["waiting", 3], ["ended", 0]] as const) {
+      el.addEventListener(ten, () => {
+        if (hinh.current === el) doi(el.ended ? 0 : s);
+      });
+    }
+    el.addEventListener("loadeddata", () => {
+      if (hinh.current !== el) return;
+      moc.current.sanSang = true;
+      setSanSang(true);
+    });
+  }, [doi]);
 
   useEffect(() => {
-    const doi = (s: number) => {
-      if (!Number.isFinite(s) || s === moc.current.trangThai) return;
-      moc.current.trangThai = s;
-      setTrangThai(s);
-      if (s === 0) khiHetMoi.current();
-    };
     const nghe = (e: MessageEvent) => {
-      if (e.origin !== GOC_NHUNG || !khung.current || e.source !== khung.current.contentWindow) return;
+      if (hinh.current || e.origin !== GOC_NHUNG || !khung.current || e.source !== khung.current.contentWindow) return;
       let d: { event?: string; info?: unknown };
       try {
         d = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
@@ -110,7 +144,7 @@ export function useVideoNhung(khiHet: () => void, khiLoi: () => void): VideoNhun
       window.removeEventListener("message", nghe);
       clearInterval(henBatTay.current);
     };
-  }, []);
+  }, [doi]);
 
   const khiNap = useCallback(() => {
     // Khung chỉ báo trạng thái sau khi trang nói đang nghe.
@@ -140,9 +174,11 @@ export function useVideoNhung(khiHet: () => void, khiLoi: () => void): VideoNhun
   }, []);
 
   const thoiGian = useCallback(
-    () => moc.current.t + (moc.current.trangThai === 1 && moc.current.luc ? (Date.now() - moc.current.luc) / 1000 : 0),
+    () => hinh.current
+      ? hinh.current.currentTime
+      : moc.current.t + (moc.current.trangThai === 1 && moc.current.luc ? (Date.now() - moc.current.luc) / 1000 : 0),
     [],
   );
 
-  return { ganKhung, sanSang, trangThai, tatTieng, lenh, thoiGian, khiNap, datLai };
+  return { ganKhung, sanSang, trangThai, tatTieng, lenh, thoiGian, khiNap, datLai, ganHinh };
 }

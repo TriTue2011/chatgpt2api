@@ -14,6 +14,7 @@
 import {
   ListMusic, LoaderCircle, MonitorOff, Maximize, Maximize2, Minimize2, MonitorPlay, Music2, Pause, PictureInPicture2, Play,
   RectangleHorizontal, SkipBack, SkipForward, Speaker, Square, Users, Volume2, VolumeX, X,
+  Headphones,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -23,7 +24,17 @@ import { cn } from "@/lib/utils";
 import { type BaiHat, type Phien, TEN_NGUON, type ThietBi, thoiLuong } from "./lib";
 import type { CheDoXem, VideoNhung } from "./video-nhung";
 
-export type VideoMo = { bai: BaiHat; src: string; theoLoa: boolean; ngheTrenMay: boolean; theoMay?: boolean };
+/** Hình riêng khi YouTube không cho nhúng: lấy link → thử tải thẳng (máy trong nhà) →
+ *  không được là đang ở ngoài nhà, chờ người xem đồng ý → link đã ký qua máy chủ. */
+export type HinhRieng = {
+  trangThai: "lay" | "thang" | "ngoai" | "ky" | "loi";
+  thang?: string;
+  ky?: string;
+  mbPhut?: number;
+  cao?: number;
+  coHinh?: boolean;
+};
+export type VideoMo = { bai: BaiHat; src: string; theoLoa: boolean; ngheTrenMay: boolean; theoMay?: boolean; hinh?: HinhRieng };
 export type ViTri = { giay: number; tong: number } | null;
 
 type Props = {
@@ -41,10 +52,17 @@ type Props = {
   doiNgheNen: () => void;
   /** Trình duyệt chặn tiếng tự phát: bảo người xem chạm vào khung video. */
   canCham: boolean;
+  /** Thẻ hình riêng lỗi hoặc quá lâu chưa có hình. */
+  hinhLoi: () => void;
+  hinhSan: () => void;
+  /** Ở ngoài nhà: người xem bấm Xem hình (trang hỏi lại trước khi mở). */
+  xemHinhNgoaiNha: () => void;
   nhung: VideoNhung;
   cheDo: CheDoXem;
   doiCheDo: (c: CheDoXem) => void;
   dongVideo: () => void;
+  /** Đang xem → chỉ nghe: tắt hình, tiếng chạy tiếp từ giây đang xem. */
+  chiNghe: () => void;
   dangChay: boolean;
   dangGui: boolean;
   layViTri: () => ViTri;
@@ -140,14 +158,46 @@ export function DangPhat(p: Props) {
     await huong?.lock?.("landscape").catch(() => undefined);
   };
 
+  // Nút toàn màn hình CỦA YOUTUBE trong khung video. Chủ máy 15/09/2026: "khi chọn thu nhỏ
+  // lại quay về màn dọc mà không phải thoát" — đang toàn màn hình (của trang) mà bấm nút
+  // đó, YouTube mở lớp toàn màn hình riêng của nó: máy nhả khoá ngang, kẹt ở màn dọc. Nên:
+  // đang toàn màn hình thì nút đó là "thu nhỏ" — thoát hẳn; chưa thì xoay ngang như nút của trang.
+  const cuaTrang = useRef(false);
+  const thoatHan = useRef(false);
   useEffect(() => {
+    const khoaNgang = () => {
+      const huong = screen.orientation as (ScreenOrientation & { lock?: (o: string) => Promise<void> }) | undefined;
+      void huong?.lock?.("landscape").catch(() => undefined);
+    };
     const doi = () => {
-      if (document.fullscreenElement) return;
-      try {
-        screen.orientation?.unlock?.();
-      } catch {
-        // Trình duyệt không khoá hướng thì không có gì để mở.
+      const dang = document.fullscreenElement;
+      const khung = toanManHinh.current;
+      if (!dang) {
+        cuaTrang.current = false;
+        thoatHan.current = false;
+        try {
+          screen.orientation?.unlock?.();
+        } catch {
+          // Trình duyệt không khoá hướng thì không có gì để mở.
+        }
+        return;
       }
+      if (khung && dang !== khung && khung.contains(dang)) {
+        if (cuaTrang.current) {
+          thoatHan.current = true;
+          void document.exitFullscreen?.().catch(() => undefined);
+        } else {
+          khoaNgang();
+        }
+        return;
+      }
+      if (dang === khung && thoatHan.current) {
+        // Vừa bỏ lớp của YouTube, còn lớp của trang: thoát nốt.
+        thoatHan.current = false;
+        void document.exitFullscreen?.().catch(() => undefined);
+        return;
+      }
+      cuaTrang.current = dang === khung;
     };
     document.addEventListener("fullscreenchange", doi);
     return () => document.removeEventListener("fullscreenchange", doi);
@@ -208,12 +258,51 @@ export function DangPhat(p: Props) {
                 src={video.src}
                 onLoad={nhung.khiNap}
                 title={video.bai.title || "Video YouTube"}
-                className="absolute inset-0 size-full [:fullscreen>&]:static [:fullscreen>&]:h-[min(100dvh,calc(100vw*9/16))] [:fullscreen>&]:w-[min(100vw,calc(100dvh*16/9))]"
+                className={cn(
+                  "absolute inset-0 size-full [:fullscreen>&]:static [:fullscreen>&]:h-[min(100dvh,calc(100vw*9/16))] [:fullscreen>&]:w-[min(100vw,calc(100dvh*16/9))]",
+                  video.hinh && "invisible",
+                )}
                 allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
                 allowFullScreen
                 // YouTube báo "Error 153" khi khung nhúng không kèm Referer (trang gửi no-referrer).
                 referrerPolicy="strict-origin-when-cross-origin"
               />
+              {video.hinh && (
+                <div
+                  className="absolute inset-0 bg-black bg-contain bg-center bg-no-repeat"
+                  style={{ backgroundImage: `url(https://i.ytimg.com/vi/${video.bai.id}/hqdefault.jpg)` }}
+                >
+                  {(video.hinh.trangThai === "thang" || video.hinh.trangThai === "ky") && (
+                    <video
+                      key={video.hinh.trangThai}
+                      ref={nhung.ganHinh}
+                      src={video.hinh.trangThai === "thang" ? video.hinh.thang : video.hinh.ky}
+                      muted
+                      playsInline
+                      preload="auto"
+                      onLoadedData={p.hinhSan}
+                      onError={p.hinhLoi}
+                      className={cn("absolute inset-0 size-full bg-black object-contain", !video.hinh.coHinh && "invisible")}
+                    />
+                  )}
+                  {!video.hinh.coHinh && (
+                    <div className="absolute inset-x-2 bottom-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-black/75 px-3 py-1.5 text-xs text-white">
+                      <span>
+                        {video.hinh.trangThai === "ngoai"
+                          ? `Đang nghe tiếng · ở ngoài mạng nhà, hình ~${video.hinh.mbPhut ?? 1} MB/phút`
+                          : video.hinh.trangThai === "loi"
+                            ? "Đang nghe tiếng · không mở được hình"
+                            : "Đang nghe tiếng · đang lấy hình…"}
+                      </span>
+                      {video.hinh.trangThai === "ngoai" && (
+                        <button type="button" onClick={p.xemHinhNgoaiNha} className="rounded-full bg-white px-3 py-1 font-semibold text-black">
+                          Xem hình
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               {p.canCham && (
                 <span className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/75 px-3 py-1 text-xs font-semibold text-white">
                   {nhung.trangThai === 1 ? "🔇 Chạm vào video để bật tiếng" : "▶ Chạm vào video để phát có tiếng"}
@@ -225,6 +314,7 @@ export function DangPhat(p: Props) {
                 <span className="min-w-0 flex-1 truncate px-1 text-xs font-medium">{video.bai.title}</span>
                 {p.phatTamDung && <NutPhu nhan={p.dangChay ? "Tạm dừng" : "Phát"} Icon={p.dangChay ? Pause : Play} onClick={p.phatTamDung} />}
                 <NutPhu nhan="Phóng to lại" Icon={Maximize2} onClick={() => p.doiCheDo("vua")} />
+                <NutPhu nhan="Chỉ nghe (tắt hình, tiếng chạy tiếp)" Icon={Headphones} onClick={p.chiNghe} />
                 <NutPhu nhan="Đóng video" Icon={X} onClick={p.dongVideo} />
               </div>
             )}
@@ -313,6 +403,7 @@ export function DangPhat(p: Props) {
                 <NutPhu nhan="Chế độ rạp (hết bề ngang)" Icon={RectangleHorizontal} onClick={() => p.doiCheDo("rap")} chiManHinhRong />
               )}
               <NutPhu nhan="Toàn màn hình" Icon={Maximize} onClick={moToanManHinh} />
+              <NutPhu nhan="Chỉ nghe (tắt hình, tiếng chạy tiếp)" Icon={Headphones} onClick={p.chiNghe} />
               <NutPhu nhan="Đóng video" Icon={X} onClick={p.dongVideo} />
             </div>
           )}

@@ -69,8 +69,10 @@ export function useKhoPlaylist(): KhoPlaylist {
   const [ds, setDs] = useState<Playlist[] | null>(boNho);
   const nhan = (r: KetQuaLenh | null) => {
     if (r) {
-      boNho = r.playlists;
-      setDs(r.playlists);
+      // Máy chủ cũ (chưa có playlist) trả ok mà không kèm danh sách: coi như rỗng.
+      const ds = Array.isArray(r.playlists) ? r.playlists : [];
+      boNho = ds;
+      setDs(ds);
     }
     return r;
   };

@@ -98,6 +98,12 @@ function theAm(): HTMLAudioElement {
   return a;
 }
 
+/** Mở khoá thẻ âm thanh ngay trong cú bấm mở video (nếu chưa phát gì), để lỡ khung
+ *  YouTube bị chặn tiếng tự phát thì trang vẫn phát được tiếng bằng thẻ này. */
+export function moKhoaTruoc() {
+  if (!amThat()) moKhoa();
+}
+
 /** Phải gọi ngay trong cú bấm (trước mọi `await`). */
 function moKhoa(): HTMLAudioElement {
   const a = theAm();
