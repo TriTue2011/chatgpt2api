@@ -126,6 +126,35 @@ esac
 # ── 3. Dựng tại chỗ ─────────────────────────────────────────────────────────
 command -v docker >/dev/null 2>&1 || { loi "máy này không có docker"; exit 1; }
 
+# Ảnh ĐANG CHẠY phải có tên riêng TRƯỚC khi `:latest` bị gắn sang ảnh mới.
+#
+# Đo 15/09/2026: c2a chạy ảnh watchtower KÉO TỪ GHCR về lúc 12:23, nên ảnh đó
+# chỉ mang đúng một tên là `:latest`. Lần dựng tại chỗ gắn `:latest` sang ảnh
+# mới → ảnh cũ mất tên duy nhất, và kho ảnh containerd của máy này coi như nó
+# không còn («No such image: sha256:40004cdb…») dù container vẫn chạy. Watchtower
+# cần thông tin ảnh cũ để thay container, nên đứng im báo «Unable to update
+# container "/c2a": no available image info» — ảnh mới lên GHCR mà không ai
+# chạy. Các lần trước không dính vì ảnh đang chạy do chính script dựng, còn
+# giữ thẻ `local-<sha>`.
+giu_ten_anh_dang_chay() {
+    local c id ten giu
+    for c in $(docker ps -a -q); do
+        [ "$(docker inspect "$c" --format '{{.Config.Image}}' 2>/dev/null)" = "$ANH:latest" ] || continue
+        id=$(docker inspect "$c" --format '{{.Image}}')
+        if ! docker image inspect "$id" >/dev/null 2>&1; then
+            noi "ảnh của container $c mất bản ghi — kéo lại $ANH@$id"
+            docker pull "$ANH@$id" >/dev/null || { loi "không kéo lại được $id"; continue; }
+        fi
+        ten=$(docker image inspect "$id" --format '{{join .RepoTags " "}}' 2>/dev/null)
+        if printf '%s\n' $ten | grep -q "^$ANH:local-"; then
+            continue
+        fi
+        giu="$ANH:local-dangchay-$(printf '%s' "${id#sha256:}" | cut -c1-12)"
+        docker tag "$id" "$giu" && noi "gắn tên giữ chỗ $giu cho ảnh đang chạy"
+    done
+}
+giu_ten_anh_dang_chay
+
 # Gắn HAI thẻ trong CÙNG một lần dựng: `local-<sha>` để còn lùi lại được, và
 # `:latest` là thứ máy chủ đang chạy. Dựng xong mới gắn thẻ ở lệnh riêng thì
 # có lúc `:latest` trỏ vào ảnh cũ vì thẻ chạy trước khi dựng xong — đã mắc
