@@ -50,6 +50,8 @@ export type VideoNhung = {
   datLai: () => void;
   /** Gắn thẻ <video> hình riêng (null = bỏ). */
   ganHinh: (el: HTMLVideoElement | null) => void;
+  /** Tua hình tới chỗ tiếng đang phát, đón trước quãng hình cần để hiện sau khi tua. */
+  tuaTheoTieng: (giayTieng: number) => void;
 };
 
 export function useVideoNhung(khiHet: () => void, khiLoi: () => void): VideoNhung {
@@ -62,6 +64,8 @@ export function useVideoNhung(khiHet: () => void, khiLoi: () => void): VideoNhun
   const khiLoiMoi = useRef(khiLoi);
   const hinh = useRef<HTMLVideoElement | null>(null);
   const henBatTay = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+  // Hình mất một lúc mới hiện sau khi tua (tải đoạn mới): `don` giây đón trước, đo lại mỗi lần tua.
+  const tua = useRef({ don: 0.3, luc: 0 });
 
   useEffect(() => {
     khiHetMoi.current = khiHet;
@@ -89,6 +93,12 @@ export function useVideoNhung(khiHet: () => void, khiLoi: () => void): VideoNhun
 
   const doi = useCallback((s: number) => {
     if (!Number.isFinite(s) || s === moc.current.trangThai) return;
+    if (s === 1 && moc.current.trangThai === 3 && tua.current.luc) {
+      // Lần tua vừa rồi mất bao lâu mới hiện: quãng đón cho lần sau (trung bình dần, ≤ 1,5 giây).
+      const mat = (Date.now() - tua.current.luc) / 1000;
+      if (mat < 4) tua.current.don = Math.min(1.5, (tua.current.don + mat) / 2);
+      tua.current.luc = 0;
+    }
     moc.current.trangThai = s;
     setTrangThai(s);
     if (s === 0) khiHetMoi.current();
@@ -180,5 +190,10 @@ export function useVideoNhung(khiHet: () => void, khiLoi: () => void): VideoNhun
     [],
   );
 
-  return { ganKhung, sanSang, trangThai, tatTieng, lenh, thoiGian, khiNap, datLai, ganHinh };
+  const tuaTheoTieng = useCallback((giayTieng: number) => {
+    lenh("seekTo", [giayTieng + tua.current.don, true]);
+    tua.current.luc = Date.now();
+  }, [lenh]);
+
+  return { ganKhung, sanSang, trangThai, tatTieng, lenh, thoiGian, khiNap, datLai, ganHinh, tuaTheoTieng };
 }

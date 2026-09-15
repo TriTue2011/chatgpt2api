@@ -233,6 +233,8 @@ export function TrinhPhat() {
     if (!laVideo(bai)) return;
     if (!video || video.bai.id !== bai.id) tiengMayHong.current = false;
     const ngheTrenMay = theoMay ? false : voiLoa ? (video?.theoLoa ? video.ngheTrenMay : false) : true;
+    // Xem một mình: link tiếng sẵn sàng phòng khi khung bị chặn tiếng tự phát.
+    if (ngheTrenMay && !voiLoa) mayNghe.taiTruoc(bai);
     // Đang hiện hình riêng (bài trước bị chặn nhúng): nạp lại khung để thử nhúng bài này.
     if (video && nhung.sanSang && !video.hinh) {
       // Cùng khung: đổi bài không nạp lại, giữ nguyên cỡ xem và toàn màn hình.
@@ -467,7 +469,7 @@ export function TrinhPhat() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baiPhienXem?.id, video?.theoLoa]);
 
-  // Hình trên trang bám theo loa: tạm dừng/phát theo loa, tua khi lệch quá 2 giây.
+  // Hình trên trang bám theo loa: tạm dừng/phát theo loa, tua khi lệch quá nửa giây.
   useEffect(() => {
     if (!theoLoa) return;
     const hen = setInterval(() => {
@@ -496,8 +498,12 @@ export function TrinhPhat() {
       if (loa.trang_thai === "playing" && [-1, 2, 5].includes(n.trangThai)) n.lenh("playVideo");
       if (loa.trang_thai !== "playing" || loa.vi_tri === null || Date.now() < db.luiTuaDen) return;
       const viTriLoa = loa.vi_tri + (Date.now() - lucTai.current) / 1000;
-      if (Math.abs(viTriLoa - n.thoiGian()) > 2) {
-        n.lenh("seekTo", [viTriLoa, true]);
+      // Loa phát luồng tiếng riêng nên hình (tắt tiếng) bám vị trí loa báo về. Lệch quá 0,8 giây
+      // là thấy lệch khẩu hình, nhịp (chủ máy 15/09/2026: "khi xem hình ko đc khớp với audio").
+      // Home Assistant báo vị trí loa trễ vài trăm mili giây nên nửa giây là mức siết giữ được
+      // mà hình không tua liên tục; nghỉ 5 giây sau mỗi lần tua để khỏi đuổi qua đuổi lại.
+      if (n.trangThai === 1 && Math.abs(viTriLoa - n.thoiGian()) > 0.5) {
+        n.tuaTheoTieng(viTriLoa);
         db.luiTuaDen = Date.now() + 5000;
       }
     }, 2000);
@@ -692,7 +698,7 @@ export function TrinhPhat() {
       void mayNghe.taiCungLoa(bai);
       const a = mayNghe.amThat();
       if (!a) return;
-      if (document.visibilityState === "hidden" && !m.ngheNen) return;
+      if (document.visibilityState === "hidden" && !document.fullscreenElement && !m.ngheNen) return;
       const loa = m.loaPhien.find((t) => dangHoatDong(t));
       if (!loa || !dangPhatBai(loa, bai)) return;
       if (loa.trang_thai === "paused" && !a.paused) a.pause();
@@ -729,8 +735,8 @@ export function TrinhPhat() {
       : "Đã tắt: tắt màn hình thì tiếng trên máy này dừng, mở lại thì phát tiếp.");
   };
 
-  // Video chạy theo thẻ âm thanh: tạm dừng/phát theo, tua khi lệch quá 2 giây. Mở lại
-  // màn hình sau khi nghe nền thì hình tự về đúng chỗ tiếng.
+  // Video chạy theo thẻ âm thanh: tạm dừng/phát theo, tua khi lệch quá 0,35 giây (đồng hồ của
+  // thẻ âm thanh chính xác). Mở lại màn hình sau khi nghe nền thì hình tự về đúng chỗ tiếng.
   const theoMay = !!video?.theoMay;
   useEffect(() => {
     if (!theoMay) return;
@@ -740,10 +746,12 @@ export function TrinhPhat() {
       if (!n.sanSang || !a) return;
       if (a.paused && DANG_CHAY.includes(n.trangThai)) n.lenh("pauseVideo");
       if (!a.paused && [-1, 2, 5].includes(n.trangThai)) n.lenh("playVideo");
-      if (a.paused || Date.now() < dongBo.current.luiTuaDen) return;
-      if (Math.abs(a.currentTime - n.thoiGian()) > 2) {
-        n.lenh("seekTo", [a.currentTime, true]);
-        dongBo.current.luiTuaDen = Date.now() + 4000;
+      // Tiếng còn đang tải (chưa có dữ liệu, vị trí 0) hoặc đang tua tới giây bắt đầu: để yên
+      // hình — bám theo lúc đó kéo hình về 0 giây (chủ máy 15/09/2026: "cứ quay về 0s liên tục").
+      if (a.paused || a.readyState < 3 || a.seeking || n.trangThai !== 1 || Date.now() < dongBo.current.luiTuaDen) return;
+      if (Math.abs(a.currentTime - n.thoiGian()) > 0.35) {
+        n.tuaTheoTieng(a.currentTime);
+        dongBo.current.luiTuaDen = Date.now() + 3000;
       }
     }, 1000);
     return () => clearInterval(hen);
@@ -760,6 +768,9 @@ export function TrinhPhat() {
 
   // Video xem trên máy (có tiếng) mà trình duyệt chặn tiếng tự phát: thử bật tiếng
   // một lần, vẫn chặn thì hiện "Chạm vào video" — chỉ cú chạm vào chính khung mới mở.
+  // Chủ máy 15/09/2026: "Khi chọn xem video thì mất 1 2 s video mới chạy" — kiểm từ giây
+  // thứ nhất, mỗi nửa giây; khung đã sẵn sàng mà hai lần liền vẫn chặn thì xử lý ngay,
+  // khung chưa nạp xong thì chờ tiếp (kẻo máy cho tự phát lại bị tắt tiếng oan).
   const muonTieng = !!video?.ngheTrenMay;
   useEffect(() => {
     setCanCham(false);
@@ -769,7 +780,16 @@ export function TrinhPhat() {
       return n.tatTieng === true || [-1, 5].includes(n.trangThai);
     };
     let henLai: ReturnType<typeof setTimeout> | undefined;
-    const hen = setTimeout(() => {
+    let lan = 0;
+    let chanLienTiep = 0;
+    const kiem = () => {
+      const n = moiNhat.current.nhung;
+      if (n.sanSang && n.trangThai === 1 && n.tatTieng === false) return;
+      chanLienTiep = n.sanSang && chan() ? chanLienTiep + 1 : 0;
+      if (chanLienTiep < 2 && ++lan < 20) {
+        hen = setTimeout(kiem, 500);
+        return;
+      }
       if (!chan()) return;
       const v = moiNhat.current.video;
       if (v && !v.theoLoa && !v.theoMay && !tiengMayHong.current) {
@@ -780,7 +800,8 @@ export function TrinhPhat() {
       moiNhat.current.nhung.lenh("unMute");
       moiNhat.current.nhung.lenh("playVideo");
       henLai = setTimeout(() => setCanCham(chan()), 1500);
-    }, 2500);
+    };
+    let hen = setTimeout(kiem, 1000);
     return () => {
       clearTimeout(hen);
       clearTimeout(henLai);

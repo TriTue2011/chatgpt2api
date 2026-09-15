@@ -65,16 +65,17 @@ export type KetNoi = { url: string; token: string; url_lan: string };
 type Tra<T> = T & { ok: boolean; error?: string };
 
 /** GET/POST tới `/api/youtube-phat/*`; `ok=false` thì báo toast câu máy chủ gửi và trả null. */
-export async function goi<T>(path: string, body?: Record<string, unknown>): Promise<Tra<T> | null> {
+/** `imLang` = hỏng thì không báo (việc làm sẵn trong nền). */
+export async function goi<T>(path: string, body?: Record<string, unknown>, imLang = false): Promise<Tra<T> | null> {
   try {
     const res = await httpRequest<Tra<T>>(`/api/youtube-phat/${path}`, body ? { method: "POST", body } : { method: "GET" });
     if (!res?.ok) {
-      toast.error(res?.error || "Không thực hiện được.");
+      if (!imLang) toast.error(res?.error || "Không thực hiện được.");
       return null;
     }
     return res;
   } catch (e) {
-    toast.error(e instanceof Error ? e.message : "Lỗi mạng.");
+    if (!imLang) toast.error(e instanceof Error ? e.message : "Lỗi mạng.");
     return null;
   }
 }

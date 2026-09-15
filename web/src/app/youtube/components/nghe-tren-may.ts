@@ -85,7 +85,9 @@ function theAm(): HTMLAudioElement {
   // chỉ phát tiếp những gì chính đoạn này đã dừng.
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
-      if (!ngheNenDangBat() && amThat() && !a.paused) {
+      // Ứng dụng Home Assistant báo trang ẩn trong chốc lát khi vào toàn màn hình (chủ máy
+      // 15/09/2026: "phóng to dừng video"): toàn màn hình là đang xem, không phải tắt màn hình.
+      if (!ngheNenDangBat() && !document.fullscreenElement && amThat() && !a.paused) {
         a.pause();
         dungKhiAn = true;
       }
@@ -139,6 +141,28 @@ function manHinhKhoa(bai: BaiHat | null) {
   hanhDong("stop", () => dung());
 }
 
+// Link tiếng xin trước khi mở video (máy chủ ký một giờ): dùng lại trong mười phút.
+const linkXinTruoc = new Map<string, { luc: number; tra: Promise<{ url: string } | null> }>();
+const khoaLink = (bai: BaiHat) => `${bai.source}:${bai.url || bai.id}`;
+
+/** Xin sẵn link tiếng của video vừa mở: khung YouTube bị chặn tiếng tự phát thì tiếng
+ *  chuyển sang thẻ này ngay, không phải chờ máy chủ giải bài. Hỏng thì im lặng. */
+export function taiTruoc(bai: BaiHat) {
+  const khoa = khoaLink(bai);
+  const co = linkXinTruoc.get(khoa);
+  if (bai.source === "http" || (co && Date.now() - co.luc < 600000)) return;
+  const tra = goi<{ url: string }>("nghe", { source: bai.source, target: bai.url || bai.id }, true).then((r) => {
+    if (!r) linkXinTruoc.delete(khoa);
+    return r;
+  });
+  linkXinTruoc.set(khoa, { luc: Date.now(), tra });
+}
+
+async function linkSan(bai: BaiHat): Promise<{ url: string } | null> {
+  const co = linkXinTruoc.get(khoaLink(bai));
+  return co && Date.now() - co.luc < 600000 ? co.tra : null;
+}
+
 /** Nghe một bài trên máy này; `batDau` = giây bắt đầu (chuyển từ video sang). */
 export async function ngheBai(bai: BaiHat, hang: Hang, batDau = 0): Promise<void> {
   const a = moKhoa();
@@ -147,7 +171,7 @@ export async function ngheBai(bai: BaiHat, hang: Hang, batDau = 0): Promise<void
   dat({ bai, hang, cungLoa: false });
   manHinhKhoa(bai);
   const ke = hang.items[hang.index + 1];
-  const r = await goi<{ url: string }>("nghe", {
+  const r = (await linkSan(bai)) ?? await goi<{ url: string }>("nghe", {
     source: bai.source,
     target: bai.url || bai.id,
     ...(ke && ke.source !== "http" ? { ke } : {}),
