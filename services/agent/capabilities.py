@@ -8115,6 +8115,31 @@ def ai_off_for(platform: str, bot_id: str, chat_id: str,
     return False
 
 
+def tag_asker_for(platform: str, bot_id: str, chat_id: str,
+                  topic_id: str | int | None = None) -> bool:
+    """Bot trả lời trong nhóm này có tag người vừa hỏi không? (config
+    `thread_mention_filters`, trường `tag_asker`). Không cấu hình → False.
+
+    Chủ máy 15/09/2026: "thêm bật tắt tag người khi phản hồi trên webui giống như tích
+    tag bot", mặc định tắt — nhóm nào tích mới tag. Bản ghi của topic thắng cả nhóm."""
+    def _lookup(key: str) -> bool | None:
+        try:
+            from services.config import config
+            m = config.get().get("thread_mention_filters") or {}
+            if isinstance(m, dict) and key in m:
+                v = m.get(key)
+                if isinstance(v, dict):
+                    return bool(v.get("tag_asker"))
+        except Exception:
+            pass
+        return None
+    for k in _thread_keys(platform, bot_id, chat_id, topic_id):
+        r = _lookup(k)
+        if r is not None:
+            return r
+    return False
+
+
 def reply_to_self_for(platform: str, bot_id: str, chat_id: str,
                       topic_id: str | int | None = None) -> tuple[bool, str]:
     """Thread có cho bot TRẢ LỜI CẢ TIN CỦA CHÍNH CHỦ (isSelf) không?

@@ -3110,6 +3110,21 @@ def _nhom_hoc_hoi(ev: dict, thread_id: str, text: str) -> str | None:
     return hieu_thiet_bi_nha.nhan_du_kien(text, nguoi=nguoi)
 
 
+def _dat_nguoi_hoi(ev: dict, caps) -> None:
+    """Người đang hỏi bot trong lượt này: mọi câu bot trả lời vào nhóm này tag họ (xem
+    `send_message`) — chỉ khi nhóm bật «Tag người hỏi» trong Lọc thread (mặc định tắt).
+    Đặt lại MỖI tin vì threading.local sống theo luồng."""
+    thread_id = str(ev.get("thread_id") or "").strip()
+    nhom = int(ev.get("thread_type") or 0) == 1
+    try:
+        bat = nhom and caps.tag_asker_for("zalop", str(ev.get("account_id") or ""), thread_id)
+    except Exception:
+        bat = False
+    _msg_ctx.hoi_thread = thread_id if bat else ""
+    _msg_ctx.hoi_uid = str(ev.get("sender_id") or "") if bat and not ev.get("is_self") else ""
+    _msg_ctx.hoi_ten = str(ev.get("display_name") or "").strip() if bat else ""
+
+
 def _process_ai(ev: dict) -> None:
     """Trả lời AI cho 1 tin — CHỈ thread được cấp phép (an toàn tài khoản cá nhân)."""
     thread_id = str(ev.get("thread_id") or "").strip()
@@ -3120,11 +3135,7 @@ def _process_ai(ev: dict) -> None:
     from services.agent import capabilities as _caps
     # Tầng lọc: nhóm (thread_id) ∩ user (sender_id) — User ID theo từng nhóm.
     _sender = str(ev.get("sender_id") or "")
-    # Người đang hỏi bot trong lượt này: mọi câu bot trả lời vào nhóm này tag họ
-    # (xem `send_message`). Đặt lại MỖI tin vì threading.local sống theo luồng.
-    _msg_ctx.hoi_thread = str(thread_id) if int(thread_type or 0) == 1 else ""
-    _msg_ctx.hoi_uid = _sender if not ev.get("is_self") else ""
-    _msg_ctx.hoi_ten = str(ev.get("display_name") or "").strip()
+    _dat_nguoi_hoi(ev, _caps)
     # NHẬT KÝ NHÓM: ghi MỌI tin nhận được (nếu phạm vi BẬT) — TRƯỚC mọi cổng
     # lọc/tag, tách hẳn với việc trả lời. Mặc định TẮT nên không bật thì không ghi.
     try:

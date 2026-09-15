@@ -445,6 +445,9 @@ def _normalize_thread_mention_filters(value: object) -> dict[str, dict]:
                     rec["self_keyword"] = _self_kw
                 if v.get("ai_off"):
                     rec["ai_off"] = True
+                # «Tag người hỏi khi bot trả lời» (chủ máy 15/09/2026, mặc định tắt).
+                if v.get("tag_asker"):
+                    rec["tag_asker"] = True
                 out[k.strip()] = rec
     return out
 

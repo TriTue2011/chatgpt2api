@@ -1,7 +1,8 @@
 """Bot trả lời trong nhóm Zalo cá nhân thì tag người vừa hỏi.
 
 Chủ máy 14/09/2026: "Tự tag người gửi mỗi khi bot trả lời trong nhóm. Cái này hợp lý
-khi trả lời người hỏi bot, để họ biết được phản hồi".
+khi trả lời người hỏi bot, để họ biết được phản hồi". 15/09/2026: "thêm bật tắt tag người
+khi phản hồi trên webui giống như tích tag bot" — ô trong Lọc thread, mặc định tắt.
 
 Khoá các chỗ dễ sai: chỉ nhóm; chỉ khi gửi vào ĐÚNG nhóm người đó vừa hỏi (bot có
 thể gửi sang nhóm khác trong cùng lượt); @All thắng; vị trí style/mention theo
@@ -68,6 +69,39 @@ class TagNguoiHoiTest(unittest.TestCase):
         self.assertGreater(len(tin), 1)
         self.assertIn("mentions", tin[0])
         self.assertTrue(all("mentions" not in m for m in tin[1:]))
+
+
+class BatTatTheoNhomTest(unittest.TestCase):
+    """Ô «Tag người hỏi» trong Lọc thread (thread_mention_filters.tag_asker)."""
+
+    def setUp(self) -> None:
+        self.addCleanup(lambda: [setattr(zp._msg_ctx, k, "") for k in ("hoi_thread", "hoi_uid", "hoi_ten")])
+
+    def _dat(self, cau_hinh, **ev):
+        from services.agent import capabilities as caps
+
+        tin = {"thread_id": "g1", "thread_type": 1, "account_id": "acc1", "sender_id": "u42", "display_name": "Việt", **ev}
+        with patch("services.config.config.get", return_value={"thread_mention_filters": cau_hinh}):
+            zp._dat_nguoi_hoi(tin, caps)
+        return (zp._msg_ctx.hoi_thread, zp._msg_ctx.hoi_uid, zp._msg_ctx.hoi_ten)
+
+    def test_mac_dinh_tat_khong_tag(self) -> None:
+        self.assertEqual(("", "", ""), self._dat({}))
+        self.assertEqual(("", "", ""), self._dat({"zalop:acc1:g1": {"required": True, "keyword": "@bot"}}))
+
+    def test_nhom_tich_o_thi_tag_nguoi_hoi(self) -> None:
+        self.assertEqual(("g1", "u42", "Việt"), self._dat({"zalop:acc1:g1": {"tag_asker": True}}))
+        # Khoá chung mọi tài khoản cũng được.
+        self.assertEqual(("g1", "u42", "Việt"), self._dat({"zalop:g1": {"tag_asker": True}}))
+        # Chat riêng, hay tin của chính chủ: không tag.
+        self.assertEqual(("", "", ""), self._dat({"zalop:acc1:g1": {"tag_asker": True}}, thread_type=0))
+        self.assertEqual("", self._dat({"zalop:acc1:g1": {"tag_asker": True}}, is_self=True)[1])
+
+    def test_luu_cau_hinh_giu_o_nay(self) -> None:
+        from services.config import _normalize_thread_mention_filters as chuan
+
+        self.assertTrue(chuan({"zalop:acc1:g1": {"tag_asker": True}})["zalop:acc1:g1"]["tag_asker"])
+        self.assertNotIn("tag_asker", chuan({"zalop:acc1:g1": {"required": True, "tag_asker": False}})["zalop:acc1:g1"])
 
 
 if __name__ == "__main__":
