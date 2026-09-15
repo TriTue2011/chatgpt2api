@@ -15,6 +15,7 @@ import {
   ListMusic, LoaderCircle, MonitorOff, Maximize, Maximize2, Minimize2, MonitorPlay, Music2, Pause, PictureInPicture2, Play,
   RectangleHorizontal, SkipBack, SkipForward, Speaker, Square, Users, Volume2, VolumeX, X,
   Headphones,
+  RotateCw,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -142,6 +143,21 @@ export function DangPhat(p: Props) {
   // Toàn màn hình trên điện thoại: xoay ngang cho video 16:9. Chỉ trình duyệt hỗ trợ
   // khoá hướng (Chrome Android, khi đang toàn màn hình) mới xoay; nơi khác vẫn toàn
   // màn hình, video giữ nguyên tỉ lệ nằm giữa (không cắt). Thoát thì trả hướng tự do.
+  // Xoay khung 90° trong toàn màn hình khi máy đang dựng đứng: trình duyệt/app không khoá xoay
+  // được (app WebView) hoặc máy khoá xoay. Chủ máy 15/09/2026: "Thêm nút quay 90 khi phóng to
+  // để cho những trường hợp khóa xoay".
+  const [toanMan, setToanMan] = useState(false);
+  const [xoay, setXoay] = useState(false);
+  const [dungDoc, setDungDoc] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia?.("(orientation: portrait)");
+    if (!mq) return;
+    const doi = () => setDungDoc(mq.matches);
+    doi();
+    mq.addEventListener("change", doi);
+    return () => mq.removeEventListener("change", doi);
+  }, []);
+
   const moToanManHinh = async () => {
     const khung = toanManHinh.current as (HTMLDivElement & { webkitRequestFullscreen?: () => Promise<void> }) | null;
     if (!khung) return;
@@ -155,7 +171,13 @@ export function DangPhat(p: Props) {
       return;
     }
     const huong = screen.orientation as (ScreenOrientation & { lock?: (o: string) => Promise<void> }) | undefined;
-    await huong?.lock?.("landscape").catch(() => undefined);
+    try {
+      if (!huong?.lock) throw new Error("khong_khoa_xoay");
+      await huong.lock("landscape");
+    } catch {
+      // Không khoá xoay được: xoay khung hình, người xem chỉ việc cầm ngang máy.
+      if (document.fullscreenElement === khung) setXoay(true);
+    }
   };
 
   // Nút toàn màn hình CỦA YOUTUBE trong khung video. Chủ máy 15/09/2026: "khi chọn thu nhỏ
@@ -172,7 +194,9 @@ export function DangPhat(p: Props) {
     const doi = () => {
       const dang = document.fullscreenElement;
       const khung = toanManHinh.current;
+      setToanMan(!!khung && dang === khung);
       if (!dang) {
+        setXoay(false);
         cuaTrang.current = false;
         thoatHan.current = false;
         try {
@@ -253,15 +277,18 @@ export function DangPhat(p: Props) {
                 "[&:fullscreen]:flex [&:fullscreen]:items-center [&:fullscreen]:justify-center [&:fullscreen]:bg-black",
               )}
             >
+              <div
+                className={cn("absolute inset-0", toanMan && "relative inset-auto shrink-0 h-[min(100dvh,calc(100vw*9/16))] w-[min(100vw,calc(100dvh*16/9))]")}
+                style={toanMan && xoay && dungDoc
+                  ? { width: "min(100dvh, calc(100vw * 16 / 9))", height: "min(100vw, calc(100dvh * 9 / 16))", rotate: "90deg" }
+                  : undefined}
+              >
               <iframe
                 ref={nhung.ganKhung}
                 src={video.src}
                 onLoad={nhung.khiNap}
                 title={video.bai.title || "Video YouTube"}
-                className={cn(
-                  "absolute inset-0 size-full [:fullscreen>&]:static [:fullscreen>&]:h-[min(100dvh,calc(100vw*9/16))] [:fullscreen>&]:w-[min(100vw,calc(100dvh*16/9))]",
-                  video.hinh && "invisible",
-                )}
+                className={cn("absolute inset-0 size-full", video.hinh && "invisible")}
                 allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
                 allowFullScreen
                 // YouTube báo "Error 153" khi khung nhúng không kèm Referer (trang gửi no-referrer).
@@ -308,6 +335,18 @@ export function DangPhat(p: Props) {
                   {nhung.trangThai === 1 ? "🔇 Chạm vào video để bật tiếng" : "▶ Chạm vào video để phát có tiếng"}
                 </span>
               )}
+              {toanMan && dungDoc && (
+                <button
+                  type="button"
+                  onClick={() => setXoay((x) => !x)}
+                  aria-label={xoay ? "Xoay lại dọc" : "Xoay ngang 90°"}
+                  title={xoay ? "Xoay lại dọc" : "Xoay ngang 90° (máy đang khoá xoay)"}
+                  className="absolute left-2 top-2 z-10 flex size-9 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur hover:bg-black/80"
+                >
+                  <RotateCw className="size-4" />
+                </button>
+              )}
+              </div>
             </div>
             {nho && (
               <div className="flex items-center gap-0.5 px-2 py-1">
