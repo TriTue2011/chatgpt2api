@@ -948,23 +948,58 @@ def _h_web_search(args: dict, ctx: dict) -> dict:
     if not query:
         return {"text": "Anh/chị muốn em tra cứu gì ạ?"}
     from services import mcp_client
+    # Thời tiết đi CÙNG lõi với đường tắt chat (AccuWeather + địa danh mặc định
+    # của cuộc trò chuyện), kể cả khi model gộp nó vào một câu tra tin tức. Bản
+    # tin 8h ngày 12–15/09 tra qua đây và nhận số liệu sai chỗ từ `vn_weather`
+    # — xem docstring `services/agent/thoi_tiet.py`.
+    thoi_tiet = None
+    try:
+        from services.agent import thoi_tiet as tt
+        thoi_tiet = tt.cho_cong_cu(query, str((ctx or {}).get("user_id") or ""))
+    except Exception as exc:
+        logger.warning({"event": "web_search_thoi_tiet_loi", "error": str(exc)[:150]})
+    khoi_tt = f"THỜI TIẾT (AccuWeather):\n{thoi_tiet}\n\n" if thoi_tiet else ""
     live = mcp_client.prefetch_realtime_context(query)
     if live:
-        return {"text": live}
+        return {"text": khoi_tt + live}
     # Return evidence from the configured MCP/search backends. A second plain
     # model call can invent a search failure or answer without fetching data.
     from services.search_service import search_service
     try:
-        results = search_service.search_all(query)
+        # Đã có khối thời tiết thì bỏ `vn_weather`: hai bộ số liệu cho cùng một
+        # câu (một cái còn sai địa danh) chỉ để model chọn nhầm.
+        results = search_service.search_all(query, bo_mcp=("vn_weather",) if thoi_tiet else ())
     except Exception:
         logger.exception("agent web_search failed")
         results = []
     if not results:
+        if khoi_tt:
+            return {"text": khoi_tt.strip()}
         return {"text": "Công cụ tra cứu chưa trả được dữ liệu cho yêu cầu này. "
                         "Không có số liệu đã xác minh để kết luận; không tự suy giá hoặc thời điểm cập nhật."}
-    return {"text": "\n\n".join(
+    return {"text": khoi_tt + "\n\n".join(
         f"{r.get('title') or ''}\n{r.get('snippet') or ''}\nNguồn: {r.get('url') or 'MCP đã cấu hình'}"
         for r in results)[:18000]}
+
+
+def _h_thoi_tiet(args: dict, ctx: dict) -> dict:
+    """Thời tiết theo địa danh (hoặc địa danh mặc định) và đặt/đổi địa danh mặc định."""
+    from services.agent import thoi_tiet as tt
+    uid = str((ctx or {}).get("user_id") or "").strip()
+    if not uid:
+        return {"text": "Em chưa xác định được cuộc trò chuyện để tra thời tiết ạ."}
+    ra = tt.xu_ly(uid, dia_danh=str(args.get("dia_danh") or "").strip(),
+                  dat_mac_dinh_moi=bool(args.get("dat_lam_mac_dinh")),
+                  tu_dong=bool((ctx or {}).get("auto_approve")))
+    # Nút «Đổi địa danh» chỉ hợp với câu trả lời của đường tắt; ở đây model còn
+    # viết tiếp. Menu CHỌN NƠI thì phải tới tay người dùng nguyên vẹn — orchestrator
+    # trả thẳng kết quả có `choices` của tool này, không để model kể lại.
+    if ra.get("cau_tra_loi"):
+        return {"text": ra["text"]}
+    nut = ra.get("nut") or []
+    if nut:
+        return {"text": ra["text"], "choices": [{"label": n, "send": g} for n, g in nut]}
+    return {"text": ra["text"]}
 
 
 def _h_write_code(args: dict, ctx: dict) -> dict:
@@ -6247,6 +6282,21 @@ CAPABILITIES: dict[str, Capability] = {
         workflow=("Xoá là việc không lấy lại được: lần gọi đầu LUÔN để xac_nhan "
                   "trống để người dùng thấy 'bao nhiêu tệp, bao nhiêu MB, từ "
                   "ngày nào', chờ họ gật rồi mới gọi lại với xac_nhan=true.")),
+    "thoi_tiet": Capability(
+        name="thoi_tiet", risk=READ, handler=_h_thoi_tiet,
+        emoji="🌦️", label="Thời tiết (AccuWeather)",
+        description=("Thời tiết hiện tại từ AccuWeather. BỎ TRỐNG dia_danh = địa danh "
+                     "MẶC ĐỊNH của cuộc trò chuyện (chưa có thì tool tự hỏi người dùng). "
+                     "Người dùng muốn ĐẶT/ĐỔI địa danh mặc định ('đổi địa danh thời tiết "
+                     "sang Đà Nẵng') → dat_lam_mac_dinh=true (kèm dia_danh nếu họ đã nêu). "
+                     "KHÔNG tự điền địa danh người dùng không nêu."),
+        parameters={"type": "object", "properties": {
+            "dia_danh": {"type": "string",
+                         "description": "Nơi người dùng NÊU trong câu; bỏ trống nếu không nêu"},
+            "dat_lam_mac_dinh": {"type": "boolean",
+                                 "description": "true khi người dùng muốn đặt/đổi địa danh mặc định"}}},
+        workflow=("Thời tiết lấy bằng tool này, không đoán từ tin tức. Tool trả câu hỏi "
+                  "hoặc menu chọn nơi thì chuyển nguyên cho người dùng.")),
     "theo_doi_chu_de": Capability(
         name="theo_doi_chu_de", risk=READ, handler=_h_theo_doi_chu_de,
         emoji="📌", label="Theo dõi chủ đề tin tức",
@@ -6779,6 +6829,8 @@ CAPABILITIES: dict[str, Capability] = {
             "Chỉ hỏi thông tin thực sự còn thiếu. Đã đủ thì gọi schedule ngay, không tự xin xác nhận. "
             "Tin tức/thời tiết: text phải là nhiệm vụ lấy dữ liệu mới lúc chạy và tổng hợp kết quả, "
             "không chỉ là tiêu đề bản tin; hệ thống gửi kết quả đúng nơi nhận đã lưu. "
+            "Thời tiết: KHÔNG tự ghi địa danh người dùng không nêu vào text — lúc chạy "
+            "sẽ dùng địa danh mặc định của cuộc trò chuyện. "
             "Sau khi đặt: đọc lại id + thời điểm cho người dùng. "
             "mode=task chỉ khi họ muốn em TỰ LÀM việc (báo cáo nhà, tóm tắt…) "
             "— còn 'nhắc anh gọi khách' thì mode=notify."
@@ -7644,6 +7696,9 @@ _CAP_GROUP: dict[str, str] = {
     "generate_image": "image", "library_media": "image", "delete_media": "image",
     "tim_da_luu": "image",
     "theo_doi_chu_de": "web",
+    # Thời tiết lấy từ AccuWeather trên mạng — cùng quyền với tra cứu, KHÔNG
+    # thuộc homeassistant (chủ máy chốt 15/09/2026: thời tiết tách khỏi HA).
+    "thoi_tiet": "web",
     "generate_music": "music",
     "generate_video": "video",
     "web_search": "web", "read_webpage": "web", "youtube_transcript": "web",

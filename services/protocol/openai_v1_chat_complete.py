@@ -2823,8 +2823,8 @@ def ha_local_fastpath_chi_tiet(user_text: str) -> tuple[str | None, bool, str]:
     """Fast-path HA cho kênh chat bot (Telegram/Zalo — orchestrator gọi TRƯỚC
     khi đụng model): chạy trên MỘT câu người dùng, KHÔNG cần provider AI nào.
     Lệnh điều khiển rõ ràng được THỰC THI ngay (call_service thẳng tới HA);
-    câu hỏi giá trị cảm biến / trạng thái on-off / âm lịch / thời tiết trả lời
-    từ dữ liệu thật. Trả (văn mẫu, đã_điều_khiển, TÊN BỘ DÒ đã khớp);
+    câu hỏi giá trị cảm biến / trạng thái on-off / âm lịch / bão trả lời từ dữ
+    liệu thật. Trả (văn mẫu, đã_điều_khiển, TÊN BỘ DÒ đã khớp);
     (None, False, "") khi không fast-path nào khớp → caller đi đường model.
 
     VÌ SAO PHẢI TRẢ TÊN BỘ DÒ: chín bộ dò dưới đây xếp hàng, cái nào khớp
@@ -2884,15 +2884,9 @@ def ha_local_fastpath_chi_tiet(user_text: str) -> tuple[str | None, bool, str]:
                             "fn": fn.__name__, "error": str(exc)[:150]})
         if r and isinstance(r, str) and r.strip():
             return r.strip(), False, fn.__name__
-    # Bot chat (Tele/Zalo): giữ °C/% — HA Assist giọng nói dùng RT1 + :tts riêng.
-    try:
-        r = _ha_local_weather(messages, keep_units=True)
-    except Exception as exc:
-        r = None
-        logger.warning({"event": "ha_bot_fastpath_error",
-                        "fn": "_ha_local_weather", "error": str(exc)[:150]})
-    if r and isinstance(r, str) and r.strip():
-        return r.strip(), False, "_ha_local_weather"
+    # Thời tiết KHÔNG còn ở đây: kênh chat bot (Tele/Zalo) hỏi thời tiết theo địa
+    # danh mặc định của cuộc trò chuyện — `services/agent/thoi_tiet.py`. Chủ máy
+    # chốt 15/09/2026 tách thời tiết khỏi HA; loa HA vẫn đọc thực thể qua RT1.
     return None, False, ""
 
 
@@ -2913,12 +2907,9 @@ def _collect_fastpath_facts(messages: list[dict[str, Any]]) -> str:
             r = None
         if r and isinstance(r, str) and r.strip():
             facts.append(r.strip())
-    try:
-        r = _ha_local_weather(messages, keep_units=True)
-    except Exception:
-        r = None
-    if r and isinstance(r, str) and r.strip():
-        facts.append(r.strip())
+    # Không bơm thời tiết HA: lượt agent lấy thời tiết bằng tool `thoi_tiet` /
+    # `web_search` theo địa danh mặc định. Bơm cả hai là đưa model hai bộ số liệu
+    # của hai nguồn cho cùng một câu.
     # De-dup while preserving order (lunar + status can overlap on dates).
     seen: set[str] = set()
     uniq = [f for f in facts if not (f in seen or seen.add(f))]

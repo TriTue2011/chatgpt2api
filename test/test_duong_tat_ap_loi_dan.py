@@ -188,7 +188,7 @@ class MoiChoTraKetQuaDeuPhaiChonCoY(unittest.TestCase):
     trong prompt → không áp), hay là văn bản đường tắt (phải áp). Chính vì chưa
     ai buộc phải quyết định mà `_ap_so_thich` nằm chết trong code suốt.
 
-    Mười một chỗ CỐ Ý không áp:
+    Mười hai chỗ CỐ Ý không áp:
       * wizard Speech Persona và luồng Facebook — câu hỏi của một máy trạng
         thái, chữ nghĩa là giao diện chứ không phải câu trả lời;
       * menu chọn model ảnh, hai câu hỏi xin duyệt, tin gộp «kết quả + xin
@@ -203,6 +203,10 @@ class MoiChoTraKetQuaDeuPhaiChonCoY(unittest.TestCase):
       * menu chọn người nhận lịch và lượt chọn đã lưu — đây là biểu mẫu hành
         động do code dựng, giữ nguyên mã lựa chọn và payload đã xác thực; nhờ
         model bày lại có thể làm đổi nút hoặc đích nhận.
+      * đường tắt THỜI TIẾT (15/09/2026) — câu trả lời thời tiết đã được áp lời
+        dặn bằng `_ap_so_thich` ngay trước đó, rồi mới gắn nút «Đổi địa danh» /
+        «Đúng rồi». Áp ở `_finalize` thì quá muộn: tin đã có khối `<<<ASK>>>`
+        nên `_ap_so_thich` tự bỏ qua, lời dặn «thêm lưu ý, dặn dò» rơi mất.
     """
 
     def setUp(self):
@@ -225,7 +229,7 @@ class MoiChoTraKetQuaDeuPhaiChonCoY(unittest.TestCase):
                          "lời dặn hay không, rồi sửa con số này")
 
     def test_so_cho_co_y_khong_ap(self):
-        self.assertEqual(len(self.khong), 11,
+        self.assertEqual(len(self.khong), 12,
                          "một chỗ trả kết quả mới KHÔNG áp lời dặn phải có lý "
                          "do ghi trong docstring của lớp test này")
 

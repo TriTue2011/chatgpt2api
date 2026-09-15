@@ -1275,8 +1275,11 @@ class SearchService:
         logger.warning({"event": "search_all_backends_failed", "tried": combo})
         return []
 
-    def search_all(self, query: str) -> list[dict[str, str]]:
+    def search_all(self, query: str, *, bo_mcp: tuple[str, ...] = ()) -> list[dict[str, str]]:
         """Smart search: phan tich intent, goi song song dung MCP tools + combo backends.
+
+        `bo_mcp`: server MCP bên gọi đã tự lo phần dữ liệu đó (vd `web_search`
+        đã có khối thời tiết AccuWeather thì bỏ `vn_weather`).
 
         Flow:
         1. IntentRouter phan tich query -> chon dung MCP tools
@@ -1318,7 +1321,7 @@ class SearchService:
 
         # --- Luong 1: Smart MCP tool call dua theo intent ---
         intent = _intent_router.detect(query)
-        mcp_server_ids = list(intent["mcp_tools"])
+        mcp_server_ids = [s for s in intent["mcp_tools"] if s not in bo_mcp]
         kb_collections = intent["kb_collections"]
 
         # Đảm bảo có WEB SEARCH (federated) cho câu KIẾN THỨC: kho có thể rỗng/thiếu

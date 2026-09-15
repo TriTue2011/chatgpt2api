@@ -58,6 +58,7 @@ class TungNhomBanDungTool(_Base):
         ("viết chương trình python", "write_code", None),
         ("tin tức hôm nay", "web_search", None),
         ("đường từ 114 Mai Hắc Đế về Bắc Linh Đàm", "chi_duong", None),
+        ("đổi địa danh thời tiết sang Đà Nẵng", "thoi_tiet", None),
         ("nhắc anh 7h sáng mai", "schedule(op=list)", None),
         ("tự động xoá phản hồi sau 15 phút", "tu_xoa_tin", None),
         ("tìm lại chuyện cũ hôm trước", "search_history", None),

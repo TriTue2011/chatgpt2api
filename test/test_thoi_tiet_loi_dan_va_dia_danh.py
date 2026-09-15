@@ -75,13 +75,17 @@ class NhanRaLoiDanThemKhuyenCao(unittest.TestCase):
 
 
 class LoiDanToiDuocLuotDienDatDuongTat(unittest.TestCase):
-    """Đường tắt thời tiết phải ĐƯA lời dặn vào lượt nhờ model diễn đạt.
+    """Đường tắt nhà thông minh phải ĐƯA lời dặn vào lượt nhờ model diễn đạt.
 
     Đây là chỗ hỏng thật: đường tắt trả lời trước khi model được gọi, nên lời
     dặn nằm trong trí nhớ không có đường nào chạm tới câu trả lời.
+
+    Ca gốc 29/08 là câu thời tiết. Từ 15/09/2026 thời tiết tách khỏi HA và đi
+    luồng riêng (`test_thoi_tiet_dia_danh_mac_dinh.py` kiểm lời dặn ở luồng đó);
+    ở đây giữ nguyên cơ chế diễn đạt cho các câu HA còn lại.
     """
 
-    FP = "Thời tiết Hoàng Mai hiện có mưa, khoảng 31°C, độ ẩm 70%."
+    FP = "Đèn bếp đang bật."
 
     def _chay(self, mem: str) -> dict:
         thay: dict = {}
@@ -95,11 +99,11 @@ class LoiDanToiDuocLuotDienDatDuongTat(unittest.TestCase):
         # `ha_local_fastpath_chi_tiet`. Vá bản gọn thì nhánh diễn đạt không
         # chạy tới và `kw` rỗng.
         with patch.object(api, "ha_local_fastpath_chi_tiet",
-                          return_value=(self.FP, False, "_ha_local_weather")), \
+                          return_value=(self.FP, False, "_ha_local_status")), \
              patch.object(orch, "call_model", side_effect=_bat), \
              patch.object(orch, "_persist_history", lambda *a, **k: None), \
              patch.object(state, "load_memory", return_value=mem):
-            orch._orchestrate_locked("thời tiết hôm nay", "u_test_thoi_tiet",
+            orch._orchestrate_locked("đèn bếp đang bật không", "u_test_thoi_tiet",
                                      ha_fastpath=True)
         return thay
 

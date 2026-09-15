@@ -1503,7 +1503,9 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
      "'giá vàng', 'kết quả trận …', 'tình hình <chủ đề>' → search ĐÚNG chủ đề "
      "đó, CHỈ trả tin LIÊN QUAN chủ đề (5–8 tin mới nhất, gạch đầu dòng ngắn). "
      "TUYỆT ĐỐI KHÔNG chia 8 mục, KHÔNG chèn tin lạc đề, KHÔNG thay chủ đề "
-     "người dùng hỏi bằng bản tin tổng hợp chung."),
+     "người dùng hỏi bằng bản tin tổng hợp chung.\n"
+     "- Thời tiết → thoi_tiet (bỏ trống dia_danh = địa danh mặc định; đặt/đổi "
+     "mặc định → dat_lam_mac_dinh=true)."),
     ("web", _KW_THEODOI,  # theo_doi_chu_de thuộc nhóm web
      "- THEO DÕI CHỦ ĐỀ để sau hỏi lại: 'theo dõi vụ cháy Hải Dương', 'cập nhật "
      "giúp tôi tình hình bão' → theo_doi_chu_de(op=add, chu_de=…). 'Có gì mới về "
@@ -3146,6 +3148,47 @@ def _orchestrate_locked(user_text: str, user_id: str,
             _journal(str(out_y.get("text") or ""), status="loa_hoi_fastpath")
             return out_y
 
+    # 1.49) THỜI TIẾT theo địa danh mặc định của cuộc trò chuyện (AccuWeather) —
+    # xem `services/agent/thoi_tiet.py`. Chủ máy chốt 15/09/2026: thời tiết TÁCH
+    # khỏi Home Assistant, nên nhánh này KHÔNG chờ `ha_fastpath` hay quyền
+    # homeassistant; quyền của nó là nhóm "web" như mọi lượt tra mạng.
+    #
+    # Đứng TRƯỚC 1.5: câu trả lời tên nơi («Hoàng Mai») ngay sau khi bot hỏi địa
+    # danh mặc định phải được luồng này nhận, không để bộ dò nào của nhà thông
+    # minh diễn giải trước.
+    if allow is None or "web" in allow:
+        _tt_ra = None
+        try:
+            from services.agent import thoi_tiet as _tt
+            _tt_ra = _tt.tra_loi(user_text, user_id)
+        except Exception as exc:
+            logger.warning({"event": "agent_thoi_tiet_loi", "error": str(exc)[:150]})
+        _tt_nut = list((_tt_ra or {}).get("nut") or [])
+        if _tt_ra and _tt_ra.get("cau_tra_loi"):
+            # Đây vẫn là đường tắt khớp chuỗi — cùng hai chốt với 1.5: câu từng
+            # bị chấm SAI thì nhường model; bộ dò chưa đủ tin thì hỏi lại.
+            try:
+                from services import bai_hoc
+                if bai_hoc.tra(user_text) or bai_hoc.bo_do_dang_ngo(_tt.BO_DO):
+                    logger.info({"event": "thoi_tiet_nhuong_model"})
+                    _tt_ra = None
+                else:
+                    _tt_ra["text"] = _ap_so_thich(str(_tt_ra["text"]), user_text, _main_model,
+                                                  pham_vi=_pham_vi(user_id))
+                    _bo_do_cuoi[str(user_id or "")] = _tt.BO_DO
+                    if bai_hoc.nen_hoi_lai(_tt.BO_DO):
+                        _tt_nut += [("Đúng rồi", "dạ đúng rồi"),
+                                    ("Chưa đúng", f"bot trả lời chưa đúng: {user_text}")]
+            except Exception as exc:
+                logger.warning("agent: thoi_tiet bai_hoc: %s", exc)
+        if _tt_ra:
+            out_tt = _finalize(user_id, {"text": _tt.gan_nut(str(_tt_ra.get("text") or ""), _tt_nut)})
+            hist.append({"role": "assistant", "content": out_tt.get("text") or ""})
+            _persist_history(user_id, hist)
+            tools_used.append("thoi_tiet")
+            _journal(str(out_tt.get("text") or ""), status="thoi_tiet")
+            return out_tt
+
     # 1.5) HA fast-path (bật/tắt RIÊNG từng bot/tài khoản qua `ha_fastpath`):
     # lệnh điều khiển / câu hỏi nhà RÕ RÀNG → xử lý CỤC BỘ ngay, KHÔNG vòng qua
     # provider — thiết bị phản ứng tức thì và chạy được cả khi không có provider
@@ -3628,7 +3671,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 result = _execute(cap, args, user_id, user_text=user_text, is_admin=is_admin,
                                   auto_approve=auto_approve)
 
-            if name == "schedule" and result.get("choices"):
+            if name in ("schedule", "thoi_tiet") and result.get("choices"):
                 out_choice = _finalize(user_id, result)
                 hist.append({"role": "tool", "tool_call_id": tc.get("id") or "",
                              "content": str(out_choice.get("text") or "")})
