@@ -26,6 +26,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEST = Path(os.environ.get("ZEROTTS_DIR") or ROOT / "data" / "zerotts")
 REPO = "zeroweight-ai/ZeroTTS"
+# GHIM đúng commit trọng số đã đo thanh điệu 15/09/2026 (0/1409 âm tiết sai thanh).
+# Không dùng mặc định của gói: zerotts 0.1.4 ghim một commit cũ, 0.1.5 tải `main`
+# — mà chính tác giả ghi `main` từng đổi graph làm hỏng ngược runtime đã phát hành.
+REVISION = "c2bfbd67dc648cac455077333f7cf5c18a2e3bb4"
 BAT_BUOC = ("config.json", "tokenizer.json", "null_voice_emb.npy", "onnx/text_encoder.onnx",
             "onnx/prefix_step.onnx", "onnx/local_frame_decode.onnx", "voices/index.json")
 
@@ -55,8 +59,7 @@ def main() -> int:
     from huggingface_hub import snapshot_download
 
     DEST.mkdir(parents=True, exist_ok=True)
-    snapshot_download(repo_id=REPO, revision=hub.DEFAULT_REVISION, allow_patterns=mau,
-                      local_dir=DEST)
+    snapshot_download(repo_id=REPO, revision=REVISION, allow_patterns=mau, local_dir=DEST)
     tong = sum(p.stat().st_size for p in DEST.rglob("*") if p.is_file()) / 1e6
     print(f"\nĐã tải ~{tong:.0f} MB.")
     return 0 if _kiem() else 1

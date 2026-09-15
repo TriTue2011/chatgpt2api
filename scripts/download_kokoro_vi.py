@@ -45,7 +45,7 @@ def _tai(ten: str, noi: Path) -> Path:
     # local_dir: ghi thẳng vào thư mục đích, KHÔNG để thêm một bản trong cache
     # Hugging Face — đĩa máy chủ chật, model 326 MB mà nằm hai nơi là phí.
     from huggingface_hub import hf_hub_download
-    return Path(hf_hub_download(kv.REPO, ten, local_dir=noi))
+    return Path(hf_hub_download(kv.REPO, ten, revision=kv.REVISION, local_dir=noi))
 
 
 def _kiem(ids: list[str]) -> bool:

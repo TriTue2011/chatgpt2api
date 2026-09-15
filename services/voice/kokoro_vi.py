@@ -30,6 +30,8 @@ import zipfile
 from dataclasses import dataclass
 
 REPO = "contextboxai/Kokoro-Vietnamese"
+#: Commit đã đo thanh điệu 15/09/2026 — ghim để tải lại ra đúng model đó.
+REVISION = "9f210d622209fcc216fe2ac6159fed2ff381cb8a"
 MODEL_FILE = "kokoro_vi.onnx"
 CONFIG_FILE = "config.json"
 VOICE_DIR = "voices"            # voices/<mã>.npy — đổi từ .pt lúc tải
