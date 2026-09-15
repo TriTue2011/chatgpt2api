@@ -21,7 +21,8 @@ import { toast } from "sonner";
 import { type BaiHat, goi, TEN_NGUON } from "./lib";
 
 export type Hang = { items: BaiHat[]; index: number };
-export type TrangThaiNghe = { bai: BaiHat | null; hang: Hang | null; chay: boolean; cungLoa: boolean };
+/** `tuChoi` = lý do trình duyệt không phát tiếng bài đang nghe ("" = không có). */
+export type TrangThaiNghe = { bai: BaiHat | null; hang: Hang | null; chay: boolean; cungLoa: boolean; tuChoi: string };
 
 export const KHOA_NGHE_NEN = "c2a-youtube:nghe-khi-tat-man-hinh";
 
@@ -29,13 +30,14 @@ export const KHOA_NGHE_NEN = "c2a-youtube:nghe-khi-tat-man-hinh";
 // mới đổi sang luồng thật khi máy chủ trả link (lúc đó cú bấm đã qua).
 const AM_LANG = "data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA";
 
-const TRONG: TrangThaiNghe = { bai: null, hang: null, chay: false, cungLoa: false };
+const TRONG: TrangThaiNghe = { bai: null, hang: null, chay: false, cungLoa: false, tuChoi: "" };
 
 let am: HTMLAudioElement | null = null;
 let trangThai: TrangThaiNghe = TRONG;
 let luot = 0;
 let mucCungLoa = "";
 let dungKhiAn = false;
+let henAn: ReturnType<typeof setTimeout> | undefined;
 const nguoiNghe = new Set<() => void>();
 
 function dat(moi: Partial<TrangThaiNghe>) {
@@ -74,12 +76,17 @@ function theAm(): HTMLAudioElement {
   a.preload = "auto";
   a.addEventListener("play", () => dat({ chay: true }));
   a.addEventListener("pause", () => dat({ chay: false }));
+  a.addEventListener("playing", () => {
+    if (trangThai.tuChoi) dat({ tuChoi: "" });
+  });
   a.addEventListener("ended", () => {
     // Hết bài khi nghe một mình: sang bài kế, kể cả khi đang ở trang khác.
     if (amThat() && trangThai.bai && !trangThai.cungLoa) chuyen(1);
   });
   a.addEventListener("error", () => {
-    if (amThat()) toast.error("Không phát được bài này trên máy này.");
+    if (!amThat()) return;
+    dat({ tuChoi: `MediaError ${a.error?.code ?? "?"}` });
+    toast.error(`Không phát được bài này trên máy này (mã lỗi ${a.error?.code ?? "?"}).`);
   });
   // Nút "Nghe khi tắt màn hình" đang tắt: trang bị ẩn thì dừng, mở lại thì phát tiếp —
   // chỉ phát tiếp những gì chính đoạn này đã dừng.
@@ -87,10 +94,16 @@ function theAm(): HTMLAudioElement {
     if (document.visibilityState === "hidden") {
       // Ứng dụng Home Assistant báo trang ẩn trong chốc lát khi vào toàn màn hình (chủ máy
       // 15/09/2026: "phóng to dừng video"): toàn màn hình là đang xem, không phải tắt màn hình.
-      if (!ngheNenDangBat() && !document.fullscreenElement && amThat() && !a.paused) {
-        a.pause();
-        dungKhiAn = true;
-      }
+      // Nó có thể báo ẩn trước khi toàn màn hình kịp bắt đầu, nên nửa giây sau xét lại: tắt
+      // màn hình thật thì lúc đó vẫn ẩn.
+      clearTimeout(henAn);
+      henAn = setTimeout(() => {
+        if (document.visibilityState !== "hidden" || document.fullscreenElement) return;
+        if (!ngheNenDangBat() && amThat() && !a.paused) {
+          a.pause();
+          dungKhiAn = true;
+        }
+      }, 500);
     } else if (dungKhiAn) {
       dungKhiAn = false;
       void a.play().catch(() => undefined);
@@ -163,12 +176,21 @@ async function linkSan(bai: BaiHat): Promise<{ url: string } | null> {
   return co && Date.now() - co.luc < 600000 ? co.tra : null;
 }
 
+/** play() bị từ chối. AbortError chỉ là bài mới hoặc lệnh dừng chen ngang, không phải lỗi. */
+function tuChoiPhat(e: unknown, goiY = "bấm ▶ để nghe") {
+  const ten = e instanceof DOMException ? e.name : "Error";
+  if (ten === "AbortError") return;
+  dat({ tuChoi: ten });
+  if (ten === "NotAllowedError") toast.message(`Trình duyệt chặn tự phát có tiếng — ${goiY}.`);
+  else toast.error(`Máy này không phát được tiếng bài này (${ten}).`);
+}
+
 /** Nghe một bài trên máy này; `batDau` = giây bắt đầu (chuyển từ video sang). */
 export async function ngheBai(bai: BaiHat, hang: Hang, batDau = 0): Promise<void> {
   const a = moKhoa();
   const lan = ++luot;
   mucCungLoa = "";
-  dat({ bai, hang, cungLoa: false });
+  dat({ bai, hang, cungLoa: false, tuChoi: "" });
   manHinhKhoa(bai);
   const ke = hang.items[hang.index + 1];
   const r = (await linkSan(bai)) ?? await goi<{ url: string }>("nghe", {
@@ -183,7 +205,7 @@ export async function ngheBai(bai: BaiHat, hang: Hang, batDau = 0): Promise<void
   }
   a.src = r.url;
   if (batDau >= 1) a.addEventListener("loadedmetadata", () => { a.currentTime = batDau; }, { once: true });
-  a.play().catch(() => toast.message("Trình duyệt chặn tự phát có tiếng — bấm ▶ để nghe."));
+  a.play().catch((e) => tuChoiPhat(e));
 }
 
 /** Bài kế (+1) / bài trước (-1) của hàng đợi trên trang; false = hết hàng. */
@@ -198,7 +220,7 @@ export function chuyen(buoc: number): boolean {
 export function phatTamDung() {
   const a = amThat();
   if (!a) return;
-  if (a.paused) void a.play().catch(() => undefined);
+  if (a.paused) void a.play().catch((e) => tuChoiPhat(e));
   else a.pause();
 }
 
@@ -214,7 +236,7 @@ function tatAm() {
 
 export function dung() {
   tatAm();
-  dat({ bai: null, hang: null, chay: false, cungLoa: false });
+  dat({ bai: null, hang: null, chay: false, cungLoa: false, tuChoi: "" });
   manHinhKhoa(null);
 }
 
@@ -249,5 +271,5 @@ export async function taiCungLoa(bai: BaiHat): Promise<void> {
   if (lan !== luot || !r || !trangThai.cungLoa) return;
   const a = theAm();
   a.src = r.url;
-  a.play().catch(() => toast.message("Trình duyệt chặn tự phát có tiếng — bấm lại nút nghe trên máy này."));
+  a.play().catch((e) => tuChoiPhat(e, "bấm lại nút nghe trên máy này"));
 }

@@ -605,8 +605,10 @@ export function TrinhPhat() {
       return;
     }
     if (videoMotMinh) {
-      if ([-1, 5].includes(nhung.trangThai) && video && !video.hinh && !tiengMayHong.current) {
-        // Khung chưa chạy (bị chặn tự phát): cú bấm này phát tiếng bằng thẻ âm thanh của trang.
+      if ((canCham || [-1, 5].includes(nhung.trangThai)) && video && !video.hinh) {
+        // Khung chưa chạy hoặc đang chờ chạm (bị chặn tự phát): cú bấm này phát tiếng bằng thẻ
+        // âm thanh của trang — kể cả khi lần tự chuyển trước bị từ chối, vì giờ đang trong cú bấm.
+        tiengMayHong.current = false;
         chuyenTiengSangMay();
         return;
       }
@@ -811,17 +813,21 @@ export function TrinhPhat() {
     if (canCham && nhung.trangThai === 1 && nhung.tatTieng !== true) setCanCham(false);
   }, [canCham, nhung.trangThai, nhung.tatTieng]);
 
-  // Video theo thẻ âm thanh mà thẻ đó không lấy được tiếng (máy chủ không trả luồng): khung
-  // tự giữ tiếng lại, dừng và bật tiếng để một chạm vào video là phát có tiếng.
+  // Video theo thẻ âm thanh mà thẻ đó không phát được tiếng (máy chủ không trả luồng, hoặc
+  // trình duyệt từ chối phát): khung tự giữ tiếng lại, dừng và bật tiếng để một chạm vào
+  // video là phát có tiếng. Cứ bám theo tiếng câm thì chạm phát trong khung là bị dừng lại
+  // (chủ máy 15/09/2026, card HA: "Kích vào play trên khung video thì giật rồi dừng").
   const coNghe = !!nghe;
+  const tiengMayTuChoi = !!mayTrangThai.tuChoi;
   useEffect(() => {
-    if (!video?.theoMay || video.hinh || coNghe) return;
+    if (!video?.theoMay || video.hinh || (coNghe && !tiengMayTuChoi)) return;
+    if (coNghe) mayNghe.dung();
     tiengMayHong.current = true;
     nhung.lenh("pauseVideo");
     nhung.lenh("unMute");
     setVideo({ ...video, theoMay: false, ngheTrenMay: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [coNghe, video?.theoMay]);
+  }, [coNghe, tiengMayTuChoi, video?.theoMay]);
 
   // Tải thẳng hình quá 8 giây chưa có hình: coi như không tải thẳng được.
   const giaiDoanHinh = video?.hinh?.trangThai;

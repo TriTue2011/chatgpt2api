@@ -157,7 +157,14 @@ export function useVideoNhung(khiHet: () => void, khiLoi: () => void): VideoNhun
   }, [doi]);
 
   const khiNap = useCallback(() => {
-    // Khung chỉ báo trạng thái sau khi trang nói đang nghe.
+    // Khung chỉ báo trạng thái sau khi trang nói đang nghe. Khung vừa nạp trang mới (đổi bài
+    // khi trang cũ chưa xong) thì trang mới chưa nghe gì: tin của trang cũ đã đánh dấu sẵn
+    // sàng và dừng bắt tay, nên khung mới bỏ qua mọi lệnh — phát, dừng, tắt tiếng (tái hiện
+    // trên card Home Assistant 15/09/2026: video đứng yên trong khi tiếng máy chạy).
+    if (!hinh.current) {
+      moc.current.sanSang = false;
+      setSanSang(false);
+    }
     clearInterval(henBatTay.current);
     let lan = 0;
     henBatTay.current = setInterval(() => {
