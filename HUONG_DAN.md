@@ -551,9 +551,39 @@ có người. Bộ `buffalo_l` chậm hơn khoảng 10 lần (dò 321 ms, mỗi 
   dưới 40 là người lạ. Mặt đã giống hẳn một người khác thì bot hỏi lại trước khi
   dạy — nhắn «<tên> chắc chắn» nếu đúng là người đó.
 
-Cấu hình (khoá `nhin_nha` trong config): `yolo.model`, `yolo.nguong` (mặc định
-0.35), `khuon_mat.bo`, `khuon_mat.nguong_co_the` / `nguong_chac`. Đổi bộ mặt thì
-vector của mọi người được tính lại từ ảnh mặt đã lưu, không phải dạy lại.
+Cấu hình ở tab **🧑 Khuôn mặt** (cạnh tab 📷 Camera): chọn model, ngưỡng, xem
+và quản lý người đã dạy, dạy mặt bằng ảnh tải lên, đặt tên cho mặt lạ, xem các
+lượt 24 giờ qua. Đổi bộ mặt thì vector của mọi người được tính lại từ ảnh mặt
+đã lưu, không phải dạy lại.
+
+**Tự canh camera** (ô «Tự canh camera», mặc định tắt) — bot tự ghi ai tới, lúc nào:
+
+| Nguồn | Cách chạy | Khi nào dùng |
+|---|---|---|
+| **Frigate** | Sự kiện `frigate/events` nhãn `person` qua MQTT → nhận mặt | Nhà có Frigate: rẻ nhất, Frigate đã dò người sẵn |
+| **YOLO tự quét** | Quét luồng phụ từng camera, thấy người → nhận mặt | Nhà không có Frigate, hoặc camera Frigate không theo dõi |
+
+Bật cả hai cũng được: hai nguồn cùng báo một camera trong vài giây thì chỉ nhận
+mặt một lần. Cùng người ở cùng camera trong 10 phút (chỉnh được) là **một lượt**
+— người ngồi xem tivi hai tiếng không thành hàng trăm bản ghi. Mặt chưa dạy được
+gom thành **mặt lạ «mã»**: cùng một người lạ đi qua mười lần là một mặt lạ mười
+lượt.
+
+**Báo tin** — bật và chọn kênh ở **Cài đặt → Thông báo**, nhóm «Nhà» (mặc định tắt):
+
+- **Camera — người lạ**: kèm ảnh vùng mặt.
+- **Camera — người quen về**: chỉ ở các camera tích «về nhà» trong tab Khuôn mặt.
+- **Camera — hỏi tên mặt lạ hay gặp**: đủ 3 lượt thì hỏi, rồi 6, 9 lượt; tối đa 3
+  lần. Trả lời «mặt lạ ab12 là bà ngoại» là bot nhớ luôn và chuyển các lượt cũ
+  sang tên đó; «thôi hỏi về mặt lạ ab12» là im.
+
+Hỏi bot «ai vừa về», «hôm nay ai đến cửa», «bà ngoại về chưa» → tra các lượt đã ghi.
+
+Cấu hình thô (khoá `nhin_nha` trong config): `yolo.model`, `yolo.nguong` (mặc
+định 0.35), `khuon_mat.bo`, `khuon_mat.nguong_co_the` / `nguong_chac`,
+`canh.bat`, `canh.frigate`, `canh.yolo_quet`, `canh.chu_ky_giay`, `canh.camera`,
+`canh.camera_ve`, `canh.phien_phut`, `canh.hoi_ten_sau`, `canh.frigate_ban_do`
+(`{"cua": "Cam cửa"}` khi tên camera trong Frigate không khớp tên đã khai).
 
 Ảnh mặt đã dạy nằm ở `data/agent/khuon_mat/`, sổ ở `data/agent/khuon_mat.sqlite`
 — dữ liệu sinh trắc, không gửi model, không ghi vào log.

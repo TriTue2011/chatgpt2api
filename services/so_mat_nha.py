@@ -412,6 +412,167 @@ def xoa_mat(mat_id: str) -> bool:
     return True
 
 
+# ── Mặt lạ (cụm) và sự kiện camera ──────────────────────────────────────────
+
+#: Tâm cụm nhận vector mới với trọng số tối đa ngần này lượt: vẫn theo kịp khi
+#: người đó đổi kiểu tóc, nhưng một khung xấu không kéo lệch hẳn cụm.
+_TRONG_SO_CUM = 10
+#: Hỏi tên một mặt lạ tối đa ngần này lần — cùng mức với `so_ten_nha._HOI_TOI_DA`.
+HOI_TOI_DA = 3
+
+
+def gom_mat_la(vector, anh, hop, camera: str) -> tuple[str, bool]:
+    """Xếp một mặt lạ vào cụm giống nhất (từ ngưỡng «có thể là»), không có thì tạo.
+
+    Trả ``(mã cụm, cụm mới?)``. KHÔNG tăng số lượt — lượt tính ở ``ghi_su_kien``,
+    vì một lượt đứng trước camera là nhiều khung mà chỉ là một lần gặp.
+    """
+    import numpy as np
+
+    from services import nhin_nha
+
+    v = np.asarray(vector, np.float32)
+    co_the, _ = nhin_nha.nguong_mat()
+    bang = _nap_bang()
+    with _khoa:
+        conn = _db()
+        if bang["la_id"]:
+            diem = np.clip(bang["la_ma_tran"] @ v, 0.0, None) * 100.0
+            i = int(diem.argmax())
+            if float(diem[i]) >= co_the:
+                ma = bang["la_id"][i]
+                r = conn.execute("SELECT so_lan, vector FROM mat_la WHERE id = ?", (ma,)).fetchone()
+                if r is not None:
+                    tam = _vec(r["vector"]) * min(max(int(r["so_lan"]), 1), _TRONG_SO_CUM) + v
+                    tam = (tam / np.linalg.norm(tam)).astype(np.float32)
+                    conn.execute("UPDATE mat_la SET vector = ?, lan_cuoi = ?, camera = ? WHERE id = ?",
+                                 (_vec_bytes(tam), time.time(), camera, ma))
+                    conn.commit()
+                    bang["la_ma_tran"][i] = tam
+                    return ma, False
+        ma = _ma()
+        now = time.time()
+        conn.execute(
+            "INSERT INTO mat_la (id, bo, vector, anh, diem_do, so_lan, lan_dau, lan_cuoi, camera) "
+            "VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?)",
+            (ma, nhin_nha.bo_mat().ma, _vec_bytes(v), _luu_anh(_cat_mat(anh, hop), "la"),
+             now, now, camera))
+        conn.commit()
+        _bo_bang()
+    return ma, True
+
+
+def ghi_su_kien(camera: str, nguon: str, loai: str, *, nguoi_id: str | None = None,
+                mat_la_id: str | None = None, do_giong: float = 0.0, hop=(),
+                anh: str = "", ts: float | None = None) -> dict[str, Any]:
+    """Ghi MỘT lượt gặp, tăng số lượt của người/cụm tương ứng."""
+    import json
+
+    ts = float(ts or time.time())
+    with _khoa:
+        conn = _db()
+        cur = conn.execute(
+            "INSERT INTO su_kien (ts, camera, nguon, loai, nguoi_id, mat_la_id, do_giong, hop, anh) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (ts, camera, nguon, loai, nguoi_id, mat_la_id, float(do_giong or 0),
+             json.dumps([round(float(x)) for x in hop]), anh or ""))
+        if nguoi_id:
+            conn.execute("UPDATE nguoi SET lan_cuoi = ?, so_lan = so_lan + 1 WHERE id = ?",
+                         (ts, nguoi_id))
+        if mat_la_id:
+            conn.execute("UPDATE mat_la SET so_lan = so_lan + 1, lan_cuoi = ? WHERE id = ?",
+                         (ts, mat_la_id))
+        conn.commit()
+        ma = cur.lastrowid
+    return {"id": ma, "ts": ts, "camera": camera, "nguon": nguon, "loai": loai,
+            "nguoi_id": nguoi_id, "mat_la_id": mat_la_id}
+
+
+def su_kien_gan(so_gio: float = 24.0, *, camera: str = "", nguoi_id: str = "",
+                gioi_han: int = 50) -> list[dict[str, Any]]:
+    """Sự kiện camera trong ``so_gio`` giờ qua, mới nhất trước, kèm tên người."""
+    dk, tham = ["s.ts >= ?"], [time.time() - float(so_gio) * 3600]
+    if camera:
+        dk.append("s.camera = ?")
+        tham.append(camera)
+    if nguoi_id:
+        dk.append("s.nguoi_id = ?")
+        tham.append(nguoi_id)
+    with _khoa:
+        rows = _db().execute(
+            "SELECT s.*, n.ten FROM su_kien s LEFT JOIN nguoi n ON n.id = s.nguoi_id "
+            f"WHERE {' AND '.join(dk)} ORDER BY s.ts DESC LIMIT ?",  # noqa: S608 — chỉ ghép tên cột cố định
+            (*tham, int(gioi_han))).fetchall()
+    return [dict(r) for r in rows]
+
+
+def mat_la(ma: str) -> dict[str, Any] | None:
+    with _khoa:
+        r = _db().execute("SELECT id, anh, so_lan, lan_dau, lan_cuoi, camera, da_hoi, bo_qua "
+                          "FROM mat_la WHERE id = ?", (ma,)).fetchone()
+    return dict(r) if r else None
+
+
+def danh_sach_mat_la(*, ca_bo_qua: bool = False) -> list[dict[str, Any]]:
+    with _khoa:
+        rows = _db().execute(
+            "SELECT id, anh, so_lan, lan_dau, lan_cuoi, camera, da_hoi, bo_qua FROM mat_la "
+            + ("" if ca_bo_qua else "WHERE bo_qua = 0 ") + "ORDER BY lan_cuoi DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def nen_hoi_mat_la(ma: str, sau_so_lan: int) -> bool:
+    """Hỏi tên khi đủ ``sau_so_lan`` lượt; mỗi lần hỏi rồi thì đợi thêm chừng ấy lượt.
+
+    3, 6, 9 lượt với mặc định — hỏi tối đa ``HOI_TOI_DA`` lần, rồi thôi hẳn: nài
+    mãi một người không ai nhận là làm phiền (cùng lý lẽ `so_ten_nha`).
+    """
+    r = mat_la(ma)
+    if not r or r["bo_qua"] or int(r["da_hoi"]) >= HOI_TOI_DA:
+        return False
+    return int(r["so_lan"]) >= max(1, int(sau_so_lan)) * (int(r["da_hoi"]) + 1)
+
+
+def danh_dau_da_hoi(ma: str) -> None:
+    with _khoa:
+        conn = _db()
+        conn.execute("UPDATE mat_la SET da_hoi = da_hoi + 1 WHERE id = ?", (ma,))
+        conn.commit()
+
+
+def thoi_hoi_mat_la(ma: str) -> bool:
+    """Chủ nhà bảo «người lạ, đừng hỏi nữa» — cụm vẫn giữ để gộp lượt, nhưng im."""
+    with _khoa:
+        conn = _db()
+        n = conn.execute("UPDATE mat_la SET bo_qua = 1 WHERE id = ?", (ma,)).rowcount
+        conn.commit()
+        _bo_bang()
+    return bool(n)
+
+
+def dat_ten_mat_la(ma: str, ten: str) -> dict[str, Any]:
+    """Mặt lạ này là ``ten``: dạy mặt từ ảnh cụm, chuyển mọi lượt cũ sang người đó."""
+    r = mat_la(ma)
+    if r is None:
+        raise LoiSoMat(f"Không có mặt lạ mã «{ma}».")
+    p = duong_anh(r["anh"])
+    if p is None:
+        raise LoiSoMat("Ảnh của mặt lạ này đã mất, không dạy được.")
+    # ep=True: chính chủ nhà vừa nói đây là ai — không hỏi lại «giống người khác».
+    kq = day(ten, p.read_bytes(), nguon="camera", ep=True)
+    with _khoa:
+        conn = _db()
+        n = conn.execute("UPDATE su_kien SET nguoi_id = ?, mat_la_id = NULL, loai = 'quen' "
+                         "WHERE mat_la_id = ?", (kq["nguoi_id"], ma)).rowcount
+        conn.execute("UPDATE nguoi SET so_lan = so_lan + ?, lan_cuoi = MAX(COALESCE(lan_cuoi, 0), ?) "
+                     "WHERE id = ?", (n, r["lan_cuoi"], kq["nguoi_id"]))
+        conn.execute("DELETE FROM mat_la WHERE id = ?", (ma,))
+        conn.commit()
+        _bo_bang()
+    _xoa_anh(r["anh"])
+    return {**kq, "so_luot": n}
+
+
 def _reset_for_tests() -> None:
     global _conn
     with _khoa:

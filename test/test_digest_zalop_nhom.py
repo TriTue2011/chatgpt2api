@@ -56,3 +56,40 @@ class DigestZalopNhomTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DigestKemAnhTest(unittest.TestCase):
+    """Tin báo kèm ảnh (vd mặt người lạ): gửi ảnh có chú thích; ảnh hỏng thì vẫn gửi chữ."""
+
+    def test_zalop_gui_anh_kem_chu_thich(self) -> None:
+        from services import digest
+        with mock.patch("services.zalo_personal._send_photo_robust", return_value=True) as anh, \
+             mock.patch("services.zalo_personal.send_message") as chu:
+            self.assertTrue(digest.send_target("zalop:tk:la", "👤 Người lạ", "http://x/a.jpg"))
+        self.assertEqual(anh.call_args.args[:3], ("la", "http://x/a.jpg", "👤 Người lạ"))
+        chu.assert_not_called()
+
+    def test_zalop_anh_hong_thi_van_gui_chu(self) -> None:
+        from services import digest
+        with mock.patch("services.zalo_personal._send_photo_robust", return_value=False), \
+             mock.patch("services.zalo_personal.send_message", return_value={"ok": True}) as chu:
+            self.assertTrue(digest.send_target("zalop:tk:la", "👤 Người lạ", "http://x/a.jpg"))
+        self.assertEqual(chu.call_args.args[1], "👤 Người lạ")
+
+    def test_telegram_chu_dai_qua_chu_thich_thi_gui_anh_roi_gui_chu(self) -> None:
+        from services import digest
+        dai = "x" * 1500
+        with mock.patch("services.telegram_bot._fetch_image_bytes", return_value=b"anh"), \
+             mock.patch("services.telegram_bot.send_photo", return_value={"ok": True}) as anh, \
+             mock.patch("services.telegram_bot.send_message", return_value={"ok": True}) as chu:
+            self.assertTrue(digest.send_target("tg:123", dai, "http://x/a.jpg"))
+        self.assertEqual(anh.call_args.args[2], "")
+        self.assertEqual(chu.call_args.args[1], dai)
+
+    def test_khong_co_anh_giu_nguyen_duong_chu(self) -> None:
+        from services import digest
+        with mock.patch("services.zalo_bot.send_photo") as anh, \
+             mock.patch("services.zalo_bot.send_message", return_value=True) as chu:
+            self.assertTrue(digest.send_target("zalo:9", "chào"))
+        anh.assert_not_called()
+        chu.assert_called_once()

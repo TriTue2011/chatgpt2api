@@ -1406,7 +1406,11 @@ _KW_CAMERA = _re_mod.compile(
     # đã tích camera. Chỉ bắt "cam" trong ngữ cảnh camera (đi cùng chụp/xem/ảnh
     # hoặc theo sau là vị trí), không bắt "cam" trơ (cam=quả cam, cảm ơn…).
     r"(chup|xem|coi|mo|gui|anh|hinh)\b[^.]{0,15}\bcam\b|"
-    r"\bcam\s+(ban|san|cong|gara|phong|trong|ngoai|cua|nha)\b")
+    r"\bcam\s+(ban|san|cong|gara|phong|trong|ngoai|cua|nha)\b|"
+    # Sổ khuôn mặt của camera (tool khuon_mat): «ai vừa về», «mặt lạ ab12 là…».
+    # Chỉ là dòng chỉ đường, không quyết hành động — lọt thì tool vẫn có trong
+    # thread đã tích camera.
+    r"khuon mat|mat la\b|nguoi la\b|ai (vua|moi) (ve|den|toi)|day mat")
 _KW_FACEBOOK = _re_mod.compile(
     r"facebook|\bfb\b|\bpage\b|dang bai|len trang|dang len")
 _KW_KHODAMMAY = _re_mod.compile(
@@ -1624,7 +1628,11 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
     ("camera", _KW_CAMERA,
      "- Camera giám sát trong nhà → xem_camera (chụp ảnh NGAY lúc này rồi "
      "gửi về), dùng khi người dùng nói 'xem camera sân', 'ngoài cổng có ai "
-     "không'. KHÁC device_capture (webcam máy tính)."),
+     "không'. Hỏi CÓ GÌ / MẤY / Ở ĐÂU / AI trong camera → xem_camera với "
+     "nhan_dang=true (YOLO + nhận mặt trên máy, trả toạ độ và tên người đã dạy "
+     "mặt). Hỏi camera ĐÃ thấy ai lúc nào ('ai vừa về', 'hôm nay ai đến cửa'), "
+     "hoặc trả lời 'mặt lạ <mã> là <tên>' → khuon_mat. KHÁC device_capture "
+     "(webcam máy tính)."),
     ("facebook", _KW_FACEBOOK,
      "- Facebook Page → facebook_trang_thai (kiểm tra token còn sống, "
      "thread gắn Page nào); dang_facebook (đăng bài, loai=chu|link|anh|"

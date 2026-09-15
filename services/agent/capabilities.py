@@ -5473,6 +5473,101 @@ def _nhan_dang_khung_camera(tho: bytes) -> tuple[str, bytes]:
                 camera_nha._thu_nho(tho, camera_nha.CANH_GUI))
 
 
+def _h_khuon_mat(args: dict, ctx: dict) -> dict:
+    """Camera thấy AI lúc nào, và DẠY tên cho mặt lạ — cùng khuôn `_h_khoa_cua`.
+
+    Luồng canh camera (`canh_camera_nha`) ghi mỗi lượt gặp vào `so_mat_nha`;
+    mặt chưa dạy thành «mặt lạ <mã>». Chủ nhà nói «mặt lạ ab12 là bà ngoại» là
+    bot nhớ luôn, các lượt cũ chuyển sang tên đó.
+    """
+    import datetime as _d
+
+    from services import camera_nha, canh_camera_nha, so_mat_nha
+
+    viec = str(args.get("viec") or "xem").strip().lower()
+    ma = str(args.get("ma") or "").strip()
+    ten = str(args.get("ten") or "").strip()
+    tz = _d.timezone(_d.timedelta(hours=7))
+
+    def _luc(ts: float) -> str:
+        return _d.datetime.fromtimestamp(float(ts), tz).strftime("%d/%m %H:%M")
+
+    try:
+        if viec in ("dat_ten", "la", "day"):
+            if not ten:
+                return {"text": "Anh/chị cho em biết tên người đó với ạ."}
+            if not ma:
+                ds = so_mat_nha.danh_sach_mat_la()
+                if not ds:
+                    return {"text": "Em không có mặt lạ nào đang chờ đặt tên ạ."}
+                ma = ds[0]["id"]
+            kq = so_mat_nha.dat_ten_mat_la(ma, ten)
+            return {"text": f"Dạ, em nhớ rồi — mặt lạ «{ma}» là **{kq['ten']}** "
+                            f"({kq['so_luot']} lượt cũ đã chuyển sang tên này). "
+                            "Lần sau camera thấy em gọi đúng tên ạ."}
+        if viec in ("thoi_hoi", "bo_qua"):
+            if not ma or not so_mat_nha.thoi_hoi_mat_la(ma):
+                return {"text": "Anh/chị nêu mã mặt lạ (vd «ab12») giúp em ạ."}
+            return {"text": f"Dạ, em sẽ không hỏi về mặt lạ «{ma}» nữa."}
+        if viec == "de_sau":
+            return {"text": "Dạ, để lần sau em hỏi lại ạ."}
+        if viec == "danh_sach":
+            nguoi = so_mat_nha.danh_sach_nguoi()
+            la = so_mat_nha.danh_sach_mat_la()
+            if not nguoi and not la:
+                return {"text": "Em chưa được dạy mặt ai. Gửi ảnh vào chat rồi chọn «Dạy khuôn mặt» ạ."}
+            dong = [f"🧑 Em nhận được {len(nguoi)} người:"]
+            dong += [f"  - {n['ten']} ({n['so_mat']} ảnh mặt"
+                     + (f", gặp gần nhất {_luc(n['lan_cuoi'])}" if n["lan_cuoi"] else "") + ")"
+                     for n in nguoi]
+            if la:
+                dong.append(f"👤 Đang theo dõi {len(la)} mặt lạ: "
+                            + ", ".join(f"«{x['id']}» {x['so_lan']} lượt" for x in la[:8]))
+            return {"text": "\n".join(dong)}
+        if viec == "doi_ten":
+            ten_moi = str(args.get("ten_moi") or "").strip()
+            n = so_mat_nha.tim_nguoi(ten)
+            if n is None or not ten_moi:
+                return {"text": "Anh/chị cho em tên cũ và tên mới giúp em ạ."}
+            so_mat_nha.doi_ten(n["id"], ten_moi)
+            return {"text": f"Dạ, đã đổi «{n['ten']}» thành «{ten_moi}»."}
+        if viec == "xoa":
+            n = so_mat_nha.tim_nguoi(ten)
+            if n is None:
+                return {"text": f"Em không có ai tên «{ten}» ạ."}
+            so_mat_nha.xoa_nguoi(n["id"])
+            return {"text": f"Dạ, em đã xoá mặt của «{n['ten']}» và mọi ảnh mặt đã lưu."}
+
+        # xem: camera thấy ai gần đây
+        try:
+            so_gio = max(0.5, min(24 * 30, float(args.get("so_gio") or 24)))
+        except (TypeError, ValueError):
+            so_gio = 24.0
+        cam = str(args.get("camera") or "").strip()
+        ten_cam = camera_nha.tim(cam)[0] if cam else ""
+        nguoi = so_mat_nha.tim_nguoi(ten) if ten else None
+        if ten and nguoi is None:
+            return {"text": f"Em chưa được dạy mặt «{ten}» ạ."}
+        ds = so_mat_nha.su_kien_gan(so_gio, camera=ten_cam,
+                                    nguoi_id=nguoi["id"] if nguoi else "", gioi_han=20)
+        if not ds:
+            tat = "" if canh_camera_nha.cfg()["bat"] else \
+                " (canh camera đang TẮT — bật trong Cài đặt thì em mới tự ghi)"
+            return {"text": f"Trong {so_gio:g} giờ qua camera chưa ghi ai{tat} ạ."}
+        dong = [f"📷 Camera thấy trong {so_gio:g} giờ qua (mới nhất trước):"]
+        for s in ds:
+            ai = (s["ten"] if s["loai"] == "quen" else
+                  f"có thể là {s['ten']}" if s["loai"] == "co_the" and s["ten"] else
+                  f"người lạ «{s['mat_la_id']}»")
+            dong.append(f"  {_luc(s['ts'])} — {ai} ở {s['camera']}")
+        return {"text": "\n".join(dong)}
+    except so_mat_nha.LoiSoMat as exc:
+        return {"text": str(exc)}
+    except Exception as exc:
+        logger.warning("khuon_mat lỗi: %s", exc)
+        return {"text": f"Em tra khuôn mặt chưa được ạ: {str(exc)[:160]}"}
+
+
 def _hoi_ve_anh(jpeg: bytes, hoi: str) -> str:
     """Hỏi nhánh vision một câu về một khung ảnh. Lỗi thì trả chuỗi rỗng.
 
@@ -6628,6 +6723,36 @@ CAPABILITIES: dict[str, Capability] = {
                   "camera nào, KHÔNG tự chụp đại một cái. Có nhận dạng thì TÊN "
                   "NGƯỜI chỉ lấy đúng từ kết quả nhận mặt ('người lạ' là chưa dạy "
                   "mặt) — không đoán tên từ dáng người hay quần áo.")),
+    "khuon_mat": Capability(
+        name="khuon_mat", risk=CHANGE, handler=_h_khuon_mat,
+        emoji="🧑", label="Khuôn mặt camera — ai tới lúc nào, dạy tên mặt lạ",
+        description=("Xem camera đã thấy AI lúc nào (ghi tự động khi bật canh "
+                     "camera), liệt kê người đã dạy mặt, và DẠY tên cho mặt lạ. "
+                     "Dùng khi hỏi «ai vừa về», «hôm nay ai đến cửa», «bà ngoại "
+                     "về chưa», hoặc trả lời tin «mặt lạ ab12 là bà ngoại» / "
+                     "«thôi hỏi về mặt lạ ab12»."),
+        parameters={"type": "object", "properties": {
+            "viec": {"type": "string",
+                     "enum": ["xem", "danh_sach", "dat_ten", "thoi_hoi", "de_sau",
+                              "doi_ten", "xoa"],
+                     "description": "'xem' (mặc định) ai camera thấy gần đây | "
+                                    "'danh_sach' người đã dạy mặt + mặt lạ | "
+                                    "'dat_ten' mặt lạ là ai | 'thoi_hoi' đừng hỏi "
+                                    "về mặt lạ đó nữa | 'de_sau' | 'doi_ten' | 'xoa'"},
+            "ma": {"type": "string",
+                   "description": "Mã mặt lạ trong tin bot gửi, vd 'ab12cd34ef56'. "
+                                  "Bỏ trống khi dat_ten thì lấy mặt lạ gặp gần nhất."},
+            "ten": {"type": "string",
+                    "description": "Tên người (dat_ten; lọc khi xem; tên CŨ khi "
+                                   "doi_ten; người cần xoá)."},
+            "ten_moi": {"type": "string", "description": "Tên mới khi doi_ten."},
+            "camera": {"type": "string", "description": "Lọc theo camera khi xem."},
+            "so_gio": {"type": "number",
+                       "description": "Xem bao nhiêu giờ gần đây (mặc định 24)."}}},
+        workflow=("Tên người CHỈ lấy từ kết quả tool — 'người lạ «mã»' là mặt chưa "
+                  "dạy, đừng đoán là ai. 'xoa' xoá hẳn ảnh mặt đã dạy: chỉ gọi khi "
+                  "người dùng nói rõ muốn xoá. Người dùng muốn dạy mặt bằng ảnh "
+                  "mới thì bảo họ gửi ảnh rồi chọn «Dạy khuôn mặt» trong menu ảnh.")),
     "device_power": Capability(
         name="device_power", risk=CHANGE, handler=_h_device_power,
         emoji="🔌", label="Tắt / khởi động lại / khoá máy tính đã cài agent",
@@ -7782,6 +7907,7 @@ _CAP_GROUP: dict[str, str] = {
     # `_NHOM_PHAI_TICH`: không tích ô này thì không có tool, kể cả ở thread chưa
     # cấu hình bộ lọc.
     "xem_camera": "camera",
+    "khuon_mat": "camera",
     "remember": "memory", "search_history": "memory",
     "model_spec": "image",
     "schedule": "schedule",

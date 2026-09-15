@@ -328,10 +328,14 @@ def _nap_tin(chu_de: str, payload: bytes, dang_ky) -> None:
         # (Frigate phát 208 tin/40 giây, phần lớn là update của cùng sự kiện).
         if chu_de == "frigate/events":
             try:
-                lich_su_nha.ghi_frigate(json.loads(
-                    payload.decode("utf-8", "replace")))
+                _su_kien = json.loads(payload.decode("utf-8", "replace"))
             except (ValueError, TypeError):
-                pass
+                _su_kien = None
+            if _su_kien is not None:
+                lich_su_nha.ghi_frigate(_su_kien)
+                # Canh camera: Frigate thấy người → nhận mặt (xếp hàng, không chặn).
+                from services import canh_camera_nha
+                canh_camera_nha.su_kien_frigate(_su_kien)
 
         phan = chu_de.split("/")
         # KHÔNG `return` sau nhánh Frigate: `return` ở đây thoát khỏi cả hàm

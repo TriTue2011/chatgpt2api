@@ -87,6 +87,12 @@ SU_KIEN: tuple[SuKien, ...] = (
            "Cửa mở sau giờ cả nhà thường đi ngủ.", "Nhà"),
     SuKien("nha.khoa_cua.tom_tat", "Khoá cửa — tóm tắt cuối ngày",
            "Hôm nay ai ra vào lúc mấy giờ.", "Nhà"),
+    SuKien("camera.nguoi_la", "Camera — người lạ",
+           "Camera thấy mặt không khớp ai đã dạy (kèm ảnh mặt).", "Nhà"),
+    SuKien("camera.nguoi_quen", "Camera — người quen về",
+           "Nhận ra mặt đã dạy ở camera được chọn (vd camera cửa).", "Nhà"),
+    SuKien("camera.hoi_ten", "Camera — hỏi tên mặt lạ hay gặp",
+           "Một mặt lạ xuất hiện nhiều lần, bot gửi ảnh hỏi đó là ai.", "Nhà"),
     SuKien("nha.goi_y", "Gợi ý bật thiết bị",
            "Bot đoán nên bật gì theo nếp nhà, chờ chủ máy chấm đúng/sai.",
            "Nhà"),
@@ -200,8 +206,10 @@ def kenh_hoac(khoa: str, cu: Any) -> list[str]:
     return list(moi) if moi else goc
 
 
-def gui(khoa: str, tin: str) -> int:
+def gui(khoa: str, tin: str, anh_url: str = "") -> int:
     """Phát một thông báo. Trả số kênh gửi được (0 = không gửi đi đâu cả).
+
+    ``anh_url``: gửi kèm ảnh (vd mặt người lạ). Kênh gửi ảnh hỏng thì vẫn gửi chữ.
 
     Đây là đường DUY NHẤT. Không có nhánh dự phòng nào về admin: chưa chọn kênh
     thì im, và nói rõ trong log vì sao im — im lặng không lý do chính là thứ đã
@@ -229,7 +237,7 @@ def gui(khoa: str, tin: str) -> int:
 
     try:
         from services import digest
-        n = digest.send_targets(c["kenh"], noi_dung)
+        n = digest.send_targets(c["kenh"], noi_dung, anh_url)
     except Exception as exc:
         logger.warning({"event": "thong_bao_gui_loi", "khoa": khoa,
                         "loi": str(exc)[:160]})

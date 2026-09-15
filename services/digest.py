@@ -197,8 +197,15 @@ def parse_target(target: str) -> tuple[str, str, str, str] | None:
     return (plat, bot_id, chat, topic)
 
 
-def send_target(target: str, text: str) -> bool:
-    """Gửi text tới MỘT kênh. Không raise; trả False nếu không gửi được."""
+#: Chú thích ảnh Telegram tối đa 1024 ký tự — dài hơn thì gửi ảnh rồi gửi chữ riêng.
+_TG_CHU_THICH = 1024
+
+
+def send_target(target: str, text: str, anh_url: str = "") -> bool:
+    """Gửi text (kèm ẢNH nếu có ``anh_url``) tới MỘT kênh. Không raise.
+
+    Ảnh gửi hỏng thì vẫn gửi chữ: tin cảnh báo mất ảnh còn hơn mất cả tin.
+    """
     parsed = parse_target(target)
     if not parsed:
         logger.warning("digest: kênh nhận không hợp lệ: %r", target)
@@ -209,6 +216,7 @@ def send_target(target: str, text: str) -> bool:
         return False
     if len(body) > _MAX_MSG:
         body = body[:_MAX_MSG] + "…"
+    anh_url = str(anh_url or "").strip()
     try:
         if plat == "tg":
             from services import telegram_bot as tg
@@ -220,6 +228,13 @@ def send_target(target: str, text: str) -> bool:
                     tg._current.bot = bot
                 # Gửi đúng TOPIC nếu khóa kênh có '#<topic>'
                 tg._current.topic = topic
+                if anh_url:
+                    anh = tg._fetch_image_bytes(anh_url)
+                    if anh and len(body) <= _TG_CHU_THICH:
+                        if tg.send_photo(chat, anh, body).get("ok"):
+                            return True
+                    elif anh and tg.send_photo(chat, anh, "").get("ok"):
+                        return bool(tg.send_message(chat, body).get("ok"))
                 return bool(tg.send_message(chat, body).get("ok"))
             finally:
                 tg._current.bot = prev_bot
@@ -231,25 +246,29 @@ def send_target(target: str, text: str) -> bool:
             try:
                 if bot is not None:
                     zb._current.bot = bot
+                if anh_url and zb.send_photo(chat, anh_url, body).get("ok"):
+                    return True
                 return bool(zb.send_message(chat, body))
             finally:
                 zb._current.bot = prev
         if plat == "zalop":
-            from services.zalo_personal import send_message as zp_send
-            return bool(zp_send(chat, body, _zalop_thread_type(bot_id, chat),
-                                account=bot_id))
+            from services import zalo_personal as zp
+            loai = _zalop_thread_type(bot_id, chat)
+            if anh_url and zp._send_photo_robust(chat, anh_url, body, loai, account=bot_id):
+                return True
+            return bool(zp.send_message(chat, body, loai, account=bot_id))
     except Exception as exc:
         logger.warning("digest: gửi %s lỗi: %s", target, str(exc)[:160])
     return False
 
 
-def send_targets(targets: Any, text: str) -> int:
+def send_targets(targets: Any, text: str, anh_url: str = "") -> int:
     """Gửi tới MỌI kênh đã chọn — trả số kênh gửi thành công."""
     if not isinstance(targets, (list, tuple)):
         return 0
     n = 0
     for t in targets:
-        if send_target(str(t), text):
+        if send_target(str(t), text, anh_url):
             n += 1
     return n
 

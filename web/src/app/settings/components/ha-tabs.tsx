@@ -14,16 +14,18 @@ import { useState } from "react";
 
 import { HACard } from "./ha-card";
 import { CameraCard } from "./camera-card";
+import { NhinNhaCard } from "./nhin-nha-card";
 import { MqttCard } from "./mqtt-card";
 import { TuyaCard } from "./tuya-card";
 import { HaDevicesCard } from "./ha-devices-card";
 
-const HA_TABS = ["ha", "camera", "mqtt", "tuya", "thiet-bi"] as const;
+const HA_TABS = ["ha", "camera", "khuon-mat", "mqtt", "tuya", "thiet-bi"] as const;
 type HaTab = (typeof HA_TABS)[number];
 
 const NHAN: [HaTab, string][] = [
   ["ha", "🏠 Kết nối HA"],
   ["camera", "📷 Camera"],
+  ["khuon-mat", "🧑 Khuôn mặt"],
   ["mqtt", "📡 MQTT"],
   ["tuya", "🔌 Tuya"],
   ["thiet-bi", "🏷️ Thiết bị & tên"],
@@ -57,6 +59,7 @@ export function HomeAssistantTabs() {
 
       {tab === "ha" && <HACard />}
       {tab === "camera" && <CameraCard />}
+      {tab === "khuon-mat" && <NhinNhaCard />}
       {tab === "mqtt" && <MqttCard />}
       {tab === "tuya" && <TuyaCard />}
       {tab === "thiet-bi" && <HaDevicesCard />}
