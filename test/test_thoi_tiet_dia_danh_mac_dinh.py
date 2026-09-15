@@ -246,6 +246,7 @@ class LuongDiaDanhMacDinh(_SoTam):
         ra = tt.tra_loi("Hoàng Mai", "u1")
         self.assertEqual(tt.doc_mac_dinh("u1")["key"], "3558175")
         self.assertIn("Đã đặt «Hoàng Mai, Hà Nội»", ra["text"])
+        self.assertIn("đổi địa danh thời tiết sang", ra["text"], "cách đổi nói một lần lúc vừa đặt")
         self.assertIn("Thời tiết Hoàng Mai", ra["text"])
 
     def test_co_roi_thi_moi_lan_theo_dia_danh_do(self):
@@ -253,7 +254,8 @@ class LuongDiaDanhMacDinh(_SoTam):
         for _ in range(2):
             ra = tt.tra_loi("thời tiết hôm nay", "u1")
             self.assertTrue(ra["text"].startswith("📍 Hoàng Mai, Hà Nội (địa danh mặc định)"))
-            self.assertIn(("📍 Đổi địa danh mặc định", "__thoi_tiet__:doi"), ra["nut"])
+            self.assertNotIn("nut", ra, "câu trả lời thường ngày không gắn nút (chủ máy 15/09/2026)")
+            self.assertNotIn("đổi địa danh thời tiết sang", ra["text"])
 
     def test_moi_cuoc_tro_chuyen_mot_dia_danh(self):
         tt.dat_mac_dinh("u1", HOANG_MAI_HN)
@@ -399,10 +401,9 @@ class OrchestratorKhongCanQuyenHA(_SoTam):
         ra, model2 = self._chay("Hoàng Mai", {"web"})
         self.assertEqual(tt.doc_mac_dinh("u_orch")["key"], "3558175")
         self.assertIn("Thời tiết Hoàng Mai", ra["text"])
-        self.assertIn("__thoi_tiet__:doi", [c["send"] for c in ra.get("choices") or []])
         self.assertEqual(model + model2, [])
 
-    def test_loi_dan_them_khuyen_cao_van_duoc_ap_va_con_nut(self):
+    def test_loi_dan_them_khuyen_cao_van_duoc_ap(self):
         """Lời dặn đã lưu ngày 29/08: «hỏi thời tiết thì thêm lưu ý, khuyến cáo»."""
         tt.dat_mac_dinh("u_orch", HOANG_MAI_HN)
         dan = ("- Khi người dùng hỏi thời tiết, ngoài thông tin thời tiết cần thêm phần "
@@ -413,7 +414,7 @@ class OrchestratorKhongCanQuyenHA(_SoTam):
         self.assertIn("khuyến cáo", he_thong)
         self.assertIn("Lưu ý: nhớ mang ô.", ra["text"])
         self.assertIn("Thời tiết Hoàng Mai", ra["text"])
-        self.assertIn("__thoi_tiet__:doi", [c["send"] for c in ra.get("choices") or []])
+        self.assertFalse(ra.get("choices"), "không nút nào khi bộ dò không cần hỏi lại")
 
     def test_luong_khong_duoc_tra_mang_thi_khong_vao(self):
         ra, model = self._chay("thời tiết hôm nay", {"homeassistant"})

@@ -200,8 +200,12 @@ def _ten(dd: dict[str, str]) -> str:
     return _ten_hien_thi(dd)
 
 
-def _nut_doi() -> tuple[str, str]:
-    return ("📍 Đổi địa danh mặc định", "__thoi_tiet__:doi")
+def _da_dat(dd: dict[str, str]) -> str:
+    # Cách đổi chỉ nói MỘT lần, lúc vừa đặt. Bản đầu gắn nút «Đổi địa danh mặc
+    # định» vào MỌI câu trả lời thời tiết; chủ máy 15/09/2026 chụp màn hình Zalo:
+    # "Hơi fail chỗ trả lời, đâu phải lúc nào cũng lựa chọn".
+    return (f"Đã đặt «{_ten(dd)}» làm địa danh mặc định cho thời tiết ạ. Muốn đổi, "
+            "anh/chị nhắn «đổi địa danh thời tiết sang <tên nơi>».\n\n")
 
 
 def _tra(dd: dict[str, str], *, la_mac_dinh: bool) -> dict[str, Any]:
@@ -211,8 +215,7 @@ def _tra(dd: dict[str, str], *, la_mac_dinh: bool) -> dict[str, Any]:
         return {"text": f"Em chưa lấy được thời tiết {_ten(dd)} từ AccuWeather lúc này, "
                         "anh/chị thử lại sau ít phút giúp em nhé."}
     if la_mac_dinh:
-        return {"text": f"📍 {_ten(dd)} (địa danh mặc định)\n{text}", "nut": [_nut_doi()],
-                "cau_tra_loi": True}
+        return {"text": f"📍 {_ten(dd)} (địa danh mặc định)\n{text}", "cau_tra_loi": True}
     return {"text": text, "cau_tra_loi": True}
 
 
@@ -293,7 +296,7 @@ def xu_ly(user_id: str, *, dia_danh: str = "", dat_mac_dinh_moi: bool = False,
     if dat_mac_dinh_moi:
         dat_mac_dinh(pv, dd)
         ra = _tra(dd, la_mac_dinh=True)
-        ra["text"] = f"Đã đặt «{_ten(dd)}» làm địa danh mặc định cho thời tiết ạ.\n\n" + ra["text"]
+        ra["text"] = _da_dat(dd) + ra["text"]
         return ra
     return _tra(dd, la_mac_dinh=False)
 
@@ -319,7 +322,7 @@ def tra_loi(user_text: str, user_id: str) -> dict[str, Any] | None:
         if viec == "dat":
             dat_mac_dinh(pv, dd)
             ra = _tra(dd, la_mac_dinh=True)
-            ra["text"] = f"Đã đặt «{_ten(dd)}» làm địa danh mặc định cho thời tiết ạ.\n\n" + ra["text"]
+            ra["text"] = _da_dat(dd) + ra["text"]
             return ra
         return _tra(dd, la_mac_dinh=False)
 
