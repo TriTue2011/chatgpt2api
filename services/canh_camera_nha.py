@@ -97,6 +97,28 @@ def _camera_duoc_canh(c: dict[str, Any]) -> list[str]:
 
 # ── Nguồn: Frigate ──────────────────────────────────────────────────────────
 
+def camera_tu_frigate(ma: str, c: dict[str, Any]) -> str:
+    """Mã camera Frigate (``cua``, ``phong-khach``) → tên camera đã khai. Không chắc → ``""``.
+
+    KHÔNG dùng ``camera_nha.tim``: hàm đó khớp CÂU NGƯỜI NÓI nên bỏ «từ chung»
+    trước khi chấm — mà «cua» (của) nằm trong danh sách đó, nên mã ``cua`` của
+    camera cửa không khớp «Cam cửa». Đo 15/09/2026: bốn camera Frigate thì
+    đúng camera cửa rơi mất. Mã máy không có từ thừa, nên luật ở đây là: MỌI
+    từ của mã phải có trong tên camera, và chỉ đúng MỘT camera thoả.
+    """
+    from services import camera_nha
+
+    ban_do = c.get("frigate_ban_do") if isinstance(c.get("frigate_ban_do"), dict) else {}
+    if ban_do.get(ma):
+        return str(ban_do[ma])
+    tu = camera_nha._tu(ma)
+    if not tu:
+        return ""
+    khop = [x["name"] for x in camera_nha.danh_sach()
+            if tu <= camera_nha._tu(x["name"]) | camera_nha._tu(str(x.get("note") or ""))]
+    return khop[0] if len(khop) == 1 else ""
+
+
 def su_kien_frigate(su_kien: Any) -> None:
     """mqtt_nha gọi cho mỗi tin ``frigate/events``. KHÔNG chặn, KHÔNG raise."""
     try:
@@ -108,14 +130,9 @@ def su_kien_frigate(su_kien: Any) -> None:
         sau = su_kien.get("after") or {}
         if not isinstance(sau, dict) or str(sau.get("label") or "") != "person":
             return
-        cam_frigate = str(sau.get("camera") or "")
-        ban_do = c["frigate_ban_do"] if isinstance(c["frigate_ban_do"], dict) else {}
-        ten = str(ban_do.get(cam_frigate) or "")
+        ten = camera_tu_frigate(str(sau.get("camera") or ""), c)
         if not ten:
-            from services import camera_nha
-            ten, ban_ghi, _ = camera_nha.tim(cam_frigate)
-            if ban_ghi is None:
-                return
+            return
         _stats["frigate"] += 1
         yeu_cau(ten, "frigate")
     except Exception as exc:

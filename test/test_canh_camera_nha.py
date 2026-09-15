@@ -152,17 +152,30 @@ class LuotVaBaoTinTests(_Nen):
 
 class NguonTests(_Nen):
     def test_su_kien_frigate_person_xin_nhan_mat_dung_camera(self):
-        from services import camera_nha
-        with mock.patch.object(camera_nha, "tim",
-                               lambda t: ("Cam cửa", {"name": "Cam cửa"}, []) if t == "cua"
-                               else ("", None, [])):
-            cc.su_kien_frigate({"type": "new", "after": {"camera": "cua", "label": "person"}})
-            cc.su_kien_frigate({"type": "new", "after": {"camera": "cua", "label": "car"}})
-            cc.su_kien_frigate({"type": "end", "after": {"camera": "cua", "label": "person"}})
-            cc.su_kien_frigate({"type": "new", "after": {"camera": "la", "label": "person"}})
+        cc.su_kien_frigate({"type": "new", "after": {"camera": "cua", "label": "person"}})
+        cc.su_kien_frigate({"type": "new", "after": {"camera": "cua", "label": "car"}})
+        cc.su_kien_frigate({"type": "end", "after": {"camera": "cua", "label": "person"}})
+        cc.su_kien_frigate({"type": "new", "after": {"camera": "la", "label": "person"}})
         self.assertEqual(cc._dang_cho, {"Cam cửa"})
         self.assertEqual(cc._hang.get_nowait(), ("Cam cửa", "frigate"))
         cc._dang_cho.clear()
+
+    def test_ma_frigate_CUA_khop_Cam_cua_du_cua_la_tu_chung(self):
+        """Lỗi thật 15/09/2026: `camera_nha.tim("cua")` bỏ «cua» (của) như từ
+        chung nên camera cửa của Frigate không khớp «Cam cửa» — đúng camera cần
+        nhất cho «người quen về»."""
+        from services import camera_nha
+        ds = [{"name": "Cam ban công"}, {"name": "Cam bếp"}, {"name": "Cam cửa"},
+              {"name": "Cam phòng khách"}, {"name": "Cam phòng ngủ"}]
+        c = cc.cfg()
+        with mock.patch.object(camera_nha, "danh_sach", lambda: ds):
+            self.assertEqual(camera_nha.tim("cua")[1], None)          # bằng chứng của lỗi
+            for ma, ten in (("cua", "Cam cửa"), ("bep", "Cam bếp"), ("ban-cong", "Cam ban công"),
+                            ("phong-khach", "Cam phòng khách"), ("phong_ngu", "Cam phòng ngủ"),
+                            ("phong", ""), ("garage", ""), ("", "")):
+                self.assertEqual(cc.camera_tu_frigate(ma, c), ten, ma)
+            self.assertEqual(cc.camera_tu_frigate("cam1", {"frigate_ban_do": {"cam1": "Cam bếp"}}),
+                             "Cam bếp")
 
     def test_tat_canh_thi_frigate_khong_xep_hang(self):
         self.cfg["canh"]["bat"] = False
