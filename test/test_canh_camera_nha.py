@@ -35,7 +35,8 @@ class _Nen(unittest.TestCase):
         tmp = Path(self._tmp.name)
         so_mat_nha._reset_for_tests()
         self.cfg = {"canh": {"bat": True, "camera_ve": ["Cam cửa"], "hoi_ten_sau": 3,
-                             "phien_phut": 10}, "khuon_mat": {"bo": "buffalo_s"}}
+                             "phien_phut": 10, "camera": ["Cam cửa", "Cam bếp"]},
+                    "khuon_mat": {"bo": "buffalo_s"}}
         self.gui: list[tuple[str, str, str]] = []
         self.mat: list[dict] = []
         self.gio = [1_000_000.0]
@@ -197,6 +198,66 @@ class NguonTests(_Nen):
     def test_camera_khong_nam_trong_danh_sach_canh_bi_bo_qua(self):
         self.cfg["canh"]["camera"] = ["Cam bếp"]
         self.assertFalse(cc.yeu_cau("Cam cửa", "frigate"))
+
+    def test_KHONG_tich_camera_nao_thi_KHONG_canh_gi(self):
+        """Rỗng = không canh gì, KHÔNG phải canh mọi camera.
+
+        Chủ máy 16/09/2026: *"khi không tích cam nào là không dùng yolo"*.
+        Trước đây rỗng nghĩa là mọi camera nên bỏ tích hết vẫn quét cả bốn.
+        """
+        self.cfg["canh"]["camera"] = []
+        self.assertEqual(cc._camera_duoc_canh(cc.cfg()), [])
+        self.assertFalse(cc.yeu_cau("Cam cửa", "yolo"))
+        self.assertFalse(cc.yeu_cau("Cam bếp", "frigate"))
+
+    def test_nguoi_la_dua_LUA_CHON_nguoi_da_biet_va_them_moi(self):
+        """Chủ máy 16/09/2026: người lạ thì đưa danh sách người đã dạy để bấm.
+
+        Bắt người dùng gõ «mặt lạ ab12 là ...» là bắt họ nhớ một mã băm.
+        """
+        with mock.patch.object(self.sm, "danh_sach_nguoi",
+                               lambda: [{"ten": "Bà ngoại"}, {"ten": "Chú Tư"}]):
+            dong = cc._lua_chon_mat_la("ab12")
+        self.assertEqual(dong[0], "<<<ASK>>>")
+        self.assertEqual(dong[-1], "<<<END>>>")
+        ca = "\n".join(dong)
+        self.assertIn("Là Bà ngoại | mặt lạ ab12 là Bà ngoại", ca)
+        self.assertIn("Là Chú Tư | mặt lạ ab12 là Chú Tư", ca)
+        self.assertIn("Thêm người mới", ca)
+        self.assertIn("thôi hỏi về mặt lạ ab12", ca)
+
+    def test_LUA_CHON_co_TRAN_va_nhan_nut_khong_qua_40_ky_tu(self):
+        """`ask_choices` cắt nhãn ở 40 ký tự — phải rút ở đây, đừng để nó cắt."""
+        nhieu = [{"ten": f"Người thứ {i} tên rất dài để thử cắt"} for i in range(20)]
+        with mock.patch.object(self.sm, "danh_sach_nguoi", lambda: nhieu):
+            dong = cc._lua_chon_mat_la("ab12")
+        self.assertEqual(len([d for d in dong if d.startswith("Là ")]),
+                         cc._TOI_DA_NGUOI_CHON)
+        for d in dong:
+            if "|" in d:
+                self.assertLessEqual(len(d.split("|")[0].strip()), 40)
+
+    def test_ten_luong_phu_chi_nhan_TEN_go2rtc_khong_nhan_URL(self):
+        """Khai URL thì không suy ra tên luồng được — và KHÔNG được đoán «-sub».
+
+        Ghép «-sub» là quy ước của riêng một nhà; nhà khác đặt tên khác thì
+        đoán như vậy là đọc nhầm sang camera của người ta.
+        """
+        from services import camera_nha
+
+        self.assertEqual(
+            camera_nha._ten_luong_phu({"kind": "go2rtc", "src_ai": "cua-sub"}), "cua-sub")
+        self.assertEqual(
+            camera_nha._ten_luong_phu({"kind": "go2rtc", "src_ai": "rtsp://may/cua"}), "")
+        self.assertEqual(camera_nha._ten_luong_phu({"kind": "go2rtc", "src_ai": ""}), "")
+        self.assertEqual(
+            camera_nha._ten_luong_phu({"kind": "rtsp", "src_ai": "cua-sub"}), "")
+
+    def test_khung_ben_bi_camera_khong_co_thi_tra_None_chu_khong_nem(self):
+        """Đường TĂNG TỐC: hỏng thì rơi về cách cũ, không được làm mất ảnh."""
+        from services import camera_nha
+
+        self.assertIsNone(camera_nha.khung_ben_bi("camera không tồn tại bao giờ"))
 
 
 if __name__ == "__main__":

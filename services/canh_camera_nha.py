@@ -53,7 +53,7 @@ _MAC_DINH: dict[str, Any] = {
     "chu_ky_giay": 2.0,
     "cach_giay": 8.0,
     "phien_phut": 10.0,
-    "camera": [],          # rỗng = mọi camera đã khai
+    "camera": [],          # rỗng = KHÔNG canh camera nào
     "camera_ve": [],       # camera tính là «về nhà» — rỗng = không báo người quen về
     "hoi_ten_sau": 3,      # mặt lạ gặp ngần này lượt thì hỏi tên
     "frigate_ban_do": {},  # {"cua": "Cam cửa"} khi tên Frigate không khớp tên camera
@@ -68,7 +68,7 @@ _lan_mat: dict[str, float] = {}             # camera → lúc nhận mặt gần
 _phien: dict[tuple[str, str], float] = {}   # (camera, người/cụm) → lúc thấy gần nhất
 _hong_toi: dict[str, float] = {}            # camera → bỏ qua tới lúc (vừa lỗi)
 _stats: dict[str, Any] = {"quet": 0, "co_nguoi": 0, "nhan_mat": 0, "su_kien": 0,
-                          "frigate": 0, "loi": 0, "loi_cuoi": ""}
+                          "frigate": 0, "ben_bi": 0, "loi": 0, "loi_cuoi": ""}
 
 
 def cfg() -> dict[str, Any]:
@@ -88,11 +88,18 @@ def _so(v: Any, mac_dinh: float, thap: float, cao: float) -> float:
 
 
 def _camera_duoc_canh(c: dict[str, Any]) -> list[str]:
+    """Camera đang được canh. KHÔNG tích camera nào ⇒ KHÔNG canh gì cả.
+
+    Chủ máy chốt 16/09/2026: *"khi không tích cam nào là không dùng yolo"*.
+    Trước đây danh sách rỗng nghĩa là MỌI camera, nên bỏ tích hết vẫn quét đủ
+    bốn camera — ngược hẳn ý người dùng, và là cách đốt CPU không ai xin.
+    """
     from services import camera_nha
 
-    ten = [x["name"] for x in camera_nha.danh_sach()]
-    chon = [str(x) for x in (c.get("camera") or []) if str(x).strip()]
-    return [t for t in ten if not chon or t in chon]
+    chon = {str(x).strip() for x in (c.get("camera") or []) if str(x).strip()}
+    if not chon:
+        return []
+    return [x["name"] for x in camera_nha.danh_sach() if x["name"] in chon]
 
 
 # ── Nguồn: Frigate ──────────────────────────────────────────────────────────
@@ -196,8 +203,16 @@ def _vong_quet() -> None:
             if time.time() < _hong_toi.get(ten, 0.0):
                 continue
             try:
-                _, tho = camera_nha.chup_tho(ten, phu=True, timeout=10)
-                nguoi = nhin_nha.vat_the(yolo_nha.doc_anh(tho), chi_nhan={"person"})
+                # Kết nối giữ mở trả khung trong 0–4 ms; `chup_tho` tốn ~1 giây
+                # mỗi lần vì go2rtc phải chờ khung khoá (đo 16/09/2026, 20 lần).
+                # Không dùng được thì rơi về cách cũ — chậm chứ không mất ảnh.
+                anh = camera_nha.khung_ben_bi(ten)
+                if anh is None:
+                    _, tho = camera_nha.chup_tho(ten, phu=True, timeout=10)
+                    anh = yolo_nha.doc_anh(tho)
+                else:
+                    _stats["ben_bi"] += 1
+                nguoi = nhin_nha.vat_the(anh, chi_nhan={"person"})
                 _stats["quet"] += 1
             except Exception as exc:
                 # Camera chết thì nghỉ nó 60 giây — không để một camera hỏng
@@ -289,6 +304,36 @@ def _don_phien(now: float, phien: float) -> None:
             del _phien[k]
 
 
+#: Trần số người đưa lên nút bấm — danh sách dài quá thì tin nhắn thành một
+#: bức tường số, bấm nhầm nhiều hơn bấm đúng.
+_TOI_DA_NGUOI_CHON = 8
+
+
+def _lua_chon_mat_la(mat_la_id: str) -> list[str]:
+    """Nút bấm kèm tin «người lạ»: chọn người đã biết, thêm mới, hoặc bỏ qua.
+
+    Chủ máy chốt 16/09/2026: *"người lạ thì bỏ qua, người quen thì đưa danh
+    sách đã có để chọn và thêm 1 lựa chọn thêm mới"*. Trước đây tin chỉ dạy
+    cú pháp «mặt lạ <mã> là <tên>» — đúng nhưng bắt người dùng gõ đúng mã,
+    mà mã là sáu ký tự băm chẳng ai nhớ nổi.
+
+    Nhãn nút bị cắt còn 40 ký tự ở `ask_choices`, nên tên dài phải rút ở đây
+    chứ không để nó cắt ngang chừng.
+    """
+    from services import so_mat_nha
+
+    dong = ["<<<ASK>>>"]
+    for n in so_mat_nha.danh_sach_nguoi()[:_TOI_DA_NGUOI_CHON]:
+        ten = str(n.get("ten") or "").strip()
+        if ten:
+            dong.append(f"Là {ten[:30]} | mặt lạ {mat_la_id} là {ten}")
+    dong.append(f"Thêm người mới | tôi muốn đặt tên mới cho mặt lạ {mat_la_id}")
+    dong.append(f"Người lạ, đừng hỏi nữa | thôi hỏi về mặt lạ {mat_la_id}")
+    dong.append(f"Để sau | để sau hỏi lại về mặt lạ {mat_la_id}")
+    dong.append("<<<END>>>")
+    return dong
+
+
 def _bao(camera: str, m: dict[str, Any], mat_la_id: str | None, anh_url: str,
          ts: float, c: dict[str, Any]) -> None:
     """Gửi qua sổ đăng ký thông báo — chưa bật/chưa chọn kênh thì `thong_bao` tự im."""
@@ -304,9 +349,12 @@ def _bao(camera: str, m: dict[str, Any], mat_la_id: str | None, anh_url: str,
     la = so_mat_nha.mat_la(mat_la_id) or {}
     so_lan = int(la.get("so_lan") or 1)
     thong_bao.gui("camera.nguoi_la",
-                  f"👤 Người lạ ở {camera} lúc {_gio(ts)}"
-                  + (f" — đã gặp {so_lan} lượt." if so_lan > 1 else ".")
-                  + f"\nNếu là người quen, nhắn «mặt lạ {mat_la_id} là <tên>» để em nhớ.",
+                  "\n".join([
+                      f"👤 Người lạ ở {camera} lúc {_gio(ts)}"
+                      + (f" — đã gặp {so_lan} lượt." if so_lan > 1 else "."),
+                      "Đây là ai ạ?",
+                      *_lua_chon_mat_la(mat_la_id),
+                  ]),
                   anh_url)
     if so_mat_nha.nen_hoi_mat_la(mat_la_id, int(_so(c["hoi_ten_sau"], 3, 1, 100))):
         gui = thong_bao.gui(

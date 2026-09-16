@@ -27,6 +27,8 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
+import threading
+import time
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -387,6 +389,142 @@ def _bocc(cam: dict[str, Any], timeout: float) -> bytes:
     """Bóc một khung từ bản ghi đã chốt luồng."""
     return (_chup_go2rtc(cam, timeout) if cam.get("kind") == "go2rtc"
             else _chup_rtsp(cam, timeout))
+
+
+# ── Luồng phụ giữ mở ─────────────────────────────────────────────────────────
+#
+# `frame.jpeg` tốn ~1 GIÂY mỗi lần gọi vì go2rtc phải chờ một khung khoá. Đo
+# 16/09/2026 trên Cam cửa, 20 lần mỗi đường: gọi theo tên luồng 1019 ms, gọi
+# theo URL RTSP thẳng 1014 ms — giống nhau, nên KHÔNG phải chuyện URL.
+#
+# Giữ MỘT kết nối RTSP mở tới go2rtc thì: mở mất 1764 ms (một lần duy nhất),
+# khung đầu 24 ms, **các khung sau 0–4 ms**. Vòng quét YOLO chạy mỗi vài giây
+# nên đây là chỗ đáng đổi: chặng chiếm ~90% thời gian một vòng gần như biến mất,
+# và không còn dựng phiên mới mỗi lần — thứ vẫn nghi là nguồn của lỗi 500.
+#
+# Ngõ cụt đã thử, đừng thử lại: `/api/stream.mjpeg` trả 200 nhưng 0 byte (camera
+# phát H.264, go2rtc không tự chuyển mã), `/api/frame.mjpeg` trả 404.
+#
+# CHỈ bật khi luồng phụ khai bằng TÊN luồng go2rtc (vd `cua-sub`). Khai bằng URL
+# thì chịu — và tuyệt đối KHÔNG đoán tên bằng cách ghép `"-sub"`: đó là quy ước
+# của riêng một nhà, nhà khác đặt tên khác là đọc nhầm camera.
+
+#: Cổng RTSP mặc định của go2rtc (cổng HTTP là 1984).
+CONG_RTSP_GO2RTC = 8554
+#: Khung cũ hơn ngần này giây coi như kết nối đã chết — mở lại.
+_KHUNG_QUA_HAN = 5.0
+
+_khoa_doc = threading.Lock()
+_doc_ben_bi: dict[str, "_DocBenBi"] = {}
+
+
+class _DocBenBi:
+    """Một kết nối RTSP mở sẵn, luôn giữ khung mới nhất trong bộ nhớ.
+
+    Luồng nền đọc liên tục chứ không đọc theo yêu cầu: ffmpeg đệm sẵn, không
+    rút ra đều thì khung tồn lại và ảnh trả về là ảnh cũ vài giây.
+    """
+
+    def __init__(self, url: str, ten: str) -> None:
+        self._url, self._ten = url, ten
+        self._cap: Any = None
+        self._khoa = threading.Lock()
+        self._dung = threading.Event()
+        self._khung: Any = None
+        self._luc = 0.0
+        self._luong = threading.Thread(target=self._chay, name=f"cam-{ten}"[:15],
+                                       daemon=True)
+        self._luong.start()
+
+    def _mo(self) -> Any:
+        import cv2
+
+        cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG)
+        if not cap.isOpened():
+            cap.release()
+            return None
+        try:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception:  # noqa: BLE001 — backend nào không hỗ trợ thì thôi
+            pass
+        return cap
+
+    def _chay(self) -> None:
+        while not self._dung.is_set():
+            if self._cap is None:
+                self._cap = self._mo()
+                if self._cap is None:
+                    self._dung.wait(5.0)      # camera đang sập, đừng quay tít
+                    continue
+            ok, khung = self._cap.read()
+            if not ok:
+                self._cap.release()
+                self._cap = None
+                continue
+            with self._khoa:
+                self._khung, self._luc = khung, time.time()
+
+    def khung(self) -> Any:
+        """Khung mới nhất, hoặc ``None`` khi kết nối chưa sẵn/đã ôi."""
+        with self._khoa:
+            if self._khung is None or time.time() - self._luc > _KHUNG_QUA_HAN:
+                return None
+            return self._khung
+
+    def dong(self) -> None:
+        self._dung.set()
+        self._luong.join(timeout=3.0)
+        if self._cap is not None:
+            self._cap.release()
+            self._cap = None
+
+
+def _ten_luong_phu(cam: dict[str, Any]) -> str:
+    """Tên luồng phụ trên go2rtc, rỗng nếu camera này không khai bằng tên."""
+    if cam.get("kind") != "go2rtc":
+        return ""
+    s = str(cam.get("src_ai") or "").strip()
+    return "" if not s or s.lower().startswith(("rtsp://", "http://", "https://")) else s
+
+
+def khung_ben_bi(ten: str):
+    """Khung BGR mới nhất từ kết nối giữ mở, hoặc ``None``.
+
+    ``None`` nghĩa là "cách này không dùng được ở đây" — người gọi rơi về
+    ``chup_tho``. Không ném lỗi: đây là đường TĂNG TỐC, hỏng thì chỉ chậm lại
+    như cũ chứ không được làm mất ảnh.
+    """
+    try:
+        ten_that, cam = _lay(ten)
+    except LoiCamera:
+        return None
+    luong = _ten_luong_phu(cam)
+    if not luong:
+        return None
+    with _khoa_doc:
+        d = _doc_ben_bi.get(ten_that)
+        if d is None:
+            u = urlsplit(str(cam.get("base") or ""))
+            if not u.hostname:
+                return None
+            tk = ""
+            if cam.get("username"):
+                tk = f"{cam['username']}:{cam.get('password') or ''}@"
+            d = _DocBenBi(f"rtsp://{tk}{u.hostname}:{CONG_RTSP_GO2RTC}/{luong}", ten_that)
+            _doc_ben_bi[ten_that] = d
+            logger.info({"event": "camera_luong_ben_bi_mo", "camera": ten_that,
+                         "luong": luong})
+    return d.khung()
+
+
+def dong_luong_ben_bi() -> int:
+    """Đóng mọi kết nối giữ mở. Trả số kết nối đã đóng."""
+    with _khoa_doc:
+        ds = list(_doc_ben_bi.values())
+        _doc_ben_bi.clear()
+    for d in ds:
+        d.dong()
+    return len(ds)
 
 
 def chup_tho(ten: str, *, phu: bool = False, timeout: float = 20.0) -> tuple[str, bytes]:

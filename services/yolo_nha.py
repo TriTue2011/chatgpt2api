@@ -10,11 +10,22 @@ Model: bản ONNX CHÍNH THỨC Ultralytics phát hành (release ``v8.4.0`` củ
 gói ``ultralytics`` (kéo theo torch, hơn 700 MB): onnxruntime và OpenCV headless
 đã có sẵn trong ảnh.
 
-Đo 15/09/2026 trên máy chủ (Xeon E5-2630L v4), ảnh mẫu ``bus.jpg``, cỡ 640:
+Đo 16/09/2026 trên máy chủ (Xeon E5-2630L v4), **255 khung thật** bóc từ bản
+ghi liên tục của 4 camera trong nhà, cỡ 640, 2 luồng. Cột "bắt được" là số
+khung tìm ra người ở ngưỡng tin cậy 0,70:
 
-    model     1 luồng   2 luồng   4 luồng   ra
-    yolo26n   154 ms    88 ms     51 ms     4 người + 1 xe buýt
-    yolo26s   458 ms    248 ms    161 ms    4 người + 1 xe buýt
+    model     ms/khung   bắt được (÷255)
+    yolo26n      79         96
+    yolo26s     244        129
+    yolo26m     742        146
+    yolo26l     943        143
+    yolo26x    2043        147
+
+**To hơn KHÔNG phải lúc nào cũng giỏi hơn.** ``yolo26l`` chậm hơn ``yolo26m``
+27% mà bắt được ÍT hơn (143 so với 146); ``yolo26x`` hơn đúng một khung nhưng
+tốn gấp 2,75 lần. Đây là lý do phải đo trên khung thật chứ đừng xếp hạng theo
+kích thước tệp: ``yolo26m`` là điểm dừng hợp lý, ``l`` và ``x`` chỉ để đối
+chứng. Khung dùng để đo giữ ở ``/tmp/mau2`` trong container khi còn.
 
 Giấy phép: trọng số YOLO26 theo AGPL-3.0 của Ultralytics. Model KHÔNG nằm
 trong repo hay ảnh — ``scripts/download_nhin_nha.py`` tải về volume dữ liệu,
@@ -47,13 +58,19 @@ class ModelYolo:
 MODELS: tuple[ModelYolo, ...] = (
     ModelYolo("yolo26n", "yolo26n.onnx",
               "2e947b787d9e787b93a16772a5f55b1d4d8c4d86f53146149c5d6a642442d6f7",
-              9.9, "nhanh nhất — 88 ms/khung với 2 luồng"),
+              9.9, "nhanh nhất — 79 ms/khung, bắt 96/255 khung; hợp để quét liên tục"),
     ModelYolo("yolo26s", "yolo26s.onnx",
               "d26b65c432111eb95798cd2320603d4d75627605dbec6c6b7f98c499a80e7321",
-              38.3, "chính xác hơn, chậm gần gấp ba — 248 ms/khung với 2 luồng"),
+              38.3, "244 ms/khung, bắt 129/255 — chậm gấp ba, bắt thêm một phần ba"),
     ModelYolo("yolo26m", "yolo26m.onnx",
               "5631854916f5d8418169580cde05647f3a1483b21a5026567f122c1fedab973d",
-              82.0, "chính xác nhất trong ba, chỉ nên dùng khi hỏi từng ảnh"),
+              82.0, "742 ms/khung, bắt 146/255 — giỏi nhất trong năm bản, nên dùng khi hỏi từng ảnh"),
+    ModelYolo("yolo26l", "yolo26l.onnx",
+              "d32e8d2b3e5c7c591865d372712e42a88ff5bbc518f3bd83ad3621668de89f7a",
+              99.6, "943 ms/khung, bắt 143/255 — CHẬM HƠN yolo26m mà bắt được ít hơn"),
+    ModelYolo("yolo26x", "yolo26x.onnx",
+              "88568299de91d4967f239a062c9f1619f695ebd05de73cd66b8f589591aaeb0a",
+              223.3, "2043 ms/khung, bắt 147/255 — hơn yolo26m một khung, tốn gấp 2,75 lần"),
 )
 MAC_DINH = "yolo26n"
 CANH = 640
