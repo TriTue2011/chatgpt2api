@@ -387,7 +387,8 @@ class ApiQuyenTests(unittest.TestCase):
                               ("post", "/api/nhin-nha/mat-la/x/thoi-hoi"),
                               ("post", "/api/nhin-nha/mat-la/x/dat-ten"),
                               ("post", "/api/nhin-nha/nguoi/x/doi-ten"),
-                              ("post", "/api/nhin-nha/mat/x/chuyen")):
+                              ("post", "/api/nhin-nha/mat/x/chuyen"),
+                              ("post", "/api/nhin-nha/su-kien/1/chuyen")):
             # POST nào nhận `body: dict` thì thiếu body là FastAPI trả 422 ở bước
             # kiểm dữ liệu, TRƯỚC khi `require_admin` kịp chạy — tức bài test sẽ
             # không đo cổng quyền nữa mà đo bộ kiểm body. Gửi body rỗng hợp lệ để
@@ -425,6 +426,32 @@ class ApiNhinNhaTests(_Nen):
         d = self.client.post("/api/nhin-nha/mat-la/khong-co/dat-ten", json={"ten": "A"}).json()
         self.assertFalse(d["ok"])
         self.assertIn("Không có mặt lạ", d["error"])
+
+    def test_tran_anh_lich_su_tinh_theo_TUNG_TAB_khong_phai_toan_cuc(self):
+        """Lượt của người quen KHÔNG được mất ảnh chỉ vì người lạ đi qua nhiều.
+
+        Đo thật 17/09/2026: 100 trong 111 lượt là «không nhận ra ai», nên trần
+        toàn cục làm 3 lượt người quen mất ảnh — đúng tab dùng để soi nhận nhầm.
+        """
+        from api import nhin_nha as api_nn
+
+        gio = self.gio[0]
+        # Lượt của người quen là CŨ NHẤT; sau nó là một đống lượt người lạ mới hơn.
+        self.sm.ghi_su_kien("Cam cửa", "yolo", "quen", nguoi_id="ng1",
+                            anh="http://x/images/a.jpg", ts=gio - 9999)
+        for i in range(api_nn.TOI_DA_ANH_SU_KIEN + 5):
+            self.sm.ghi_su_kien("Cam cửa", "yolo", "la", mat_la_id="cum1",
+                                anh="http://x/images/b.jpg", ts=gio - i)
+        with mock.patch("time.time", lambda: gio), \
+             mock.patch.object(api_nn, "_anh_su_kien", lambda u: "ANH" if u else ""):
+            ds = self.client.get("/api/nhin-nha/su-kien?so_gio=24").json()["su_kien"]
+        quen = [s for s in ds if s["nguoi_id"] == "ng1"]
+        la = [s for s in ds if not s["nguoi_id"]]
+        self.assertEqual(len(quen), 1)
+        self.assertEqual(quen[0]["anh_nho"], "ANH")       # tab người quen vẫn có ảnh
+        self.assertEqual(sum(1 for s in la if s["anh_nho"]), api_nn.TOI_DA_ANH_SU_KIEN)
+        # URL nội bộ (127.0.0.1) không được lọt ra web — bấm vào chỉ báo lỗi.
+        self.assertFalse(any("anh" in s for s in ds))
 
     def test_chuyen_mat_nham_sang_dung_nguoi_qua_tuyen_web(self):
         """Đi qua HTTP thật, không gọi thẳng hàm: route, quyền và hình dạng trả về

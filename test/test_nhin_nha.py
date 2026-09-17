@@ -285,6 +285,67 @@ class SoMatTests(unittest.TestCase):
         for xau in ("../km.sqlite", "/etc/passwd", ""):
             self.assertIsNone(self.sm.duong_anh(xau))
 
+    def test_chuyen_su_kien_gan_lai_dung_nguoi_va_doi_so_luot(self):
+        """Soi lịch sử thấy một lượt gán nhầm thì sửa đúng DÒNG ấy, không hàng loạt."""
+        a = self.sm.day("Việt", _anh(10))
+        b = self.sm.day("Lan", _anh(11))
+        # Mốc thời gian phải là giờ THẬT: `su_kien_gan` lọc theo cửa sổ giờ, nên
+        # một mốc tuỳ tiện (vd ts=5, tức năm 1970) sẽ không đọc lại được.
+        import time as _t
+        gio = _t.time()
+        sk = self.sm.ghi_su_kien("Cam cửa", "yolo", "quen", nguoi_id=a["nguoi_id"], ts=gio - 120)
+        khac = self.sm.ghi_su_kien("Cam cửa", "yolo", "quen", nguoi_id=a["nguoi_id"], ts=gio - 60)
+        kq = self.sm.chuyen_su_kien(sk["id"], "Lan")
+        self.assertEqual(kq["nguoi_id"], b["nguoi_id"])
+        theo = {n["id"]: n for n in self.sm.danh_sach_nguoi()}
+        # `day()` chỉ thêm ẢNH MẪU, KHÔNG tăng `so_lan` — chỉ `ghi_su_kien` mới
+        # tăng. Nên Lan chưa từng có lượt nào, dời sang mới thành 1; còn Việt ghi
+        # 2 lượt, dời đi 1 thì còn 1.
+        self.assertEqual(theo[b["nguoi_id"]]["so_lan"], 1)
+        self.assertEqual(theo[a["nguoi_id"]]["so_lan"], 1)
+        con = {s["id"]: s for s in self.sm.su_kien_gan(24, gioi_han=50)}
+        self.assertEqual(con[sk["id"]]["nguoi_id"], b["nguoi_id"])
+        self.assertEqual(con[khac["id"]]["nguoi_id"], a["nguoi_id"])   # KHÔNG lan sang dòng khác
+        for xau, chu in (("", "Chưa có tên"), ("x" * 61, "dài quá")):
+            with self.assertRaises(self.sm.LoiSoMat) as ng:
+                self.sm.chuyen_su_kien(sk["id"], xau)
+            self.assertIn(chu, str(ng.exception))
+        with self.assertRaises(self.sm.LoiSoMat) as ng:
+            self.sm.chuyen_su_kien(99999, "Lan")
+        self.assertIn("99999", str(ng.exception))
+
+    def test_chuyen_su_kien_moi_nhat_thi_lui_lan_cuoi_cua_nguoi_cu(self):
+        """Gán đi đúng lần gặp gần nhất thì «gặp lần cuối» của người cũ phải lùi
+        lại, không được trỏ vào một lượt đã thuộc về người khác."""
+        import time as _t
+        a = self.sm.day("Việt", _anh(10))
+        self.sm.day("Lan", _anh(11))
+        gio = _t.time()
+        self.sm.ghi_su_kien("Cam cửa", "yolo", "quen", nguoi_id=a["nguoi_id"], ts=gio - 500)
+        moi = self.sm.ghi_su_kien("Cam cửa", "yolo", "quen", nguoi_id=a["nguoi_id"], ts=gio - 10)
+        lay = lambda: {n["id"]: n for n in self.sm.danh_sach_nguoi()}[a["nguoi_id"]]["lan_cuoi"]
+        self.assertAlmostEqual(lay(), gio - 10, delta=1)
+        self.sm.chuyen_su_kien(moi["id"], "Lan")
+        self.assertAlmostEqual(lay(), gio - 500, delta=1)   # lùi về lượt còn lại
+
+    def test_chuyen_su_kien_tra_lai_luot_cho_cum_nguoi_la(self):
+        """Lượt vốn tính cho cụm lạ, nay xác định là người quen thì cụm phải bớt
+        một lượt — `nen_hoi_mat_la` đếm đúng `so_lan` để quyết định hỏi tên."""
+        import time as _t
+        self.sm.day("Lan", _anh(11))
+        anh = yn.doc_anh(_anh(11))
+        ma, _moi = self.sm.gom_mat_la(self.vec["buffalo_s"]["la"], anh,
+                                      (10, 10, 90, 90), "Cam cửa")
+        gio = _t.time()
+        self.sm.ghi_su_kien("Cam cửa", "yolo", "la", mat_la_id=ma, ts=gio - 60)
+        sk = self.sm.ghi_su_kien("Cam cửa", "yolo", "la", mat_la_id=ma, ts=gio - 30)
+        self.assertEqual(self.sm.mat_la(ma)["so_lan"], 2)
+        self.assertAlmostEqual(self.sm.mat_la(ma)["lan_cuoi"], gio - 30, delta=1)
+        self.sm.chuyen_su_kien(sk["id"], "Lan")      # gán đi lượt MỚI NHẤT của cụm
+        self.assertEqual(self.sm.mat_la(ma)["so_lan"], 1)   # đã trả lại một lượt
+        # …và «gần nhất» của cụm lùi về lượt còn lại, không trỏ vào lượt đã đi.
+        self.assertAlmostEqual(self.sm.mat_la(ma)["lan_cuoi"], gio - 60, delta=1)
+
     def test_chuyen_mat_nham_sang_dung_nguoi_giu_nguyen_anh(self):
         """Đặt nhầm tên cho một cụm thì phải sửa được mà KHÔNG mất ảnh camera."""
         a = self.sm.day("Việt", _anh(10))

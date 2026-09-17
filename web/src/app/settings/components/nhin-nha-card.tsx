@@ -47,7 +47,8 @@ type Nguoi = { id: string; ten: string; so_mat: number; anh: string; mat_ds?: Ma
 type MatLa = { id: string; anh: string; anh_ds?: string[]; so_lan: number; lan_cuoi: number;
                camera: string; da_hoi: number };
 type SuKien = { id: number; ts: number; camera: string; nguon: string; loai: string;
-                ten: string | null; mat_la_id: string | null; do_giong: number };
+                ten: string | null; nguoi_id: string | null; mat_la_id: string | null;
+                do_giong: number; anh_nho?: string };
 
 const luc = (ts: number | null) =>
   ts ? new Date(ts * 1000).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit",
@@ -77,6 +78,9 @@ export function NhinNhaCard() {
   // Ảnh mặt nào đang được chọn chuyển sang ai (theo mã ảnh mặt).
   const [chuyenTen, setChuyenTen] = useState<Record<string, string>>({});
   const [chuyenMoi, setChuyenMoi] = useState<Record<string, string>>({});
+  // Gán lại MỘT lượt trong lịch sử (theo số hiệu lượt).
+  const [ganTen, setGanTen] = useState<Record<number, string>>({});
+  const [ganMoi, setGanMoi] = useState<Record<number, string>>({});
 
   const cams = Object.keys(((config as any)?.cameras as Record<string, unknown>) || {});
 
@@ -88,7 +92,9 @@ export function NhinNhaCard() {
     try {
       const [a, b, c, d] = await Promise.all([
         request.get("/api/nhin-nha/trang-thai"), request.get("/api/nhin-nha/nguoi"),
-        request.get("/api/nhin-nha/mat-la"), request.get("/api/nhin-nha/su-kien?so_gio=24"),
+        // 7 ngày chứ không phải 24 giờ: soi nhận nhầm cần đủ lượt để nhìn ra,
+        // mà cả tuần ở nhà này mới có khoảng trăm lượt.
+        request.get("/api/nhin-nha/mat-la"), request.get("/api/nhin-nha/su-kien?so_gio=168"),
       ]);
       setTt(a.data as TrangThai);
       setNguoi(((b.data as any)?.nguoi as Nguoi[]) || []);
@@ -181,6 +187,9 @@ export function NhinNhaCard() {
   // Tab đang mở thật sự: người đầu tiên khi chưa chọn gì, "la" khi chưa dạy ai.
   const tabHt = tab || nguoi[0]?.id || "la";
   const nguoiHt = nguoi.find((n) => n.id === tabHt) || null;
+  // Lịch sử của ĐÚNG tab đang mở: tab người quen thì lấy lượt máy gán cho người
+  // đó, tab «Mặt khác» lấy mọi lượt máy không nhận ra ai.
+  const lichSu = suKien.filter((s) => (tabHt === "la" ? !s.nguoi_id : s.nguoi_id === tabHt));
 
   return (
     <Card>
@@ -489,29 +498,71 @@ export function NhinNhaCard() {
         </div>
         ) : null}
 
-        {/* ── Sự kiện ─────────────────────────────────────────────────── */}
-        <div className="space-y-1">
+        {/* ── Lịch sử nhận diện, chia theo TAB đang mở ──────────────────
+            Đây mới là chỗ soi được nhận nhầm: ảnh mẫu chỉ có vài tấm, còn lịch
+            sử là mọi lần máy ĐÃ kết luận ai là ai. */}
+        <div className="space-y-2">
           <div className="flex items-center gap-2">
-            <p className="text-sm font-medium">24 giờ qua ({suKien.length} lượt)</p>
+            <p className="text-sm font-medium">
+              Lịch sử 7 ngày · {nguoiHt ? `máy bảo là «${nguoiHt.ten}»` : "máy không nhận ra ai"}
+              {" "}({lichSu.length} lượt)
+            </p>
             <Button size="sm" variant="outline" onClick={() => void tai()}>Làm mới</Button>
           </div>
-          <div className="overflow-x-auto">
-            <table className="text-xs">
-              <tbody>
-                {suKien.map((s) => (
-                  <tr key={s.id} className="border-b border-border/40">
-                    <td className="pr-3 py-1 whitespace-nowrap">{luc(s.ts)}</td>
-                    <td className="pr-3">{s.camera}</td>
-                    <td className="pr-3">
-                      {s.loai === "quen" ? s.ten
-                        : s.loai === "co_the" ? `có thể là ${s.ten} (${Math.round(s.do_giong)}/100)`
-                        : `người lạ «${s.mat_la_id}»`}
-                    </td>
-                    <td className="text-muted-foreground">{s.nguon}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <p className="text-xs text-muted-foreground">
+            Ảnh nào <b>không phải</b> người của tab này là một lần nhận nhầm — chọn «Đây là ai?»
+            ngay dưới ảnh để gán lại. Chỉ sửa đúng lượt đó, không đụng lượt khác.
+          </p>
+          {lichSu.length === 0 ? (
+            <p className="text-xs text-muted-foreground">Chưa có lượt nào trong tab này.</p>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            {lichSu.map((s) => {
+              const dich = ganTen[s.id] === "__moi__" ? (ganMoi[s.id] || "") : (ganTen[s.id] || "");
+              return (
+                <div key={s.id} className="w-32 space-y-1 rounded border border-border/70 p-1">
+                  {s.anh_nho ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={s.anh_nho} alt={`lượt ${s.id}`}
+                         className="h-28 w-full rounded object-cover" />
+                  ) : (
+                    <div className="flex h-28 w-full items-center justify-center rounded bg-muted
+                                    text-center text-[10px] text-muted-foreground">
+                      lượt cũ,<br />không kèm ảnh
+                    </div>
+                  )}
+                  <p className="text-[10px] text-muted-foreground">
+                    {luc(s.ts)} · {s.camera} · {s.nguon}
+                    {s.loai === "co_the" ? ` · ngờ ${Math.round(s.do_giong)}/100` : ""}
+                    {s.loai === "la" && s.mat_la_id ? ` · nhóm «${s.mat_la_id.slice(-4)}»` : ""}
+                  </p>
+                  <select
+                    className="w-full rounded border border-border/70 bg-background px-1 py-0.5 text-[11px]"
+                    value={ganTen[s.id] ?? ""}
+                    onChange={(e) => setGanTen({ ...ganTen, [s.id]: e.target.value })}>
+                    <option value="">Đây là ai?</option>
+                    {nguoi.map((k) => <option key={k.id} value={k.ten}>{k.ten}</option>)}
+                    <option value="__moi__">➕ Người mới…</option>
+                  </select>
+                  {ganTen[s.id] === "__moi__" ? (
+                    <Input className="h-7 text-xs" placeholder="Tên người mới"
+                      value={ganMoi[s.id] || ""}
+                      onChange={(e) => setGanMoi({ ...ganMoi, [s.id]: e.target.value })} />
+                  ) : null}
+                  {dich.trim() ? (
+                    <Button size="sm" variant="outline" className="h-7 w-full text-[11px]"
+                      onClick={async () => {
+                        await goi(() => request.post(`/api/nhin-nha/su-kien/${s.id}/chuyen`,
+                          { ten: dich.trim() }), `Đã gán lượt này cho «${dich.trim()}».`);
+                        setGanTen({ ...ganTen, [s.id]: "" });
+                        setGanMoi({ ...ganMoi, [s.id]: "" });
+                      }}>
+                      Gán lại
+                    </Button>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         </div>
       </CardContent>

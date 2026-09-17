@@ -528,6 +528,66 @@ def ghi_su_kien(camera: str, nguon: str, loai: str, *, nguoi_id: str | None = No
             "nguoi_id": nguoi_id, "mat_la_id": mat_la_id}
 
 
+def chuyen_su_kien(su_kien_id: int, ten: str) -> dict[str, Any]:
+    """Gán lại MỘT lượt gặp trong lịch sử cho đúng người.
+
+    Khác `dat_ten_mat_la` (ghi đè hàng loạt mọi lượt của một cụm như một tác dụng
+    phụ): ở đây chủ nhà nhìn đúng một tấm ảnh rồi khẳng định đó là ai, nên sửa
+    đúng dòng ấy. Vì thế `chuyen_mat` KHÔNG đụng lịch sử, còn hàm này thì có.
+
+    Dời luôn số lượt gặp giữa hai người để `nguoi.so_lan` không đếm sai.
+    """
+    ten = " ".join(str(ten or "").split())
+    if not ten:
+        raise LoiSoMat("Chưa có tên người cho lượt gặp này.")
+    if len(ten) > 60:
+        raise LoiSoMat("Tên dài quá — tối đa 60 ký tự.")
+    with _khoa:
+        conn = _db()
+        r = conn.execute("SELECT nguoi_id, mat_la_id, ts FROM su_kien WHERE id = ?",
+                         (int(su_kien_id),)).fetchone()
+        if r is None:
+            raise LoiSoMat(f"Không có lượt gặp số {su_kien_id}.")
+        cu = _tim_nguoi_theo_ten(conn, ten)
+        moi = cu is None
+        nguoi_id = _ma() if moi else cu["id"]
+        if moi:
+            conn.execute("INSERT INTO nguoi (id, ten, tao_luc) VALUES (?, ?, ?)",
+                         (nguoi_id, ten, time.time()))
+        if r["nguoi_id"] and r["nguoi_id"] != nguoi_id:
+            conn.execute("UPDATE nguoi SET so_lan = MAX(0, so_lan - 1) WHERE id = ?",
+                         (r["nguoi_id"],))
+            # `lan_cuoi` phải tính LẠI, không chỉ trừ lượt: nếu lượt vừa gán đi
+            # đúng là lần gặp gần nhất của người cũ thì ô «gặp lần cuối» sẽ còn
+            # trỏ vào một lượt không còn là của họ. Hết lượt thì thành NULL —
+            # `danh_sach_nguoi` vốn cho phép rỗng.
+            conn.execute("UPDATE nguoi SET lan_cuoi = "
+                         "(SELECT MAX(ts) FROM su_kien WHERE nguoi_id = ? AND id != ?) "
+                         "WHERE id = ?", (r["nguoi_id"], int(su_kien_id), r["nguoi_id"]))
+        # Lượt này vốn đang tính cho một CỤM người lạ; nay đã biết là người quen
+        # thì phải trả lượt lại cho cụm. Quên chỗ này thì `nen_hoi_mat_la` — vốn
+        # quyết định hỏi tên đúng theo `so_lan` — sẽ hỏi sớm hơn mức đáng.
+        if r["mat_la_id"]:
+            conn.execute("UPDATE mat_la SET so_lan = MAX(0, so_lan - 1) WHERE id = ?",
+                         (r["mat_la_id"],))
+            # Và tính lại `lan_cuoi` của cụm vì cùng lý do — nó vừa hiện trên web
+            # vừa là khoá xếp thứ tự (`danh_sach_mat_la` sắp theo `lan_cuoi`).
+            # Cột này NOT NULL nên hết lượt thì lùi về `lan_dau`, khác `nguoi`.
+            conn.execute("UPDATE mat_la SET lan_cuoi = COALESCE("
+                         "(SELECT MAX(ts) FROM su_kien WHERE mat_la_id = ? AND id != ?), lan_dau) "
+                         "WHERE id = ?", (r["mat_la_id"], int(su_kien_id), r["mat_la_id"]))
+        if r["nguoi_id"] != nguoi_id:
+            conn.execute("UPDATE nguoi SET so_lan = so_lan + 1, "
+                         "lan_cuoi = MAX(COALESCE(lan_cuoi, 0), ?) WHERE id = ?",
+                         (r["ts"], nguoi_id))
+        conn.execute("UPDATE su_kien SET nguoi_id = ?, mat_la_id = NULL, loai = 'quen' "
+                     "WHERE id = ?", (nguoi_id, int(su_kien_id)))
+        conn.commit()
+        _bo_bang()
+    logger.info({"event": "so_mat_chuyen_su_kien", "nguoi_moi": moi})
+    return {"nguoi_id": nguoi_id, "ten": ten if moi else cu["ten"], "nguoi_moi": moi}
+
+
 def su_kien_gan(so_gio: float = 24.0, *, camera: str = "", nguoi_id: str = "",
                 gioi_han: int = 50) -> list[dict[str, Any]]:
     """Sự kiện camera trong ``so_gio`` giờ qua, mới nhất trước, kèm tên người."""

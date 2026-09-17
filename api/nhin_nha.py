@@ -16,7 +16,8 @@ dạng data URL thu nhỏ chứ không mở một đường tĩnh công khai nà
 ``GET  /api/nhin-nha/mat-la``                mặt lạ đang theo dõi (kèm ảnh từng lượt)
 ``POST /api/nhin-nha/mat-la/{id}/dat-ten``   ``{"ten": "..."}``
 ``POST /api/nhin-nha/mat-la/{id}/thoi-hoi``
-``GET  /api/nhin-nha/su-kien?so_gio=24``
+``GET  /api/nhin-nha/su-kien?so_gio=24``      lịch sử nhận diện (kèm ảnh nhỏ)
+``POST /api/nhin-nha/su-kien/{id}/chuyen``   ``{"ten": "..."}`` — gán lại lượt gặp
 """
 
 from __future__ import annotations
@@ -45,6 +46,14 @@ _CANH_NHO = 320
 #: Trần số ảnh gửi kèm mỗi người và mỗi cụm mặt lạ. Mỗi ảnh là một data URL
 #: ~320 px nhúng thẳng vào JSON, nên hồ sơ 20 ảnh sẽ làm phình cả câu trả lời.
 TOI_DA_ANH = 8
+#: Trần số ảnh nhỏ kèm LỊCH SỬ nhận diện, tính cho TỪNG TAB (mỗi người quen một
+#: tab, cộng tab «Mặt khác») — KHÔNG phải trần toàn cục. Mỗi ảnh nhúng ~13 KB.
+#:
+#: Vì sao theo tab: đo 17/09/2026 trên lịch sử thật, 100 trong 111 lượt là «không
+#: nhận ra ai». Một trần toàn cục 60 ảnh bị nhóm đông ăn hết, làm 3 trong 11 lượt
+#: của người quen mất ảnh (hạng 83, 88, 91) — đúng những tab dùng để soi nhận
+#: nhầm. Trần sinh ra để giới hạn dung lượng, không phải để chọn tab nào đáng soi.
+TOI_DA_ANH_SU_KIEN = 40
 
 
 def _thu_nho(du_lieu: bytes) -> str:
@@ -236,6 +245,34 @@ def create_router() -> APIRouter:
         from services import so_mat_nha
 
         so_gio = max(0.5, min(24 * 30, float(so_gio)))
-        return {"ok": True, "su_kien": so_mat_nha.su_kien_gan(so_gio, gioi_han=100)}
+
+        def _doc():
+            ds = so_mat_nha.su_kien_gan(so_gio, gioi_han=200)
+            dem: dict[str, int] = {}
+            for s in ds:
+                # Đếm riêng cho từng tab (xem `TOI_DA_ANH_SU_KIEN`): tab nào cũng
+                # được đủ ảnh để soi, không để nhóm đông nuốt phần của nhóm ít.
+                khoa = str(s.get("nguoi_id") or "la")
+                thu = dem.get(khoa, 0)
+                dem[khoa] = thu + 1
+                s["anh_nho"] = _anh_su_kien(s.get("anh") or "") if thu < TOI_DA_ANH_SU_KIEN else ""
+                # `anh` là URL nội bộ (127.0.0.1) — trình duyệt người dùng không
+                # gọi được, gửi ra chỉ gây hiểu nhầm là có ảnh mà bấm không ra.
+                s.pop("anh", None)
+            return ds
+        return {"ok": True, "su_kien": await run_in_threadpool(_doc)}
+
+    @router.post("/api/nhin-nha/su-kien/{su_kien_id}/chuyen")
+    async def chuyen_su_kien(su_kien_id: int, body: dict,
+                             authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        from services import so_mat_nha
+
+        try:
+            kq = await run_in_threadpool(so_mat_nha.chuyen_su_kien, su_kien_id,
+                                         str(body.get("ten") or ""))
+        except so_mat_nha.LoiSoMat as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, **kq}
 
     return router
