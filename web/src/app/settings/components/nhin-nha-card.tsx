@@ -41,7 +41,8 @@ type TrangThai = {
   canh: { dang_chay: boolean; quet: number; co_nguoi: number; nhan_mat: number;
           su_kien: number; frigate: number; loi: number; loi_cuoi: string };
 };
-type Nguoi = { id: string; ten: string; so_mat: number; anh: string; lan_cuoi: number | null; so_lan: number };
+type Nguoi = { id: string; ten: string; so_mat: number; anh: string; anh_ds?: string[];
+               lan_cuoi: number | null; so_lan: number };
 type MatLa = { id: string; anh: string; so_lan: number; lan_cuoi: number; camera: string; da_hoi: number };
 type SuKien = { id: number; ts: number; camera: string; nguon: string; loai: string;
                 ten: string | null; mat_la_id: string | null; do_giong: number };
@@ -63,9 +64,11 @@ export function NhinNhaCard() {
   const [msg, setMsg] = useState("");
   const [saved, setSaved] = useState(false);
   const [tenDay, setTenDay] = useState("");
-  const [tepDay, setTepDay] = useState<File | null>(null);
+  const [tepDay, setTepDay] = useState<File[]>([]);
   const [canEp, setCanEp] = useState(false);
   const [tenLa, setTenLa] = useState<Record<string, string>>({});
+  // Khi chọn «đặt tên mới» trong danh sách thả xuống thì gõ tên vào đây.
+  const [tenMoiLa, setTenMoiLa] = useState<Record<string, string>>({});
   const [suaTen, setSuaTen] = useState<Record<string, string>>({});
 
   const cams = Object.keys(((config as any)?.cameras as Record<string, unknown>) || {});
@@ -102,24 +105,45 @@ export function NhinNhaCard() {
     void tai();
   };
 
+  // Gửi LẦN LƯỢT từng ảnh với CÙNG một tên. `so_mat_nha.day()` vốn đã cộng dồn:
+  // người chưa có thì tạo, có rồi thì thêm mặt — nên nhiều ảnh = một người nhiều
+  // khuôn mặt, đúng kiểu CompreFace. Trước đây ô chọn tệp chỉ nhận MỘT ảnh, tức
+  // giao diện tự mâu thuẫn với chính lời khuyên «dạy 3–4 ảnh» ngay bên dưới nó.
   const day = async (ep: boolean) => {
-    if (!tenDay.trim() || !tepDay) { setMsg("❌ Cần cả tên và ảnh."); return; }
-    setMsg("Đang dạy mặt…");
-    const fd = new FormData();
-    fd.append("ten", tenDay.trim());
-    fd.append("anh", tepDay);
-    fd.append("ep", ep ? "true" : "false");
-    try {
-      const d = (await request.post("/api/nhin-nha/day", fd)).data as any;
-      if (d.ok) {
-        setMsg(`✅ Đã nhớ mặt «${d.ten}» (${d.so_mat} ảnh mặt).`);
-        setTenDay(""); setTepDay(null); setCanEp(false);
-        void tai();
-      } else {
-        setMsg(`❌ ${d.error}`);
-        setCanEp(String(d.error || "").includes("chắc chắn"));
-      }
-    } catch (e) { setMsg(`❌ ${loiCua(e)}`); }
+    if (!tenDay.trim() || tepDay.length === 0) {
+      setMsg("❌ Cần cả tên và ít nhất một ảnh."); return;
+    }
+    setMsg(`Đang dạy mặt (0/${tepDay.length})…`);
+    let xong = 0;
+    let cuoi: any = null;
+    const loi: string[] = [];
+    for (const tep of tepDay) {
+      const fd = new FormData();
+      fd.append("ten", tenDay.trim());
+      fd.append("anh", tep);
+      fd.append("ep", ep ? "true" : "false");
+      try {
+        const d = (await request.post("/api/nhin-nha/day", fd)).data as any;
+        if (d.ok) {
+          xong += 1; cuoi = d;
+          setMsg(`Đang dạy mặt (${xong}/${tepDay.length})…`);
+        } else {
+          loi.push(`${tep.name}: ${d.error}`);
+          if (String(d.error || "").includes("chắc chắn")) setCanEp(true);
+        }
+      } catch (e) { loi.push(`${tep.name}: ${loiCua(e)}`); }
+    }
+    // Một ảnh hỏng KHÔNG được làm mất các ảnh đã nhận: báo rõ cái nào bỏ qua.
+    if (xong > 0) {
+      setMsg(`✅ Đã nhớ mặt «${cuoi.ten}» — thêm ${xong}/${tepDay.length} ảnh, `
+             + `tổng ${cuoi.so_mat} ảnh mặt.`
+             + (loi.length ? ` Bỏ qua: ${loi.join("; ")}` : ""));
+      setTenDay(""); setTepDay([]);
+      if (!loi.length) setCanEp(false);
+    } else {
+      setMsg(`❌ ${loi.join("; ") || "Không dạy được ảnh nào"}`);
+    }
+    void tai();
   };
 
   const goi = async (fn: () => Promise<{ data: any }>, xong: string) => {
@@ -261,10 +285,15 @@ export function NhinNhaCard() {
           <div className="flex flex-wrap gap-2">
             {nguoi.map((n) => (
               <div key={n.id} className="w-44 rounded border border-border/70 p-2 space-y-1">
-                {n.anh ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={n.anh} alt={n.ten} className="h-24 w-full rounded object-cover" />
-                ) : null}
+                {/* Bày TỪNG ảnh mặt đã dạy, không chỉ một tấm đại diện: chủ máy
+                    cần thấy đã dạy những góc nào rồi mới biết còn thiếu góc nào. */}
+                <div className="flex flex-wrap gap-1">
+                  {(n.anh_ds && n.anh_ds.length ? n.anh_ds : [n.anh]).filter(Boolean).map((a, i) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img key={i} src={a} alt={`${n.ten} ${i + 1}`}
+                         className="h-16 w-16 rounded object-cover" />
+                  ))}
+                </div>
                 <Input value={suaTen[n.id] ?? n.ten}
                   onChange={(e) => setSuaTen({ ...suaTen, [n.id]: e.target.value })} />
                 <p className="text-[11px] text-muted-foreground">
@@ -290,16 +319,20 @@ export function NhinNhaCard() {
             <div className="flex flex-wrap items-center gap-2">
               <Input className="w-48" value={tenDay} onChange={(e) => setTenDay(e.target.value)}
                 placeholder="Tên, vd: Bà ngoại" />
-              <input type="file" accept="image/*" className="text-xs"
-                onChange={(e) => setTepDay(e.target.files?.[0] || null)} />
+              <input type="file" accept="image/*" multiple className="text-xs"
+                onChange={(e) => setTepDay(Array.from(e.target.files || []))} />
+              {tepDay.length ? (
+                <span className="text-xs text-muted-foreground">đã chọn {tepDay.length} ảnh</span>
+              ) : null}
               <Button size="sm" onClick={() => day(false)}>Dạy</Button>
               {canEp ? (
                 <Button size="sm" variant="outline" onClick={() => day(true)}>Đúng là người này</Button>
               ) : null}
             </div>
             <p className="text-xs text-muted-foreground">
-              Ảnh chỉ có mặt người đó (hoặc mặt đó to rõ nhất). Dạy 3–4 ảnh khác góc, khác ánh sáng
-              để nhận chắc hơn.
+              Ảnh chỉ có mặt người đó (hoặc mặt đó to rõ nhất). <b>Chọn nhiều ảnh một lần</b> —
+              3–4 tấm khác góc, khác ánh sáng thì nhận chắc hơn hẳn. Gõ đúng tên người đã có
+              là ảnh mới được cộng thêm vào người đó chứ không tạo người mới.
             </p>
           </div>
         </div>
@@ -320,12 +353,28 @@ export function NhinNhaCard() {
                 <p className="text-[11px] text-muted-foreground">
                   «{x.id}» · {x.so_lan} lượt · {x.camera} · {luc(x.lan_cuoi)}
                 </p>
-                <Input value={tenLa[x.id] || ""} placeholder="Đây là ai?"
-                  onChange={(e) => setTenLa({ ...tenLa, [x.id]: e.target.value })} />
+                {/* Chọn người ĐÃ CÓ thì mặt này được cộng vào hồ sơ người đó
+                    (`dat_ten_mat_la` gọi `day(..., ep=True)`, mà `day` đã cộng
+                    dồn). Gõ tay tên có sẵn cũng ra kết quả ấy, nhưng gõ sai một
+                    ký tự là đẻ ra người trùng — nên cho chọn từ danh sách. */}
+                <select
+                  className="w-full rounded border border-border/70 bg-background px-2 py-1 text-xs"
+                  value={tenLa[x.id] ?? ""}
+                  onChange={(e) => setTenLa({ ...tenLa, [x.id]: e.target.value })}>
+                  <option value="">Đây là ai?</option>
+                  {nguoi.map((n) => <option key={n.id} value={n.ten}>{n.ten}</option>)}
+                  <option value="__moi__">➕ Người mới…</option>
+                </select>
+                {tenLa[x.id] === "__moi__" ? (
+                  <Input autoFocus placeholder="Tên người mới" value={tenMoiLa[x.id] || ""}
+                    onChange={(e) => setTenMoiLa({ ...tenMoiLa, [x.id]: e.target.value })} />
+                ) : null}
                 <div className="flex gap-1">
-                  <Button size="sm" variant="outline" disabled={!(tenLa[x.id] || "").trim()}
+                  <Button size="sm" variant="outline"
+                    disabled={!((tenLa[x.id] === "__moi__" ? tenMoiLa[x.id] : tenLa[x.id]) || "").trim()}
                     onClick={() => goi(() => request.post(`/api/nhin-nha/mat-la/${x.id}/dat-ten`,
-                                                          { ten: tenLa[x.id] }), "Đã nhớ tên.")}>
+                      { ten: tenLa[x.id] === "__moi__" ? tenMoiLa[x.id] : tenLa[x.id] }),
+                      "Đã nhớ tên.")}>
                     Đặt tên
                   </Button>
                   <Button size="sm" variant="outline"

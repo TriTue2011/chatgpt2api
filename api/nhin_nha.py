@@ -32,7 +32,15 @@ logger = logging.getLogger(__name__)
 
 #: Ảnh tải lên để dạy mặt — ảnh điện thoại nguyên gốc hiếm khi quá 12 MB.
 _TOI_DA_BYTE = 15_000_000
-_CANH_NHO = 160
+#: Cạnh dài của ảnh mặt gửi ra web. Trước là 160 và chủ máy kêu «ảnh tách mặt
+#: vẫn mờ» — đo 17/09/2026: ảnh LƯU trên đĩa của người đã dạy là 181–428 px
+#: (trung vị 269), tức nguồn đủ nét, chính bước thu nhỏ này làm mờ. 320 thì
+#: data URL to gấp ~4 lần nhưng vẫn chỉ vài chục KB, chỉ dùng cho hai danh
+#: sách thu nhỏ.
+#: Lưu ý: ảnh MẶT LẠ trung vị chỉ 152 px — mờ từ nguồn vì người đứng xa, nâng
+#: trần ở đây KHÔNG cứu được, muốn nét phải đứng gần hơn hoặc dùng luồng chính
+#: độ phân giải cao hơn.
+_CANH_NHO = 320
 
 
 def _anh_nho(rel: str) -> str:
@@ -81,10 +89,18 @@ def create_router() -> APIRouter:
         require_admin(authorization)
         from services import so_mat_nha
 
+        #: Trần số ảnh gửi kèm mỗi người. Mỗi ảnh là một data URL ~320 px nhúng
+        #: thẳng vào JSON, nên người có 20 ảnh sẽ làm phình cả câu trả lời.
+        TOI_DA_ANH = 8
+
         def _doc():
             ds = so_mat_nha.danh_sach_nguoi()
             for n in ds:
                 n["anh"] = _anh_nho(n["anh"])
+                # Từng ảnh mặt của người đó, để web bày theo nhóm thay vì chỉ
+                # một tấm đại diện — chủ máy cần thấy đã dạy những góc nào.
+                mat = so_mat_nha.mat_cua(n["id"])[:TOI_DA_ANH]
+                n["anh_ds"] = [a for a in (_anh_nho(m["anh"]) for m in mat) if a]
             return ds
         return {"ok": True, "nguoi": await run_in_threadpool(_doc)}
 
