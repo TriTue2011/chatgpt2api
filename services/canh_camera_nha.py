@@ -55,6 +55,7 @@ _MAC_DINH: dict[str, Any] = {
     "phien_phut": 10.0,
     "camera": [],          # rỗng = KHÔNG canh camera nào
     "camera_ve": [],       # camera tính là «về nhà» — rỗng = không báo người quen về
+    "nhan": ["person"],    # nhãn YOLO cần tìm; nhãn KHÁC người chỉ để báo tin
     "hoi_ten_sau": 3,      # mặt lạ gặp ngần này lượt thì hỏi tên
     "frigate_ban_do": {},  # {"cua": "Cam cửa"} khi tên Frigate không khớp tên camera
 }
@@ -67,8 +68,9 @@ _luong: list[threading.Thread] = []
 _lan_mat: dict[str, float] = {}             # camera → lúc nhận mặt gần nhất
 _phien: dict[tuple[str, str], float] = {}   # (camera, người/cụm) → lúc thấy gần nhất
 _hong_toi: dict[str, float] = {}            # camera → bỏ qua tới lúc (vừa lỗi)
-_stats: dict[str, Any] = {"quet": 0, "co_nguoi": 0, "nhan_mat": 0, "su_kien": 0,
-                          "frigate": 0, "ben_bi": 0, "loi": 0, "loi_cuoi": ""}
+_stats: dict[str, Any] = {"quet": 0, "co_nguoi": 0, "thay_vat": 0, "nhan_mat": 0,
+                          "su_kien": 0, "frigate": 0, "ben_bi": 0, "loi": 0,
+                          "loi_cuoi": ""}
 
 
 def cfg() -> dict[str, Any]:
@@ -100,6 +102,38 @@ def _camera_duoc_canh(c: dict[str, Any]) -> list[str]:
     if not chon:
         return []
     return [x["name"] for x in camera_nha.danh_sach() if x["name"] in chon]
+
+
+def _nhan_canh(c: dict[str, Any]) -> set[str]:
+    """Nhãn YOLO cần tìm khi quét. Không khai gì thì chỉ tìm «person».
+
+    Nhãn KHÁC người chỉ dùng để BÁO TIN, không kéo theo nhận khuôn mặt: chạy
+    nhận mặt lên một con chó là đốt 300 ms cho không có gì.
+    """
+    ds = {str(x).strip() for x in (c.get("nhan") or []) if str(x).strip()}
+    return ds or {"person"}
+
+
+def _bao_vat(camera: str, nhan: set[str], ts: float, c: dict[str, Any]) -> None:
+    """Báo «thấy <vật>» cho nhãn khác người, gộp theo cửa sổ ``phien_phut``.
+
+    Không gộp thì một con mèo nằm trong khung sẽ sinh một tin mỗi vòng quét.
+    """
+    from services import thong_bao
+    from services.yolo_nha import TEN_VIET
+
+    phien = _so(c["phien_phut"], 10.0, 0.5, 24 * 60) * 60
+    moi = []
+    with _khoa:
+        for n in sorted(nhan):
+            khoa = (camera, f"vat:{n}")
+            if ts - _phien.get(khoa, 0.0) >= phien:
+                moi.append(n)
+            _phien[khoa] = ts
+    if not moi:
+        return
+    ten = ", ".join(TEN_VIET.get(n, n) for n in moi)
+    thong_bao.gui("camera.thay_vat", f"👁️ Thấy {ten} ở {camera} lúc {_gio(ts)}.")
 
 
 # ── Nguồn: Frigate ──────────────────────────────────────────────────────────
@@ -212,7 +246,7 @@ def _vong_quet() -> None:
                     anh = yolo_nha.doc_anh(tho)
                 else:
                     _stats["ben_bi"] += 1
-                nguoi = nhin_nha.vat_the(anh, chi_nhan={"person"})
+                thay = nhin_nha.vat_the(anh, chi_nhan=_nhan_canh(c))
                 _stats["quet"] += 1
             except Exception as exc:
                 # Camera chết thì nghỉ nó 60 giây — không để một camera hỏng
@@ -221,7 +255,16 @@ def _vong_quet() -> None:
                 _stats["loi"] += 1
                 _stats["loi_cuoi"] = f"quét {ten}: {str(exc)[:120]}"
                 continue
-            if nguoi:
+            if not thay:
+                continue
+            khac = {v.nhan for v in thay if v.nhan != "person"}
+            if khac:
+                _stats["thay_vat"] += 1
+                _bao_vat(ten, khac, time.time(), c)
+            if any(v.nhan == "person" for v in thay):
+                # CHỈ người mới kéo theo nhận mặt — và `xu_ly` lấy LUỒNG CHÍNH
+                # nguyên cỡ, không phải khung luồng phụ vừa quét: mặt ở luồng
+                # phụ 640×480 chỉ còn vài pixel, không nhận ra ai.
                 _stats["co_nguoi"] += 1
                 yeu_cau(ten, "yolo")
         _stop.wait(nghi)

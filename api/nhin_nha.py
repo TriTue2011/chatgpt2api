@@ -65,8 +65,13 @@ def create_router() -> APIRouter:
         require_admin(authorization)
         from services import canh_camera_nha, nhin_nha, so_mat_nha
 
+        from services import yolo_nha
+
         tt = canh_camera_nha.trang_thai()
-        return {"ok": True, "model": nhin_nha.trang_thai(),
+        # Danh sách nhãn để web dựng ô tích. Lấy từ bảng tên tiếng Việt chứ
+        # không bắt web tự chép: chép là sớm muộn lệch nhau.
+        nhan = [{"ma": ma, "ten": ten} for ma, ten in yolo_nha.TEN_VIET.items()]
+        return {"ok": True, "model": {**nhin_nha.trang_thai(), "nhan": nhan},
                 "canh": {k: v for k, v in tt.items() if k != "cau_hinh"},
                 "so_nguoi": len(so_mat_nha.danh_sach_nguoi()),
                 "so_mat_la": len(so_mat_nha.danh_sach_mat_la())}

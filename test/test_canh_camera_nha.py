@@ -259,6 +259,29 @@ class NguonTests(_Nen):
 
         self.assertIsNone(camera_nha.khung_ben_bi("camera không tồn tại bao giờ"))
 
+    def test_khong_tich_nhan_nao_thi_chi_tim_NGUOI(self):
+        """Mặc định phải là «person» — nhãn khác là thứ người dùng chủ động thêm."""
+        self.assertEqual(cc._nhan_canh({}), {"person"})
+        self.assertEqual(cc._nhan_canh({"nhan": []}), {"person"})
+        self.assertEqual(cc._nhan_canh({"nhan": ["dog", "  cat  ", ""]}), {"dog", "cat"})
+
+    def test_bao_thay_vat_GOP_theo_phien_khong_bao_moi_vong_quet(self):
+        """Không gộp thì con mèo nằm trong khung sinh một tin mỗi 2 giây."""
+        c = cc.cfg()
+        cc._bao_vat("Cam cửa", {"dog"}, self.gio[0], c)
+        cc._bao_vat("Cam cửa", {"dog"}, self.gio[0] + 60, c)        # cùng phiên
+        vat = [g for g in self.gui if g[0] == "camera.thay_vat"]
+        self.assertEqual(len(vat), 1)
+        self.assertIn("chó", vat[0][1])                              # tên tiếng Việt
+        cc._bao_vat("Cam cửa", {"dog"}, self.gio[0] + 11 * 60, c)   # quá 10 phút
+        self.assertEqual(len([g for g in self.gui if g[0] == "camera.thay_vat"]), 2)
+
+    def test_khoa_thay_vat_co_trong_so_dang_ky_thong_bao(self):
+        """Khoá lạ thì `thong_bao.gui` nuốt mất — phải đăng ký mới gửi được."""
+        from services import thong_bao
+
+        self.assertIn("camera.thay_vat", {s.khoa for s in thong_bao.SU_KIEN})
+
 
 if __name__ == "__main__":
     unittest.main()

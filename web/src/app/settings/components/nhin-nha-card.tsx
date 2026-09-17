@@ -23,7 +23,7 @@ import { request } from "@/lib/request";
 type Canh = {
   bat?: boolean; frigate?: boolean; yolo_quet?: boolean; chu_ky_giay?: number;
   cach_giay?: number; phien_phut?: number; camera?: string[]; camera_ve?: string[];
-  hoi_ten_sau?: number;
+  hoi_ten_sau?: number; nhan?: string[];
 };
 type NhinNha = {
   yolo?: { model?: string; nguong?: number; luong?: number };
@@ -36,6 +36,7 @@ type TrangThai = {
     yolo: { model: string; da_tai: boolean; cac_model: ModelTT[] };
     khuon_mat: { bo: string; da_tai: boolean; cac_bo: ModelTT[] };
     lenh_tai: string;
+    nhan?: { ma: string; ten: string }[];
   };
   canh: { dang_chay: boolean; quet: number; co_nguoi: number; nhan_mat: number;
           su_kien: number; frigate: number; loi: number; loi_cuoi: string };
@@ -220,7 +221,15 @@ export function NhinNhaCard() {
             {oSo("Hỏi tên mặt lạ sau (lượt)", canh.hoi_ten_sau, 3, (v) => datCanh({ hoi_ten_sau: v }))}
           </div>
           <div className="text-xs text-muted-foreground space-y-1">
-            <p>Camera được canh (không tích cái nào = tất cả):</p>
+            <p>Nhãn cần tìm khi quét — chỉ «người» mới kéo theo nhận khuôn mặt,
+               các nhãn khác chỉ báo tin «thấy vật»:</p>
+            <div className="flex flex-wrap gap-3 max-h-28 overflow-y-auto pr-1">
+              {(tt?.model.nhan || []).map((n) => (
+                <span key={n.ma}>{oTich(n.ten, (canh.nhan || ["person"]).includes(n.ma),
+                                        () => datCanh({ nhan: batTat(canh.nhan, n.ma) }))}</span>
+              ))}
+            </div>
+            <p>Camera được canh (KHÔNG tích cái nào = không canh camera nào):</p>
             <div className="flex flex-wrap gap-3">
               {cams.map((t) => (
                 <span key={t}>{oTich(t, (canh.camera || []).includes(t),

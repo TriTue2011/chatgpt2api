@@ -93,6 +93,9 @@ SU_KIEN: tuple[SuKien, ...] = (
            "Nhận ra mặt đã dạy ở camera được chọn (vd camera cửa).", "Nhà"),
     SuKien("camera.hoi_ten", "Camera — hỏi tên mặt lạ hay gặp",
            "Một mặt lạ xuất hiện nhiều lần, bot gửi ảnh hỏi đó là ai.", "Nhà"),
+    SuKien("camera.thay_vat", "Camera — thấy vật đã tích",
+           "Thấy thứ khác người mà bạn đã tích (chó, mèo, xe máy…). "
+           "Gộp theo cùng cửa sổ thời gian với lượt người.", "Nhà"),
     SuKien("nha.goi_y", "Gợi ý bật thiết bị",
            "Bot đoán nên bật gì theo nếp nhà, chờ chủ máy chấm đúng/sai.",
            "Nhà"),
