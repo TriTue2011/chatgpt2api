@@ -41,9 +41,11 @@ type TrangThai = {
   canh: { dang_chay: boolean; quet: number; co_nguoi: number; nhan_mat: number;
           su_kien: number; frigate: number; loi: number; loi_cuoi: string };
 };
-type Nguoi = { id: string; ten: string; so_mat: number; anh: string; anh_ds?: string[];
+type MatAnh = { id: string; anh: string; nguon: string };
+type Nguoi = { id: string; ten: string; so_mat: number; anh: string; mat_ds?: MatAnh[];
                lan_cuoi: number | null; so_lan: number };
-type MatLa = { id: string; anh: string; so_lan: number; lan_cuoi: number; camera: string; da_hoi: number };
+type MatLa = { id: string; anh: string; anh_ds?: string[]; so_lan: number; lan_cuoi: number;
+               camera: string; da_hoi: number };
 type SuKien = { id: number; ts: number; camera: string; nguon: string; loai: string;
                 ten: string | null; mat_la_id: string | null; do_giong: number };
 
@@ -70,6 +72,11 @@ export function NhinNhaCard() {
   // Khi chọn «đặt tên mới» trong danh sách thả xuống thì gõ tên vào đây.
   const [tenMoiLa, setTenMoiLa] = useState<Record<string, string>>({});
   const [suaTen, setSuaTen] = useState<Record<string, string>>({});
+  // Tab đang mở: mã người, hoặc "la" cho tab mặt khác. Rỗng = lấy tab đầu tiên.
+  const [tab, setTab] = useState<string>("");
+  // Ảnh mặt nào đang được chọn chuyển sang ai (theo mã ảnh mặt).
+  const [chuyenTen, setChuyenTen] = useState<Record<string, string>>({});
+  const [chuyenMoi, setChuyenMoi] = useState<Record<string, string>>({});
 
   const cams = Object.keys(((config as any)?.cameras as Record<string, unknown>) || {});
 
@@ -109,8 +116,9 @@ export function NhinNhaCard() {
   // người chưa có thì tạo, có rồi thì thêm mặt — nên nhiều ảnh = một người nhiều
   // khuôn mặt, đúng kiểu CompreFace. Trước đây ô chọn tệp chỉ nhận MỘT ảnh, tức
   // giao diện tự mâu thuẫn với chính lời khuyên «dạy 3–4 ảnh» ngay bên dưới nó.
-  const day = async (ep: boolean) => {
-    if (!tenDay.trim() || tepDay.length === 0) {
+  const day = async (ep: boolean, tenSan?: string) => {
+    const ten = (tenSan ?? tenDay).trim();
+    if (!ten || tepDay.length === 0) {
       setMsg("❌ Cần cả tên và ít nhất một ảnh."); return;
     }
     setMsg(`Đang dạy mặt (0/${tepDay.length})…`);
@@ -119,7 +127,7 @@ export function NhinNhaCard() {
     const loi: string[] = [];
     for (const tep of tepDay) {
       const fd = new FormData();
-      fd.append("ten", tenDay.trim());
+      fd.append("ten", ten);
       fd.append("anh", tep);
       fd.append("ep", ep ? "true" : "false");
       try {
@@ -170,6 +178,9 @@ export function NhinNhaCard() {
 
   const m = tt?.model;
   const chuaTai = m && (!m.yolo.da_tai || !m.khuon_mat.da_tai);
+  // Tab đang mở thật sự: người đầu tiên khi chưa chọn gì, "la" khi chưa dạy ai.
+  const tabHt = tab || nguoi[0]?.id || "la";
+  const nguoiHt = nguoi.find((n) => n.id === tabHt) || null;
 
   return (
     <Card>
@@ -279,25 +290,88 @@ export function NhinNhaCard() {
           {msg ? <span className="text-xs text-muted-foreground">{msg}</span> : null}
         </div>
 
-        {/* ── Người đã dạy ────────────────────────────────────────────── */}
+        {/* ── Ảnh khuôn mặt: mỗi người quen một tab, cuối là tab mặt khác ── */}
         <div className="space-y-2">
-          <p className="text-sm font-medium">Người đã dạy mặt ({nguoi.length})</p>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1">
             {nguoi.map((n) => (
-              <div key={n.id} className="w-44 rounded border border-border/70 p-2 space-y-1">
-                {/* Bày TỪNG ảnh mặt đã dạy, không chỉ một tấm đại diện: chủ máy
-                    cần thấy đã dạy những góc nào rồi mới biết còn thiếu góc nào. */}
-                <div className="flex flex-wrap gap-1">
-                  {(n.anh_ds && n.anh_ds.length ? n.anh_ds : [n.anh]).filter(Boolean).map((a, i) => (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img key={i} src={a} alt={`${n.ten} ${i + 1}`}
-                         className="h-16 w-16 rounded object-cover" />
-                  ))}
+              <Button key={n.id} size="sm" variant={tabHt === n.id ? "default" : "outline"}
+                onClick={() => setTab(n.id)}>
+                {n.ten} ({n.so_mat})
+              </Button>
+            ))}
+            <Button size="sm" variant={tabHt === "la" ? "default" : "outline"}
+              onClick={() => setTab("la")}>
+              Mặt khác ({matLa.length})
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Mở từng tab để soi có ảnh nào bị nhận nhầm. Thấy ảnh lạc chỗ thì chọn
+            «Chuyển sang…» ngay dưới ảnh đó — ảnh giữ nguyên, chỉ đổi chủ, không phải dạy lại.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {nguoi.filter((n) => n.id === tabHt).map((n) => (
+              <div key={n.id} className="w-full rounded border border-border/70 p-2 space-y-2">
+                {/* Mỗi ảnh kèm ô «Chuyển sang…». Mặt vào sổ qua «đặt tên cho mặt
+                    lạ» nên có thể là người khác; xoá rồi dạy lại thì mất ảnh
+                    camera không chụp lại được, nên sửa bằng cách đổi chủ. */}
+                <div className="flex flex-wrap gap-2">
+                  {(n.mat_ds || []).map((mt) => {
+                    const dich = mt.id in chuyenTen && chuyenTen[mt.id] === "__moi__"
+                      ? (chuyenMoi[mt.id] || "") : (chuyenTen[mt.id] || "");
+                    return (
+                      <div key={mt.id} className="w-28 space-y-1">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={mt.anh} alt={`${n.ten} ${mt.id}`}
+                             className="h-24 w-28 rounded object-cover" />
+                        <p className="text-[10px] text-muted-foreground">
+                          {mt.nguon === "camera" ? "📷 từ camera" : `✋ ${mt.nguon}`}
+                        </p>
+                        <select
+                          className="w-full rounded border border-border/70 bg-background px-1 py-0.5 text-[11px]"
+                          value={chuyenTen[mt.id] ?? ""}
+                          onChange={(e) => setChuyenTen({ ...chuyenTen, [mt.id]: e.target.value })}>
+                          <option value="">Chuyển sang…</option>
+                          {nguoi.filter((k) => k.id !== n.id).map((k) => (
+                            <option key={k.id} value={k.ten}>{k.ten}</option>
+                          ))}
+                          <option value="__moi__">➕ Người mới…</option>
+                        </select>
+                        {chuyenTen[mt.id] === "__moi__" ? (
+                          <Input className="h-7 text-xs" placeholder="Tên người mới"
+                            value={chuyenMoi[mt.id] || ""}
+                            onChange={(e) => setChuyenMoi({ ...chuyenMoi, [mt.id]: e.target.value })} />
+                        ) : null}
+                        {dich.trim() ? (
+                          <Button size="sm" variant="outline" className="h-7 w-full text-[11px]"
+                            onClick={async () => {
+                              await goi(() => request.post(
+                                `/api/nhin-nha/mat/${mt.id}/chuyen`, { ten: dich.trim() }),
+                                `Đã chuyển sang «${dich.trim()}».`);
+                              // Ảnh đổi chủ nhưng GIỮ NGUYÊN mã, nên không xoá lựa
+                              // chọn cũ là sang tab người nhận vẫn thấy nút «Chuyển»
+                              // với một tên không còn nằm trong danh sách chọn.
+                              setChuyenTen({ ...chuyenTen, [mt.id]: "" });
+                              setChuyenMoi({ ...chuyenMoi, [mt.id]: "" });
+                            }}>
+                            Chuyển
+                          </Button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                  {!(n.mat_ds || []).length ? (
+                    <p className="text-xs text-muted-foreground">Chưa có ảnh mặt nào.</p>
+                  ) : null}
                 </div>
                 <Input value={suaTen[n.id] ?? n.ten}
                   onChange={(e) => setSuaTen({ ...suaTen, [n.id]: e.target.value })} />
                 <p className="text-[11px] text-muted-foreground">
                   {n.so_mat} ảnh mặt · gặp {n.so_lan} lượt · {luc(n.lan_cuoi)}
+                  {/* Nói rõ khi CHƯA hiện hết: người soi để tìm ảnh nhận nhầm mà
+                      không biết mình đang bị giấu bớt thì kết luận sai. */}
+                  {n.so_mat > (n.mat_ds?.length ?? 0)
+                    ? ` · chỉ hiện ${n.mat_ds?.length ?? 0} ảnh mới nhất`
+                    : ""}
                 </p>
                 <div className="flex gap-1">
                   {suaTen[n.id] !== undefined && suaTen[n.id] !== n.ten ? (
@@ -315,18 +389,28 @@ export function NhinNhaCard() {
             ))}
           </div>
           <div className="rounded border border-dashed border-border/70 p-3 space-y-2">
-            <p className="text-sm font-medium">Dạy mặt mới</p>
+            <p className="text-sm font-medium">
+              {nguoiHt ? `Thêm ảnh cho «${nguoiHt.ten}»` : "Dạy mặt mới"}
+            </p>
             <div className="flex flex-wrap items-center gap-2">
-              <Input className="w-48" value={tenDay} onChange={(e) => setTenDay(e.target.value)}
-                placeholder="Tên, vd: Bà ngoại" />
+              {/* Đang ở tab của một người thì khỏi gõ lại tên — gõ sai một ký tự
+                  là đẻ ra người trùng, đúng cái bẫy ô chọn mặt lạ đã tránh. */}
+              {nguoiHt ? null : (
+                <Input className="w-48" value={tenDay} onChange={(e) => setTenDay(e.target.value)}
+                  placeholder="Tên, vd: Bà ngoại" />
+              )}
               <input type="file" accept="image/*" multiple className="text-xs"
                 onChange={(e) => setTepDay(Array.from(e.target.files || []))} />
               {tepDay.length ? (
                 <span className="text-xs text-muted-foreground">đã chọn {tepDay.length} ảnh</span>
               ) : null}
-              <Button size="sm" onClick={() => day(false)}>Dạy</Button>
+              <Button size="sm" onClick={() => day(false, nguoiHt?.ten)}>
+                {nguoiHt ? "Thêm ảnh" : "Dạy"}
+              </Button>
               {canEp ? (
-                <Button size="sm" variant="outline" onClick={() => day(true)}>Đúng là người này</Button>
+                <Button size="sm" variant="outline" onClick={() => day(true, nguoiHt?.ten)}>
+                  Đúng là người này
+                </Button>
               ) : null}
             </div>
             <p className="text-xs text-muted-foreground">
@@ -337,21 +421,37 @@ export function NhinNhaCard() {
           </div>
         </div>
 
-        {/* ── Mặt lạ ──────────────────────────────────────────────────── */}
+        {/* ── Tab «Mặt khác»: cụm camera gom được nhưng chưa biết là ai ── */}
+        {tabHt === "la" ? (
         <div className="space-y-2">
-          <p className="text-sm font-medium">Mặt lạ camera gặp ({matLa.length})</p>
+          <p className="text-sm font-medium">Mặt khác camera gặp ({matLa.length})</p>
           {matLa.length === 0 ? (
             <p className="text-xs text-muted-foreground">Chưa có — bật «Tự canh camera» thì em mới gom.</p>
           ) : null}
           <div className="flex flex-wrap gap-2">
             {matLa.map((x) => (
               <div key={x.id} className="w-44 rounded border border-border/70 p-2 space-y-1">
+                {/* Bày ảnh của TỪNG lượt gặp, không chỉ tấm đại diện: nhóm trộn
+                    nhầm hai người chỉ lộ ra khi xem cạnh nhau. Tấm đầu là ảnh
+                    đại diện của nhóm, nên nó to hơn. */}
                 {x.anh ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={x.anh} alt={`mặt lạ ${x.id}`} className="h-24 w-full rounded object-cover" />
                 ) : null}
+                {x.anh_ds && x.anh_ds.length > 1 ? (
+                  <div className="flex flex-wrap gap-1">
+                    {x.anh_ds.map((a, i) => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img key={i} src={a} alt={`lượt ${i + 1}`}
+                           className="h-10 w-10 rounded object-cover" />
+                    ))}
+                  </div>
+                ) : null}
                 <p className="text-[11px] text-muted-foreground">
                   «{x.id}» · {x.so_lan} lượt · {x.camera} · {luc(x.lan_cuoi)}
+                  {x.anh_ds && x.anh_ds.length > 1
+                    ? ` · ${x.anh_ds.length} ảnh — xem có lẫn người khác không`
+                    : ""}
                 </p>
                 {/* Chọn người ĐÃ CÓ thì mặt này được cộng vào hồ sơ người đó
                     (`dat_ten_mat_la` gọi `day(..., ep=True)`, mà `day` đã cộng
@@ -387,6 +487,7 @@ export function NhinNhaCard() {
             ))}
           </div>
         </div>
+        ) : null}
 
         {/* ── Sự kiện ─────────────────────────────────────────────────── */}
         <div className="space-y-1">

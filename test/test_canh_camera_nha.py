@@ -384,8 +384,16 @@ class ApiQuyenTests(unittest.TestCase):
         for phuong, duong in (("get", "/api/nhin-nha/nguoi"), ("get", "/api/nhin-nha/mat-la"),
                               ("get", "/api/nhin-nha/su-kien"), ("get", "/api/nhin-nha/trang-thai"),
                               ("delete", "/api/nhin-nha/nguoi/x"),
-                              ("post", "/api/nhin-nha/mat-la/x/thoi-hoi")):
-            self.assertIn(getattr(c, phuong)(duong).status_code, (401, 403), duong)
+                              ("post", "/api/nhin-nha/mat-la/x/thoi-hoi"),
+                              ("post", "/api/nhin-nha/mat-la/x/dat-ten"),
+                              ("post", "/api/nhin-nha/nguoi/x/doi-ten"),
+                              ("post", "/api/nhin-nha/mat/x/chuyen")):
+            # POST nào nhận `body: dict` thì thiếu body là FastAPI trả 422 ở bước
+            # kiểm dữ liệu, TRƯỚC khi `require_admin` kịp chạy — tức bài test sẽ
+            # không đo cổng quyền nữa mà đo bộ kiểm body. Gửi body rỗng hợp lệ để
+            # thứ bị đo đúng là cổng quyền. (Route không nhận body thì bỏ qua nó.)
+            kw = {"json": {}} if phuong == "post" else {}
+            self.assertIn(getattr(c, phuong)(duong, **kw).status_code, (401, 403), duong)
 
 
 class ApiNhinNhaTests(_Nen):
@@ -417,6 +425,44 @@ class ApiNhinNhaTests(_Nen):
         d = self.client.post("/api/nhin-nha/mat-la/khong-co/dat-ten", json={"ten": "A"}).json()
         self.assertFalse(d["ok"])
         self.assertIn("Không có mặt lạ", d["error"])
+
+    def test_chuyen_mat_nham_sang_dung_nguoi_qua_tuyen_web(self):
+        """Đi qua HTTP thật, không gọi thẳng hàm: route, quyền và hình dạng trả về
+        đều là chỗ hỏng được mà test mức dịch vụ không thấy."""
+        import cv2
+
+        class _May:
+            bo = self.nn.bo_mat()
+
+            def do(self_may, anh, nguong=0.5):
+                from services import khuon_mat_nha as km
+                return [km.Mat((100.0, 100.0, 260.0, 300.0), 0.9, None)]
+
+            def vector(self_may, anh, m):
+                m.vector = _vec(3)
+                return m.vector
+
+        _ok, buf = cv2.imencode(".jpg", np.full((480, 640, 3), 120, np.uint8))
+        with mock.patch.object(self.nn, "mat", lambda: _May()):
+            self.assertTrue(self.client.post(
+                "/api/nhin-nha/day", data={"ten": "Lan"},
+                files={"anh": ("a.jpg", buf.tobytes(), "image/jpeg")}).json()["ok"])
+        # Web phải nhận được MÃ của từng ảnh mặt, không chỉ ảnh — không có mã thì
+        # nhìn thấy ảnh sai cũng không trỏ vào nó mà sửa được.
+        ds = self.client.get("/api/nhin-nha/nguoi").json()["nguoi"]
+        self.assertEqual(len(ds[0]["mat_ds"]), 1)
+        self.assertEqual(ds[0]["mat_ds"][0]["nguon"], "web")
+        mat_id = ds[0]["mat_ds"][0]["id"]
+
+        d = self.client.post(f"/api/nhin-nha/mat/{mat_id}/chuyen", json={"ten": "Việt"}).json()
+        self.assertTrue(d["ok"], d)
+        self.assertTrue(d["nguoi_moi"])
+        theo_ten = {n["ten"]: n for n in self.client.get("/api/nhin-nha/nguoi").json()["nguoi"]}
+        self.assertEqual(theo_ten["Việt"]["so_mat"], 1)
+        self.assertEqual(theo_ten["Lan"]["so_mat"], 0)   # người cũ còn đó, chỉ hết ảnh
+        loi = self.client.post("/api/nhin-nha/mat/khong-co/chuyen", json={"ten": "X"}).json()
+        self.assertFalse(loi["ok"])
+        self.assertIn("khong-co", loi["error"])
 
     def test_day_mat_qua_web_va_doi_ten_xoa(self):
         import cv2

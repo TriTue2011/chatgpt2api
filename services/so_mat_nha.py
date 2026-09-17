@@ -363,6 +363,46 @@ def mat_cua(nguoi_id: str) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def chuyen_mat(mat_id: str, ten: str) -> dict[str, Any]:
+    """Chuyển MỘT khuôn mặt sang người khác — đường sửa khi nhận nhầm.
+
+    Mặt vào sổ qua ``dat_ten_mat_la`` (chủ nhà đặt tên cho một cụm camera gom
+    được), mà cụm có thể lẫn người: đo 17/09/2026 trên 60 cụm thật, 4 cụm có
+    ảnh bên trong chỉ giống nhau 18–25 điểm. Đặt nhầm là chuyện có thật, nên
+    phải có đường sửa.
+
+    Đổi chủ chứ không xoá-rồi-dạy-lại: ảnh camera không chụp lại được, xoá đi
+    là mất hẳn. Người chưa có thì tạo. KHÔNG đụng ``su_kien`` cũ — chúng ghi
+    việc ĐÃ xảy ra lúc ấy, sửa lại là viết lại lịch sử.
+    """
+    ten = " ".join(str(ten or "").split())
+    if not ten:
+        raise LoiSoMat("Chưa có tên người nhận khuôn mặt này.")
+    if len(ten) > 60:
+        raise LoiSoMat("Tên dài quá — tối đa 60 ký tự.")
+    with _khoa:
+        conn = _db()
+        r = conn.execute("SELECT nguoi_id FROM mat WHERE id = ?", (mat_id,)).fetchone()
+        if r is None:
+            raise LoiSoMat(f"Không có khuôn mặt mã «{mat_id}».")
+        cu = _tim_nguoi_theo_ten(conn, ten)
+        moi = cu is None
+        nguoi_id = _ma() if moi else cu["id"]
+        if moi:
+            conn.execute("INSERT INTO nguoi (id, ten, tao_luc) VALUES (?, ?, ?)",
+                         (nguoi_id, ten, time.time()))
+        conn.execute("UPDATE mat SET nguoi_id = ? WHERE id = ?", (nguoi_id, mat_id))
+        conn.commit()
+        so_mat = conn.execute("SELECT COUNT(*) FROM mat WHERE nguoi_id = ?",
+                              (nguoi_id,)).fetchone()[0]
+        con_lai = conn.execute("SELECT COUNT(*) FROM mat WHERE nguoi_id = ?",
+                               (r["nguoi_id"],)).fetchone()[0]
+        _bo_bang()
+    logger.info({"event": "so_mat_chuyen_mat", "nguoi_moi": moi, "cu_con_lai": con_lai})
+    return {"nguoi_id": nguoi_id, "ten": ten if moi else cu["ten"], "nguoi_moi": moi,
+            "so_mat": so_mat, "cu_con_lai": con_lai}
+
+
 def tim_nguoi(ten: str) -> dict[str, Any] | None:
     with _khoa:
         r = _tim_nguoi_theo_ten(_db(), ten)
@@ -519,6 +559,27 @@ def danh_sach_mat_la(*, ca_bo_qua: bool = False) -> list[dict[str, Any]]:
             "SELECT id, anh, so_lan, lan_dau, lan_cuoi, camera, da_hoi, bo_qua FROM mat_la "
             + ("" if ca_bo_qua else "WHERE bo_qua = 0 ") + "ORDER BY lan_cuoi DESC").fetchall()
     return [dict(r) for r in rows]
+
+
+def anh_su_kien_cua(mat_la_id: str, gioi_han: int = 8) -> list[str]:
+    """Ảnh của TỪNG lượt gặp thuộc một cụm, mới nhất trước.
+
+    Cụm chỉ giữ MỘT ảnh đại diện (``mat_la.anh``, chụp lúc cụm ra đời), nên nhìn
+    vào đó không thể biết cụm có đang trộn hai người hay không. Ảnh từng lượt
+    nằm ở ``su_kien.anh``; gom theo cụm thì soi được — đo 17/09/2026 trên 60 cụm
+    thật: 4 cụm có ảnh trong cùng một cụm chỉ giống nhau 18–25 điểm, tức lẫn
+    người.
+
+    Trả nguyên giá trị ``su_kien.anh`` (URL tuyệt đối do luồng canh ghi); bên
+    gọi tự đổi sang đường dẫn đĩa. Ảnh này nằm trong kho ảnh CHUNG, không phải
+    kho khuôn mặt, nên bị dọn sau ``image_retention_days`` ngày — thư viện của
+    cụm thưa dần theo thời gian, còn ảnh đại diện thì ở lại.
+    """
+    with _khoa:
+        rows = _db().execute(
+            "SELECT anh FROM su_kien WHERE mat_la_id = ? AND anh != '' "
+            "ORDER BY ts DESC LIMIT ?", (mat_la_id, max(1, int(gioi_han)))).fetchall()
+    return [r["anh"] for r in rows]
 
 
 def nen_hoi_mat_la(ma: str, sau_so_lan: int) -> bool:

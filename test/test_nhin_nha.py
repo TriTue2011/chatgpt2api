@@ -285,6 +285,68 @@ class SoMatTests(unittest.TestCase):
         for xau in ("../km.sqlite", "/etc/passwd", ""):
             self.assertIsNone(self.sm.duong_anh(xau))
 
+    def test_chuyen_mat_nham_sang_dung_nguoi_giu_nguyen_anh(self):
+        """Đặt nhầm tên cho một cụm thì phải sửa được mà KHÔNG mất ảnh camera."""
+        a = self.sm.day("Việt", _anh(10))
+        b = self.sm.day("Lan", _anh(11))
+        mat = self.sm.mat_cua(a["nguoi_id"])[0]
+        kq = self.sm.chuyen_mat(mat["id"], "Lan")
+        self.assertEqual((kq["nguoi_id"], kq["so_mat"], kq["cu_con_lai"]),
+                         (b["nguoi_id"], 2, 0))
+        self.assertIsNotNone(self.sm.duong_anh(mat["anh"]))          # ảnh còn nguyên
+        self.assertIn(mat["id"], [m["id"] for m in self.sm.mat_cua(b["nguoi_id"])])
+        self.assertEqual(self.sm.nhan_dien(_anh(10))["mat"][0]["ten"], "Lan")
+
+    def test_chuyen_mat_sang_ten_moi_thi_tao_nguoi_con_ten_hong_thi_bao(self):
+        a = self.sm.day("Việt", _anh(10))
+        mat = self.sm.mat_cua(a["nguoi_id"])[0]
+        self.assertTrue(self.sm.chuyen_mat(mat["id"], "Bà ngoại")["nguoi_moi"])
+        self.assertIn("Bà ngoại", [n["ten"] for n in self.sm.danh_sach_nguoi()])
+        for xau, chu in (("", "Chưa có tên"), ("x" * 61, "dài quá")):
+            with self.assertRaises(self.sm.LoiSoMat) as ng:
+                self.sm.chuyen_mat(mat["id"], xau)
+            self.assertIn(chu, str(ng.exception))
+        with self.assertRaises(self.sm.LoiSoMat) as ng:
+            self.sm.chuyen_mat("khong-co-mat-nay", "Lan")
+        self.assertIn("khong-co-mat-nay", str(ng.exception))
+
+    def test_anh_tung_luot_gap_gom_theo_cum_moi_nhat_truoc_va_co_tran(self):
+        """Cụm giữ một ảnh đại diện; muốn biết cụm có lẫn người phải xem từng lượt."""
+        anh = yn.doc_anh(_anh(11))
+        ma, moi = self.sm.gom_mat_la(self.vec["buffalo_s"]["lan"], anh, (10, 10, 90, 90), "Cam cửa")
+        self.assertTrue(moi)
+        for i in range(5):
+            self.sm.ghi_su_kien("Cam cửa", "yolo", "la", mat_la_id=ma, ts=1000.0 + i,
+                                anh=f"http://x/images/2026/09/17/m{i}.jpg")
+        # Lượt KHÔNG kèm ảnh không được lọt vào thư viện (web sẽ hiện ô trống).
+        self.sm.ghi_su_kien("Cam cửa", "yolo", "la", mat_la_id=ma, anh="", ts=1010.0)
+        ds = self.sm.anh_su_kien_cua(ma)
+        self.assertEqual(len(ds), 5)
+        self.assertTrue(ds[0].endswith("m4.jpg"))            # mới nhất đứng trước
+        self.assertEqual(len(self.sm.anh_su_kien_cua(ma, 2)), 2)
+        self.assertEqual(self.sm.anh_su_kien_cua("khong-co-cum-nay"), [])
+
+
+class AnhSuKienTests(unittest.TestCase):
+    """Đọc ảnh lượt gặp từ kho ảnh CHUNG — khác kho khuôn mặt, nên chặn riêng."""
+
+    def test_chi_doc_trong_kho_anh_va_chan_thoat_thu_muc(self):
+        pytest.importorskip("cv2")
+        from api import nhin_nha as api_nn
+
+        with TemporaryDirectory() as tmp:
+            goc = Path(tmp) / "images"
+            (goc / "2026").mkdir(parents=True)
+            (goc / "2026" / "a.jpg").write_bytes(_anh(10, 40, 40))
+            (Path(tmp) / "ngoai.jpg").write_bytes(_anh(11, 40, 40))
+            with mock.patch.object(api_nn, "_goc_anh", lambda: goc):
+                self.assertTrue(api_nn._anh_su_kien("http://x/images/2026/a.jpg")
+                                .startswith("data:image/jpeg;base64,"))
+                for xau in ("http://x/images/../ngoai.jpg",   # thoát ra ngoài kho
+                            "http://x/khac/a.jpg",            # không phải đường /images/
+                            "http://x/images/khong-co.jpg", "", None):
+                    self.assertEqual(api_nn._anh_su_kien(xau), "")
+
 
 class NhinNhaCauHinhTests(unittest.TestCase):
     def test_model_la_hoac_nguong_hong_thi_ve_mac_dinh(self):

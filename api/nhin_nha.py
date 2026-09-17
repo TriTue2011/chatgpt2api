@@ -8,11 +8,12 @@ quản sổ khuôn mặt (người, ảnh mặt, mặt lạ, sự kiện).
 dạng data URL thu nhỏ chứ không mở một đường tĩnh công khai nào cho kho mặt.
 
 ``GET  /api/nhin-nha/trang-thai``            model đã tải + số liệu luồng canh
-``GET  /api/nhin-nha/nguoi``                 người đã dạy (kèm ảnh nhỏ)
+``GET  /api/nhin-nha/nguoi``                 người đã dạy (kèm từng ảnh mặt + mã)
 ``POST /api/nhin-nha/day``                   dạy mặt: form ``ten`` + ``anh`` (+ ``ep``)
 ``POST /api/nhin-nha/nguoi/{id}/doi-ten``    ``{"ten": "..."}``
 ``DELETE /api/nhin-nha/nguoi/{id}``
-``GET  /api/nhin-nha/mat-la``                mặt lạ đang theo dõi
+``POST /api/nhin-nha/mat/{id}/chuyen``       ``{"ten": "..."}`` — nhận nhầm thì đổi chủ
+``GET  /api/nhin-nha/mat-la``                mặt lạ đang theo dõi (kèm ảnh từng lượt)
 ``POST /api/nhin-nha/mat-la/{id}/dat-ten``   ``{"ten": "..."}``
 ``POST /api/nhin-nha/mat-la/{id}/thoi-hoi``
 ``GET  /api/nhin-nha/su-kien?so_gio=24``
@@ -41,19 +42,17 @@ _TOI_DA_BYTE = 15_000_000
 #: trần ở đây KHÔNG cứu được, muốn nét phải đứng gần hơn hoặc dùng luồng chính
 #: độ phân giải cao hơn.
 _CANH_NHO = 320
+#: Trần số ảnh gửi kèm mỗi người và mỗi cụm mặt lạ. Mỗi ảnh là một data URL
+#: ~320 px nhúng thẳng vào JSON, nên hồ sơ 20 ảnh sẽ làm phình cả câu trả lời.
+TOI_DA_ANH = 8
 
 
-def _anh_nho(rel: str) -> str:
-    """Ảnh mặt đã lưu → data URL JPEG cạnh dài ≤ 160 px. Mất ảnh thì chuỗi rỗng."""
+def _thu_nho(du_lieu: bytes) -> str:
+    """Byte ảnh → data URL JPEG cạnh dài ≤ ``_CANH_NHO``. Hỏng thì chuỗi rỗng."""
     import cv2
     import numpy as np
 
-    from services import so_mat_nha
-
-    p = so_mat_nha.duong_anh(rel)
-    if p is None:
-        return ""
-    anh = cv2.imdecode(np.frombuffer(p.read_bytes(), np.uint8), cv2.IMREAD_COLOR)
+    anh = cv2.imdecode(np.frombuffer(du_lieu, np.uint8), cv2.IMREAD_COLOR)
     if anh is None:
         return ""
     cao, rong = anh.shape[:2]
@@ -63,6 +62,50 @@ def _anh_nho(rel: str) -> str:
                          interpolation=cv2.INTER_AREA)
     ok, buf = cv2.imencode(".jpg", anh, [cv2.IMWRITE_JPEG_QUALITY, 80])
     return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("ascii") if ok else ""
+
+
+def _anh_nho(rel: str) -> str:
+    """Ảnh trong kho KHUÔN MẶT → data URL thu nhỏ. Mất ảnh thì chuỗi rỗng."""
+    from services import so_mat_nha
+
+    p = so_mat_nha.duong_anh(rel)
+    return _thu_nho(p.read_bytes()) if p is not None else ""
+
+
+def _goc_anh():
+    """Thư mục kho ảnh chung. Tách riêng để test thay được mà không đụng config."""
+    from pathlib import Path
+
+    from services.config import config
+
+    return Path(config.images_dir)
+
+
+def _anh_su_kien(url: str) -> str:
+    """Ảnh một lượt gặp → data URL thu nhỏ. Không đọc được thì chuỗi rỗng.
+
+    ``su_kien.anh`` giữ URL tuyệt đối trỏ vào kho ảnh chung
+    (``http://127.0.0.1:80/images/...``) — địa chỉ ấy là của chính máy chủ nên
+    trình duyệt người dùng KHÔNG gọi được. Đọc từ đĩa rồi nhúng, giống mọi ảnh
+    mặt khác: ảnh sinh trắc không mở đường tĩnh công khai (xem đầu file).
+
+    Chặn thoát thư mục như ``so_mat_nha.duong_anh``: đường dẫn đi vào từ sổ, mà
+    một chuỗi ``..`` lọt qua đây là đọc được file bất kỳ trên máy.
+    """
+    u = str(url or "")
+    if "/images/" not in u:
+        return ""
+    rel = u.split("/images/", 1)[1]
+    if not rel:
+        return ""
+    try:
+        goc = _goc_anh().resolve()
+        p = (goc / rel).resolve()
+        if not p.is_file() or goc not in p.parents:
+            return ""
+        return _thu_nho(p.read_bytes())
+    except (OSError, ValueError):
+        return ""
 
 
 def create_router() -> APIRouter:
@@ -89,20 +132,31 @@ def create_router() -> APIRouter:
         require_admin(authorization)
         from services import so_mat_nha
 
-        #: Trần số ảnh gửi kèm mỗi người. Mỗi ảnh là một data URL ~320 px nhúng
-        #: thẳng vào JSON, nên người có 20 ảnh sẽ làm phình cả câu trả lời.
-        TOI_DA_ANH = 8
-
         def _doc():
             ds = so_mat_nha.danh_sach_nguoi()
             for n in ds:
                 n["anh"] = _anh_nho(n["anh"])
-                # Từng ảnh mặt của người đó, để web bày theo nhóm thay vì chỉ
-                # một tấm đại diện — chủ máy cần thấy đã dạy những góc nào.
-                mat = so_mat_nha.mat_cua(n["id"])[:TOI_DA_ANH]
-                n["anh_ds"] = [a for a in (_anh_nho(m["anh"]) for m in mat) if a]
+                # Kèm MÃ từng ảnh, không chỉ ảnh: web phải trỏ được vào một ảnh
+                # cụ thể để chuyển nó sang người khác khi thấy nhận nhầm. `nguon`
+                # đi cùng vì mặt vào sổ từ camera dễ sai hơn mặt dạy bằng ảnh tay.
+                n["mat_ds"] = [{"id": m["id"], "anh": a, "nguon": m["nguon"]}
+                               for m, a in ((m, _anh_nho(m["anh"]))
+                                            for m in so_mat_nha.mat_cua(n["id"])[:TOI_DA_ANH])
+                               if a]
             return ds
         return {"ok": True, "nguoi": await run_in_threadpool(_doc)}
+
+    @router.post("/api/nhin-nha/mat/{mat_id}/chuyen")
+    async def chuyen_mat(mat_id: str, body: dict, authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        from services import so_mat_nha
+
+        try:
+            kq = await run_in_threadpool(so_mat_nha.chuyen_mat, mat_id,
+                                         str(body.get("ten") or ""))
+        except so_mat_nha.LoiSoMat as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, **kq}
 
     @router.post("/api/nhin-nha/day")
     async def day(ten: str = Form(...), anh: UploadFile = File(...), ep: bool = Form(False),
@@ -150,6 +204,11 @@ def create_router() -> APIRouter:
             ds = so_mat_nha.danh_sach_mat_la()
             for x in ds:
                 x["anh"] = _anh_nho(x["anh"])
+                # Ảnh TỪNG lượt gặp, không chỉ tấm đại diện lúc cụm ra đời: chỉ
+                # khi nhìn cả nhóm mới thấy cụm có đang trộn hai người hay không.
+                x["anh_ds"] = [a for a in (_anh_su_kien(u) for u
+                                           in so_mat_nha.anh_su_kien_cua(x["id"], TOI_DA_ANH))
+                               if a]
             return ds
         return {"ok": True, "mat_la": await run_in_threadpool(_doc)}
 
