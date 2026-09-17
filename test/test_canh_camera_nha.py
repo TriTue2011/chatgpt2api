@@ -34,8 +34,12 @@ class _Nen(unittest.TestCase):
         self._tmp = TemporaryDirectory()
         tmp = Path(self._tmp.name)
         so_mat_nha._reset_for_tests()
+        # `khoang_khung_giay: 0` — vẫn nhìn đủ 5 khung như thật (để test chạm vào
+        # phần gom đại diện), nhưng KHÔNG ngủ giữa các khung. Để mặc định 0,5 s
+        # thì riêng bộ test này mất 32 giây thay vì 3.
         self.cfg = {"canh": {"bat": True, "camera_ve": ["Cam cửa"], "hoi_ten_sau": 3,
-                             "phien_phut": 10, "camera": ["Cam cửa", "Cam bếp"]},
+                             "phien_phut": 10, "camera": ["Cam cửa", "Cam bếp"],
+                             "khoang_khung_giay": 0},
                     "khuon_mat": {"bo": "buffalo_s"}}
         self.gui: list[tuple[str, str, str]] = []
         self.mat: list[dict] = []
@@ -258,6 +262,44 @@ class NguonTests(_Nen):
         from services import camera_nha
 
         self.assertIsNone(camera_nha.khung_ben_bi("camera không tồn tại bao giờ"))
+
+    def test_chat_luong_MAT_TO_NET_hon_thi_diem_CAO_hon(self):
+        """Chấm để CHỌN khung tốt nhất trong lượt, nên phải phân biệt được to/nhỏ."""
+        anh = np.random.default_rng(7).integers(0, 255, (400, 400, 3), dtype=np.uint8)
+        to = cc._diem_chat_luong(anh, {"hop": [10, 10, 210, 210], "diem_do": 0.9})
+        nho = cc._diem_chat_luong(anh, {"hop": [10, 10, 55, 55], "diem_do": 0.9})
+        self.assertGreater(to, nho)
+        # Hộp hỏng thì chấm theo mỗi điểm dò, KHÔNG được ném lỗi làm hỏng cả lượt
+        self.assertGreater(cc._diem_chat_luong(anh, {"hop": None, "diem_do": 0.8}), 0)
+
+    def test_chon_dai_dien_lay_khung_DIEM_CAO_NHAT_cua_moi_nguoi(self):
+        a = np.zeros((10, 10, 3), np.uint8)
+        xau = self._m("quen", _vec(1), ten="Việt", nguoi_id="n1", do_giong=60)
+        tot = self._m("quen", _vec(1), ten="Việt", nguoi_id="n1", do_giong=90)
+        ra = cc._chon_dai_dien([(0.2, xau, a), (0.9, tot, a)], dong_thuan=2)
+        self.assertEqual(len(ra), 1)
+        self.assertEqual(ra[0][0]["do_giong"], 90)
+        self.assertEqual(ra[0][0]["loai"], "quen")      # đủ 2 lần nhìn → giữ «quen»
+
+    def test_THIEU_DONG_THUAN_thi_ha_tu_QUEN_xuong_CO_THE(self):
+        """Một khung ăn may vượt ngưỡng không đủ để khẳng định tên ai."""
+        a = np.zeros((10, 10, 3), np.uint8)
+        m = self._m("quen", _vec(1), ten="Việt", nguoi_id="n1", do_giong=80)
+        ra = cc._chon_dai_dien([(0.9, m, a)], dong_thuan=2)
+        self.assertEqual(ra[0][0]["loai"], "co_the")
+        self.assertEqual(m["loai"], "quen")            # không sửa vào dict gốc
+
+    def test_MOT_nguoi_la_qua_NHIEU_KHUNG_chi_thanh_MOT_dai_dien(self):
+        """Không gom thì một người đi qua đẻ ra năm cụm mặt lạ."""
+        a = np.zeros((10, 10, 3), np.uint8)
+        ds = [(0.3 + i / 10, self._m("la", _vec(5)), a) for i in range(5)]
+        self.assertEqual(len(cc._chon_dai_dien(ds, dong_thuan=2)), 1)
+
+    def test_HAI_nguoi_la_KHAC_nhau_thi_van_tach_lam_hai(self):
+        """Gom chung hết thành một là gộp nhầm hai người khách cùng đứng."""
+        a = np.zeros((10, 10, 3), np.uint8)
+        ds = [(0.5, self._m("la", _vec(2)), a), (0.6, self._m("la", _vec(9)), a)]
+        self.assertEqual(len(cc._chon_dai_dien(ds, dong_thuan=2)), 2)
 
     def test_khong_tich_nhan_nao_thi_chi_tim_NGUOI(self):
         """Mặc định phải là «person» — nhãn khác là thứ người dùng chủ động thêm."""

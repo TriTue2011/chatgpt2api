@@ -56,6 +56,9 @@ _MAC_DINH: dict[str, Any] = {
     "camera": [],          # rỗng = KHÔNG canh camera nào
     "camera_ve": [],       # camera tính là «về nhà» — rỗng = không báo người quen về
     "nhan": ["person"],    # nhãn YOLO cần tìm; nhãn KHÁC người chỉ để báo tin
+    "so_khung_luot": 5,    # nhìn mấy khung trong MỘT lượt rồi mới quyết
+    "khoang_khung_giay": 0.5,   # cách nhau bao lâu giữa hai khung trong lượt
+    "dong_thuan": 2,       # phải ngần này lần nhìn cùng chỉ một người mới dám gọi tên
     "hoi_ten_sau": 3,      # mặt lạ gặp ngần này lượt thì hỏi tên
     "frigate_ban_do": {},  # {"cua": "Cam cửa"} khi tên Frigate không khớp tên camera
 }
@@ -69,8 +72,9 @@ _lan_mat: dict[str, float] = {}             # camera → lúc nhận mặt gần
 _phien: dict[tuple[str, str], float] = {}   # (camera, người/cụm) → lúc thấy gần nhất
 _hong_toi: dict[str, float] = {}            # camera → bỏ qua tới lúc (vừa lỗi)
 _stats: dict[str, Any] = {"quet": 0, "co_nguoi": 0, "thay_vat": 0, "nhan_mat": 0,
-                          "su_kien": 0, "frigate": 0, "ben_bi": 0, "loi": 0,
-                          "loi_cuoi": ""}
+                          "su_kien": 0, "frigate": 0, "ben_bi": 0,
+                          "khung_trong_luot": 0, "ha_vi_thieu_dong_thuan": 0,
+                          "loi": 0, "loi_cuoi": ""}
 
 
 def cfg() -> dict[str, Any]:
@@ -297,24 +301,135 @@ def _luu_anh_bao(anh, hop) -> str:
     return f"{gateway_base_url()}/images/{time.strftime('%Y/%m/%d')}/{tep}"
 
 
+def _diem_chat_luong(anh, m: dict[str, Any]) -> float:
+    """Chấm 0–1 cho một khuôn mặt bắt được: dò chắc tới đâu, to tới đâu, nét tới đâu.
+
+    Vì sao cần: đo 17/09/2026 trên camera bếp, CÙNG một người lúc 09:26 cúi đầu
+    thì không model nào dò ra mặt (thử cả `buffalo_l`), lúc 09:27 ngẩng lên thì
+    ra ngay. Nhìn đúng một khung rồi quyết là phó mặc cho may rủi.
+
+    KHÔNG dùng 5 điểm mốc dù bộ dò có sinh ra: `so_mat_nha.nhan_dien_anh` không
+    mang `moc` ra ngoài, và fixture test cũng không có — bộ chấm phải chạy được
+    khi thiếu, nếu không là vỡ mọi test cũ.
+    """
+    import cv2
+
+    diem_do = float(m.get("diem_do") or 0.0)
+    try:
+        x1, y1, x2, y2 = (int(v) for v in m["hop"])
+        canh = max(1, min(x2 - x1, y2 - y1))
+    except Exception:  # noqa: BLE001 — hộp lạ thì chấm theo mỗi điểm dò
+        return round(diem_do, 4)
+    # 40 px là sàn cho phép dạy (`MAT_NHO_NHAT`); từ 160 px trở lên coi như đủ to.
+    co = min(1.0, max(0.0, (canh - 40) / 120.0))
+    net = 0.0
+    try:
+        o = anh[max(0, y1):max(0, y2), max(0, x1):max(0, x2)]
+        if getattr(o, "size", 0):
+            xam = cv2.cvtColor(o, cv2.COLOR_BGR2GRAY)
+            # Phương sai Laplace: ảnh mờ thì cạnh ít biến thiên.
+            net = min(1.0, float(cv2.Laplacian(xam, cv2.CV_64F).var()) / 200.0)
+    except Exception:  # noqa: BLE001 — chấm điểm hỏng KHÔNG được làm hỏng cả lượt
+        net = 0.0
+    return round(0.5 * diem_do + 0.3 * co + 0.2 * net, 4)
+
+
+def _chon_dai_dien(ung_vien: list[tuple[float, dict[str, Any], Any]],
+                   dong_thuan: int) -> list[tuple[dict[str, Any], Any]]:
+    """Nhiều lần nhìn trong một lượt → mỗi danh tính một khuôn mặt đại diện.
+
+    Hai việc, và việc thứ hai mới là thứ giảm nhận sai:
+
+    1. Chọn khung CHẤT LƯỢNG CAO NHẤT cho mỗi danh tính, thay vì khung đầu tiên.
+    2. **Đòi đồng thuận**: chưa đủ ``dong_thuan`` lần nhìn cùng chỉ vào một người
+       thì hạ từ «quen» xuống «có thể là» — vẫn ghi, vẫn hiện, nhưng không dám
+       khẳng định tên. Tài liệu và cộng đồng đều nói đồng thuận nhiều lần đáng
+       tin hơn là chỉnh ngưỡng điểm, vì một khung xấu có thể ăn may vượt ngưỡng.
+    """
+    import numpy as np
+
+    from services import nhin_nha
+
+    co_the, _chac = nhin_nha.nguong_mat()
+    # Người đã biết (kể cả «có thể là») gom theo danh tính. Mặt LẠ chưa có danh
+    # tính nên gom theo ĐỘ GIỐNG giữa chính các vector — cùng luật mà
+    # `so_mat_nha.gom_mat_la` dùng. Gom chung hết thành một là gộp nhầm hai khách
+    # cùng đứng; mỗi khung một cụm thì một người đi qua đẻ ra năm cụm.
+    theo_ai: dict[str, list[tuple[float, dict[str, Any], Any]]] = {}
+    cum_la: list[tuple[str, Any]] = []
+    for d, m, anh in ung_vien:
+        if m.get("nguoi_id"):
+            khoa = f"nguoi:{m['nguoi_id']}"
+        else:
+            khoa = ""
+            v = np.asarray(m["vector"], np.float32)
+            for ten_cum, vc in cum_la:
+                if float(np.dot(vc, v)) * 100.0 >= co_the:
+                    khoa = ten_cum
+                    break
+            if not khoa:
+                khoa = "la:%d" % len(cum_la)
+                cum_la.append((khoa, v))
+        theo_ai.setdefault(khoa, []).append((d, m, anh))
+    ra = []
+    for khoa, ds in theo_ai.items():
+        ds.sort(key=lambda z: -z[0])
+        _d, m, anh = ds[0]
+        if khoa.startswith("nguoi:") and m.get("loai") == "quen" and len(ds) < dong_thuan:
+            m = {**m, "loai": "co_the"}
+            _stats["ha_vi_thieu_dong_thuan"] += 1
+        ra.append((m, anh))
+    return ra
+
+
 def xu_ly(camera: str, nguon: str) -> dict[str, Any]:
-    """Một lượt nhận mặt ở ``camera``. Trả tóm tắt để test và web xem."""
+    """Một lượt nhận mặt ở ``camera``. Trả tóm tắt để test và web xem.
+
+    NHÌN NHIỀU KHUNG rồi mới quyết, không quyết ngay khung đầu — xem
+    `_diem_chat_luong` để biết vì sao. Khung lấy từ LUỒNG CHÍNH nguyên cỡ, vì
+    mặt ở luồng phụ 640×480 chỉ còn vài pixel.
+    """
     from services import camera_nha, nhin_nha, so_mat_nha, yolo_nha
 
     c = cfg()
     if not nhin_nha.co_mat():
         return {"bo_qua": "chưa tải model mặt"}
-    _, tho = camera_nha.chup_tho(camera, timeout=15)
-    anh = yolo_nha.doc_anh(tho)
-    k = nhin_nha.phan_tich_khung(anh)
+    so_khung = int(_so(c["so_khung_luot"], 5, 1, 30))
+    cach = _so(c["khoang_khung_giay"], 0.5, 0.0, 10.0)
+    ung_vien: list[tuple[float, dict[str, Any], Any]] = []
+    anh = None
+    k = None
+    for i in range(so_khung):
+        if i and cach:
+            _stop.wait(cach)
+        if _stop.is_set():
+            break
+        try:
+            _, tho = camera_nha.chup_tho(camera, timeout=15)
+            anh_i = yolo_nha.doc_anh(tho)
+        except Exception as exc:
+            # Một khung hỏng KHÔNG được làm hỏng cả lượt: go2rtc thỉnh thoảng
+            # trả mã 500 (đo được 2/12 lần ở Cam cửa ngày 17/09).
+            logger.info({"event": "canh_camera_khung_hong", "camera": camera,
+                         "loi": str(exc)[:120]})
+            continue
+        k_i = nhin_nha.phan_tich_khung(anh_i)
+        _stats["khung_trong_luot"] += 1
+        if anh is None:
+            anh, k = anh_i, k_i
+        for m in k_i.mat:
+            if m["nho"] or m["diem_do"] < DIEM_DO_TOI_THIEU:
+                continue
+            ung_vien.append((_diem_chat_luong(anh_i, m), m, anh_i))
+    if anh is None:
+        return {"bo_qua": "không lấy được khung nào"}
     _stats["nhan_mat"] += 1
     now = time.time()
     phien = _so(c["phien_phut"], 10.0, 0.5, 24 * 60) * 60
+    dai_dien = _chon_dai_dien(ung_vien, int(_so(c["dong_thuan"], 2, 1, 10)))
     ra: dict[str, Any] = {"nguoi": sum(v.nhan == "person" for v in k.vat_the),
-                          "mat": len(k.mat), "su_kien": []}
-    for m in k.mat:
-        if m["nho"] or m["diem_do"] < DIEM_DO_TOI_THIEU:
-            continue
+                          "mat": len(dai_dien), "su_kien": []}
+    for m, anh in dai_dien:
         mat_la_id = None
         if m["loai"] == "la":
             mat_la_id, _moi = so_mat_nha.gom_mat_la(m["vector"], anh, m["hop"], camera)
