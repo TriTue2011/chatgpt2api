@@ -153,18 +153,26 @@ def _iou(a, b) -> float:
     return giao / hop if hop > 0 else 0.0
 
 
-def phan_tich_khung(anh, *, nhan_mat: bool = True) -> KhungDaXem:
+def phan_tich_khung(anh, *, nhan_mat: bool = True,
+                    hop_nguoi: list | None = None) -> KhungDaXem:
     """Vật thể + khuôn mặt trong một khung ảnh BGR.
 
     Chỉ dò mặt TRONG hộp người mà YOLO tìm được, không dò cả khung: khung luồng
     chính 2688×1664 thu về 640 thì mặt người đứng xa còn vài pixel, SCRFD bỏ
     sót; cắt vùng người rồi mới thu thì mặt đủ to. Chưa tải model mặt thì chỉ
     trả vật thể (``mat`` rỗng) — không làm hỏng câu hỏi «trong bếp có gì».
+
+    ``hop_nguoi`` — danh sách ``yolo_nha.VatThe`` dựng sẵn (Frigate đã dò giúp)
+    thì DÙNG LUÔN thay vì chạy YOLO, tiết kiệm một lượt suy luận mỗi khung.
+    Hộp ấy chụp tại thời điểm Frigate báo, còn khung này lấy sau đó một hai
+    giây — người đã dịch chỗ — nên nếu KHÔNG ra mặt nào thì tự chạy lại bằng
+    YOLO trên đúng khung này. Đường dự phòng đó là điều kiện để dùng hộp sẵn
+    không bao giờ tệ hơn cách cũ.
     """
     from services import so_mat_nha
 
     cao, rong = anh.shape[:2]
-    ra = KhungDaXem(rong, cao, vat_the(anh))
+    ra = KhungDaXem(rong, cao, list(hop_nguoi) if hop_nguoi else vat_the(anh))
     if not nhan_mat or not co_mat():
         return ra
     may = mat()
@@ -184,6 +192,10 @@ def phan_tich_khung(anh, *, nhan_mat: bool = True) -> KhungDaXem:
                 ra.mat.append(m)
             elif m["diem_do"] > trung["diem_do"]:
                 ra.mat[ra.mat.index(trung)] = m
+    # Dùng hộp sẵn mà không ra mặt nào: người đã dịch khỏi chỗ Frigate thấy.
+    # Chạy lại bằng YOLO trên đúng khung này — chậm hơn, nhưng không bỏ sót.
+    if hop_nguoi and not ra.mat and nhan_mat and co_mat():
+        return phan_tich_khung(anh, nhan_mat=nhan_mat)
     return ra
 
 

@@ -66,6 +66,9 @@ class _Nen(unittest.TestCase):
         cc._phien.clear()
         cc._lan_mat.clear()
         cc._dang_cho.clear()
+        # Sổ hộp người Frigate cũng phải xoá: để lại là trạng thái rò từ test này
+        # sang test khác, cho ra lỗi chập chờn theo thứ tự chạy — loại khó truy nhất.
+        cc._goi_y.clear()
 
     def tearDown(self):
         for x in reversed(self.p):
@@ -164,6 +167,51 @@ class NguonTests(_Nen):
         self.assertEqual(cc._dang_cho, {"Cam cửa"})
         self.assertEqual(cc._hang.get_nowait(), ("Cam cửa", "frigate"))
         cc._dang_cho.clear()
+
+    def test_su_kien_frigate_giu_lai_hop_nguoi_de_khoi_chay_lai_yolo(self):
+        cc.su_kien_frigate({"type": "new", "after": {"camera": "cua", "label": "person",
+                                                     "box": [188, 266, 244, 381]}})
+        self.assertEqual(cc._goi_y["Cam cửa"][1], [188, 266, 244, 381])
+        cc._dang_cho.clear()
+        cc._hang.get_nowait()
+
+    def test_su_kien_frigate_khong_co_box_thi_khong_ghi_so(self):
+        cc.su_kien_frigate({"type": "new", "after": {"camera": "cua", "label": "person"}})
+        self.assertNotIn("Cam cửa", cc._goi_y)
+        cc._dang_cho.clear()
+        cc._hang.get_nowait()
+
+    def test_hop_frigate_CHI_dung_cho_khung_DAU_TIEN(self):
+        """Khung sau cách nhau nửa giây, người đã dịch chỗ nên hộp cũ càng sai.
+
+        Đây là lý do hộp chỉ dùng một lần: dùng cho mọi khung thì lượt nhận mặt
+        sẽ cắt mãi vào chỗ người đã rời đi, tệ hơn hẳn để YOLO tự dò.
+        """
+        ghi: list = []
+
+        def _ghi(anh, **kw):
+            ghi.append(kw.get("hop_nguoi"))
+            return self.nn.KhungDaXem(1280, 720, [], list(self.mat))
+
+        cc._goi_y["Cam cửa"] = (self.gio[0], [188, 266, 244, 381])
+        with mock.patch.object(self.nn, "phan_tich_khung", _ghi):
+            cc.xu_ly("Cam cửa", "frigate")
+        self.assertEqual(len(ghi), 5)                 # so_khung_luot mặc định
+        self.assertIsNotNone(ghi[0])                  # khung đầu: có hộp sẵn
+        self.assertTrue(all(x is None for x in ghi[1:]))   # các khung sau: tự dò
+
+    def test_hop_frigate_qua_CU_thi_bo(self):
+        """Quá 5 giây thì người đã đi khỏi chỗ ấy — hộp thành vô dụng."""
+        ghi: list = []
+
+        def _ghi(anh, **kw):
+            ghi.append(kw.get("hop_nguoi"))
+            return self.nn.KhungDaXem(1280, 720, [], list(self.mat))
+
+        cc._goi_y["Cam cửa"] = (self.gio[0] - 30.0, [188, 266, 244, 381])
+        with mock.patch.object(self.nn, "phan_tich_khung", _ghi):
+            cc.xu_ly("Cam cửa", "frigate")
+        self.assertTrue(all(x is None for x in ghi))
 
     def test_ma_frigate_CUA_khop_Cam_cua_du_cua_la_tu_chung(self):
         """Lỗi thật 15/09/2026: `camera_nha.tim("cua")` bỏ «cua» (của) như từ
@@ -518,3 +566,69 @@ class ApiNhinNhaTests(_Nen):
                                          json={"ten": "Lan Anh"}).json()["ok"])
         self.assertTrue(self.client.delete(f"/api/nhin-nha/nguoi/{nid}").json()["ok"])
         self.assertEqual(self.client.get("/api/nhin-nha/nguoi").json()["nguoi"], [])
+
+
+class HopTuFrigateTests(unittest.TestCase):
+    """Đổi hộp Frigate sang pixel ảnh luồng chính, và loại hộp vô lý.
+
+    Đơn vị là chỗ dễ sai nhất: bản tin MQTT trả PIXEL của luồng dò 640×480
+    (đo thật 18/09/2026: ``after.box = [188, 266, 244, 381]``), còn API REST
+    trả TỈ LỆ 0–1 ở ``data.box``. Lấy nhầm đường là nhân pixel với bề rộng
+    khung, cho ra hộp nằm ngoài ảnh mà không có lỗi nào báo.
+    """
+
+    def setUp(self):
+        pytest.importorskip("cv2")
+
+    def test_doi_pixel_luong_do_sang_pixel_luong_chinh(self):
+        ra = cc._hop_tu_frigate([188, 266, 244, 381], 1280, 960, 0.9)
+        self.assertEqual(len(ra), 1)
+        self.assertEqual(ra[0].nhan, "person")
+        # 640→1280 là gấp đôi, 480→960 cũng gấp đôi.
+        self.assertEqual(ra[0].hop, (376, 532, 488, 762))
+
+    def test_bo_hop_vuot_khung_luong_do(self):
+        """Lưới an toàn: cỡ luồng dò đổi mà hằng số chưa đổi theo thì hộp lệch.
+
+        Thà bỏ hộp và để YOLO tự dò, còn hơn cắt nhầm vùng rồi lặng lẽ mất mặt.
+        """
+        self.assertEqual(cc._hop_tu_frigate([0, 0, 1900, 1000], 1280, 960, 0.9), [])
+
+    def test_bo_hop_vo_ly(self):
+        for hop in ([100, 100, 90, 200], [0, 0, 3, 3], "abc", [1, 2, 3], None):
+            self.assertEqual(cc._hop_tu_frigate(hop, 1280, 960, 0.9), [], repr(hop))
+
+
+class PhanTichKhungDuPhongTests(unittest.TestCase):
+    """Dùng hộp Frigate mà KHÔNG ra mặt thì phải chạy lại bằng YOLO.
+
+    Chủ máy chốt 18/09/2026: "Có, nhưng giữ đường cũ làm dự phòng". Thiếu nhánh
+    này thì mỗi lần hộp lệch là mất hẳn một lượt nhận mặt — dùng hộp sẵn hoá ra
+    tệ hơn cách cũ.
+    """
+
+    def setUp(self):
+        pytest.importorskip("cv2")
+
+    def test_khong_ra_mat_thi_roi_ve_yolo(self):
+        from services import nhin_nha, so_mat_nha, yolo_nha
+
+        anh = np.full((720, 1280, 3), 90, np.uint8)
+        hop_frigate = [yolo_nha.VatThe("person", 0.9, (0, 0, 100, 100))]
+        hop_yolo = [yolo_nha.VatThe("person", 0.8, (600, 300, 700, 500))]
+        lan = []
+
+        def _nhan(vung, may):
+            lan.append(vung.shape)
+            if len(lan) == 1:          # vùng theo hộp Frigate: không thấy ai
+                return {"mat": []}
+            return {"mat": [{"hop": [1, 2, 3, 4], "diem_do": 0.9}]}
+
+        with mock.patch.object(nhin_nha, "co_mat", lambda: True), \
+             mock.patch.object(nhin_nha, "mat", lambda: object()), \
+             mock.patch.object(nhin_nha, "vat_the", lambda a, **kw: list(hop_yolo)), \
+             mock.patch.object(so_mat_nha, "nhan_dien_anh", _nhan):
+            k = nhin_nha.phan_tich_khung(anh, hop_nguoi=hop_frigate)
+        self.assertEqual(len(lan), 2)          # thử hộp Frigate rồi mới rơi về YOLO
+        self.assertEqual(len(k.mat), 1)
+        self.assertEqual(k.vat_the, hop_yolo)  # kết quả cuối là của YOLO

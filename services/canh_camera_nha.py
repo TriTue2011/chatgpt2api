@@ -71,10 +71,50 @@ _luong: list[threading.Thread] = []
 _lan_mat: dict[str, float] = {}             # camera → lúc nhận mặt gần nhất
 _phien: dict[tuple[str, str], float] = {}   # (camera, người/cụm) → lúc thấy gần nhất
 _hong_toi: dict[str, float] = {}            # camera → bỏ qua tới lúc (vừa lỗi)
+#: camera → (lúc nhận, hộp người Frigate vừa báo). ĐỂ NGOÀI hàng đợi có chủ ý:
+#: hình dạng bản ghi trong ``_hang`` là hợp đồng đã có test canh
+#: (``test_canh_camera_nha`` khẳng định ``("Cam cửa", "frigate")``), nên nhét
+#: thêm dữ liệu vào đó là phá thứ đang được bảo vệ. Sổ tạm theo camera đi đúng
+#: lối của ``_dang_cho`` / ``_lan_mat`` / ``_phien`` ngay trên.
+_goi_y: dict[str, tuple[float, list]] = {}
+
+#: Cỡ luồng DÒ của Frigate. Hộp trong bản tin MQTT tính bằng PIXEL của luồng
+#: này — đo bản tin thật 18/09/2026: ``after.box = [188, 266, 244, 381]``, tức
+#: (x1, y1, x2, y2). Khác hẳn API REST (``data.box`` là tỉ lệ 0–1); lấy nhầm
+#: đơn vị là cắt ra vùng nằm ngoài ảnh mà không có lỗi nào báo.
+_FRIGATE_RONG, _FRIGATE_CAO = 640, 480
+
+
 _stats: dict[str, Any] = {"quet": 0, "co_nguoi": 0, "thay_vat": 0, "nhan_mat": 0,
                           "su_kien": 0, "frigate": 0, "ben_bi": 0,
                           "khung_trong_luot": 0, "ha_vi_thieu_dong_thuan": 0,
                           "loi": 0, "loi_cuoi": ""}
+
+
+def _hop_tu_frigate(hop, rong: int, cao: int, diem: float) -> list:
+    """Hộp Frigate (pixel luồng dò) → ``VatThe`` theo pixel ảnh luồng chính.
+
+    Trả danh sách rỗng khi hộp vô lý. Kiểm tra ấy là phần QUAN TRỌNG: nếu cỡ
+    luồng dò đổi mà hằng số ``_FRIGATE_RONG``/``_FRIGATE_CAO`` chưa đổi theo,
+    hộp sẽ lệch — thà bỏ hộp và để YOLO tự dò còn hơn cắt nhầm vùng rồi lặng
+    lẽ mất mặt.
+    """
+    from services import yolo_nha
+
+    try:
+        x1, y1, x2, y2 = (float(v) for v in hop)
+    except (TypeError, ValueError):
+        return []
+    if x2 <= x1 or y2 <= y1:
+        return []
+    if max(x2, x1) > _FRIGATE_RONG * 1.02 or max(y2, y1) > _FRIGATE_CAO * 1.02:
+        return []
+    tx, ty = rong / _FRIGATE_RONG, cao / _FRIGATE_CAO
+    a, b = int(max(0, x1 * tx)), int(max(0, y1 * ty))
+    c, d = int(min(rong, x2 * tx)), int(min(cao, y2 * ty))
+    if c - a < 8 or d - b < 8:
+        return []
+    return [yolo_nha.VatThe("person", float(diem or 0.5), (a, b, c, d))]
 
 
 def cfg() -> dict[str, Any]:
@@ -179,6 +219,13 @@ def su_kien_frigate(su_kien: Any) -> None:
         if not ten:
             return
         _stats["frigate"] += 1
+        # Giữ lại hộp người Frigate vừa dò: `xu_ly` dùng nó cho khung ĐẦU TIÊN
+        # để khỏi chạy lại YOLO. Ghi đè bản cũ là đúng — tin mới luôn sát thực
+        # tế hơn tin cũ vài giây.
+        hop = sau.get("box")
+        if isinstance(hop, (list, tuple)) and len(hop) == 4:
+            with _khoa:
+                _goi_y[ten] = (time.time(), list(hop))
         yeu_cau(ten, "frigate")
     except Exception as exc:
         _stats["loi"] += 1
@@ -399,6 +446,14 @@ def xu_ly(camera: str, nguon: str) -> dict[str, Any]:
     ung_vien: list[tuple[float, dict[str, Any], Any]] = []
     anh = None
     k = None
+    # Hộp người Frigate vừa báo, nếu còn mới. Lấy RA LUÔN (pop) để lượt sau
+    # không dùng lại hộp cũ. Hạn 5 giây: quá đó thì người đã đi khỏi chỗ ấy,
+    # hộp thành vô dụng — thà để YOLO tự dò trên đúng khung vừa chụp.
+    goi_y = None
+    with _khoa:
+        cu = _goi_y.pop(camera, None)
+    if cu and time.time() - cu[0] <= 5.0:
+        goi_y = cu[1]
     for i in range(so_khung):
         if i and cach:
             _stop.wait(cach)
@@ -413,7 +468,14 @@ def xu_ly(camera: str, nguon: str) -> dict[str, Any]:
             logger.info({"event": "canh_camera_khung_hong", "camera": camera,
                          "loi": str(exc)[:120]})
             continue
-        k_i = nhin_nha.phan_tich_khung(anh_i)
+        # CHỈ khung đầu tiên lấy được mới dùng hộp của Frigate: các khung sau
+        # cách nhau nửa giây, người đã dịch chỗ nên hộp cũ càng lúc càng sai.
+        hop_nguoi = None
+        if goi_y:
+            hop_nguoi = _hop_tu_frigate(goi_y, anh_i.shape[1], anh_i.shape[0],
+                                        0.9) or None
+            goi_y = None
+        k_i = nhin_nha.phan_tich_khung(anh_i, hop_nguoi=hop_nguoi)
         _stats["khung_trong_luot"] += 1
         if anh is None:
             anh, k = anh_i, k_i
