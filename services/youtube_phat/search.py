@@ -92,6 +92,17 @@ FACEBOOK_SHARE_PATH = re.compile(r"^/share/[a-z]/[A-Za-z0-9_-]{4,64}/?$", re.IGN
 # Đo 19/09/2026 trên trang trả về cho một link chia sẻ thật: chuỗi này xuất hiện nhiều
 # lần, còn thẻ canonical và og:url thì chỉ trỏ tới BÀI VIẾT nên không dùng được.
 FACEBOOK_MEDIA_ID = re.compile(r"impl_([0-9]{5,25})")
+# Thẻ chuẩn của trang. Đo 19/09/2026 trên HAI dạng chia sẻ và chúng giấu mã ở hai nơi
+# khác nhau — đó là lý do phải đọc cả hai chỗ:
+#   /share/r/… (chia sẻ reel)  -> canonical = facebook.com/reel/<mã video>  (dùng được)
+#                                 KHÔNG có trường impl_
+#   /share/v/… (chia sẻ video) -> canonical = facebook.com/…/posts/<mã BÀI VIẾT> (vô dụng)
+#                                 có trường impl_<mã video>
+# Thẻ canonical/og:url là thẻ HTML có tài liệu nên bền hơn trường nội bộ → thử trước.
+FACEBOOK_CANONICAL = re.compile(
+    r'<(?:link[^>]*rel="canonical"[^>]*href|meta[^>]*property="og:url"[^>]*content)="([^"]+)"',
+    re.IGNORECASE,
+)
 # Thiếu nhóm đầu đề này là Facebook đá sang trang đăng nhập rồi trả 400 — đo được:
 # gọi trần thì 400 với 3.676 byte, gọi đủ đầu đề thì 200 với 298.659 byte.
 FACEBOOK_PAGE_HEADERS = {
@@ -182,7 +193,16 @@ def resolve_facebook_share(share_url, *, timeout=20):
         raise
     except (OSError, ValueError, gzip.BadGzipFile) as error:
         raise SearchUnavailableError("search_provider_failed") from error
-    found = FACEBOOK_MEDIA_ID.search(body.decode("utf-8", "ignore"))
+    trang = body.decode("utf-8", "ignore")
+    # 1) Thẻ chuẩn trước — và KHÔNG viết bộ phân tích mới: địa chỉ lấy từ thẻ đem đưa
+    #    thẳng vào `facebook_url_query`, vốn đã hiểu /reel/, /watch?v= và /videos/.
+    for dia_chi in FACEBOOK_CANONICAL.findall(trang)[:4]:
+        ma = facebook_url_query(dia_chi.replace("&amp;", "&"))
+        if ma:
+            return ma
+    # 2) Đường lùi: trường nội bộ, chỉ dùng khi thẻ chuẩn trỏ vào bài viết chứ không
+    #    trỏ vào video (đúng trường hợp của dạng /share/v/).
+    found = FACEBOOK_MEDIA_ID.search(trang)
     if not found:
         raise SearchUnavailableError("facebook_share_unreadable")
     return found.group(1)

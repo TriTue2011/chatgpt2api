@@ -128,6 +128,38 @@ class FacebookMetadataSearchTests(unittest.TestCase):
         self.assertIn("Mozilla", request.get_header("User-agent"))
         self.assertEqual("navigate", request.get_header("Sec-fetch-mode"))
 
+    def test_resolve_facebook_share_prefers_the_canonical_tag(self):
+        """Dạng /share/r/ (chia sẻ reel): thẻ canonical trỏ THẲNG vào video và trang
+        KHÔNG có trường impl_. Đo 19/09/2026 trên trang thật 374 KB — trước khi có
+        nhánh này, đúng dạng link ấy báo `facebook_share_unreadable`."""
+        page = io.BytesIO(
+            b'<link rel="canonical" href="https://www.facebook.com/reel/1359730975917832/" />'
+        )
+        page.headers = {}
+        with patch.object(self.search, "urlopen", return_value=page):
+            self.assertEqual(
+                "1359730975917832",
+                self.search.resolve_facebook_share(
+                    "https://www.facebook.com/share/r/19NLbyFKHq/"
+                ),
+            )
+
+    def test_resolve_facebook_share_falls_back_when_canonical_points_at_the_post(self):
+        """Dạng /share/v/: thẻ canonical trỏ vào BÀI VIẾT (mã 1135095972510953) chứ
+        không trỏ vào video, nên phải bỏ qua nó và lùi về trường nội bộ."""
+        page = io.BytesIO(
+            b'<link rel="canonical" href="https://www.facebook.com/Trang/posts/1135095972510953/" />'
+            b'"media_id":"1;2;;9::impl_1807802260572674"'
+        )
+        page.headers = {}
+        with patch.object(self.search, "urlopen", return_value=page):
+            self.assertEqual(
+                "1807802260572674",
+                self.search.resolve_facebook_share(
+                    "https://www.facebook.com/share/v/1JjG1BpepR/"
+                ),
+            )
+
     def test_resolve_facebook_share_says_so_when_facebook_changes_the_page(self):
         """Điểm yếu đã biết: nó đọc một trường nội bộ không có tài liệu. Hỏng thì phải
         BÁO RÕ, không được lặng lẽ thành 'không tìm thấy bài nào'."""
