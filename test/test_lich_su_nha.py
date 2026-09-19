@@ -380,6 +380,29 @@ class LichSuNhaTest(unittest.TestCase):
                 "start_time": now, "end_time": now + 30}})
         self.assertEqual(self.m._hang.qsize(), 2)
 
+    def test_frigate_ghi_on_off_de_ben_doc_hieu_dung(self) -> None:
+        """Giá trị phải là ON/OFF — `bat_dau`/`ket_thuc` bị đọc thành CÓ NGƯỜI.
+
+        Test cũ chỉ đếm số mục trong hàng đợi nên từ vựng ghi ra chưa bao giờ
+        được soi; lỗi vì thế sống 10 ngày và đổ 13.109 dòng sai vào tầng học.
+        Khẳng định luôn bằng CHÍNH hàm đọc, không chép lại luật của nó.
+        """
+        from services.boi_canh_nha import _co_mat
+
+        now = time.time()
+        for loai in ("new", "end"):
+            self.m.ghi_frigate({"type": loai, "after": {
+                "camera": "phong_khach", "label": "person",
+                "start_time": now, "end_time": now + 30}})
+        gia_tri = [str(x) for x in list(self.m._hang.queue)]
+        self.assertTrue(any("'ON'" in x or '"ON"' in x for x in gia_tri), gia_tri)
+        self.assertTrue(any("'OFF'" in x or '"OFF"' in x for x in gia_tri), gia_tri)
+        self.assertFalse(any("bat_dau" in x or "ket_thuc" in x for x in gia_tri), gia_tri)
+        # Cổng chặn thật: bên đọc phải hiểu ON là có người, OFF là vắng.
+        self.assertTrue(_co_mat("ON"))
+        self.assertFalse(_co_mat("OFF"))
+        self.assertTrue(_co_mat("ket_thuc"))  # vì sao bản cũ sai
+
     # ── thống kê ───────────────────────────────────────────────────────────
     def test_thong_ke_khong_raise_khi_db_hong(self) -> None:
         with mock.patch.object(self.m, "_db", side_effect=RuntimeError("hỏng")):

@@ -504,6 +504,23 @@ def ghi_frigate(su_kien: dict[str, Any]) -> None:
     """Chỉ ghi lúc BẮT ĐẦU và KẾT THÚC — chủ máy chốt, bỏ 'update'.
 
     Frigate phát 208 tin/40 giây, phần lớn là 'update' của cùng một sự kiện.
+
+    GIÁ TRỊ PHẢI LÀ ``ON``/``OFF``, không phải ``bat_dau``/``ket_thuc``. Lý do
+    đo được 19/09/2026, và đây là một lỗi THẬT đã chạy 10 ngày:
+    `boi_canh_nha._co_mat` coi là CÓ NGƯỜI với mọi giá trị không nằm trong danh
+    sách tắt (``off``, ``0``, ``false``, ``none``…). Chuỗi ``ket_thuc`` không
+    nằm trong đó, nên **sự kiện KẾT THÚC bị đọc thành CÓ NGƯỜI** — 13.109 dòng
+    như vậy trong kho, nhiều gần gấp đôi 6.874 dòng ``0`` nói đúng là vắng, và
+    tất cả đổ thẳng vào đặc trưng ``nguoi_<phòng>`` mà tầng xác suất ăn.
+    Nặng thêm vì chủ đề đếm của chính Frigate (``frigate/<cam>`` trường
+    ``person``, giá trị ``0``/``1``/``2``) ghi vào ĐÚNG CÙNG MỘT KHOÁ, nên hai
+    nguồn đè nhau và kết quả tuỳ tin nào tới sau.
+
+    Chữa theo nguyên tắc, không thêm danh sách từ khoá cho bên đọc: dùng đúng
+    từ vựng mà CHÍNH Frigate đã dùng ở các trường khác của nó (``motion`` và
+    ``audio`` đều ghi ``ON``/``OFF``). Khi ấy một khoá chỉ còn một nghĩa —
+    "camera này đang thấy người hay không" — và hai nguồn nói cùng một thứ
+    tiếng: ``OFF`` khớp với số đếm ``0``.
     """
     try:
         if not isinstance(su_kien, dict):
@@ -517,7 +534,7 @@ def ghi_frigate(su_kien: dict[str, Any]) -> None:
         cam = str(sau.get("camera") or "?")
         nhan = str(sau.get("label") or "?")
         ghi("frigate", f"frigate/{cam}", nhan,
-            "bat_dau" if loai == "new" else "ket_thuc",
+            "ON" if loai == "new" else "OFF",
             ts=_so(sau.get("start_time" if loai == "new" else "end_time")) or None)
     except Exception:
         pass
