@@ -27,6 +27,142 @@ def load_search_module():
     return module
 
 
+class FacebookMetadataSearchTests(unittest.TestCase):
+    """Nguồn Facebook: chỉ tra cứu được bằng LINK DÁN VÀO, không tìm theo từ khoá."""
+
+    def setUp(self):
+        self.search = load_search_module()
+
+    def test_facebook_url_query_recognizes_pasted_links(self):
+        doc = self.search.facebook_url_query
+        self.assertEqual("1807802260572674", doc("https://www.facebook.com/watch/?v=1807802260572674"))
+        self.assertEqual("1807802260572674", doc("https://www.facebook.com/reel/1807802260572674/"))
+        self.assertEqual(
+            "1135095972510953",
+            doc("https://www.facebook.com/100080316830026/videos/1135095972510953/"),
+        )
+        # Dạng mà trình duyệt CHƯA ĐĂNG NHẬP nhận được khi bấm link chia sẻ: Facebook
+        # chèn TÊN BÀI vào giữa "videos" và mã, nên lấy đoạn kế tiếp sẽ ra tên bài.
+        self.assertEqual(
+            "1807802260572674",
+            doc(
+                "https://www.facebook.com/Emgaibay.686868/videos/"
+                "c%C3%B3-nh%E1%BB%AFng-chuy%E1%BB%87n/1807802260572674/?rdid=Nu17Gu2Uz4GFI9xf"
+            ),
+        )
+        # Link chia sẻ KHÔNG mang mã video — `resolve_facebook_share` lo việc đó.
+        self.assertIsNone(doc("https://www.facebook.com/share/v/1JjG1BpepR/"))
+        self.assertIsNone(doc("https://www.youtube.com/watch?v=dQw4w9WgXcQ"))
+        self.assertIsNone(doc("Bolero trữ tình"))
+
+    def test_parse_facebook_payload_returns_video_metadata(self):
+        entry = {
+            "id": "1807802260572674",
+            "title": "Có những chuyện có lẽ nên để trong lòng",
+            "uploader": "Em Gái Bay",
+            "duration": 148.821,
+            "thumbnails": [{"url": "https://scontent.xx.fbcdn.net/v/anh.jpg"}],
+        }
+        items = self.search.parse_facebook_payload({"entries": [entry]}, limit=5)
+        self.assertEqual(1, len(items))
+        self.assertEqual("facebook", items[0]["source"])
+        self.assertEqual("1807802260572674", items[0]["id"])
+        self.assertEqual(
+            "https://www.facebook.com/watch/?v=1807802260572674", items[0]["url"]
+        )
+        self.assertEqual("Em Gái Bay", items[0]["channel"])
+        self.assertEqual(148, items[0]["duration"])
+
+    def test_parse_facebook_payload_strips_the_count_prefix(self):
+        """Facebook nhét số liệu vào đầu tiêu đề — đo trên dữ liệu thật 19/09/2026."""
+        entry = {
+            "id": "1807802260572674",
+            "title": "49K views · 1.2K reactions | Có những chuyện có lẽ nên để trong lòng",
+        }
+        items = self.search.parse_facebook_payload({"entries": [entry]}, limit=1)
+        self.assertEqual("Có những chuyện có lẽ nên để trong lòng", items[0]["title"])
+
+    def test_parse_facebook_payload_keeps_a_real_pipe_in_the_title(self):
+        entry = {"id": "1807802260572674", "title": "Sến Trữ Tình | Tuyển tập hay nhất"}
+        items = self.search.parse_facebook_payload({"entries": [entry]}, limit=1)
+        self.assertEqual("Sến Trữ Tình | Tuyển tập hay nhất", items[0]["title"])
+
+    def test_parse_facebook_payload_drops_entries_without_a_numeric_id(self):
+        entry = {"id": "dQw4w9WgXcQ", "title": "Video YouTube lọt vào"}
+        self.assertEqual([], self.search.parse_facebook_payload({"entries": [entry]}, limit=5))
+
+    def test_search_facebook_refuses_plain_text(self):
+        with self.assertRaises(ValueError):
+            self.search.search_facebook("Bolero trữ tình")
+
+    def test_facebook_share_url_recognizes_share_links(self):
+        doc = self.search.facebook_share_url
+        self.assertEqual(
+            "https://www.facebook.com/share/v/1JjG1BpepR/",
+            doc("https://www.facebook.com/share/v/1JjG1BpepR/"),
+        )
+        self.assertEqual(
+            "https://www.facebook.com/share/r/1JjG1BpepR/",
+            doc("https://www.facebook.com/share/r/1JjG1BpepR/"),
+        )
+        self.assertIsNone(doc("https://www.facebook.com/reel/1807802260572674/"))
+        self.assertIsNone(doc("https://example.com/share/v/1JjG1BpepR/"))
+
+    def test_resolve_facebook_share_reads_the_internal_media_id(self):
+        """Mã video KHÔNG suy ra được từ mã trong link chia sẻ: mã bài viết là
+        1135095972510953 còn mã video là 1807802260572674 — phải đọc từ trang."""
+        page = io.BytesIO(
+            b'player_identifier:{"media_id":'
+            b'"100080316830026;1135095972510953;;9::impl_1807802260572674"}'
+        )
+        page.headers = {}
+        with patch.object(self.search, "urlopen", return_value=page) as open_url:
+            video_id = self.search.resolve_facebook_share(
+                "https://www.facebook.com/share/v/1JjG1BpepR/"
+            )
+
+        self.assertEqual("1807802260572674", video_id)
+        request = open_url.call_args.args[0]
+        # Thiếu nhóm đầu đề giống trình duyệt là Facebook trả 400 — đo 19/09/2026:
+        # gọi trần 400 với 3.676 byte, gọi đủ đầu đề 200 với 298.659 byte.
+        self.assertIn("Mozilla", request.get_header("User-agent"))
+        self.assertEqual("navigate", request.get_header("Sec-fetch-mode"))
+
+    def test_resolve_facebook_share_says_so_when_facebook_changes_the_page(self):
+        """Điểm yếu đã biết: nó đọc một trường nội bộ không có tài liệu. Hỏng thì phải
+        BÁO RÕ, không được lặng lẽ thành 'không tìm thấy bài nào'."""
+        page = io.BytesIO(b"<html><body>Trang da doi, khong con truong cu</body></html>")
+        page.headers = {}
+        with patch.object(self.search, "urlopen", return_value=page):
+            with self.assertRaises(self.search.SearchUnavailableError):
+                self.search.resolve_facebook_share(
+                    "https://www.facebook.com/share/v/1JjG1BpepR/"
+                )
+
+    def test_search_facebook_follows_a_share_link_then_looks_up_the_video(self):
+        page = io.BytesIO(b'"media_id":"1;2;;9::impl_1807802260572674"')
+        page.headers = {}
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps({"id": "1807802260572674", "title": "Tên bài"}),
+            stderr="",
+        )
+        with patch.object(self.search, "urlopen", return_value=page), patch(
+            "subprocess.run", return_value=completed
+        ) as run:
+            items = self.search.search_facebook(
+                "https://www.facebook.com/share/v/1JjG1BpepR/"
+            )
+
+        self.assertEqual(1, len(items))
+        self.assertEqual("1807802260572674", items[0]["id"])
+        self.assertEqual(
+            "https://www.facebook.com/watch/?v=1807802260572674",
+            run.call_args.args[0][-1],
+        )
+
+
 class YouTubeMetadataSearchTests(unittest.TestCase):
     def setUp(self):
         self.search = load_search_module()

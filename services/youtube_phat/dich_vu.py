@@ -25,13 +25,21 @@ from services.config import DATA_DIR
 from utils.log import logger
 
 from .playlists import PlaylistError, PlaylistStore, is_share_code, read_share_code, share_code
-from .search import fetch_youtube_playlist, search_youtube, search_zing, youtube_playlist_id
+from .search import (
+    fetch_youtube_playlist,
+    search_facebook,
+    search_youtube,
+    search_zing,
+    youtube_playlist_id,
+)
 from .session import PlaybackSession
 from .streaming import (
     StreamUnavailableError,
     build_signed_stream_url,
     fetch_zing_playlist,
     fetch_zing_web_keys,
+    resolve_facebook_audio,
+    resolve_facebook_video,
     resolve_youtube_audio,
     resolve_youtube_video,
     resolve_zing_stream,
@@ -56,6 +64,54 @@ API_VERSION = "1"
 MAX_HISTORY = 20
 
 _THU_MUC = Path(DATA_DIR) / "youtube_phat"
+
+
+FACEBOOK_ID = re.compile(r"^[0-9]{5,25}$")
+FACEBOOK_HOSTS = {
+    "facebook.com",
+    "www.facebook.com",
+    "m.facebook.com",
+    "web.facebook.com",
+}
+
+
+def normalize_facebook_target(raw_target):
+    """Mã video Facebook, từ chính mã số hoặc từ một link người dùng dán.
+
+    Nhận /reel/<mã>, /watch/?v=<mã>, /<trang>/videos/<tên bài>/<mã>/. KHÔNG nhận link
+    chia sẻ /share/v/<mã ngắn> — mã trong đó là mã BÀI VIẾT, không phải mã video, và
+    bộ bóc luồng không đọc được dạng ấy. Việc lần từ link chia sẻ ra mã video do
+    `search.resolve_facebook_share` lo, ở tầng tìm kiếm."""
+    target = str(raw_target or "").strip()
+    if FACEBOOK_ID.fullmatch(target):
+        return target
+    parsed = urlsplit(target if "//" in target else f"https://{target}")
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme not in {"http", "https"} or host not in FACEBOOK_HOSTS:
+        raise ValueError("invalid_facebook_target")
+    phan = [doan for doan in parsed.path.split("/") if doan]
+    video_id = ""
+    if parsed.path.rstrip("/").endswith("/watch") or parsed.path == "/watch":
+        video_id = parse_qs(parsed.query).get("v", [""])[0]
+    elif phan and phan[0] == "reel" and len(phan) > 1:
+        video_id = phan[1]
+    elif "videos" in phan:
+        # Quét tìm đoạn LÀ CHUỖI SỐ: Facebook chèn tên bài vào giữa "videos" và mã.
+        sau = phan[phan.index("videos") + 1 :]
+        video_id = next((doan for doan in sau if FACEBOOK_ID.fullmatch(doan)), "")
+    if not FACEBOOK_ID.fullmatch(video_id):
+        raise ValueError("invalid_facebook_target")
+    return video_id
+
+
+def facebook_video_target(video_id, max_height):
+    """Đích cho phần HÌNH: "<mã>:<chiều cao>". Facebook chỉ có hai bậc gộp sẵn
+    (hd/sd) nên chiều cao ở đây chỉ dùng để chọn giữa hai bậc ấy."""
+    try:
+        height = int(max_height or 0)
+    except (TypeError, ValueError):
+        height = 0
+    return f"{video_id}:{720 if height >= 720 or height == 0 else 480}"
 
 
 def normalize_target(raw_target):
@@ -214,6 +270,17 @@ class PlayerCore:
         elif source == "zing":
             target = self.require_public_zing_result(target)
             fallback = {"source": "zing", "kind": "song", "id": target, "url": target}
+        elif source == "facebook":
+            # Thiếu nhánh này thì nghe trên máy chạy còn PHÁT RA LOA hỏng: đường ra loa
+            # đi qua đây, đường nghe trên máy thì không.
+            video_id = normalize_facebook_target(target)
+            target = video_id
+            fallback = {
+                "source": "facebook",
+                "kind": "video",
+                "id": video_id,
+                "url": f"https://www.facebook.com/watch/?v={video_id}",
+            }
         elif source == "http":
             fallback = None
         else:
@@ -250,7 +317,7 @@ class PlayerCore:
         item = item if isinstance(item, dict) else {}
         source = item.get("source")
         target = item.get("url") or item.get("id")
-        if not self.prefetch_streams or source not in {"youtube", "zing"} or item.get("kind") not in {"video", "song"} or not target:
+        if not self.prefetch_streams or source not in {"youtube", "zing", "facebook"} or item.get("kind") not in {"video", "song"} or not target:
             return
         key = (source, target)
         with self.stream_lock:
@@ -341,6 +408,13 @@ class PlayerCore:
                 with self.player_lock:
                     self.playback_session.remember_search(source, results)
                 return results
+            if source == "facebook":
+                # Chỉ tra cứu được bằng LINK DÁN VÀO (kể cả link chia sẻ);
+                # `search_facebook` tự ném `invalid_search_query` nếu đưa vào chữ.
+                results = search_facebook(query, limit=limit)
+                with self.player_lock:
+                    self.playback_session.remember_search(source, results)
+                return results
             raise ValueError("invalid_search_source")
 
     def remember_public_zing_results(self, results, *, ttl=3600):
@@ -401,6 +475,9 @@ class PlayerCore:
             if normalized.get("kind") != "video" or not normalized.get("id"):
                 raise ValueError("youtube_audio_requires_video")
             target = normalized["id"] if source == "youtube" else youtube_video_target(normalized["id"], max_height)
+        elif source in {"facebook", "facebook_video"}:
+            video_id = normalize_facebook_target(target)
+            target = video_id if source == "facebook" else facebook_video_target(video_id, max_height)
         else:
             raise ValueError("unsupported_stream_source")
         return target, self._resolve_stream(source, target)
@@ -451,10 +528,17 @@ class PlayerCore:
             cached = self.stream_cache.get(key)
             if cached and cached[0] >= time.monotonic():
                 return dict(cached[1])
+        # Hai nhánh Facebook PHẢI đứng trước `else`: nhánh cuối là đường Zing (kèm cơ
+        # chế lấy lại khoá rồi thử lại), nên thiếu chúng thì đích Facebook bị đem đi
+        # giải bằng bộ giải Zing và hỏng ở một chỗ chẳng liên quan gì.
         if source == "youtube":
             resolved = resolve_youtube_audio(target)
         elif source == "youtube_video":
             resolved = resolve_youtube_video(target)
+        elif source == "facebook":
+            resolved = resolve_facebook_audio(target)
+        elif source == "facebook_video":
+            resolved = resolve_facebook_video(target)
         else:
             try:
                 resolved = resolve_zing_stream(target, **self.zing_keys())

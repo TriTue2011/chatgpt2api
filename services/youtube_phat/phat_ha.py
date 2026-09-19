@@ -394,7 +394,11 @@ def phat(source: str, target: str, entity_ids: Any, base_url: str, *,
     mà không phát lại. Thiết bị không phát được hoặc HA từ chối thì vào `bo_qua`
     kèm lý do; không gửi được tới thiết bị nào thì ném ValueError."""
     goi = goi or goi_loa
-    if source not in {"youtube", "zing", "http"}:
+    # Danh sách này là cửa chặn RIÊNG của tầng gửi tới loa, độc lập với
+    # `STREAM_SOURCES` bên streaming và với nhánh nguồn bên `dich_vu`. Thêm nguồn mà
+    # quên chỗ này thì mọi thứ khác đúng hết nhưng bấm phát ra loa vẫn báo
+    # "unsupported_source".
+    if source not in {"youtube", "zing", "facebook", "http"}:
         raise ValueError("unsupported_source")
     chon = _chon(entity_ids)
     theo_ma = {d["entity_id"]: d for d in danh_sach(dung_bo_dem=False)}
@@ -435,6 +439,14 @@ def phat(source: str, target: str, entity_ids: Any, base_url: str, *,
             gui(d, "media_player", "play_media", yc)
     elif source == "zing":
         yc = luong("zing", target)
+        loai = yc["media_content_type"]
+        for d in thiet_bi:
+            gui(d, "media_player", "play_media", yc)
+    elif source == "facebook":
+        # Giống hệt nhánh Zing: gửi một địa chỉ luồng đã ký. KHÔNG đi nhánh YouTube
+        # bên dưới — nhánh ấy gọi ứng dụng YouTube gốc trên thiết bị, thứ không có
+        # tương đương cho Facebook.
+        yc = luong("facebook", target)
         loai = yc["media_content_type"]
         for d in thiet_bi:
             gui(d, "media_player", "play_media", yc)

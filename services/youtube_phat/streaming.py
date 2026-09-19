@@ -28,8 +28,28 @@ from urllib.request import (
 )
 
 
-STREAM_SOURCES = ("zing", "youtube", "youtube_video")
+STREAM_SOURCES = ("zing", "youtube", "youtube_video", "facebook", "facebook_video")
 YOUTUBE_VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
+# Facebook: reel hoặc video thường, mã là một chuỗi số.
+#
+# Đo 19/09/2026 trên một bài thật, CÙNG MỘT MÃ `1807802260572674`:
+#   /watch/?v=<mã>    -> đúng video, 148,821 giây
+#   /reel/<mã>/       -> đúng video, 148,821 giây
+#   /video.php?v=<mã> -> "This video is only available for registered users"
+# Câu "chỉ dành cho người dùng đã đăng ký" là lời từ chối cho DẠNG ĐỊA CHỈ không đọc
+# được, KHÔNG phải lời nói về quyền xem — nó từng làm tôi kết luận sai ba lần liền.
+# Dựng địa chỉ dạng "/watch/?v=" vì nó phủ được cả reel lẫn video thường.
+FACEBOOK_VIDEO_ID = re.compile(r"^[0-9]{5,25}$")
+FACEBOOK_VIDEO_TARGET = re.compile(r"^([0-9]{5,25}):(360|480|720|1080)$")
+FACEBOOK_STREAM_HOSTS = ("fbcdn.net",)
+# Facebook phục vụ hai tệp GỘP SẴN (hình avc1 + tiếng AAC trong cùng một mp4): "hd"
+# và "sd". Đo 19/09/2026: tải 128 KB đầu của cả hai đều thấy "ftyp moov avc1 mp4a",
+# máy chủ trả HTTP 206 kiểu video/mp4, từ video-hkg1-2.xx.fbcdn.net.
+# QUAN TRỌNG: yt-dlp báo vcodec, acodec và height của hai định dạng này đều là NA,
+# nên KHÔNG lọc được theo codec hay chiều cao như bên YouTube — chép khuôn
+# `_youtube_video_format` sang đây sẽ lọc sạch mọi ứng viên rồi báo "không có định
+# dạng phù hợp". Phải chọn theo MÃ ĐỊNH DẠNG.
+FACEBOOK_MUXED_FORMATS = ("hd", "sd")
 # Luồng HÌNH (không tiếng) của một video, cho trình duyệt khi YouTube không cho nhúng:
 # đích "ID:chiều cao tối đa". Tiếng đi riêng (loa hoặc thẻ <audio>), hình chạy theo.
 YOUTUBE_VIDEO_HEIGHTS = (360, 480, 720, 1080)
@@ -173,6 +193,16 @@ def validate_stream_target(source: str, target: str) -> str:
         value = str(target or "").strip()
         if not YOUTUBE_VIDEO_TARGET.fullmatch(value):
             raise ValueError("invalid_youtube_target")
+        return value
+    if source == "facebook":
+        video_id = str(target or "").strip()
+        if not FACEBOOK_VIDEO_ID.fullmatch(video_id):
+            raise ValueError("invalid_facebook_target")
+        return video_id
+    if source == "facebook_video":
+        value = str(target or "").strip()
+        if not FACEBOOK_VIDEO_TARGET.fullmatch(value):
+            raise ValueError("invalid_facebook_target")
         return value
     raise ValueError("unsupported_stream_source")
 
@@ -653,3 +683,119 @@ def resolve_youtube_audio(
         "headers": headers,
         "content_type": CONTENT_TYPES.get(extension, "audio/mp4"),
     }
+
+
+def _la_luong_chi_tieng(item: dict) -> bool:
+    """Đúng khi mục này là luồng CHỈ CÓ TIẾNG.
+
+    Bắt buộc `acodec` phải có thật, chứ không chỉ xét `vcodec` rỗng. Hai tệp gộp sẵn
+    "hd"/"sd" của Facebook KHÔNG khai codec nào (yt-dlp báo NA cả hai), nên điều kiện
+    chỉ dựa vào `vcodec` sẽ nhận nhầm chúng là luồng tiếng rồi gắn sai kiểu nội dung.
+
+    Dùng CHUNG cho cả chỗ chọn định dạng lẫn chỗ quyết kiểu nội dung — hai nơi cùng
+    một câu hỏi thì phải cùng một câu trả lời, tách ra là mầm lệch về sau."""
+    return item.get("acodec") not in (None, "none") and item.get("vcodec") in (None, "none")
+
+
+def _facebook_muxed_format(info: dict, *, want_hd: bool) -> dict:
+    """Tệp mp4 gộp sẵn của Facebook: "hd" trước, "sd" dự phòng (hoặc ngược lại).
+
+    Chọn theo MÃ ĐỊNH DẠNG chứ không theo codec/chiều cao — xem chú thích ở
+    `FACEBOOK_MUXED_FORMATS`: yt-dlp báo ba trường đó là NA cho hai định dạng này."""
+    found: dict[str, dict] = {}
+    for item in info.get("formats") or []:
+        if not isinstance(item, dict) or not item.get("url"):
+            continue
+        name = str(item.get("format_id") or "").lower()
+        if name in FACEBOOK_MUXED_FORMATS and str(item.get("ext") or "").lower() == "mp4":
+            found.setdefault(name, item)
+    for name in (("hd", "sd") if want_hd else ("sd", "hd")):
+        if name in found:
+            return found[name]
+    # yt-dlp rút gọn về một luồng duy nhất khi người gọi đã chọn sẵn định dạng.
+    if info.get("url") and str(info.get("ext") or "").lower() == "mp4":
+        return info
+    raise StreamUnavailableError("unsupported_stream_format")
+
+
+def _facebook_audio_format(info: dict) -> dict:
+    """Luồng CHỈ CÓ TIẾNG nếu Facebook có (đo được: m4a, mp4a.40.5, ~73 kbps, 48 kHz);
+    không có thì dùng tệp gộp sẵn nhỏ hơn — loa vẫn phát ra tiếng từ mp4."""
+    audio_only = [
+        item
+        for item in info.get("formats") or []
+        if isinstance(item, dict) and item.get("url") and _la_luong_chi_tieng(item)
+    ]
+    if audio_only:
+        return audio_only[-1]
+    return _facebook_muxed_format(info, want_hd=False)
+
+
+def _facebook_stream(selected: dict, info: dict) -> dict:
+    """Kiểm máy chủ phát rồi dựng bản ghi luồng, đúng hình dạng của các nguồn khác."""
+    stream_url = str(selected.get("url") or "")
+    parsed_stream = urlsplit(stream_url)
+    stream_host = (parsed_stream.hostname or "").lower()
+    if parsed_stream.scheme not in {"http", "https"} or not any(
+        stream_host == suffix or stream_host.endswith(f".{suffix}")
+        for suffix in FACEBOOK_STREAM_HOSTS
+    ):
+        raise StreamUnavailableError("unsupported_stream_format")
+    headers = {"User-Agent": ZING_USER_AGENT}
+    upstream_headers = selected.get("http_headers") or info.get("http_headers")
+    if isinstance(upstream_headers, dict):
+        headers = {
+            str(key): str(value)
+            for key, value in upstream_headers.items()
+            if key and value
+        } or headers
+    return {"url": stream_url, "headers": headers}
+
+
+def _facebook_info(video_id: str, timeout: int, extractor) -> dict:
+    try:
+        info = extractor(f"https://www.facebook.com/watch/?v={video_id}", timeout)
+    except Exception as error:  # yt-dlp ném nhiều loại cho cùng một kiểu hỏng
+        raise StreamUnavailableError("stream_provider_failed") from error
+    if not isinstance(info, dict):
+        raise StreamUnavailableError("invalid_stream_response")
+    return info
+
+
+def resolve_facebook_audio(
+    target: str, *, timeout: int = 20, extractor=extract_with_yt_dlp
+) -> dict:
+    """TIẾNG của một video Facebook, cho loa — tách riêng khỏi phần hình, đúng như
+    cặp `youtube` / `youtube_video` đang làm."""
+    video_id = validate_stream_target("facebook", target)
+    info = _facebook_info(video_id, timeout, extractor)
+    selected = _facebook_audio_format(info)
+    stream = _facebook_stream(selected, info)
+    extension = str(selected.get("ext") or "").lower()
+    stream["content_type"] = (
+        CONTENT_TYPES.get(extension, "audio/mp4")
+        if _la_luong_chi_tieng(selected)
+        else "video/mp4"
+    )
+    return stream
+
+
+def resolve_facebook_video(
+    target: str, *, timeout: int = 20, extractor=extract_with_yt_dlp
+) -> dict:
+    """HÌNH của một video Facebook cho thẻ <video> của trình duyệt.
+
+    Khác bên YouTube ở một điểm đã đo: Facebook chỉ có tệp gộp sẵn, nên luồng này
+    mang theo cả tiếng. Bên hiển thị tự tắt tiếng khi đang phát ra loa."""
+    video_id, max_height = validate_stream_target("facebook_video", target).split(":")
+    info = _facebook_info(video_id, timeout, extractor)
+    selected = _facebook_muxed_format(info, want_hd=int(max_height) >= 720)
+    stream = _facebook_stream(selected, info)
+    stream["content_type"] = VIDEO_CONTENT_TYPES.get(
+        str(selected.get("ext") or "").lower(), "video/mp4"
+    )
+    if isinstance(selected.get("height"), int):
+        stream["height"] = selected["height"]
+    if selected.get("tbr"):
+        stream["bitrate_kbps"] = round(float(selected["tbr"]))
+    return stream

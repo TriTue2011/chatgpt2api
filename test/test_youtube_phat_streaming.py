@@ -202,6 +202,119 @@ class ZingWebKeyTests(unittest.TestCase):
         mo.assert_not_called()
 
 
+class FacebookResolverTests(unittest.TestCase):
+    """Nguồn Facebook: nghe và xem tách riêng, đúng như cặp youtube / youtube_video.
+
+    Dữ liệu giả ở đây lấy theo đúng hình dạng ĐO ĐƯỢC ngày 19/09/2026 trên một reel
+    thật: một luồng chỉ-có-tiếng (m4a, mp4a.40.5) và hai tệp gộp sẵn "hd"/"sd" mà
+    yt-dlp báo vcodec/acodec/height đều là NA — chính chỗ này làm khuôn chọn định dạng
+    của YouTube không dùng lại được."""
+
+    def setUp(self):
+        self.streaming = load_streaming_module()
+        self.video_id = "1807802260572674"
+
+    def _extractor(self, result):
+        def extract(watch_url, timeout):
+            self.asked = (watch_url, timeout)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        return extract
+
+    def _info(self, *, audio=True):
+        formats = []
+        if audio:
+            formats.append(
+                {
+                    "format_id": "38352274251084823a",
+                    "ext": "m4a",
+                    "acodec": "mp4a.40.5",
+                    "vcodec": "none",
+                    "url": "https://video-hkg1-2.xx.fbcdn.net/v/tieng.m4a",
+                }
+            )
+        formats += [
+            {"format_id": "sd", "ext": "mp4", "url": "https://video-hkg1-2.xx.fbcdn.net/v/sd.mp4"},
+            {"format_id": "hd", "ext": "mp4", "url": "https://video-hkg1-2.xx.fbcdn.net/v/hd.mp4"},
+        ]
+        return {"formats": formats, "http_headers": {"User-Agent": "yt-dlp-client"}}
+
+    def test_token_round_trip_is_bound_to_facebook_and_expiry(self):
+        token = self.streaming.create_stream_token(
+            self.video_id, "integration-secret", source="facebook", now=1_000, ttl=300
+        )
+        self.assertEqual(
+            ("facebook", self.video_id),
+            self.streaming.verify_stream_token(token, "integration-secret", now=1_299),
+        )
+        with self.assertRaises(self.streaming.InvalidStreamTokenError):
+            self.streaming.verify_stream_token(token, "integration-secret", now=1_301)
+
+    def test_token_rejects_a_non_numeric_id(self):
+        with self.assertRaises(ValueError):
+            self.streaming.create_stream_token(
+                "https://www.facebook.com/reel/1807802260572674/",
+                "integration-secret",
+                source="facebook",
+            )
+
+    def test_audio_resolver_prefers_the_audio_only_stream(self):
+        result = self.streaming.resolve_facebook_audio(
+            self.video_id, extractor=self._extractor(self._info())
+        )
+        self.assertEqual("https://video-hkg1-2.xx.fbcdn.net/v/tieng.m4a", result["url"])
+        self.assertTrue(result["content_type"].startswith("audio/"), result["content_type"])
+        self.assertEqual({"User-Agent": "yt-dlp-client"}, result["headers"])
+
+    def test_audio_resolver_falls_back_to_the_muxed_file(self):
+        result = self.streaming.resolve_facebook_audio(
+            self.video_id, extractor=self._extractor(self._info(audio=False))
+        )
+        self.assertEqual("https://video-hkg1-2.xx.fbcdn.net/v/sd.mp4", result["url"])
+        self.assertEqual("video/mp4", result["content_type"])
+
+    def test_video_resolver_picks_hd_at_720_and_sd_below(self):
+        cao = self.streaming.resolve_facebook_video(
+            f"{self.video_id}:720", extractor=self._extractor(self._info())
+        )
+        self.assertEqual("https://video-hkg1-2.xx.fbcdn.net/v/hd.mp4", cao["url"])
+        self.assertEqual("video/mp4", cao["content_type"])
+        thap = self.streaming.resolve_facebook_video(
+            f"{self.video_id}:480", extractor=self._extractor(self._info())
+        )
+        self.assertEqual("https://video-hkg1-2.xx.fbcdn.net/v/sd.mp4", thap["url"])
+
+    def test_resolver_rejects_a_stream_outside_fbcdn(self):
+        info = {"formats": [{"format_id": "hd", "ext": "mp4", "url": "https://evil.example/ro-ri.mp4"}]}
+        with self.assertRaises(self.streaming.StreamUnavailableError):
+            self.streaming.resolve_facebook_video(
+                f"{self.video_id}:720", extractor=self._extractor(info)
+            )
+
+    def test_resolver_fails_when_yt_dlp_exits_nonzero(self):
+        with self.assertRaises(self.streaming.StreamUnavailableError):
+            self.streaming.resolve_facebook_audio(
+                self.video_id,
+                extractor=self._extractor(RuntimeError("ERROR: Cannot parse data")),
+            )
+
+    def test_resolver_asks_yt_dlp_for_the_watch_page(self):
+        self.streaming.resolve_facebook_audio(
+            self.video_id, extractor=self._extractor(self._info())
+        )
+        self.assertEqual(
+            f"https://www.facebook.com/watch/?v={self.video_id}", self.asked[0]
+        )
+
+    def test_video_resolver_rejects_a_target_without_a_height(self):
+        with self.assertRaises(ValueError):
+            self.streaming.resolve_facebook_video(
+                self.video_id, extractor=self._extractor(self._info())
+            )
+
+
 class YouTubeAudioResolverTests(unittest.TestCase):
     def setUp(self):
         self.streaming = load_streaming_module()
