@@ -162,6 +162,29 @@ class FacebookMetadataSearchTests(unittest.TestCase):
             run.call_args.args[0][-1],
         )
 
+    def test_search_facebook_calls_yt_dlp_through_the_venv_python(self):
+        """Container c2a KHÔNG có lệnh `yt-dlp` trên PATH, chỉ có thư viện trong venv.
+
+        Chép nguyên lệnh của add-on sang là hỏng ngay trên máy thật: đo 19/09/2026 trong
+        container, `command -v yt-dlp` trả "not found" trong khi tìm kiếm YouTube vẫn
+        chạy (nó gọi qua trình thông dịch). Hậu quả là `search_process_failed` bị bọc
+        thành `search_unavailable`, người dùng chỉ thấy "không tìm được lúc này" —
+        không lần ra được nguyên nhân. Phép kiểm này chặn đường lùi cho lần chuyển mã sau."""
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps({"id": "1807802260572674", "title": "Tên bài"}),
+            stderr="",
+        )
+        with patch("subprocess.run", return_value=completed) as run:
+            self.search.search_facebook(
+                "https://www.facebook.com/reel/1807802260572674/"
+            )
+
+        command = run.call_args.args[0]
+        self.assertEqual([sys.executable, "-m", "yt_dlp"], command[:3])
+        self.assertNotIn("yt-dlp", command)
+
 
 class YouTubeMetadataSearchTests(unittest.TestCase):
     def setUp(self):

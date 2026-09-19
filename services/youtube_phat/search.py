@@ -254,8 +254,14 @@ def search_facebook(query, *, limit=1, timeout=30):
             raise ValueError("invalid_search_query")
         video_id = resolve_facebook_share(share_url, timeout=timeout)
     _validated_query_and_limit(query, limit, max_length=MAX_URL_LENGTH)
+    # c2a: container KHÔNG có lệnh `yt-dlp` trên PATH, chỉ có thư viện trong venv —
+    # giống hệt `search_youtube` ngay dưới. Bản đầu tôi chép nguyên lệnh của add-on
+    # (chuỗi "yt-dlp" trần) nên trên máy thật nó trả `search_process_failed` rồi bị bọc
+    # thành `search_unavailable`: người dùng chỉ thấy "không tìm được lúc này". Đo
+    # 19/09/2026 ngay trong container: `command -v yt-dlp` -> not found, trong khi tìm
+    # kiếm YouTube vẫn chạy vì nó gọi qua trình thông dịch.
     command = [
-        "yt-dlp",
+        sys.executable, "-m", "yt_dlp",
         "--dump-single-json",
         "--skip-download",
         "--no-warnings",
