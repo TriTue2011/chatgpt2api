@@ -66,7 +66,7 @@ class YouTubePhatApiTest(unittest.TestCase):
         d = self.get("/api/integration/health", headers=H).json()
         self.assertEqual(("ok", "1"), (d["status"], d["api_version"]))
         self.assertIn("play", d["capabilities"])
-        self.assertEqual(["youtube", "zing", "http"], d["playback_sources"])
+        self.assertEqual(["youtube", "zing", "facebook", "http"], d["playback_sources"])
 
     # ── phiên phát ─────────────────────────────────────────────────────────
     def test_play_status_history_stop(self) -> None:

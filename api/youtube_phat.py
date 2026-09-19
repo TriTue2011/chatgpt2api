@@ -90,7 +90,7 @@ def create_router() -> APIRouter:
         return _json(200, {
             "success": True, "status": "ok", "api_version": dich_vu.API_VERSION,
             "app_version": dich_vu.APP_VERSION, "capabilities": _KHA_NANG,
-            "sources": ["youtube", "zing"], "playback_sources": ["youtube", "zing", "http"],
+            "sources": ["youtube", "zing", "facebook"], "playback_sources": ["youtube", "zing", "facebook", "http"],
         })
 
     @router.get(f"{I}/search")
@@ -235,10 +235,15 @@ def create_router() -> APIRouter:
         try:
             payload = await _doc_json(request, 4096)
             source = payload.get("source")
-            if source not in {"zing", "youtube", "youtube_video"}:
+            # Cửa chặn RIÊNG của tầng API, độc lập với STREAM_SOURCES bên streaming và
+            # với các nhánh trong dich_vu. Thiếu nguồn ở đây thì hai hàm giải luồng
+            # chạy tốt bên dưới không bao giờ được gọi tới — đo 19/09/2026: gọi thẳng
+            # resolve_facebook_audio/video trong container đều OK, mà thẻ vẫn báo
+            # "không lấy được tiếng/hình".
+            if source not in {"zing", "youtube", "youtube_video", "facebook", "facebook_video"}:
                 raise ValueError("unsupported_stream_source")
             # youtube_video: chỉ hình, cho thẻ HA khi YouTube không cho nhúng.
-            chieu_cao = [payload.get("max_height") or 720] if source == "youtube_video" else []
+            chieu_cao = [payload.get("max_height") or 720] if source in {"youtube_video", "facebook_video"} else []
             target, resolved = await asyncio.to_thread(c.prepare_stream, source, payload.get("target"), *chieu_cao)
             stream_url = c.create_stream_url(source, target, url_goc(request))
         except StreamUnavailableError:
@@ -249,7 +254,10 @@ def create_router() -> APIRouter:
                 return _json(409, {"error": ma})
             if ma == "unverified_zing_target":
                 return _json(403, {"error": ma})
+            # «invalid_facebook_target» PHẢI có trong danh sách giữ nguyên: thiếu nó thì
+            # mã lỗi bị nghiền thành «invalid_request» và người dùng lại mất nguyên nhân.
             if ma not in {"invalid_request", "invalid_youtube_target", "invalid_zing_target",
+                          "invalid_facebook_target",
                           "unsupported_stream_source", "youtube_audio_requires_video"}:
                 ma = "invalid_request"
             return _json(400, {"error": ma})
@@ -258,7 +266,7 @@ def create_router() -> APIRouter:
         return _json(200, {"success": True, "source": source, "stream_url": stream_url,
                            "media_content_type": resolved.get("content_type", "audio/mpeg"),
                            "expires_in": 3600,
-                           **(_luong_hinh(resolved) if source == "youtube_video" else {})})
+                           **(_luong_hinh(resolved) if source in {"youtube_video", "facebook_video"} else {})})
 
     @router.post(f"{I}/play")
     async def play(request: Request, authorization: str | None = Header(default=None)):
@@ -479,11 +487,11 @@ def create_router() -> APIRouter:
         try:
             payload = await _doc_json(request, 8192)
             source = str(payload.get("source") or "").lower()
-            if source not in {"youtube", "zing", "youtube_video"}:
+            if source not in {"youtube", "zing", "youtube_video", "facebook", "facebook_video"}:
                 raise ValueError("unsupported_source")
             c = dich_vu.core()
             # youtube_video: chỉ hình, khi YouTube không cho nhúng video trên trang.
-            chieu_cao = [payload.get("max_height") or 720] if source == "youtube_video" else []
+            chieu_cao = [payload.get("max_height") or 720] if source in {"youtube_video", "facebook_video"} else []
             ma, giai = await asyncio.to_thread(c.prepare_stream, source, str(payload.get("target") or ""), *chieu_cao)
             url = c.create_stream_url(source, ma, f"{resolve_image_base_url(request)}{TIEN_TO}")
         except StreamUnavailableError:
@@ -492,7 +500,7 @@ def create_router() -> APIRouter:
             return _loi(str(error))
         c.prefetch(payload.get("ke"))
         return {"ok": True, "url": urlsplit(url).path, "content_type": giai.get("content_type") or "audio/mpeg",
-                **(_luong_hinh(giai) if source == "youtube_video" else {})}
+                **(_luong_hinh(giai) if source in {"youtube_video", "facebook_video"} else {})}
 
     async def _phien_lenh(request: Request, lam) -> dict:
         try:
