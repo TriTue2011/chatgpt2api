@@ -24,6 +24,63 @@ def _nap(thu_muc: str):
     return bc, ls
 
 
+class NoiKhaiTayTest(unittest.TestCase):
+    """Nấc ba của `phong_cua`: bảng chủ nhà tự khai, cho thứ sổ HA không phủ.
+
+    Lớp riêng, không dùng `BoiCanhNhaTest`: phần dựng cảnh ở đó giả lập luôn
+    `phong_cua`, mà đây là ca kiểm CHÍNH hàm ấy.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.bc, self.ls = _nap(self._tmp.name)
+        # Hai nấc trên trượt hết: sổ khu vực HA rỗng, danh sách phòng rỗng.
+        self._p = mock.patch.object(self.bc, "_nap_so_phong", return_value=({}, {}))
+        self._p.start()
+        self.addCleanup(self._p.stop)
+
+    def tearDown(self) -> None:
+        self.bc._reset_for_tests()
+        self.ls._reset_for_tests()
+        self._tmp.cleanup()
+
+    def _khai(self, bang: dict) -> None:
+        self.bc.config.data.setdefault("mqtt", {})["boi_canh"] = {
+            "noi_cua_thiet_bi": bang}
+
+    def test_gan_duoc_noi_chon_cho_thiet_bi_ha_khong_biet(self) -> None:
+        """Ca thật 19/09/2026: camera cửa Frigate ghi thiết bị `frigate/cua`.
+
+        Nhà chỉ có sáu phòng, không phòng nào tên "cửa", nên 2.081 dòng của nó
+        rơi vào rổ `khac` — trộn chung với aptomat tổng (181.991 dòng) và mọi
+        thiết bị chưa gán phòng, tín hiệu "có người ở cửa" loãng tới vô dụng.
+        """
+        self._khai({"frigate/cua": "Hành lang"})
+        self.assertEqual(self.bc.phong_cua("frigate/cua"), "Hành lang")
+        self.assertEqual(self.bc._khoa_phong("frigate/cua"), "hành_lang")
+
+    def test_khop_dung_ten_chu_khong_khop_tien_to(self) -> None:
+        """Khớp lỏng là nuốt nhầm: `frigate/cua` không được ôm `frigate/cua-so`."""
+        self._khai({"frigate/cua": "Hành lang"})
+        self.assertEqual(self.bc.phong_cua("frigate/cua-so"), "")
+        self.assertEqual(self.bc.phong_cua("zigbee2mqtt/Cửa sổ bếp"), "")
+
+    def test_bo_qua_dong_khai_hut(self) -> None:
+        """Một dòng gõ dở không được biến thành phòng tên rỗng."""
+        self._khai({"frigate/cua": "  ", "": "Hành lang", "frigate/bep": "Bếp"})
+        self.assertEqual(self.bc.phong_cua("frigate/cua"), "")
+        self.assertEqual(self.bc.phong_cua("frigate/bep"), "Bếp")
+
+    def test_so_khu_vuc_ha_van_thang_bang_tu_khai(self) -> None:
+        """Nấc ba đứng CUỐI: sổ HA vẫn là nguồn chính xác tuyệt đối."""
+        self._p.stop()
+        with mock.patch.object(self.bc, "_nap_so_phong",
+                               return_value=({"frigate/cua": "Bếp"}, {})):
+            self._khai({"frigate/cua": "Hành lang"})
+            self.assertEqual(self.bc.phong_cua("frigate/cua"), "Bếp")
+        self._p.start()
+
+
 class BoiCanhNhaTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = TemporaryDirectory()

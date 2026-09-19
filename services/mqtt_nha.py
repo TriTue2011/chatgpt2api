@@ -165,19 +165,23 @@ def luu_cau_hinh(host: str, port: int = 1883, username: str = "",
     mk = password if password and password != "***" else str(cu.get("password") or "")
 
     ban_ghi = {
+        # GIỮ MỌI KHOÁ HÀM NÀY KHÔNG SỞ HỮU. Hàm gán đè CẢ khối "mqtt", mà bản
+        # trước dựng bản ghi từ số không rồi cứu tay đúng hai khoá (`uu_tien`,
+        # `lich_su`) — nên mọi nhánh khác bị xoá IM LẶNG mỗi lần ai đó lưu lại
+        # cấu hình MQTT. Đo trên máy thật 19/09/2026: khối "mqtt" còn giữ
+        # `bai_hoc`, `canh_bao`, `du_doan`, `hieu_thiet_bi` — bốn nhánh cấu hình
+        # của tầng học và tầng cảnh báo, KHÔNG nhánh nào nằm trong danh sách cứu.
+        # Danh sách cứu tay luôn thiếu; bắt đầu từ bản cũ rồi chỉ ghi đè phần của
+        # mình thì không bao giờ sót, kể cả nhánh mai này mới thêm.
+        **cu,
         "host": host,
         "port": port,
         "username": (username or "").strip(),
         "password": mk,
         "enabled": bool(enabled),
         "note": (ghi_chu or "").strip(),
-        # GIỮ hai khoá này: hàm ghi đè cả khối "mqtt", không chép lại là mỗi
-        # lần sửa cổng lại xoá mất ô tích ưu tiên và cấu hình lịch sử — đúng
-        # cái bẫy mà tác giả đã lường trước cho mật khẩu ở trên.
         "uu_tien": bool(cu.get("uu_tien", False)) if uu_tien is None else bool(uu_tien),
     }
-    if isinstance(cu.get("lich_su"), dict):
-        ban_ghi["lich_su"] = cu["lich_su"]
 
     from services.config import config
 

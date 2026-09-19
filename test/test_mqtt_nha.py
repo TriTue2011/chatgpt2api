@@ -301,6 +301,33 @@ class CauHinhTests(unittest.TestCase):
             mq.luu_cau_hinh("1.2.3.4", 1883, password="moi")
             self.assertEqual(config.data["mqtt"]["password"], "moi")
 
+    def test_luu_giu_moi_nhanh_khac_trong_khoi_mqtt(self) -> None:
+        """Hàm gán đè CẢ khối "mqtt" — nhánh nó không sở hữu phải còn nguyên.
+
+        Đo trên máy thật 19/09/2026: khối này còn giữ `bai_hoc`, `canh_bao`,
+        `du_doan`, `hieu_thiet_bi`. Bản cũ dựng bản ghi từ số không rồi cứu tay
+        đúng hai khoá, nên bốn nhánh kia bị xoá IM LẶNG mỗi lần ai đó lưu lại
+        cấu hình MQTT — và không test nào canh, nên nó sống tới tận hôm nay.
+        """
+        cu = {
+            "host": "1.2.3.4", "password": "bimat",
+            "lich_su": {"bat": True}, "bai_hoc": {"bat": True},
+            "canh_bao": {"nguong": 3}, "du_doan": {"so_ngay": 30},
+            "hieu_thiet_bi": {"x": 1},
+            "boi_canh": {"noi_cua_thiet_bi": {"frigate/cua": "Hành lang"}},
+        }
+        with _CauHinh(cu):
+            mq.luu_cau_hinh("1.2.3.4", 8883)
+            khoi = config.data["mqtt"]
+            for nhanh in ("lich_su", "bai_hoc", "canh_bao", "du_doan",
+                          "hieu_thiet_bi", "boi_canh"):
+                self.assertIn(nhanh, khoi, f"mất nhánh {nhanh} sau khi lưu")
+            self.assertEqual(
+                khoi["boi_canh"]["noi_cua_thiet_bi"]["frigate/cua"], "Hành lang")
+            # Phần hàm SỞ HỮU vẫn phải được ghi đè như cũ.
+            self.assertEqual(khoi["port"], 8883)
+            self.assertEqual(khoi["password"], "bimat")
+
     def test_luu_thieu_host_thi_bao_loi(self) -> None:
         with _CauHinh({}):
             with self.assertRaises(mq.LoiMqtt):

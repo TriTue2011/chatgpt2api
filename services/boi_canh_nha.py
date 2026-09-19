@@ -158,6 +158,23 @@ def _nap_so_phong() -> tuple[dict[str, str], dict[str, str]]:
     return _cache_phong, _cache_ten_phong
 
 
+def _noi_khai_tay() -> dict[str, str]:
+    """Bảng chủ nhà TỰ KHAI: tên thiết bị → nơi chốn, cho thứ sổ HA không phủ.
+
+    Đọc từ cấu hình (``mqtt.boi_canh.noi_cua_thiet_bi``) nên sửa được mà không
+    phải đụng vào mã — đó là điểm khác giữa "dữ liệu" và "một danh sách cứng
+    trong mã": nhà thêm camera mới thì khai thêm một dòng, không cần bản mới.
+
+    Bỏ qua mục khai hụt (khoá rỗng hoặc nơi chốn rỗng), nếu không một dòng gõ
+    dở sẽ biến thành phòng tên rỗng và gom nhầm mọi thứ vào đó.
+    """
+    raw = _cfg().get("noi_cua_thiet_bi")
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): str(v).strip() for k, v in raw.items()
+            if str(k).strip() and str(v).strip()}
+
+
 def phong_cua(thiet_bi: str) -> str:
     """Thiết bị này thuộc phòng nào.
 
@@ -190,6 +207,23 @@ def phong_cua(thiet_bi: str) -> str:
     for kd in sorted(ten_phong, key=len, reverse=True):
         if kd and kd in t:
             return ten_phong[kd]
+
+    # NẤC BA — bảng do chủ nhà tự khai, cho thứ HAI NẤC TRÊN không phủ được.
+    # Đặt CUỐI CÙNG là cố ý: sổ khu vực HA vẫn là nguồn chính xác tuyệt đối, bảng
+    # này chỉ vá chỗ trống. Ca thật (19/09/2026): camera cửa Frigate ghi thiết bị
+    # `frigate/cua`, mà nhà không có phòng nào tên "cửa" — chủ nhà nói nó "ở cửa
+    # nhà, ngoài hành lang". Không có nấc này thì 2.081 dòng của nó rơi vào rổ
+    # `khac`, trộn chung với aptomat tổng (181.991 dòng) và mọi thiết bị chưa gán
+    # phòng, nên tín hiệu "có người ở cửa" bị pha loãng tới mức vô dụng.
+    # Là DỮ LIỆU, không phải danh sách trong mã: chủ nhà gán được cho bất kỳ thiết
+    # bị nào mà không cần sửa mã — chữa cả lớp, không riêng camera này.
+    for khoa, noi in _noi_khai_tay().items():
+        # KHỚP ĐÚNG TÊN — không khớp chuỗi con, cũng không khớp tiền tố. Khớp lỏng
+        # là nuốt nhầm: khoá `frigate/cua` sẽ ôm luôn `frigate/cua-so`, còn khoá
+        # ngắn `cua` thì ôm cả `Cửa sổ bếp`. Chủ nhà khai đủ tên thiết bị nên chặt
+        # là đúng; cần khớp lỏng thì đó là một yêu cầu khác, không đoán trước.
+        if _khong_dau(khoa) == t:
+            return noi
     return ""
 
 
