@@ -80,6 +80,11 @@ ZING_USER_AGENT = (
 )
 CONTENT_TYPES = {
     "aac": "audio/aac",
+    # Bài PHÁT TRỰC TIẾP không có tệp nhạc, chỉ có bản kê luồng HLS. Thiếu dòng này
+    # thì nó rơi về mặc định "audio/mp4" — một lời khai SAI. Đo 20/09/2026 trên bài
+    # trực tiếp thật: máy chủ gốc trả đúng "application/vnd.apple.mpegurl", còn ta
+    # thì khai là mp4, khiến bên nhận tưởng phát được rồi mới hỏng.
+    "m3u8": "application/vnd.apple.mpegurl",
     "flac": "audio/flac",
     "m4a": "audio/mp4",
     "mp3": "audio/mpeg",
