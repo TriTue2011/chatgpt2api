@@ -50,6 +50,18 @@ from .streaming import (
     zing_playlist_id,
 )
 
+# Tham số của khung nhúng — GIỮ KHỚP với `youtube_player/app/server.py` bên repo
+# add-on. Hai bản song song trôi khỏi nhau đúng một lần trong ngày 20/09/2026 (bài
+# Facebook thêm được ở bản này mà rơi im lặng ở bản kia), nên từ đây thứ gì sửa ở
+# một bên thì soi sang bên kia ngay.
+#   enablejsapi=1  — mở đường postMessage để TRANG biết khung báo lỗi; thiếu nó thì
+#                    YouTube tự vẽ hộp lỗi và giao diện không hay biết gì.
+#   playsinline=1  — điện thoại phát ngay trong trang thay vì bung toàn màn.
+#   rel=0          — hết bài không gợi ý video của kênh khác.
+# Riêng `origin` KHÔNG đặt ở đây: chỉ trình duyệt mới biết trang mở bằng địa chỉ
+# nào. Giao diện c2a tự gắn trong `srcNhung`, xem web/src/app/youtube/components.
+EMBED_PARAMS = "enablejsapi=1&playsinline=1&rel=0"
+
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 PLAYLIST_ID = re.compile(r"^[A-Za-z0-9_-]{10,80}$")
 YOUTUBE_HOSTS = {
@@ -140,14 +152,15 @@ def normalize_target(raw_target):
             "kind": "video",
             "id": video_id,
             "embed_url": (
-                f"https://www.youtube-nocookie.com/embed/{video_id}?autoplay=1"
+                f"https://www.youtube-nocookie.com/embed/{video_id}"
+                f"?autoplay=1&{EMBED_PARAMS}"
             ),
         }
         if PLAYLIST_ID.fullmatch(playlist_id or ""):
             target["playlist_id"] = playlist_id
             target["embed_url"] = (
                 f"https://www.youtube-nocookie.com/embed/{video_id}"
-                f"?list={playlist_id}&autoplay=1"
+                f"?list={playlist_id}&autoplay=1&{EMBED_PARAMS}"
             )
         return target
 
@@ -157,7 +170,7 @@ def normalize_target(raw_target):
             "id": playlist_id,
             "embed_url": (
                 "https://www.youtube-nocookie.com/embed/videoseries"
-                f"?list={playlist_id}&autoplay=1"
+                f"?list={playlist_id}&autoplay=1&{EMBED_PARAMS}"
             ),
         }
 
