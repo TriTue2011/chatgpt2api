@@ -250,7 +250,10 @@ class MoiDuongOnboardDungEmailDaBuTests(unittest.TestCase):
                          "được với ô email trống")
 
     def test_du_sau_duong_cung_bu_credential(self):
-        self.assertEqual(NGUON.count("email_tk, mat_khau, hat_giong = bu_credential(req)"), 6)
+        # 20/09/2026: thêm đường onboard thứ BẢY — Grok Web. Con số này cố ý ghim
+        # cứng: thêm một đường đăng nhập mà quên bù credential thì nó rơi đúng vào
+        # đây, chứ không lặng lẽ chạy với ô email trống.
+        self.assertEqual(NGUON.count("email_tk, mat_khau, hat_giong = bu_credential(req)"), 7)
 
 
 if __name__ == "__main__":

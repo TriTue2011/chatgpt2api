@@ -64,12 +64,17 @@ class BuCredentialTests(unittest.TestCase):
                       "phải đọc email từ bản ghi trong kho, không chỉ mật khẩu/TOTP")
 
     def test_moi_duong_onboard_dung_email_da_bu(self):
-        """Cả sáu đường onboard phải dùng email đã bù, không phải req.email thô."""
+        """Cả BẢY đường onboard phải dùng email đã bù, không phải req.email thô.
+
+        20/09/2026: thêm đường thứ bảy — Grok Web. Con số ghim cứng là cố ý: thêm
+        một đường đăng nhập mà quên bù credential thì rơi đúng vào đây, chứ không
+        lặng lẽ chạy với ô email trống.
+        """
         self.assertNotIn("email=req.email", MAIN,
                          "còn nơi truyền thẳng req.email — nơi đó vẫn đăng nhập "
                          "được với email rỗng")
-        self.assertEqual(MAIN.count("email_tk, mat_khau, hat_giong = bu_credential(req)"), 6,
-                         "phải đủ sáu đường onboard cùng bù credential")
+        self.assertEqual(MAIN.count("email_tk, mat_khau, hat_giong = bu_credential(req)"), 7,
+                         "phải đủ bảy đường onboard cùng bù credential")
 
 
 class ChanEmailRongTests(unittest.TestCase):

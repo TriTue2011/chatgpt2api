@@ -1634,9 +1634,14 @@ async def api_claude_web_session(profile: str) -> dict[str, Any]:
 async def api_grok_web_onboard(req: GrokWebOnboardReq, request: Request) -> dict[str, Any]:
     from .grok_web_login import start_grok_web_login
     novnc = _novnc_url(request)
+    # Đi qua «bu_credential» như MỌI đường onboard khác: lấy thẳng trường email của
+    # yêu cầu là bỏ qua kho tài khoản đã lưu, nên lần đăng nhập lại nào không kèm
+    # mật khẩu sẽ lặng lẽ chạy với ô rỗng. Có test ghim chuyện này và nó đã bắt
+    # được tôi ở bản đầu — đừng viết lại kiểu cũ.
+    email_tk, mat_khau, hat_giong = bu_credential(req)
     session = await start_grok_web_login(
-        profile=req.profile, email=req.email, password=req.password,
-        totp_secret=req.totp_secret, novnc_url=novnc,
+        profile=req.profile, email=email_tk, password=mat_khau,
+        totp_secret=hat_giong, novnc_url=novnc,
     )
     if req.email.strip() and req.password.strip():
         try: save_account(req.email, req.password, req.totp_secret, "")
