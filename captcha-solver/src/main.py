@@ -375,6 +375,13 @@ class ClaudeWebOnboardReq(BaseModel):
     totp_secret: str = ""
 
 
+class GrokWebOnboardReq(BaseModel):
+    profile: str = "grok-web-default"
+    email: str = ""
+    password: str = ""
+    totp_secret: str = ""
+
+
 
 
 class GeminiWebImageReq(BaseModel):
@@ -1613,6 +1620,72 @@ async def api_claude_web_session(profile: str) -> dict[str, Any]:
     if session is None or not session.session_key:
         raise HTTPException(status_code=404, detail="Chưa có sessionKey (onboard Claude Web trước)")
     return {"profile": profile, "session_key": session.session_key, "email": session.email}
+
+
+# ── Grok Web (grok.com) ─────────────────────────────────────────────────
+#
+# Cùng bộ bốn endpoint như Claude Web, thêm ĐÚNG MỘT trạng thái nữa:
+# «need_manual». Đo 20/09/2026: bộ giải Turnstile không qua được cửa Cloudflare
+# của grok.com (thử cả ba cách, 60 giây vẫn nguyên), kể cả khi hồ sơ đã có sẵn
+# «cf_clearance». Nên chỗ này nói thẳng là cần một cú tích tay qua noVNC, thay
+# vì quay vòng thử lại rồi báo "thất bại" — báo thế là đổ lỗi nhầm chỗ.
+
+@app.post("/v1/grok-web/onboard", dependencies=[Depends(require_api_key)])
+async def api_grok_web_onboard(req: GrokWebOnboardReq, request: Request) -> dict[str, Any]:
+    from .grok_web_login import start_grok_web_login
+    novnc = _novnc_url(request)
+    session = await start_grok_web_login(
+        profile=req.profile, email=req.email, password=req.password,
+        totp_secret=req.totp_secret, novnc_url=novnc,
+    )
+    if req.email.strip() and req.password.strip():
+        try: save_account(req.email, req.password, req.totp_secret, "")
+        except Exception: pass
+    return {
+        **session.to_dict(),
+        "novnc": novnc,
+        "note": "Theo dõi /v1/grok-web/{profile}/onboard-status. state=need_manual nghĩa là "
+                "cần mở noVNC tích ô xác minh của Cloudflare rồi gọi lại onboard. "
+                "state=success thì lấy cookie ở /v1/grok-web/{profile}/session.",
+    }
+
+
+@app.get("/v1/grok-web/{profile}/onboard-status", dependencies=[Depends(require_api_key)])
+async def api_grok_web_onboard_status(profile: str) -> dict[str, Any]:
+    from .grok_web_login import get_session as get_grok_session
+    session = get_grok_session(profile)
+    if session is None:
+        return {"profile": profile, "state": "none", "message": "Chưa có phiên onboard"}
+    return session.to_dict()
+
+
+@app.post("/v1/grok-web/{profile}/onboard-2fa-code", dependencies=[Depends(require_api_key)])
+async def api_grok_web_onboard_2fa_code(profile: str, req: TwoFactorCodeReq) -> dict[str, Any]:
+    from .grok_web_login import submit_2fa_code as submit_grok_2fa
+    if not submit_grok_2fa(profile, req.code):
+        raise HTTPException(status_code=409, detail="Phiên không ở state=need_code")
+    return {"profile": profile, "submitted": True}
+
+
+@app.get("/v1/grok-web/{profile}/session", dependencies=[Depends(require_api_key)])
+async def api_grok_web_session(profile: str) -> dict[str, Any]:
+    """Cookie phiên grok.com của một hồ sơ đã đăng nhập.
+
+    Đọc thẳng từ hồ sơ trên đĩa nên dùng được cả khi trình duyệt đã đóng. Trả
+    về TẤT CẢ cookie của grok.com trừ nhóm «cf_» của Cloudflare — cố ý không
+    lọc theo một cái tên tự nghĩ ra, vì chưa ai đăng nhập được lần nào nên
+    không ai biết chắc phiên nằm ở cookie tên gì.
+    """
+    from .grok_web_login import doc_cookie_phien
+    try:
+        cookies = await doc_cookie_phien(profile)
+    except HoSoDangBan:
+        raise HTTPException(429, "Account Busy") from None
+    except ValueError:
+        raise HTTPException(400, "Tên hồ sơ không hợp lệ") from None
+    if not cookies:
+        raise HTTPException(status_code=404, detail="Chưa có phiên Grok (onboard trước)")
+    return {"profile": profile, "cookies": cookies, "cookie_names": sorted(cookies)}
 
 
 @app.post("/v1/claude-web/{profile}/relogin-via-google", dependencies=[Depends(require_api_key)])
