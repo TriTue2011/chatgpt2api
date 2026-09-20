@@ -435,7 +435,12 @@ export function TrinhPhat() {
     });
     setDangGuiMa("");
     if (!r) return;
-    if (nghe) dungNghe();
+    if (nghe) {
+      /* CÙNG BÀI thì giữ tiếng trên máy tới lúc loa kêu (xem «nhuongTiengChoLoa»);
+         BÀI KHÁC thì dừng ngay — vừa chọn bài mới mà còn nghe bài cũ mới là lạ. */
+      if (ids[0] && cungBai(nghe, bai)) nhuongTiengChoLoa(ids[0], () => dungNghe());
+      else dungNghe();
+    }
     const ten = (id: string) => theoMa.get(id)?.ten ?? id;
     if (r.bo_qua.length) {
       toast.warning(`Đã gửi tới ${r.da_gui.map(ten).join(", ")}. Bỏ qua: ${r.bo_qua.map((b) => ten(b.entity_id)).join(", ")}.`);
@@ -611,14 +616,39 @@ export function TrinhPhat() {
     setXemPlaylist(true);
   };
 
+  /** NHƯỜNG TIẾNG CHO LOA ĐÚNG LÚC LOA LÊN TIẾNG, ĐỪNG CẮT TRƯỚC.
+   *
+   *  Gửi bài cho loa xong mà tắt tiếng trên máy ngay thì sinh một quãng IM LẶNG: máy
+   *  chủ còn giải bài (đo 20/09/2026: YouTube 1,59 giây), loa còn nạp đệm. Với người
+   *  nghe thì quãng ấy đúng là "mất tiếng". Nên giữ tiếng trên máy tới nhịp đầu tiên
+   *  loa thật sự báo "playing"; quá 15 giây loa vẫn im thì thôi, không nhường — loa
+   *  hỏng thì ít nhất còn nghe được trên máy. Trong lúc chờ thì hỏi trạng thái nhanh
+   *  hơn nhịp thường, vì nhịp thường 2,5–5 giây là nhường trễ hơn cả quãng cần chữa. */
+  const nhuongTiengChoLoa = (id: string, nhuong: () => void) => {
+    const batDau = Date.now();
+    const hen = setInterval(() => {
+      const loa = (moiNhat.current.thietBi ?? []).find((t) => t.entity_id === id);
+      if (loa?.trang_thai !== "playing" && Date.now() - batDau < 15000) {
+        void taiThietBi(true);
+        return;
+      }
+      clearInterval(hen);
+      if (loa?.trang_thai === "playing") nhuong();
+    }, 800);
+  };
+
   const loaNhapVideo = async (tb: ThietBi, v: VideoMo) => {
     const tu = nhung.thoiGian();
     const r = await goi<KetQuaPhat>("phat", { source: "youtube", target: v.bai.url || v.bai.id, entity_ids: [tb.entity_id] });
     if (!r) return;
-    nhung.lenh("mute");
-    setVideo({ ...v, theoLoa: true, ngheTrenMay: false });
+    // Khung giữ tiếng tới lúc loa kêu rồi mới câm — xem «nhuongTiengChoLoa».
+    setVideo({ ...v, theoLoa: true, ngheTrenMay: true });
+    nhuongTiengChoLoa(tb.entity_id, () => {
+      nhung.lenh("mute");
+      setVideo((cu) => (cu ? { ...cu, ngheTrenMay: false } : cu));
+    });
     dongBo.current.choTua = { id: tb.entity_id, tu, luc: Date.now() };
-    toast.success(`${tb.ten} phát tiếng; video trên trang tắt tiếng và chạy theo loa.`);
+    toast.success(`${tb.ten} sắp phát; tiếng giữ trên trang tới khi loa kêu rồi tự tắt.`);
     void taiThietBi(true);
   };
 
