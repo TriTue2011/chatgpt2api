@@ -277,6 +277,48 @@ def create_router() -> APIRouter:
         except Exception as exc:
             return _loi(exc, "bật tầng")
 
+    @router.post("/api/hoc-hoi/noi-chon")
+    async def dat_noi_chon(body: dict, authorization: str | None = Header(default=None)):
+        """Gán NƠI CHỐN cho thiết bị mà Home Assistant không biết nó ở đâu.
+
+        body: ``{thiet_bi: 'frigate/cua', noi: 'Hành lang'}``; ``noi`` rỗng là gỡ bỏ.
+        Ca thật: camera cửa nằm "ở cửa nhà, ngoài hành lang", không thuộc phòng nào
+        trong sáu phòng, nên mọi lượt của nó rơi vào rổ «khác» và tầng xác suất không
+        học được "có người ở cửa" như một điều kiện riêng.
+
+        PHẢI GHI TỪ TIẾN TRÌNH ĐANG CHẠY. Đo 20/09/2026: ghi thẳng vào kho từ một
+        tiến trình phụ thì MẤT — ``ConfigStore`` nạp cấu hình đúng MỘT LẦN lúc khởi
+        động rồi giữ nguyên bản chụp ấy, nên lần lưu kế tiếp của tiến trình chính ghi
+        đè bản cũ xuống kho và cuốn phăng khoá vừa thêm.
+        """
+        require_admin(authorization)
+        thiet_bi = " ".join(str(body.get("thiet_bi") or "").split())
+        noi = " ".join(str(body.get("noi") or "").split())
+        if not thiet_bi or len(thiet_bi) > 200:
+            return {"ok": False, "error": "Chưa nêu thiết bị, hoặc tên thiết bị dài quá."}
+        if len(noi) > 60:
+            return {"ok": False, "error": "Tên nơi chốn dài quá — tối đa 60 ký tự."}
+        try:
+            from services.config import config
+
+            def _sua(data: dict) -> None:
+                bang = (data.setdefault("mqtt", {})
+                            .setdefault("boi_canh", {})
+                            .setdefault("noi_cua_thiet_bi", {}))
+                if noi:
+                    bang[thiet_bi] = noi
+                else:
+                    bang.pop(thiet_bi, None)
+
+            config.mutate(_sua)
+            logger.info({"event": "hoc_hoi_noi_chon", "thiet_bi": thiet_bi,
+                         "co_noi": bool(noi)})
+            bang = ((config.data.get("mqtt") or {}).get("boi_canh") or {}).get(
+                "noi_cua_thiet_bi") or {}
+            return {"ok": True, "thiet_bi": thiet_bi, "noi": noi, "bang": dict(bang)}
+        except Exception as exc:
+            return _loi(exc, "đặt nơi chốn")
+
     # ── Sổ tên thiết bị ──────────────────────────────────────────────────────
     @router.get("/api/hoc-hoi/ten")
     async def ten(authorization: str | None = Header(default=None)):

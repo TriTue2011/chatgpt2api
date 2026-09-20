@@ -167,6 +167,19 @@ def create_router() -> APIRouter:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, **kq}
 
+    @router.delete("/api/nhin-nha/mat/{mat_id}")
+    async def xoa_mot_mat(mat_id: str, authorization: str | None = Header(default=None)):
+        """Xoá MỘT ảnh mặt khỏi sổ — đường dọn ảnh xấu hoặc ảnh vào nhầm.
+
+        `so_mat_nha.xoa_mat` có sẵn từ lâu nhưng KHÔNG endpoint nào gọi tới, nên trên
+        web chỉ xoá được cả một người: muốn bỏ một tấm xấu thì phải xoá sạch rồi dạy
+        lại từ đầu. Chủ máy báo thiếu 20/09/2026.
+        """
+        require_admin(authorization)
+        from services import so_mat_nha
+
+        return {"ok": so_mat_nha.xoa_mat(mat_id)}
+
     @router.post("/api/nhin-nha/day")
     async def day(ten: str = Form(...), anh: UploadFile = File(...), ep: bool = Form(False),
                   authorization: str | None = Header(default=None)):

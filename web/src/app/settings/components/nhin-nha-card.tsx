@@ -160,10 +160,13 @@ export function NhinNhaCard() {
     void tai();
   };
 
-  const goi = async (fn: () => Promise<{ data: any }>, xong: string) => {
+  // `xong` nhận thêm dạng HÀM để lời báo nói đúng thứ máy chủ vừa làm — ví dụ gán
+  // lượt có kèm học mặt hay không. Chuỗi thường vẫn chạy y như cũ.
+  const goi = async (fn: () => Promise<{ data: any }>, xong: string | ((d: any) => string)) => {
     try {
       const d = (await fn()).data;
-      setMsg(d.ok ? `✅ ${xong}` : `❌ ${d.error || "Không làm được"}`);
+      const loi = typeof xong === "function" ? xong(d) : xong;
+      setMsg(d.ok ? `✅ ${loi}` : `❌ ${d.error || "Không làm được"}`);
       void tai();
     } catch (e) { setMsg(`❌ ${loiCua(e)}`); }
   };
@@ -365,6 +368,20 @@ export function NhinNhaCard() {
                             Chuyển
                           </Button>
                         ) : null}
+                        {/* Xoá ĐÚNG MỘT ảnh. Trước đây web chỉ xoá được cả một
+                            người, nên muốn bỏ một tấm xấu thì phải xoá sạch rồi
+                            dạy lại từ đầu — mà ảnh camera không chụp lại được.
+                            Hỏi lại trước khi xoá vì đúng lý do ấy. */}
+                        <Button size="sm" variant="outline" className="h-7 w-full text-[11px]"
+                          onClick={() => {
+                            if (window.confirm(
+                              `Xoá ảnh mặt này của «${n.ten}»? Ảnh camera không chụp lại được.`)) {
+                              void goi(() => request.delete(`/api/nhin-nha/mat/${mt.id}`),
+                                "Đã xoá ảnh mặt.");
+                            }
+                          }}>
+                          Xoá ảnh
+                        </Button>
                       </div>
                     );
                   })}
@@ -552,8 +569,15 @@ export function NhinNhaCard() {
                   {dich.trim() ? (
                     <Button size="sm" variant="outline" className="h-7 w-full text-[11px]"
                       onClick={async () => {
+                        // Gán lượt nay còn DẠY luôn từ chính tấm ảnh ấy, nên lời báo
+                        // phải nói rõ học được hay không — báo chung chung thì chủ
+                        // máy tưởng đã học xong trong khi có thể ảnh không có mặt nào.
                         await goi(() => request.post(`/api/nhin-nha/su-kien/${s.id}/chuyen`,
-                          { ten: dich.trim() }), `Đã gán lượt này cho «${dich.trim()}».`);
+                          { ten: dich.trim() }),
+                          (d) => d.da_day
+                            ? `Đã gán lượt này cho «${dich.trim()}» và học mặt từ chính ảnh này.`
+                            : `Đã gán lượt này cho «${dich.trim()}» — chưa học được mặt`
+                              + `${d.day_loi ? ` (${d.day_loi})` : ""}.`);
                         setGanTen({ ...ganTen, [s.id]: "" });
                         setGanMoi({ ...ganMoi, [s.id]: "" });
                       }}>

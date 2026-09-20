@@ -150,6 +150,29 @@ def _xoa_anh(rel: str) -> None:
 
 # ── Vector tham chiếu ───────────────────────────────────────────────────────
 
+def _doc_anh_su_kien(url: str) -> bytes | None:
+    """Đọc ảnh của một lượt gặp từ thư viện ảnh camera.
+
+    ``su_kien.anh`` là URL đầy đủ do ``canh_camera_nha._luu_anh_bao`` sinh, dạng
+    ``…/images/YYYY/MM/DD/camera_mat_*.jpg``. Chỉ nhận đúng dạng ấy và chỉ đọc
+    BÊN TRONG thư mục ảnh: đây là chuỗi lấy từ cơ sở dữ liệu, nên phải chặn đường
+    dẫn lạ thay vì tin nó.
+    """
+    from urllib.parse import urlsplit
+
+    from services.config import config
+
+    duong = urlsplit(str(url or "")).path
+    dau = "/images/"
+    if not duong.startswith(dau):
+        return None
+    goc = config.images_dir.resolve()
+    tep = (config.images_dir / duong[len(dau):]).resolve()
+    if goc not in tep.parents or not tep.is_file():
+        return None
+    return tep.read_bytes()
+
+
 def _mat_to_nhat(may, anh):
     """Mặt to nhất (theo diện tích) và mặt cỡ thứ hai — cho bước dò lại."""
     mats = sorted(may.do(anh), key=lambda m: -(m.rong * m.cao))
@@ -528,7 +551,7 @@ def ghi_su_kien(camera: str, nguon: str, loai: str, *, nguoi_id: str | None = No
             "nguoi_id": nguoi_id, "mat_la_id": mat_la_id}
 
 
-def chuyen_su_kien(su_kien_id: int, ten: str) -> dict[str, Any]:
+def chuyen_su_kien(su_kien_id: int, ten: str, *, day_luon: bool = True) -> dict[str, Any]:
     """Gán lại MỘT lượt gặp trong lịch sử cho đúng người.
 
     Khác `dat_ten_mat_la` (ghi đè hàng loạt mọi lượt của một cụm như một tác dụng
@@ -544,7 +567,7 @@ def chuyen_su_kien(su_kien_id: int, ten: str) -> dict[str, Any]:
         raise LoiSoMat("Tên dài quá — tối đa 60 ký tự.")
     with _khoa:
         conn = _db()
-        r = conn.execute("SELECT nguoi_id, mat_la_id, ts FROM su_kien WHERE id = ?",
+        r = conn.execute("SELECT nguoi_id, mat_la_id, ts, anh FROM su_kien WHERE id = ?",
                          (int(su_kien_id),)).fetchone()
         if r is None:
             raise LoiSoMat(f"Không có lượt gặp số {su_kien_id}.")
@@ -584,8 +607,29 @@ def chuyen_su_kien(su_kien_id: int, ten: str) -> dict[str, Any]:
                      "WHERE id = ?", (nguoi_id, int(su_kien_id)))
         conn.commit()
         _bo_bang()
-    logger.info({"event": "so_mat_chuyen_su_kien", "nguoi_moi": moi})
-    return {"nguoi_id": nguoi_id, "ten": ten if moi else cu["ten"], "nguoi_moi": moi}
+    ten_that = ten if moi else cu["ten"]
+    # HỌC LUÔN TỪ CHÍNH TẤM ẢNH ẤY. Chủ máy vừa nhìn một tấm và khẳng định đây là
+    # ai — đó là dữ liệu gán nhãn TAY, thứ đáng tin nhất trong cả hệ. Trước đây hàm
+    # này chỉ sửa đúng dòng lịch sử rồi thôi, nên lần sau máy vẫn nhận nhầm y hệt;
+    # chủ máy báo 20/09/2026: "khi tôi chỉ đây là ai thì dùng chính cái đó làm dữ
+    # liệu tạo vector nhận diện tiếp".
+    # Dạy HỎNG thì KHÔNG được làm hỏng việc gán: việc gán đã xong và đã ghi rồi.
+    # Gọi NGOÀI khối khoá vì `day` tự lấy khoá của nó.
+    da_day, day_loi = False, ""
+    if day_luon and r["anh"]:
+        try:
+            du_lieu = _doc_anh_su_kien(r["anh"])
+            if du_lieu is None:
+                day_loi = "không đọc được ảnh của lượt này"
+            else:
+                day(ten_that, du_lieu, nguon="camera", ep=True)
+                da_day = True
+        except Exception as exc:
+            day_loi = str(exc)[:120]
+            logger.info({"event": "so_mat_chuyen_su_kien_day_loi", "loi": day_loi})
+    logger.info({"event": "so_mat_chuyen_su_kien", "nguoi_moi": moi, "da_day": da_day})
+    return {"nguoi_id": nguoi_id, "ten": ten_that, "nguoi_moi": moi,
+            "da_day": da_day, "day_loi": day_loi}
 
 
 def su_kien_gan(so_gio: float = 24.0, *, camera: str = "", nguoi_id: str = "",

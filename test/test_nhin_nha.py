@@ -314,6 +314,61 @@ class SoMatTests(unittest.TestCase):
             self.sm.chuyen_su_kien(99999, "Lan")
         self.assertIn("99999", str(ng.exception))
 
+    def test_chuyen_su_kien_day_luon_tu_chinh_anh_ay(self):
+        """Chủ máy chỉ «đây là ai» thì ảnh ấy thành dữ liệu học, không chỉ sửa lịch sử.
+
+        Trước 20/09/2026 hàm này chỉ sửa đúng dòng lịch sử rồi thôi, nên lần sau máy
+        vẫn nhận nhầm y hệt — chủ máy phải chỉ đi chỉ lại mãi. Gán nhãn tay là dữ
+        liệu đáng tin nhất trong cả hệ, bỏ đi thì phí.
+        """
+        import time as _t
+
+        a = self.sm.day("Việt", _anh(10))
+        b = self.sm.day("Lan", _anh(11))
+        self.assertEqual(len(self.sm.mat_cua(b["nguoi_id"])), 1)
+        sk = self.sm.ghi_su_kien("Cam cửa", "yolo", "quen", nguoi_id=a["nguoi_id"],
+                                 anh="http://x/images/2026/09/20/camera_mat_1.jpg",
+                                 ts=_t.time() - 60)
+        with mock.patch.object(self.sm, "_doc_anh_su_kien", return_value=_anh(11)):
+            kq = self.sm.chuyen_su_kien(sk["id"], "Lan")
+        self.assertTrue(kq["da_day"], kq)
+        self.assertEqual(kq["nguoi_id"], b["nguoi_id"])
+        # Đã học thêm MỘT ảnh cho Lan, và lượt vẫn được gán đúng như cũ.
+        self.assertEqual(len(self.sm.mat_cua(b["nguoi_id"])), 2)
+
+    def test_chuyen_su_kien_day_hong_thi_van_gan_xong(self):
+        """Ảnh không có mặt nào thì học hỏng — nhưng việc gán đã xong, không được huỷ."""
+        import time as _t
+
+        a = self.sm.day("Việt", _anh(10))
+        b = self.sm.day("Lan", _anh(11))
+        sk = self.sm.ghi_su_kien("Cam cửa", "yolo", "quen", nguoi_id=a["nguoi_id"],
+                                 anh="http://x/images/2026/09/20/camera_mat_2.jpg",
+                                 ts=_t.time() - 60)
+        with mock.patch.object(self.sm, "_doc_anh_su_kien", return_value=_anh(14)):
+            kq = self.sm.chuyen_su_kien(sk["id"], "Lan")
+        self.assertFalse(kq["da_day"])
+        self.assertTrue(kq["day_loi"])                      # nói rõ vì sao, không im
+        self.assertEqual(kq["nguoi_id"], b["nguoi_id"])     # việc gán VẪN xong
+        self.assertEqual(len(self.sm.mat_cua(b["nguoi_id"])), 1)
+
+    def test_doc_anh_su_kien_chi_doc_trong_thu_vien_anh(self):
+        """Chuỗi này lấy từ cơ sở dữ liệu, nên phải chặn đường dẫn lạ thay vì tin nó."""
+        for xau in ("", "http://x/etc/passwd", "http://x/images/../../etc/passwd",
+                    "/etc/passwd"):
+            self.assertIsNone(self.sm._doc_anh_su_kien(xau), xau)
+
+    def test_xoa_mot_anh_mat_khong_dung_toi_nguoi(self):
+        """Xoá đúng một ảnh xấu, không phải xoá cả người rồi dạy lại từ đầu."""
+        a = self.sm.day("Việt", _anh(10))
+        self.sm.day("Việt", _anh(17))
+        ds = self.sm.mat_cua(a["nguoi_id"])
+        self.assertEqual(len(ds), 2)
+        self.assertTrue(self.sm.xoa_mat(ds[0]["id"]))
+        self.assertEqual(len(self.sm.mat_cua(a["nguoi_id"])), 1)
+        self.assertTrue(any(n["id"] == a["nguoi_id"] for n in self.sm.danh_sach_nguoi()))
+        self.assertFalse(self.sm.xoa_mat("khong-co-ma-nay"))
+
     def test_chuyen_su_kien_moi_nhat_thi_lui_lan_cuoi_cua_nguoi_cu(self):
         """Gán đi đúng lần gặp gần nhất thì «gặp lần cuối» của người cũ phải lùi
         lại, không được trỏ vào một lượt đã thuộc về người khác."""
