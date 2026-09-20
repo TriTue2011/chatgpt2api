@@ -229,6 +229,56 @@ export function TrinhPhat() {
   };
 
   /** `theoMay` = tiếng do thẻ <audio> của máy này phát; video tắt tiếng và chạy theo. */
+  /** Thúc tiếng sau khi khung vừa nạp — bậc thang 0 / 300 / 800 / 2000 mili giây.
+   *
+   * Chép của thẻ `phicomm-r1-card` chủ máy đưa 20/09/2026 (dòng 1904-1908), kèm
+   * xác nhận thẻ ấy nghe nhạc và xem video trên iPhone đều bình thường. Giao diện
+   * lập trình của trình phát YouTube chưa nhận lệnh ngay lúc khung vừa nạp, nên
+   * gửi đúng một lần là rơi vào khoảng chưa ai nghe.
+   */
+  const thucTiengKhung = () => {
+    const thuc = () => {
+      nhung.lenh("unMute");
+      nhung.lenh("setVolume", [100]);
+    };
+    thuc();
+    [300, 800, 2000].forEach((cho) => setTimeout(thuc, cho));
+  };
+
+  /** BẬT TIẾNG CHO KHUNG — dựng lại khung, KHÔNG gửi lệnh `unMute`.
+   *
+   * Cú bấm của người dùng nằm ở TRANG, còn trình phát nằm trong khung
+   * youtube-nocookie.com khác miền. Lệnh `unMute` đi qua postMessage nên cử chỉ
+   * ấy không đi theo: với trình duyệt, đó là cảnh một video đang tự phát ở chế độ
+   * câm bỗng bật tiếng mà không ai chạm vào nó — và cách nó xử là TẠM DỪNG video.
+   * Luật này có ở cả Chrome trên Android lẫn WebKit trên iPhone và macOS.
+   *
+   * Chủ máy đo được đúng chuyện này trên Android 20/09/2026, với thẻ Home
+   * Assistant dùng cùng một mô hình: "nghe trên máy này mà đang phát ra loa bị
+   * dừng video, nhưng chọn cả nghe khi tắt màn hình thì không sao" — nhánh
+   * tắt-màn-hình để khung câm nguyên và cho thẻ âm thanh mang tiếng.
+   *
+   * Thẻ `phicomm-r1-card` chạy được trên mọi máy vì địa chỉ nhúng của nó không hề
+   * có tham số `mute`: khung sinh ra đã có tiếng sẵn, ngay trong cú bấm.
+   */
+  const batTiengKhung = (v: VideoMo, giayBatDau?: number) => {
+    // Hình riêng (thẻ <video> của chính trang) không dính luật của khung nhúng.
+    if (v.hinh) {
+      setVideo({ ...v, ngheTrenMay: true });
+      return;
+    }
+    if (nhung.tatTieng === false) {
+      // Khung đang có tiếng sẵn: nạp lại chỉ tổ mất toàn màn hình và mất mấy giây.
+      nhung.lenh("playVideo");
+      setVideo({ ...v, ngheTrenMay: true });
+      return;
+    }
+    const giay = giayBatDau ?? nhung.thoiGian();
+    nhung.datLai();
+    setVideo({ ...v, src: srcNhung(v.bai.id, false, giay), ngheTrenMay: true });
+    thucTiengKhung();
+  };
+
   const moVideo = (bai: BaiHat, voiLoa: boolean, batDau = 0, theoMay = false) => {
     if (!laVideo(bai)) return;
     if (!video || video.bai.id !== bai.id) tiengMayHong.current = false;
@@ -239,8 +289,13 @@ export function TrinhPhat() {
     if (video && nhung.sanSang && !video.hinh) {
       // Cùng khung: đổi bài không nạp lại, giữ nguyên cỡ xem và toàn màn hình.
       if (video.bai.id !== bai.id) nhung.lenh("loadVideoById", [{ videoId: bai.id, startSeconds: batDau }]);
-      nhung.lenh(ngheTrenMay ? "unMute" : "mute");
-      setVideo({ ...video, bai, theoLoa: voiLoa, ngheTrenMay, theoMay });
+      if (ngheTrenMay) {
+        // Cùng lớp lỗi: khung đang câm thì phải dựng lại, đừng gửi `unMute`.
+        batTiengKhung({ ...video, bai, theoLoa: voiLoa, theoMay }, batDau);
+      } else {
+        nhung.lenh("mute");
+        setVideo({ ...video, bai, theoLoa: voiLoa, ngheTrenMay, theoMay });
+      }
     } else {
       nhung.datLai();
       setVideo({ bai, src: srcNhung(bai.id, !ngheTrenMay, batDau), theoLoa: voiLoa, ngheTrenMay, theoMay });
@@ -569,9 +624,8 @@ export function TrinhPhat() {
       moi.delete(tb.entity_id);
       if (video?.theoLoa && !moi.size) {
         // Không còn loa nào tích: video trên trang phát tiếp một mình, có tiếng.
-        nhung.lenh("unMute");
         dongBo.current.choTua = null;
-        setVideo({ ...video, theoLoa: false, ngheTrenMay: true });
+        batTiengKhung({ ...video, theoLoa: false });
       }
     } else {
       moi.add(tb.entity_id);
@@ -679,8 +733,7 @@ export function TrinhPhat() {
       return;
     }
     if (video?.theoLoa && !ngheNen) {
-      nhung.lenh("unMute");
-      setVideo({ ...video, ngheTrenMay: true });
+      batTiengKhung(video);
       return;
     }
     batNgheCungLoa();
