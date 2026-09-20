@@ -29,6 +29,9 @@ MAX_SHARE_CODE = 300_000
 MAX_SHARE_JSON = 2_000_000
 PLAYLIST_ID = re.compile(r"^[a-z0-9]{12}$")
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
+#: Mã video Facebook là một chuỗi SỐ — khác hẳn khuôn 11 ký tự của YouTube, nên mỗi
+#: nguồn một khuôn riêng thay vì một khuôn lỏng cho cả hai.
+FACEBOOK_ID = re.compile(r"^[0-9]{5,25}$")
 ZING_SONG_ID = re.compile(r"^[A-Za-z0-9]{8,16}$")
 
 
@@ -72,6 +75,15 @@ def normalize_item(item):
         item_id = song_id
         url = f"https://zingmp3.vn{parsed.path}"
         kind = "song"
+    elif source == "facebook":
+        # Thiếu nhánh này thì thêm bài Facebook vào playlist trả None IM LẶNG —
+        # chủ máy báo 20/09/2026: "ghim video face được nhưng thêm playlist không
+        # được". Ghim đi đường khác (kho gợi ý của tích hợp) nên nó chạy, còn
+        # playlist đi qua đây nên rơi.
+        if not FACEBOOK_ID.fullmatch(item_id):
+            return None
+        url = f"https://www.facebook.com/watch/?v={item_id}"
+        kind = "video"
     elif source == "http":
         url = _https_url(url or item_id)
         if not url:
