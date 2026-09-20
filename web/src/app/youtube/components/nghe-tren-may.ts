@@ -261,15 +261,19 @@ export function tatCungLoa() {
   dat({ cungLoa: false, chay: false });
 }
 
-/** Nạp bài của loa đang xem (bỏ qua nếu đang là bài đó). */
-export async function taiCungLoa(bai: BaiHat): Promise<void> {
+/** Nạp bài của loa đang xem (bỏ qua nếu đang là bài đó); `batDau` = giây loa đang ở. */
+export async function taiCungLoa(bai: BaiHat, batDau = 0): Promise<void> {
   const muc = `${bai.source}:${bai.url || bai.id}`;
   if (mucCungLoa === muc) return;
   mucCungLoa = muc;
   const lan = ++luot;
-  const r = await goi<{ url: string }>("nghe", { source: bai.source, target: bai.url || bai.id });
+  // Dùng lại link đã xin sẵn nếu có — bớt trọn một lượt hỏi máy chủ (đo: 1,0–1,6 giây).
+  const r = (await linkSan(bai)) ?? await goi<{ url: string }>("nghe", { source: bai.source, target: bai.url || bai.id });
   if (lan !== luot || !r || !trangThai.cungLoa) return;
   const a = theAm();
   a.src = r.url;
+  // Vào đúng chỗ TRƯỚC khi phát: khỏi nghe một quãng sai chỗ rồi mới nhảy, và khỏi tốn
+  // thêm một lượt xin dữ liệu cho cú nhảy ấy.
+  if (batDau >= 1) a.addEventListener("loadedmetadata", () => { a.currentTime = batDau; }, { once: true });
   a.play().catch((e) => tuChoiPhat(e, "bấm lại nút nghe trên máy này"));
 }

@@ -37,7 +37,7 @@ import { type BaiHat, dangHoatDong, dangPhatBai, goi, type Nguon, type Phien, ty
 import * as mayNghe from "./nghe-tren-may";
 import { DanhSachPlaylist, type NguonHang, useKhoPlaylist } from "./playlist";
 import { TimNhac } from "./tim-nhac";
-import { type CheDoXem, laVideo, srcNhung, useVideoNhung } from "./video-nhung";
+import { type CheDoXem, laTao, laVideo, srcNhung, useVideoNhung } from "./video-nhung";
 
 const KHOA_CHON = "c2a-youtube:chon";
 const KHOA_CHE_DO_XEM = "c2a-youtube:che-do-xem";
@@ -557,7 +557,11 @@ export function TrinhPhat() {
       // là thấy lệch khẩu hình, nhịp (chủ máy 15/09/2026: "khi xem hình ko đc khớp với audio").
       // Home Assistant báo vị trí loa trễ vài trăm mili giây nên nửa giây là mức siết giữ được
       // mà hình không tua liên tục; nghỉ 5 giây sau mỗi lần tua để khỏi đuổi qua đuổi lại.
-      if (n.trangThai === 1 && Math.abs(viTriLoa - n.thoiGian()) > 0.5) {
+      /* KHUNG ĐANG MANG TIẾNG thì mỗi cú tua là một lần tiếng nhảy trong tai người
+         nghe. Khung câm lệch nửa giây thì tua cho khớp khẩu hình; khung có tiếng chỉ
+         chữa khi lệch tới mức nghe ra là hai nơi đang ở hai chỗ khác nhau. */
+      const nguongLech = v?.ngheTrenMay ? 5 : 0.5;
+      if (n.trangThai === 1 && Math.abs(viTriLoa - n.thoiGian()) > nguongLech) {
         n.tuaTheoTieng(viTriLoa);
         db.luiTuaDen = Date.now() + 5000;
       }
@@ -723,18 +727,49 @@ export function TrinhPhat() {
 
   // Tiếng trên máy này khi phát ra loa: <audio> nghe cùng loa, hoặc khung video bật tiếng.
   const tiengTrenMay = ngheCungLoa || !!(video?.theoLoa && video.ngheTrenMay);
+  /** NGHE BÀI CỦA LOA BẰNG CHÍNH KHUNG YOUTUBE — đường nhanh, chép cách thẻ
+   *  `phicomm-r1-card` làm.
+   *
+   *  Đo trên máy chủ 20/09/2026, cùng một bài, tính từ lúc có địa chỉ luồng:
+   *  lấy byte đầu **từ đầu bài** mất 0,10 giây, nhưng **nhảy vào giữa bài** mất
+   *  **1,64 giây** — googlevideo phải mở lại luồng ở đúng chỗ ấy. Mà "nghe cùng loa"
+   *  thì lần nào cũng là nhảy vào giữa bài. Khung YouTube không có chặng đó: địa chỉ
+   *  nhúng mang sẵn `start`, trình phát của Google tự lo.
+   *
+   *  Trả về true nếu đã nhận việc; false thì người gọi đi đường thẻ âm thanh. */
+  const ngheBangKhung = () => {
+    const bai = phienXem?.item;
+    if (!bai || !laVideo(bai)) return false;
+    const loa = loaPhien.find((t) => dangHoatDong(t) && t.vi_tri !== null);
+    const giay = loa?.vi_tri != null ? loa.vi_tri + (Date.now() - lucTai.current) / 1000 : 0;
+    nhung.datLai();
+    setVideo({ bai, src: srcNhung(bai.id, false, Math.max(0, Math.floor(giay))), theoLoa: true, ngheTrenMay: true, chiTieng: true });
+    return true;
+  };
+
   const doiNgheTrenMay = () => {
     if (tiengTrenMay) {
       if (ngheCungLoa) tatNgheCungLoa();
       if (video?.theoLoa && video.ngheTrenMay) {
-        nhung.lenh("mute");
-        setVideo({ ...video, ngheTrenMay: false });
+        // Khung mở ra chỉ để mang tiếng: tắt tiếng là đóng hẳn, đừng để nó chạy câm.
+        if (video.chiTieng) dongVideo();
+        else {
+          nhung.lenh("mute");
+          setVideo({ ...video, ngheTrenMay: false });
+        }
       }
       return;
     }
-    if (video?.theoLoa && !ngheNen) {
-      batTiengKhung(video);
-      return;
+    /* TẮT MÀN HÌNH LÀ RÀNG BUỘC MẠNH HƠN TỐC ĐỘ. Trang ẩn thì Chrome treo khung nhúng,
+       nên máy không phải nhà Táo mà đang bật "nghe khi tắt màn hình" vẫn phải đi thẻ
+       âm thanh. Máy nhà Táo thì ngược lại — thẻ âm thanh của WebKit đo được là không
+       tải nổi, còn khung thì chạy. */
+    if (!(ngheNen && !laTao())) {
+      if (video?.theoLoa) {
+        batTiengKhung(video);
+        return;
+      }
+      if (ngheBangKhung()) return;
     }
     batNgheCungLoa();
   };
@@ -750,7 +785,12 @@ export function TrinhPhat() {
         mayNghe.tatCungLoa();
         return;
       }
-      void mayNghe.taiCungLoa(bai);
+      /* Vào đúng chỗ NGAY TỪ ĐẦU. Trước đây thẻ âm thanh phát từ giây 0 rồi vòng canh
+         bên dưới mới kéo về chỗ loa: người nghe được một quãng sai chỗ, và cú kéo ấy
+         tốn thêm một lượt xin dữ liệu (đo 20/09: 1,64 giây với YouTube). */
+      const loaDan = m.loaPhien.find((t) => dangHoatDong(t) && t.vi_tri !== null);
+      const giayLoa = loaDan?.vi_tri != null ? loaDan.vi_tri + (Date.now() - lucTai.current) / 1000 : 0;
+      void mayNghe.taiCungLoa(bai, Math.max(0, giayLoa));
       const a = mayNghe.amThat();
       if (!a) return;
       if (document.visibilityState === "hidden" && !document.fullscreenElement && !m.ngheNen) return;
@@ -767,6 +807,33 @@ export function TrinhPhat() {
     }, 1000);
     return () => clearInterval(hen);
   }, [ngheCungLoa]);
+
+  /* Loa đổi bài mà khung đang mang tiếng: khung theo bài mới. Thiếu chỗ này thì máy
+     vẫn hát bài cũ trong khi loa đã sang bài khác. */
+  const baiLoaId = phienXem?.item?.id ?? "";
+  useEffect(() => {
+    const v = moiNhat.current.video;
+    if (!v?.chiTieng || !baiLoaId || v.bai.id === baiLoaId) return;
+    const bai = moiNhat.current.baiPhienXem;
+    if (bai && laVideo(bai)) {
+      nhung.datLai();
+      setVideo({ bai, src: srcNhung(bai.id, false, 0), theoLoa: true, ngheTrenMay: true, chiTieng: true });
+    } else {
+      // Bài mới không phải YouTube (Zing, link): khung không phát được, trả về thẻ âm thanh.
+      dongVideo();
+      batNgheCungLoa();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baiLoaId]);
+
+  /* XIN SẴN ĐỊA CHỈ LUỒNG CỦA BÀI LOA ĐANG PHÁT. Bài Zing hay link thì khung YouTube
+     không phát được, vẫn phải đi thẻ âm thanh — mà chặng chậm nhất của đường ấy là lượt
+     hỏi máy chủ giải bài (đo 20/09: YouTube 1,59 giây, Zing 1,08 giây). Xin trước thì
+     lúc bấm không còn lượt hỏi nào; hỏng thì im lặng, không ảnh hưởng gì. */
+  useEffect(() => {
+    const bai = moiNhat.current.baiPhienXem;
+    if (bai && bai.source !== "http") mayNghe.taiTruoc(bai);
+  }, [baiLoaId]);
 
   const doiNgheNen = () => {
     const bat = !ngheNen;

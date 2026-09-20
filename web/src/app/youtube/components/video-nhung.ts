@@ -20,7 +20,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { BaiHat } from "./lib";
 
-export const GOC_NHUNG = "https://www.youtube-nocookie.com";
+/* KHUNG NHÚNG LẤY TỪ «www.youtube.com», KHÔNG PHẢI «youtube-nocookie.com».
+   Chrome cho khung tự phát KÈM TIẾNG hay không là xét theo mức gắn bó của người dùng
+   với chính tên miền ấy; nocookie thì gần như không máy nào từng mở nên điểm bằng
+   không. Thẻ «phicomm-r1-card» chủ máy đưa 20/09/2026 dùng youtube.com và nghe được
+   ngay trên cả Android lẫn iPhone. */
+export const GOC_NHUNG = "https://www.youtube.com";
+
+/** Máy nhà Táo (iPhone, iPad, Safari trên macOS) — WebKit, khác hẳn phần còn lại ở
+ *  chỗ ai giữ được tiếng khi tắt màn hình. */
+export function laTao(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  const iOS = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const safari = /Safari/.test(ua) && !/Chrome|Chromium|Android|Edg\/|OPR\//.test(ua);
+  return iOS || safari;
+}
 const MA_VIDEO = /^[A-Za-z0-9_-]{11}$/;
 
 export type CheDoXem = "vua" | "rap" | "nho";

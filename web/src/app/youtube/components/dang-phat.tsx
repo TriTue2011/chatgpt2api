@@ -35,7 +35,9 @@ export type HinhRieng = {
   cao?: number;
   coHinh?: boolean;
 };
-export type VideoMo = { bai: BaiHat; src: string; theoLoa: boolean; ngheTrenMay: boolean; theoMay?: boolean; hinh?: HinhRieng };
+/** `chiTieng` = khung mở ra CHỈ để mang tiếng (loa đang phát, người dùng bật "nghe trên
+ *  máy này"): khung vẫn chạy nhưng thu còn một điểm ảnh, trang trông như chưa mở hình. */
+export type VideoMo = { bai: BaiHat; src: string; theoLoa: boolean; ngheTrenMay: boolean; theoMay?: boolean; chiTieng?: boolean; hinh?: HinhRieng };
 export type ViTri = { giay: number; tong: number } | null;
 
 type Props = {
@@ -132,10 +134,13 @@ export function DangPhat(p: Props) {
   const noiPhat = p.nghe ? [] : (p.phien?.output_entity_ids ?? []).map((id) => tenTheoMa.get(id) ?? id);
   const hang = p.hang;
   const anh = bai && /^https?:\/\//.test(bai.thumbnail || "") ? bai.thumbnail : "";
-  const nho = !!video && cheDo === "nho";
+  /* Mọi thứ thuộc phần NHÌN đi theo `hienHinh`; riêng việc dựng khung đi theo `video`,
+     vì khung chỉ-mang-tiếng vẫn phải còn trong trang mới phát được. */
+  const hienHinh = !!video && !video.chiTieng;
+  const nho = hienHinh && cheDo === "nho";
 
   const meta = bai
-    ? video
+    ? hienHinh
       ? [bai.channel || bai.artist, video.theoMay ? "Tiếng từ máy này (nghe cả khi tắt màn hình)" : video.theoLoa && noiPhat.length ? `Tiếng ra ${noiPhat.join(", ")}${p.tiengTrenMay ? " và máy này" : ""}` : "Xem trên trang"]
       : [bai.artist || bai.channel, TEN_NGUON[bai.source], p.nghe ? "Nghe trên máy này (cả khi tắt màn hình)" : noiPhat.length ? `Trên ${noiPhat.join(", ")}${p.tiengTrenMay ? " và máy này" : ""}` : ""]
     : [];
@@ -242,17 +247,17 @@ export function DangPhat(p: Props) {
             <Music2 className="size-12 text-[var(--primary)] opacity-50" />
           </div>
         )}
-        {!video && (
+        {!hienHinh && (
           <span className="absolute left-3 top-3 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur">
             {p.nghe ? (p.dangChay ? "Đang nghe trên máy này" : "Tạm dừng") : bai ? (p.dangChay ? "Đang phát" : "Đã gửi") : "Chưa phát"}
           </span>
         )}
-        {!video && hang && hang.items.length > 1 && hang.index >= 0 && (
+        {!hienHinh && hang && hang.items.length > 1 && hang.index >= 0 && (
           <span className="absolute right-3 top-3 flex items-center gap-1 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-semibold tabular-nums text-white backdrop-blur">
             <ListMusic className="size-3" /> {hang.index + 1}/{hang.items.length}
           </span>
         )}
-        {!video && p.xemTaiDay && (
+        {!hienHinh && p.xemTaiDay && (
           <button
             type="button"
             onClick={p.xemTaiDay}
@@ -264,9 +269,13 @@ export function DangPhat(p: Props) {
         {video && (
           <div
             className={cn(
-              nho
-                ? "fixed bottom-20 right-4 z-40 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-2xl lg:bottom-4"
-                : "absolute inset-0 bg-black",
+              // Khung chỉ mang tiếng: thu còn một điểm ảnh, KHÔNG dùng `hidden` hay
+              // `display:none` — cả hai làm trình duyệt dừng phát.
+              !hienHinh
+                ? "pointer-events-none absolute size-px overflow-hidden opacity-[0.001]"
+                : nho
+                  ? "fixed bottom-20 right-4 z-40 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-2xl lg:bottom-4"
+                  : "absolute inset-0 bg-black",
             )}
           >
             <div
@@ -433,7 +442,7 @@ export function DangPhat(p: Props) {
               <MonitorOff className="size-3.5" /> Nghe khi tắt màn hình
             </button>
           </div>
-          {video && (
+          {hienHinh && (
             <div className="flex items-center">
               {cheDo !== "nho" && <NutPhu nhan="Thu nhỏ (khung nổi)" Icon={PictureInPicture2} onClick={() => p.doiCheDo("nho")} />}
               {cheDo === "rap" ? (
