@@ -155,7 +155,7 @@ function manHinhKhoa(bai: BaiHat | null) {
 }
 
 // Link tiếng xin trước khi mở video (máy chủ ký một giờ): dùng lại trong mười phút.
-const linkXinTruoc = new Map<string, { luc: number; tra: Promise<{ url: string } | null> }>();
+const linkXinTruoc = new Map<string, { luc: number; tra: Promise<{ url: string } | null>; url?: string }>();
 const khoaLink = (bai: BaiHat) => `${bai.source}:${bai.url || bai.id}`;
 
 /** Xin sẵn link tiếng của video vừa mở: khung YouTube bị chặn tiếng tự phát thì tiếng
@@ -166,6 +166,11 @@ export function taiTruoc(bai: BaiHat) {
   if (bai.source === "http" || (co && Date.now() - co.luc < 600000)) return;
   const tra = goi<{ url: string }>("nghe", { source: bai.source, target: bai.url || bai.id }, true).then((r) => {
     if (!r) linkXinTruoc.delete(khoa);
+    // Giữ luôn địa chỉ đã giải: lúc bấm còn dùng được NGAY, không phải chờ lời hứa.
+    else {
+      const muc = linkXinTruoc.get(khoa);
+      if (muc) muc.url = r.url;
+    }
     return r;
   });
   linkXinTruoc.set(khoa, { luc: Date.now(), tra });
@@ -248,12 +253,27 @@ export function viTri(): { giay: number; tong: number } | null {
 
 export const thoiGian = () => amThat()?.currentTime ?? 0;
 
-/** Bắt đầu nghe cùng loa; phải gọi ngay trong cú bấm. */
-export function batCungLoa() {
+/** Bắt đầu nghe cùng loa; phải gọi ngay trong cú bấm.
+ *
+ *  `bai` + `batDau` để PHÁT NGAY TRONG CHÍNH CÚ BẤM khi địa chỉ luồng đã xin sẵn.
+ *  Trình duyệt chỉ chắc chắn cho phát khi lệnh phát nằm trong cử chỉ người dùng; đi qua
+ *  một `await` là đã ra ngoài. Chủ máy đo 21/09/2026 trên thẻ Home Assistant dùng cùng
+ *  mô hình: "tiếng rất lâu mới nghe thấy hoặc phải thao tác vào nghe khi tắt màn" — tức
+ *  phải chạm thêm lần nữa mới có tiếng. Vào đúng giây bằng mảnh địa chỉ `#t=`, khỏi chờ
+ *  `loadedmetadata` rồi mới tua.
+ */
+export function batCungLoa(bai?: BaiHat | null, batDau = 0) {
   if (trangThai.bai) dung();
-  moKhoa();
+  const a = moKhoa();
   mucCungLoa = "";
   dat({ cungLoa: true });
+  const san = bai ? linkXinTruoc.get(khoaLink(bai)) : undefined;
+  if (bai && san?.url && Date.now() - san.luc < 600000) {
+    mucCungLoa = `${bai.source}:${bai.url || bai.id}`;
+    luot++;
+    a.src = batDau >= 1 ? `${san.url}#t=${Math.floor(batDau)}` : san.url;
+    a.play().catch((e) => tuChoiPhat(e, "bấm lại nút nghe trên máy này"));
+  }
 }
 
 export function tatCungLoa() {
@@ -271,9 +291,9 @@ export async function taiCungLoa(bai: BaiHat, batDau = 0): Promise<void> {
   const r = (await linkSan(bai)) ?? await goi<{ url: string }>("nghe", { source: bai.source, target: bai.url || bai.id });
   if (lan !== luot || !r || !trangThai.cungLoa) return;
   const a = theAm();
-  a.src = r.url;
-  // Vào đúng chỗ TRƯỚC khi phát: khỏi nghe một quãng sai chỗ rồi mới nhảy, và khỏi tốn
-  // thêm một lượt xin dữ liệu cho cú nhảy ấy.
-  if (batDau >= 1) a.addEventListener("loadedmetadata", () => { a.currentTime = batDau; }, { once: true });
+  /* Vào đúng chỗ NGAY TRONG ĐỊA CHỈ (`#t=`), đừng chờ `loadedmetadata` rồi mới tua: cú
+     tua muộn ấy còn đè lên vị trí mới hơn mà vòng canh vừa đặt — dựng lại được trong
+     Chrome 21/09/2026, tiếng nhảy lùi hai giây ngay khi vừa bắt đầu. */
+  a.src = batDau >= 1 ? `${r.url}#t=${Math.floor(batDau)}` : r.url;
   a.play().catch((e) => tuChoiPhat(e, "bấm lại nút nghe trên máy này"));
 }

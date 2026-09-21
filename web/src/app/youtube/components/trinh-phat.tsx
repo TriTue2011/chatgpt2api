@@ -752,7 +752,12 @@ export function TrinhPhat() {
       toast.error("Link audio chỉ nghe được trên loa.");
       return;
     }
-    mayNghe.batCungLoa();
+    /* Truyền cả bài và giây loa để «batCungLoa» phát NGAY trong cú bấm này khi địa chỉ
+       luồng đã xin sẵn — đi qua một await là lệnh phát nằm ngoài cử chỉ người dùng, và
+       trình duyệt đòi chạm thêm một lần nữa. */
+    const loa = loaPhien.find((t) => dangHoatDong(t) && t.vi_tri !== null);
+    const giay = loa?.vi_tri != null ? loa.vi_tri + (Date.now() - lucTai.current) / 1000 : 0;
+    mayNghe.batCungLoa(bai, Math.max(0, Math.floor(giay)));
   };
 
   // Tiếng trên máy này khi phát ra loa: <audio> nghe cùng loa, hoặc khung video bật tiếng.
