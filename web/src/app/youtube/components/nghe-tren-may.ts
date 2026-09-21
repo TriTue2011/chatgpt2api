@@ -212,19 +212,22 @@ function tuChoiPhat(e: unknown, goiY = "bấm ▶ để nghe") {
 
 /** Nghe một bài trên máy này; `batDau` = giây bắt đầu (chuyển từ video sang). */
 export async function ngheBai(bai: BaiHat, hang: Hang, batDau = 0): Promise<void> {
-  const a = moKhoa();
+  /* MỘT CÚ BẤM CHỈ CHỨNG NHẬN MỘT LẦN PHÁT. Mở khoá bằng đoạn im lặng rồi mới đổi `src`
+     sang bài thật nghĩa là cú bấm chứng nhận cho đoạn im lặng; bài thật bị coi là tự phát
+     nên nằm im ở "đang tải mà không có byte nào" tới khi app được đánh thức lại — chủ máy
+     21/09/2026: "vẫn phải ẩn app xuống, bật app khác rồi chọn lại app HA mới hát".
+     Có sẵn địa chỉ thì đặt thẳng bài thật, không mở khoá nữa. */
+  const san = linkXinTruoc.get(khoaLink(bai));
+  const coSan = !!san?.url && Date.now() - san.luc < 600000;
+  const a = coSan ? theAm() : moKhoa();
   const lan = ++luot;
   mucCungLoa = "";
   dat({ bai, hang, cungLoa: false, tuChoi: "" });
   manHinhKhoa(bai);
   const ke = hang.items[hang.index + 1];
-  /* ĐỊA CHỈ ĐÃ XIN SẴN THÌ KHÔNG `await` GÌ TRƯỚC KHI PHÁT. Đi qua một `await` là lệnh
-     phát đã ra ngoài phần chạy đồng bộ của cú bấm. Chrome vẫn cho vì cử chỉ còn hiệu lực
-     năm giây, nhưng WebKit thì không — đo trên iPhone 20/09/2026: phần tử được phép phát,
-     có nguồn, mà không tải nổi một byte. */
-  const san = linkXinTruoc.get(khoaLink(bai));
-  if (san?.url && Date.now() - san.luc < 600000) {
-    datNguon(a, san.url, batDau);
+  // Có sẵn thì phát ngay tại đây, không `await` gì — xem chú thích đầu hàm.
+  if (coSan && san) {
+    datNguon(a, san.url as string, batDau);
     return;
   }
   const r = (await linkSan(bai)) ?? await goi<{ url: string }>("nghe", {
@@ -291,15 +294,16 @@ export const thoiGian = () => amThat()?.currentTime ?? 0;
  */
 export function batCungLoa(bai?: BaiHat | null, batDau = 0) {
   if (trangThai.bai) dung();
-  const a = moKhoa();
+  // Có sẵn địa chỉ thì KHÔNG mở khoá bằng đoạn im lặng — xem chú thích ở «ngheBai».
+  const san = bai ? linkXinTruoc.get(khoaLink(bai)) : undefined;
+  const coSan = !!san?.url && Date.now() - san.luc < 600000;
+  const a = coSan ? theAm() : moKhoa();
   mucCungLoa = "";
   dat({ cungLoa: true });
-  const san = bai ? linkXinTruoc.get(khoaLink(bai)) : undefined;
-  if (bai && san?.url && Date.now() - san.luc < 600000) {
+  if (bai && coSan && san?.url) {
     mucCungLoa = `${bai.source}:${bai.url || bai.id}`;
     luot++;
-    a.src = batDau >= 1 ? `${san.url}#t=${Math.floor(batDau)}` : san.url;
-    a.play().catch((e) => tuChoiPhat(e, "bấm lại nút nghe trên máy này"));
+    datNguon(a, san.url, batDau);
   }
 }
 
