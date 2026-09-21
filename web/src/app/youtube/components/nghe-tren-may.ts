@@ -74,6 +74,18 @@ function theAm(): HTMLAudioElement {
   if (am) return am;
   const a = new Audio();
   a.preload = "auto";
+  /* PHẦN TỬ PHẢI NẰM TRONG TRANG. `new Audio()` tạo một phần tử rời, không gắn vào đâu
+     cả — và khung web của app Home Assistant chỉ chịu đi lấy dữ liệu cho phần tử rời ấy
+     khi trang bị ẩn rồi hiện lại. Chủ máy đo 21/09/2026 trên thẻ dùng cùng mô hình:
+     "thoát app ra rồi vào lại là nghe được luôn, nhưng nếu không thoát là tiếng mãi
+     không nghe được. iPhone tương tự". */
+  a.setAttribute("playsinline", "");
+  a.setAttribute("webkit-playsinline", "");
+  Object.assign(a.style, {
+    position: "fixed", top: "-9999px", left: "-9999px",
+    width: "1px", height: "1px", opacity: "0.01",
+  });
+  document.body.append(a);
   a.addEventListener("play", () => dat({ chay: true }));
   a.addEventListener("pause", () => dat({ chay: false }));
   a.addEventListener("playing", () => {
