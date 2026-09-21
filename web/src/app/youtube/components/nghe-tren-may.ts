@@ -181,6 +181,14 @@ async function linkSan(bai: BaiHat): Promise<{ url: string } | null> {
   return co && Date.now() - co.luc < 600000 ? co.tra : null;
 }
 
+/** Đặt nguồn rồi phát, vào đúng giây bằng mảnh địa chỉ `#t=` — không chờ
+ *  `loadedmetadata` rồi mới tua, vì cú tua muộn ấy còn đè lên vị trí mới hơn mà vòng
+ *  canh vừa đặt (dựng lại được trong Chrome 21/09/2026: tiếng nhảy lùi hai giây). */
+function datNguon(a: HTMLAudioElement, url: string, batDau: number) {
+  a.src = batDau >= 1 ? `${url}#t=${Math.floor(batDau)}` : url;
+  a.play().catch((e) => tuChoiPhat(e));
+}
+
 /** play() bị từ chối. AbortError chỉ là bài mới hoặc lệnh dừng chen ngang, không phải lỗi. */
 function tuChoiPhat(e: unknown, goiY = "bấm ▶ để nghe") {
   const ten = e instanceof DOMException ? e.name : "Error";
@@ -198,6 +206,15 @@ export async function ngheBai(bai: BaiHat, hang: Hang, batDau = 0): Promise<void
   dat({ bai, hang, cungLoa: false, tuChoi: "" });
   manHinhKhoa(bai);
   const ke = hang.items[hang.index + 1];
+  /* ĐỊA CHỈ ĐÃ XIN SẴN THÌ KHÔNG `await` GÌ TRƯỚC KHI PHÁT. Đi qua một `await` là lệnh
+     phát đã ra ngoài phần chạy đồng bộ của cú bấm. Chrome vẫn cho vì cử chỉ còn hiệu lực
+     năm giây, nhưng WebKit thì không — đo trên iPhone 20/09/2026: phần tử được phép phát,
+     có nguồn, mà không tải nổi một byte. */
+  const san = linkXinTruoc.get(khoaLink(bai));
+  if (san?.url && Date.now() - san.luc < 600000) {
+    datNguon(a, san.url, batDau);
+    return;
+  }
   const r = (await linkSan(bai)) ?? await goi<{ url: string }>("nghe", {
     source: bai.source,
     target: bai.url || bai.id,
@@ -208,9 +225,7 @@ export async function ngheBai(bai: BaiHat, hang: Hang, batDau = 0): Promise<void
     dung();
     return;
   }
-  a.src = r.url;
-  if (batDau >= 1) a.addEventListener("loadedmetadata", () => { a.currentTime = batDau; }, { once: true });
-  a.play().catch((e) => tuChoiPhat(e));
+  datNguon(a, r.url, batDau);
 }
 
 /** Bài kế (+1) / bài trước (-1) của hàng đợi trên trang; false = hết hàng. */
