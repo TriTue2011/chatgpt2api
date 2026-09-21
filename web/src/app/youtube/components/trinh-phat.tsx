@@ -790,11 +790,14 @@ export function TrinhPhat() {
       }
       return;
     }
-    /* TẮT MÀN HÌNH LÀ RÀNG BUỘC MẠNH HƠN TỐC ĐỘ. Trang ẩn thì Chrome treo khung nhúng,
-       nên máy không phải nhà Táo mà đang bật "nghe khi tắt màn hình" vẫn phải đi thẻ
-       âm thanh. Máy nhà Táo thì ngược lại — thẻ âm thanh của WebKit đo được là không
-       tải nổi, còn khung thì chạy. */
-    if (!(ngheNen && !laTao())) {
+    /* CHỈ MÁY NHÀ TÁO ĐI ĐƯỜNG KHUNG — luật ĐO ĐƯỢC, không phải đoán.
+       Ảnh chụp Android của chủ máy 21/09/2026: khung dựng lại kèm tiếng vẫn hiện nút
+       play đỏ của YouTube và dòng "Chạm vào video để phát có tiếng" — Chrome chặn tự
+       phát kèm tiếng, dù khung đã lấy từ www.youtube.com. Máy nhà Táo thì ngược lại:
+       thẻ âm thanh của WebKit đo được là không tải nổi, còn khung thì chạy.
+       Thẻ âm thanh phải mở khoá NGAY TRONG CÚ BẤM này («batCungLoa» gọi «moKhoa»
+       đồng bộ) — thử khung trước rồi mới lùi là mở khoá ngoài cử chỉ, Chrome từ chối. */
+    if (laTao()) {
       if (video?.theoLoa) {
         batTiengKhung(video);
         return;
