@@ -182,6 +182,38 @@ class YouTubePhatApiTest(unittest.TestCase):
         self.assertEqual((206, "audio/mpeg", b"MP3!"), (r.status_code, r.headers["content-type"], r.content))
         self.assertEqual("bytes=0-3", mo.call_args.args[0].get_header("Range"))
 
+    @patch("api.youtube_phat.urlopen")
+    @patch("services.youtube_phat.dich_vu.resolve_zing_stream")
+    def test_luong_khong_kem_range_van_xin_theo_khuc_va_tra_ve_200(self, giai, mo) -> None:
+        """Máy nghe không xin theo khúc thì proxy vẫn phải xin — nếu không Google bóp.
+
+        Đo trên máy chủ 21/09/2026, hỏi thẳng googlevideo cùng một luồng đã ấm: không
+        kèm «Range» thì byte đầu tiên mất 1,87 giây rồi chỉ nhỏ giọt 0,33 MB trong 10
+        giây; kèm «Range: bytes=0-» thì 0,04 giây và 3,45 MB trong 0,1 giây. Cú đầu
+        tiên trình phát của WebKit gửi lại không kèm Range, nên iPhone và Android nằm
+        ở "đang tải mà không có dữ liệu" cho tới khi người dùng thoát app rồi vào lại.
+        """
+        target = "https://zingmp3.vn/bai-hat/Thuc-Giac/ZZ90FD0B.html"
+        self.nho_zing(target)
+        giai.return_value = {"url": "https://audio.zmdcdn.me/song.mp3",
+                             "headers": {"Referer": "https://zingmp3.vn/"}, "content_type": "audio/mpeg"}
+        up = io.BytesIO(b"MP3!")
+        up.headers = {"Content-Type": "audio/mpeg", "Content-Length": "4",
+                      "Content-Range": "bytes 0-3/4", "Accept-Ranges": "bytes"}
+        up.getcode = lambda: 206
+        mo.return_value = up
+        d = self.client.post("/yt/api/integration/stream", json={"source": "zing", "target": target},
+                             headers={**H, "host": "172.16.10.38:3030"}).json()
+        token = d["stream_url"].rsplit("/", 1)[-1]
+        r = self.get(f"/api/stream/{token}")
+        # Lên Google thì xin cả tệp theo khúc…
+        self.assertEqual("bytes=0-", mo.call_args.args[0].get_header("Range"))
+        # …còn trả về máy nghe thì đúng chuẩn: nó không hỏi khúc nào nên nhận 200,
+        # không có Content-Range, và biết cỡ tệp để còn tua.
+        self.assertEqual((200, b"MP3!"), (r.status_code, r.content))
+        self.assertNotIn("content-range", r.headers)
+        self.assertEqual(("4", "bytes"), (r.headers["content-length"], r.headers["accept-ranges"]))
+
     @patch("services.youtube_phat.dich_vu.resolve_zing_stream")
     def test_khoa_zing_doc_tu_thu_muc_du_lieu_thieu_thi_502(self, giai) -> None:
         target = "https://zingmp3.vn/bai-hat/Thuc-Giac/ZZ90FD0B.html"

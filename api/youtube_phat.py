@@ -319,8 +319,22 @@ def create_router() -> APIRouter:
             if loi is not None:
                 return loi
             headers = {**resolved["headers"], "Accept-Encoding": "identity"}
-            if range_header:
-                headers["Range"] = range_header
+            # LUÔN XIN THEO KHÚC, kể cả khi máy nghe không xin.
+            #
+            # Đo trên máy chủ 21/09/2026, cùng một luồng YouTube đã ấm, hỏi THẲNG
+            # googlevideo (nên không phải lỗi của proxy này):
+            #
+            #   không kèm Range  → byte đầu tiên 1,87 s, rồi 0,33 MB trong 10 giây
+            #   Range: bytes=0-  → byte đầu tiên 0,04 s, và 3,45 MB trong 0,1 giây
+            #
+            # Google bóp băng thông đúng những yêu cầu không kèm Range, xuống cỡ tốc độ
+            # nghe (~33 KB/s). Mà cú ĐẦU TIÊN trình phát của WebKit gửi thì không kèm
+            # Range — nên trên iPhone và Android, phần tử âm thanh nằm ở "đang tải mà
+            # không có dữ liệu" (nap=0 mang=2, không báo lỗi) đúng như hộp đen ghi lại
+            # lúc 14:00–14:03 ngày 21/09/2026. Thoát app rồi vào lại thì WebKit dựng lại
+            # trình phát và xin tiếp CÓ kèm Range, rơi vào đường nhanh — đúng cái trò
+            # chủ máy phải làm mãi: "thoát app ra rồi vào lại là nghe được luôn".
+            headers["Range"] = range_header or "bytes=0-"
             try:
                 up = await asyncio.to_thread(urlopen, UrlRequest(resolved["url"], headers=headers), timeout=30)
                 break
@@ -341,6 +355,16 @@ def create_router() -> APIRouter:
         for ten in ("Content-Length", "Content-Range", "Accept-Ranges"):
             if gia_tri := up.headers.get(ten):
                 out[ten] = gia_tri
+        ma = up.getcode() or 200
+        if not range_header and ma == 206:
+            # Máy nghe không hỏi theo khúc thì phải nhận nguyên tệp: trả 200 chứ không
+            # phải 206, và bỏ Content-Range đi. Khúc xin ở trên là chuyện riêng giữa
+            # proxy này với Google, máy nghe không cần biết.
+            ma = 200
+            tong = str(out.pop("Content-Range", "")).rsplit("/", 1)[-1]
+            if tong.isdigit():
+                out["Content-Length"] = tong
+            out.setdefault("Accept-Ranges", "bytes")
 
         def _khuc():
             try:
@@ -351,7 +375,7 @@ def create_router() -> APIRouter:
             finally:
                 up.close()
 
-        return StreamingResponse(_khuc(), status_code=up.getcode() or 200, headers=out)
+        return StreamingResponse(_khuc(), status_code=ma, headers=out)
 
     @router.head(f"{TIEN_TO}/api/stream/{{token}}")
     async def head_stream(token: str, request: Request):
