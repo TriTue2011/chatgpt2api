@@ -185,13 +185,13 @@ class YouTubePhatApiTest(unittest.TestCase):
     @patch("api.youtube_phat.urlopen")
     @patch("services.youtube_phat.dich_vu.resolve_zing_stream")
     def test_luong_khong_kem_range_van_xin_theo_khuc_va_tra_ve_200(self, giai, mo) -> None:
-        """Máy nghe không xin theo khúc thì proxy vẫn phải xin — nếu không Google bóp.
+        """Proxy phải xin Google một khúc CÓ GIỚI HẠN, dù máy nghe hỏi kiểu gì.
 
-        Đo trên máy chủ 21/09/2026, hỏi thẳng googlevideo cùng một luồng đã ấm: không
-        kèm «Range» thì byte đầu tiên mất 1,87 giây rồi chỉ nhỏ giọt 0,33 MB trong 10
-        giây; kèm «Range: bytes=0-» thì 0,04 giây và 3,45 MB trong 0,1 giây. Cú đầu
-        tiên trình phát của WebKit gửi lại không kèm Range, nên iPhone và Android nằm
-        ở "đang tải mà không có dữ liệu" cho tới khi người dùng thoát app rồi vào lại.
+        Đo trên máy chủ 21/09/2026, một bài 82 MB: xin không giới hạn (không «Range»,
+        hoặc «bytes=0-») được 0,033 MB/giây; xin từng khúc 4 MB được 15 MB/giây —
+        nhanh hơn khoảng 450 lần. Google bóp mọi yêu cầu không giới hạn xuống cỡ tốc
+        độ nghe. Hậu quả: loa Cast báo "Failed to cast media" và điện thoại nằm ở
+        "đang tải mà không có dữ liệu".
         """
         target = "https://zingmp3.vn/bai-hat/Thuc-Giac/ZZ90FD0B.html"
         self.nho_zing(target)
@@ -206,13 +206,83 @@ class YouTubePhatApiTest(unittest.TestCase):
                              headers={**H, "host": "172.16.10.38:3030"}).json()
         token = d["stream_url"].rsplit("/", 1)[-1]
         r = self.get(f"/api/stream/{token}")
-        # Lên Google thì xin cả tệp theo khúc…
-        self.assertEqual("bytes=0-", mo.call_args.args[0].get_header("Range"))
+        # Lên Google thì xin một khúc CÓ ĐẦU CÓ CUỐI, không bao giờ để ngỏ…
+        self.assertEqual("bytes=0-4194303", mo.call_args.args[0].get_header("Range"))
         # …còn trả về máy nghe thì đúng chuẩn: nó không hỏi khúc nào nên nhận 200,
         # không có Content-Range, và biết cỡ tệp để còn tua.
         self.assertEqual((200, b"MP3!"), (r.status_code, r.content))
         self.assertNotIn("content-range", r.headers)
         self.assertEqual(("4", "bytes"), (r.headers["content-length"], r.headers["accept-ranges"]))
+
+    @patch("api.youtube_phat.KHUC_LUONG", 4)
+    @patch("api.youtube_phat.urlopen")
+    @patch("services.youtube_phat.dich_vu.resolve_zing_stream")
+    def test_luong_dai_duoc_noi_tu_NHIEU_khuc_lien_tiep(self, giai, mo) -> None:
+        """Tệp dài hơn một khúc thì proxy tự xin khúc kế, máy nghe thấy một luồng liền.
+
+        Đây là chỗ bản sửa đầu (chỉ thêm «Range: bytes=0-») còn hụt: bài 3,45 MB lọt
+        qua vì cả tệp nhỏ hơn một khúc, còn bài 82 MB thì vẫn nhỏ giọt.
+        """
+        target = "https://zingmp3.vn/bai-hat/Thuc-Giac/ZZ90FD0B.html"
+        self.nho_zing(target)
+        giai.return_value = {"url": "https://audio.zmdcdn.me/song.mp3",
+                             "headers": {"Referer": "https://zingmp3.vn/"}, "content_type": "audio/mpeg"}
+        ca_tep = b"0123456789"
+        xin = []
+
+        def mot_khuc(req, timeout=None):
+            rg = req.get_header("Range")
+            xin.append(rg)
+            a, b = rg.removeprefix("bytes=").split("-")
+            a, b = int(a), int(b)
+            phan = io.BytesIO(ca_tep[a:b + 1])
+            phan.headers = {"Content-Type": "audio/mpeg", "Content-Length": str(b - a + 1),
+                            "Content-Range": f"bytes {a}-{b}/{len(ca_tep)}", "Accept-Ranges": "bytes"}
+            phan.getcode = lambda: 206
+            return phan
+
+        mo.side_effect = mot_khuc
+        d = self.client.post("/yt/api/integration/stream", json={"source": "zing", "target": target},
+                             headers={**H, "host": "172.16.10.38:3030"}).json()
+        token = d["stream_url"].rsplit("/", 1)[-1]
+        r = self.get(f"/api/stream/{token}")
+        # Máy nghe nhận ĐỦ cả tệp, liền một mạch…
+        self.assertEqual((200, ca_tep, "10"), (r.status_code, r.content, r.headers["content-length"]))
+        # …còn bên dưới là ba lượt xin khúc 4 byte nối nhau.
+        self.assertEqual(["bytes=0-3", "bytes=4-7", "bytes=8-9"], xin)
+
+    @patch("api.youtube_phat.KHUC_LUONG", 4)
+    @patch("api.youtube_phat.urlopen")
+    @patch("services.youtube_phat.dich_vu.resolve_zing_stream")
+    def test_may_nghe_xin_mot_khuc_thi_nhan_dung_khuc_no_xin(self, giai, mo) -> None:
+        """Tua giữa bài: trả 206 đúng khúc máy nghe hỏi, không phải khúc lấy của Google."""
+        target = "https://zingmp3.vn/bai-hat/Thuc-Giac/ZZ90FD0B.html"
+        self.nho_zing(target)
+        giai.return_value = {"url": "https://audio.zmdcdn.me/song.mp3",
+                             "headers": {"Referer": "https://zingmp3.vn/"}, "content_type": "audio/mpeg"}
+        ca_tep = b"0123456789"
+        xin = []
+
+        def mot_khuc(req, timeout=None):
+            rg = req.get_header("Range")
+            xin.append(rg)
+            a, b = rg.removeprefix("bytes=").split("-")
+            a, b = int(a), int(b)
+            phan = io.BytesIO(ca_tep[a:b + 1])
+            phan.headers = {"Content-Type": "audio/mpeg", "Content-Length": str(b - a + 1),
+                            "Content-Range": f"bytes {a}-{b}/{len(ca_tep)}", "Accept-Ranges": "bytes"}
+            phan.getcode = lambda: 206
+            return phan
+
+        mo.side_effect = mot_khuc
+        d = self.client.post("/yt/api/integration/stream", json={"source": "zing", "target": target},
+                             headers={**H, "host": "172.16.10.38:3030"}).json()
+        token = d["stream_url"].rsplit("/", 1)[-1]
+        r = self.get(f"/api/stream/{token}", headers={"Range": "bytes=6-"})
+        self.assertEqual((206, b"6789"), (r.status_code, r.content))
+        self.assertEqual("bytes 6-9/10", r.headers["content-range"])
+        self.assertEqual("4", r.headers["content-length"])
+        self.assertEqual(["bytes=6-9"], xin)
 
     @patch("services.youtube_phat.dich_vu.resolve_zing_stream")
     def test_khoa_zing_doc_tu_thu_muc_du_lieu_thieu_thi_502(self, giai) -> None:

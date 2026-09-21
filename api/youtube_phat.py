@@ -48,6 +48,24 @@ TIEN_TO = "/yt"
 _KHA_NANG = ["history", "play", "search", "session", "sessions", "status", "stop",
              "youtube_stream", "zing_stream"]
 
+#: Cỡ mỗi khúc proxy xin của Google. Đo 21/09/2026 trên một bài 82 MB: xin không
+#: giới hạn được 0,033 MB/giây, xin từng khúc 4 MB được 15 MB/giây — nhanh hơn
+#: khoảng 450 lần. Khúc quá nhỏ thì tốn nhiều lượt mở kết nối, 4 MB là chỗ đã đo
+#: thấy đầy tốc ngay từ khúc đầu (0,09 giây) mà vẫn vào tiếng sớm.
+KHUC_LUONG = 4 * 1024 * 1024
+
+
+def _tong_co_tep(up) -> int:
+    """Cỡ THẬT của cả tệp, đọc từ «Content-Range: bytes a-b/TỔNG» của khúc đầu.
+
+    Không dùng «Content-Length» được: với một khúc thì nó là cỡ của khúc ấy thôi.
+    """
+    tong = str(up.headers.get("Content-Range") or "").rsplit("/", 1)[-1].strip()
+    if tong.isdigit():
+        return int(tong)
+    con = str(up.headers.get("Content-Length") or "").strip()
+    return int(con) if con.isdigit() else 0
+
 
 def _json(status: int, payload: dict) -> JSONResponse:
     return JSONResponse(payload, status_code=status,
@@ -310,33 +328,46 @@ def create_router() -> APIRouter:
     @router.get(f"{TIEN_TO}/api/stream/{{token}}")
     async def proxy_stream(token: str, request: Request):
         """Tiếp sóng luồng âm thanh cho loa — loa không gọi thẳng googlevideo.com
-        (URL gắn IP máy giải, loa tải là 403)."""
+        (URL gắn IP máy giải, loa tải là 403).
+
+        LẤY THEO TỪNG KHÚC CÓ GIỚI HẠN, đừng mở một cú không giới hạn. Đo trên máy
+        chủ 21/09/2026, cùng một bài 82 MB, cùng lúc:
+
+            không Range, hoặc «bytes=0-»   →  0,033 MB/giây
+            từng khúc «bytes=a-b» 4 MB      →  15 MB/giây
+
+        Nhanh hơn khoảng 450 lần. Google bóp mọi yêu cầu KHÔNG GIỚI HẠN xuống cỡ tốc
+        độ nghe, và chỉ trả hết tốc khi được hỏi một khúc có đầu có cuối. Bài ngắn
+        không lộ ra (cả tệp còn nhỏ hơn một khúc), nên hôm 21/09 tôi đo bằng một bài
+        3,45 MB và tưởng chỉ cần thêm «Range» là xong — bài dài thì vẫn nhỏ giọt.
+
+        Hậu quả đã thấy: loa Google Cast báo "Failed to cast media … Reachable from
+        the cast device" (log HA 17:05:28) vì nó tải nhỏ giọt rồi bỏ cuộc, còn điện
+        thoại thì nằm ở "đang tải mà không có dữ liệu".
+        """
         range_header = request.headers.get("range")
         if range_header and not re.fullmatch(r"bytes=\d*-\d*", range_header):
             return _json(400, {"error": "invalid_range"})
+        # «bytes=-500» (xin 500 byte CUỐI) không tính được đầu khúc nếu chưa biết cỡ
+        # tệp, mà máy nghe gần như không dùng. Giữ nguyên đường cũ cho nó.
+        xin = re.fullmatch(r"bytes=(\d+)-(\d*)", range_header or "bytes=0-")
+        dau = int(xin.group(1)) if xin else 0
+        cuoi_xin = int(xin.group(2)) if xin and xin.group(2) else None
+
+        def _mo_khuc(resolved, tu, den):
+            headers = {**resolved["headers"], "Accept-Encoding": "identity",
+                       "Range": f"bytes={tu}-{den}" if den is not None else f"bytes={tu}-"}
+            return urlopen(UrlRequest(resolved["url"], headers=headers), timeout=30)
+
+        het_khuc_dau = None if not xin else dau + KHUC_LUONG - 1
+        if cuoi_xin is not None:
+            het_khuc_dau = min(het_khuc_dau, cuoi_xin) if het_khuc_dau is not None else cuoi_xin
         for lan in (1, 2):
             resolved, loi = await _mo_luong(token, request)
             if loi is not None:
                 return loi
-            headers = {**resolved["headers"], "Accept-Encoding": "identity"}
-            # LUÔN XIN THEO KHÚC, kể cả khi máy nghe không xin.
-            #
-            # Đo trên máy chủ 21/09/2026, cùng một luồng YouTube đã ấm, hỏi THẲNG
-            # googlevideo (nên không phải lỗi của proxy này):
-            #
-            #   không kèm Range  → byte đầu tiên 1,87 s, rồi 0,33 MB trong 10 giây
-            #   Range: bytes=0-  → byte đầu tiên 0,04 s, và 3,45 MB trong 0,1 giây
-            #
-            # Google bóp băng thông đúng những yêu cầu không kèm Range, xuống cỡ tốc độ
-            # nghe (~33 KB/s). Mà cú ĐẦU TIÊN trình phát của WebKit gửi thì không kèm
-            # Range — nên trên iPhone và Android, phần tử âm thanh nằm ở "đang tải mà
-            # không có dữ liệu" (nap=0 mang=2, không báo lỗi) đúng như hộp đen ghi lại
-            # lúc 14:00–14:03 ngày 21/09/2026. Thoát app rồi vào lại thì WebKit dựng lại
-            # trình phát và xin tiếp CÓ kèm Range, rơi vào đường nhanh — đúng cái trò
-            # chủ máy phải làm mãi: "thoát app ra rồi vào lại là nghe được luôn".
-            headers["Range"] = range_header or "bytes=0-"
             try:
-                up = await asyncio.to_thread(urlopen, UrlRequest(resolved["url"], headers=headers), timeout=30)
+                up = await asyncio.to_thread(_mo_khuc, resolved, dau, het_khuc_dau)
                 break
             except HTTPError as exc:
                 # Link được dùng lại hàng giờ (stream_cache_seconds): YouTube từ chối
@@ -350,32 +381,43 @@ def create_router() -> APIRouter:
             except OSError as exc:
                 logger.warning({"event": "youtube_phat_luong_loi", "loi": str(exc)[:160]})
                 return _json(502, {"error": "stream_unavailable"})
+
+        tong = _tong_co_tep(up)
+        cuoi = cuoi_xin if cuoi_xin is not None else (tong - 1 if tong else None)
         out = {"Content-Type": up.headers.get("Content-Type", resolved.get("content_type", "audio/mpeg")),
-               "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
-        for ten in ("Content-Length", "Content-Range", "Accept-Ranges"):
-            if gia_tri := up.headers.get(ten):
-                out[ten] = gia_tri
-        ma = up.getcode() or 200
-        if not range_header and ma == 206:
-            # Máy nghe không hỏi theo khúc thì phải nhận nguyên tệp: trả 200 chứ không
-            # phải 206, và bỏ Content-Range đi. Khúc xin ở trên là chuyện riêng giữa
-            # proxy này với Google, máy nghe không cần biết.
+               "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
+               "Accept-Ranges": "bytes"}
+        if cuoi is not None:
+            out["Content-Length"] = str(cuoi - dau + 1)
+        if range_header and tong:
+            # Máy nghe hỏi theo khúc thì trả đúng khúc NÓ hỏi — không phải khúc proxy
+            # này đang lấy của Google.
+            ma = 206
+            out["Content-Range"] = f"bytes {dau}-{cuoi}/{tong}"
+        else:
             ma = 200
-            tong = str(out.pop("Content-Range", "")).rsplit("/", 1)[-1]
-            if tong.isdigit():
-                out["Content-Length"] = tong
-            out.setdefault("Accept-Ranges", "bytes")
 
-        def _khuc():
+        def _noi_cac_khuc():
+            """Đọc hết khúc đang mở rồi tự mở khúc kế — máy nghe thấy một luồng liền."""
+            mo = up
+            vi_tri = dau
             try:
-                while khuc := up.read(64 * 1024):
-                    yield khuc
-            except OSError:
+                while True:
+                    try:
+                        while mieng := mo.read(64 * 1024):
+                            vi_tri += len(mieng)
+                            yield mieng
+                    finally:
+                        mo.close()
+                    if cuoi is None or vi_tri > cuoi:
+                        return
+                    ke = min(vi_tri + KHUC_LUONG - 1, cuoi)
+                    mo = _mo_khuc(resolved, vi_tri, ke)
+            except (OSError, HTTPError):
+                # Máy nghe bỏ đi (tua, đổi bài) hoặc link hết hạn giữa chừng.
                 return
-            finally:
-                up.close()
 
-        return StreamingResponse(_khuc(), status_code=ma, headers=out)
+        return StreamingResponse(_noi_cac_khuc(), status_code=ma, headers=out)
 
     @router.head(f"{TIEN_TO}/api/stream/{{token}}")
     async def head_stream(token: str, request: Request):
