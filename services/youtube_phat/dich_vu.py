@@ -19,7 +19,8 @@ import secrets
 import threading
 import time
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
+from urllib.request import Request, urlopen
 
 from services.config import DATA_DIR
 from utils.log import logger
@@ -62,6 +63,7 @@ from .streaming import (
 # nào. Giao diện c2a tự gắn trong `srcNhung`, xem web/src/app/youtube/components.
 EMBED_PARAMS = "enablejsapi=1&playsinline=1&rel=0"
 
+OEMBED_UA = "Mozilla/5.0 (X11; Linux x86_64) c2a-youtube-phat"
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 PLAYLIST_ID = re.compile(r"^[A-Za-z0-9_-]{10,80}$")
 YOUTUBE_HOSTS = {
@@ -177,6 +179,55 @@ def normalize_target(raw_target):
     raise ValueError("invalid_youtube_target")
 
 
+
+# Tên bài của một mã video, nhớ suốt phiên chạy: tên không đổi, mà mỗi lượt hỏi tốn
+# một lượt HTTP.
+_TEN_YOUTUBE: dict[str, dict[str, str]] = {}
+_TEN_YOUTUBE_TOI_DA = 512
+
+
+def ten_bai_youtube(video_id, *, timeout=4):
+    """Tên bài, tên kênh và ảnh bìa của một mã video — hỏi thẳng YouTube bằng oEmbed.
+
+    VÌ SAO CẦN: phiên phát chỉ biết tên bài khi bài ấy nằm trong một danh sách mà
+    người dùng vừa tìm (hàng đợi phiên, playlist, kết quả tìm). Bấm tích loa cho bài
+    đang nghe thì thẻ chỉ gửi MỘT MÃ VIDEO, không nằm trong danh sách nào, nên phiên
+    lấy luôn mã làm tên — chủ máy thấy "dTeH03NpB1A" hiện ra thay cho tên bài (ảnh
+    chụp 21/09/2026), và ảnh bìa cũng trống.
+
+    Không biết tên thì ĐI HỎI NGUỒN, đừng lấy thứ sẵn có trong tay làm tên. oEmbed là
+    đường rẻ nhất: một lượt HTTP công khai, không khoá, không cần yt-dlp; hỏng thì
+    trả về rỗng và mọi thứ giữ nguyên như cũ.
+    """
+    ma = str(video_id or "").strip()
+    if not VIDEO_ID.fullmatch(ma):
+        return {}
+    if ma in _TEN_YOUTUBE:
+        return dict(_TEN_YOUTUBE[ma])
+    dia_chi = "https://www.youtube.com/oembed?format=json&url=" + quote(
+        f"https://www.youtube.com/watch?v={ma}", safe=""
+    )
+    try:
+        with urlopen(Request(dia_chi, headers={"User-Agent": OEMBED_UA}), timeout=timeout) as tra:
+            du_lieu = json.loads(tra.read(65536).decode("utf-8", "replace"))
+    except (OSError, ValueError) as loi:
+        logger.info(json.dumps({"event": "youtube_oembed_hong", "ma": ma, "loi": str(loi)[:120]}))
+        return {}
+    if not isinstance(du_lieu, dict):
+        return {}
+    ten = {
+        "title": str(du_lieu.get("title") or "").strip(),
+        "artist": str(du_lieu.get("author_name") or "").strip(),
+        "thumbnail": str(du_lieu.get("thumbnail_url") or "").strip(),
+        "url": f"https://www.youtube.com/watch?v={ma}",
+    }
+    if not ten["title"]:
+        return {}
+    if len(_TEN_YOUTUBE) >= _TEN_YOUTUBE_TOI_DA:
+        _TEN_YOUTUBE.pop(next(iter(_TEN_YOUTUBE)))
+    _TEN_YOUTUBE[ma] = ten
+    return dict(ten)
+
 def resolve_integration_token(data_dir: Path) -> str:
     """Token Integration API: đọc file, chưa có thì sinh và lưu (quyền 600)."""
     token_path = Path(data_dir) / "integration_token"
@@ -280,6 +331,10 @@ class PlayerCore:
         queue_items = self.playlists.get(playlist_id)["items"] if playlist_id else None
         if source == "youtube":
             fallback = normalize_target(target)
+            # Không nằm trong danh sách nào thì tên bài sẽ rơi về chính mã video —
+            # đi hỏi YouTube một lượt, xem «ten_bai_youtube».
+            if fallback.get("kind") == "video" and not fallback.get("title"):
+                fallback.update(ten_bai_youtube(fallback.get("id", "")))
         elif source == "zing":
             target = self.require_public_zing_result(target)
             fallback = {"source": "zing", "kind": "song", "id": target, "url": target}
