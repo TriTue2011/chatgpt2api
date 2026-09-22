@@ -554,7 +554,7 @@ export function NhinNhaCard() {
               const veKhac = ganTen[s.id] === "__khac";
               const dich = ganTen[s.id] === "__moi__" ? (ganMoi[s.id] || "") : (ganTen[s.id] || "");
               const tenDich = veKhac ? "" : dich.trim();
-              const bao = (hoc: boolean) => (d: { da_day?: boolean; day_loi?: string; bo_mau?: string; xet_lai?: number; ten?: string }) => {
+              const bao = (hoc: boolean) => (d: { da_day?: boolean; day_loi?: string; bo_mau?: string; xet_lai?: number; ten?: string; trung?: boolean }) => {
                 if (veKhac) {
                   return hoc
                     ? `Đã chuyển về Mặt khác${d.bo_mau ? " và bỏ mẫu gây nhầm" : ""}.`
