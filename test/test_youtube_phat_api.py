@@ -430,6 +430,113 @@ class YouTubePhatApiTest(unittest.TestCase):
         self.assertEqual("aqz-KE-bpKQ", his["items"][0]["id"])
 
 
+def _hop(typ: bytes, payload: bytes) -> bytes:
+    return (8 + len(payload)).to_bytes(4, "big") + typ + payload
+
+
+def _sidx(timescale: int, refs: list[tuple[int, int]]) -> bytes:
+    body = bytearray()
+    body += bytes((0, 0, 0, 0))
+    body += (1).to_bytes(4, "big")
+    body += timescale.to_bytes(4, "big")
+    body += (0).to_bytes(4, "big")
+    body += (0).to_bytes(4, "big")
+    body += (0).to_bytes(2, "big")
+    body += len(refs).to_bytes(2, "big")
+    for dai, giay_don in refs:
+        body += dai.to_bytes(4, "big")
+        body += giay_don.to_bytes(4, "big")
+        body += (0).to_bytes(4, "big")
+    return _hop(b"sidx", bytes(body))
+
+
+class MucLucMp4Test(unittest.TestCase):
+    def test_hai_khuc_va_danh_sach_hls(self) -> None:
+        from services.youtube_phat.streaming import danh_sach_hls, doc_muc_luc_mp4
+
+        ftyp = _hop(b"ftyp", b"dash" + b"\x00" * 12)
+        moov = _hop(b"moov", b"\x00" * 20)
+        sx = _sidx(1000, [(100, 10000), (40, 5000)])
+        muc = doc_muc_luc_mp4(ftyp + moov + sx + b"\x00" * 140)
+        self.assertIsNotNone(muc)
+        khoi, khuc = muc
+        self.assertEqual(len(ftyp) + len(moov), khoi)
+        self.assertEqual([(khoi + len(sx), 100, 10.0), (khoi + len(sx) + 100, 40, 5.0)], khuc)
+        text = danh_sach_hls(khoi, khuc, "https://may/yt/api/stream/tok?khoi=1")
+        self.assertIn("#EXT-X-PLAYLIST-TYPE:VOD", text)
+        self.assertIn(f'BYTERANGE="{khoi}@0"', text)
+        self.assertIn("#EXT-X-BYTERANGE:100@", text)
+        self.assertIn("#EXT-X-ENDLIST\n", text)
+        self.assertEqual(2, text.count("#EXTINF:"))
+
+    def test_sidx_chi_toi_muc_luc_khac_thi_bo(self) -> None:
+        from services.youtube_phat.streaming import doc_muc_luc_mp4
+
+        # bit cao của referenced_size = 1: mảnh này là mục lục, không phải tiếng.
+        sx = _sidx(1000, [(100 | 0x80000000, 1000)])
+        self.assertIsNone(doc_muc_luc_mp4(_hop(b"ftyp", b"x" * 8) + sx))
+
+
+UA_IPHONE = ("Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) "
+             "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1")
+
+
+class YouTubeIphoneKhucTest(unittest.TestCase):
+    def setUp(self) -> None:
+        YouTubePhatApiTest.setUp(self)
+        self.get = YouTubePhatApiTest.get.__get__(self)
+
+    def _token(self, source="youtube", target="dQw4w9WgXcQ"):
+        from services.youtube_phat.streaming import create_stream_token
+
+        return create_stream_token(target, "token-thu", source=source, ttl=600)
+
+    def test_iphone_bi_chuyen_sang_danh_sach_android_va_zing_thi_khong(self) -> None:
+        token = self._token()
+        r = self.client.get(f"/yt/api/stream/{token}", headers={"User-Agent": UA_IPHONE},
+                            follow_redirects=False)
+        self.assertEqual(302, r.status_code)
+        self.assertTrue(r.headers["location"].endswith(".m3u8"), r.headers["location"])
+        head = self.client.head(f"/yt/api/stream/{token}", headers={"User-Agent": UA_IPHONE},
+                                follow_redirects=False)
+        self.assertEqual(302, head.status_code)
+        zing = self._token("zing", "https://zingmp3.vn/bai-hat/Thuc-Giac/ZZ90FD0B.html")
+        r = self.client.get(f"/yt/api/stream/{zing}", headers={"User-Agent": UA_IPHONE},
+                            follow_redirects=False)
+        self.assertNotEqual(302, r.status_code)
+
+    @patch("api.youtube_phat.urlopen")
+    @patch("services.youtube_phat.dich_vu.resolve_youtube_audio")
+    def test_danh_sach_ke_dung_khuc_va_khuc_van_tra_byte(self, giai, mo) -> None:
+        ftyp = _hop(b"ftyp", b"dash" + b"\x00" * 12)
+        moov = _hop(b"moov", b"\x00" * 20)
+        sx = _sidx(1000, [(4, 10000)])
+        giai.return_value = {"url": "https://rr.googlevideo.com/v", "headers": {"User-Agent": "TriTue"},
+                             "content_type": "audio/mp4"}
+        dau = io.BytesIO(ftyp + moov + sx)
+        dau.headers = {"Content-Type": "audio/mp4"}
+        media = io.BytesIO(b"abcd")
+        media.headers = {"Content-Type": "audio/mp4", "Content-Length": "4",
+                         "Content-Range": "bytes 0-3/4", "Accept-Ranges": "bytes"}
+        media.getcode = lambda: 206
+
+        def mo_url(req, timeout):
+            if req.get_header("Range") == f"bytes=0-{256 * 1024 - 1}":
+                return dau
+            return media
+
+        mo.side_effect = mo_url
+        token = self._token()
+        r = self.get(f"/api/stream/{token}.m3u8", headers={"User-Agent": UA_IPHONE})
+        self.assertEqual(200, r.status_code, r.text)
+        self.assertIn("mpegurl", r.headers["content-type"])
+        self.assertIn(f"?khoi=1", r.text)
+        self.assertIn(f'BYTERANGE="{len(ftyp) + len(moov)}@0"', r.text)
+        khuc = self.get(f"/api/stream/{token}?khoi=1", headers={
+            "User-Agent": UA_IPHONE, "Range": "bytes=0-3"})
+        self.assertEqual((206, b"abcd"), (khuc.status_code, khuc.content))
+
+
 class _NgCanh:
     """urlopen trả về dùng được với `with`."""
 

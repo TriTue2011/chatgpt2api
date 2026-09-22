@@ -118,8 +118,18 @@ export function DanhSachThietBi({ className, thietBi, loi, chon, batTat, amLuong
               : "Home Assistant chưa có loa hay tivi nào."}
         </p>
       ) : (
-        <ul className="space-y-1 px-2 pb-2">
-          {hien.map((tb) => {
+        <div className="grid gap-3 px-2 pb-2 sm:grid-cols-2">
+          {(["loa", "tivi"] as const).map((loai) => {
+            const cot = hien.filter((t) => t.loai === loai);
+            if (!cot.length) return null;
+            return (
+              <div key={loai} className="min-w-0">
+                <p className="flex items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {loai === "tivi" ? <Tv className="size-3.5" /> : <Speaker className="size-3.5" />}
+                  {loai === "tivi" ? "Màn hình" : "Loa"}
+                </p>
+                <ul className="space-y-1">
+          {cot.map((tb) => {
             const daChon = chon.has(tb.entity_id);
             const Icon = tb.loai === "tivi" ? Tv : Speaker;
             const matKetNoi = tb.trang_thai === "unavailable";
@@ -178,7 +188,11 @@ export function DanhSachThietBi({ className, thietBi, loi, chon, batTat, amLuong
               </li>
             );
           })}
-        </ul>
+                </ul>
+              </div>
+            );
+          })}
+        </div>
       )}
 
       {daAn.length > 0 && (

@@ -1,6 +1,6 @@
 "use client";
 
-import { AudioLines, Headphones, Link2, ListMusic, ListPlus, LoaderCircle, MonitorPlay, Music2, Play, Search, Youtube } from "lucide-react";
+import { AudioLines, Facebook, Headphones, Link2, ListMusic, ListPlus, LoaderCircle, MonitorPlay, Music2, Play, Search, Youtube } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -10,10 +10,13 @@ import { cn } from "@/lib/utils";
 import { type BaiHat, type Nguon, TEN_NGUON, thoiLuong } from "./lib";
 import { type KhoPlaylist, laLinkPlaylist, ThemVaoPlaylist } from "./playlist";
 
-const NUT_NGUON: { khoa: Nguon; Icon: typeof Youtube; goiY: string }[] = [
-  { khoa: "youtube", Icon: Youtube, goiY: "Dán link YouTube để ra đúng video · tivi mở ứng dụng YouTube, loa nhận tiếng" },
-  { khoa: "zing", Icon: Music2, goiY: "Bài công khai, không VIP" },
-  { khoa: "http", Icon: Link2, goiY: "Dán link MP3, AAC, FLAC, OGG hoặc HLS" },
+/** Cùng hàng với thẻ Home Assistant: YouTube, Zing, Facebook, rồi Playlist.
+ *  Link giữ lại vì c2a phát được file âm thanh trực tiếp, thẻ cũng nhận nguồn này. */
+const NUT_NGUON: { khoa: Nguon; Icon: typeof Youtube; nhan: string; goiY: string; o: string }[] = [
+  { khoa: "youtube", Icon: Youtube, nhan: "YouTube", goiY: "Tivi mở ứng dụng YouTube, loa nhận tiếng.", o: "Tìm tên bài hát, ca sĩ hoặc dán link YouTube…" },
+  { khoa: "zing", Icon: Music2, nhan: "Zing MP3", goiY: "Bài công khai, không VIP.", o: "Tìm tên bài hát hoặc ca sĩ…" },
+  { khoa: "facebook", Icon: Facebook, nhan: "Facebook", goiY: "Chỉ dán link. Reel, watch hoặc link chia sẻ đều được.", o: "Dán link video Facebook (reel, watch hoặc link chia sẻ)…" },
+  { khoa: "http", Icon: Link2, nhan: "Link", goiY: "File MP3, AAC, FLAC, OGG hoặc HLS.", o: "https://…/bai-hat.mp3" },
 ];
 
 type Props = {
@@ -45,47 +48,31 @@ export function TimNhac({
   className, nguon, doiNguon, tuKhoa, setTuKhoa, tim, dangTim, ketQua, dangPhatMa, dangGuiMa, coLoa, phat,
   kho, xemPlaylist, doiXemPlaylist, luuCaPlaylist, dangLuuPlaylist, bangPlaylist,
 }: Props) {
-  const goiY = NUT_NGUON.find((n) => n.khoa === nguon)?.goiY;
-  const tab = (dang: boolean, nhan: string, Icon: typeof Search, bam: () => void) => (
+  const nut = NUT_NGUON.find((n) => n.khoa === nguon);
+  const nutNguon = (dang: boolean, nhan: string, Icon: typeof Search, bam: () => void) => (
     <button
       type="button"
       aria-pressed={dang}
       onClick={bam}
       className={cn(
-        "flex items-center gap-1.5 border-b-2 px-1 pb-1.5 text-sm font-semibold transition",
-        dang ? "border-[var(--primary)] text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+        "flex min-w-0 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold transition sm:text-sm",
+        dang ? "bg-[var(--card)] text-[var(--primary)] shadow-sm" : "text-muted-foreground hover:text-foreground",
       )}
     >
-      <Icon className="size-4" /> {nhan}
+      <Icon className="size-4 shrink-0" />
+      <span className="truncate">{nhan}</span>
     </button>
   );
   return (
     <section className={cn("rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 sm:p-5", className)}>
-      <div className="mb-3 flex gap-4">
-        {tab(!xemPlaylist, "Tìm nhạc", Search, () => doiXemPlaylist(false))}
-        {tab(xemPlaylist, `Playlist${kho.ds?.length ? ` (${kho.ds.length})` : ""}`, ListMusic, () => doiXemPlaylist(true))}
-      </div>
-      {xemPlaylist ? bangPlaylist : (<>
-      <div role="group" aria-label="Nguồn nhạc" className="grid grid-cols-3 gap-1 rounded-xl bg-[var(--muted)] p-1">
-        {NUT_NGUON.map(({ khoa, Icon }) => (
-          <button
-            key={khoa}
-            type="button"
-            aria-pressed={nguon === khoa}
-            onClick={() => doiNguon(khoa)}
-            className={cn(
-              "flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold transition sm:text-sm",
-              nguon === khoa
-                ? "bg-[var(--card)] text-[var(--primary)] shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <Icon className="size-4" />
-            <span className="truncate">{TEN_NGUON[khoa]}</span>
-          </button>
+      <div role="group" aria-label="Nguồn nhạc và playlist" className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--muted)] p-1 sm:grid-cols-3 xl:grid-cols-5">
+        {NUT_NGUON.map(({ khoa, Icon, nhan }) => (
+          <span key={khoa} className="contents">{nutNguon(!xemPlaylist && nguon === khoa, nhan, Icon, () => { doiXemPlaylist(false); doiNguon(khoa); })}</span>
         ))}
+        {nutNguon(xemPlaylist, `Playlist${kho.ds?.length ? ` (${kho.ds.length})` : ""}`, ListMusic, () => doiXemPlaylist(true))}
       </div>
 
+      {xemPlaylist ? bangPlaylist : (<>
       <form
         className="mt-3 flex gap-2"
         onSubmit={(e) => {
@@ -98,7 +85,7 @@ export function TimNhac({
           value={tuKhoa}
           onChange={(e) => setTuKhoa(e.target.value)}
           maxLength={nguon === "zing" ? 120 : 2048}
-          placeholder={nguon === "http" ? "https://…/bai-hat.mp3" : nguon === "youtube" ? "Tên bài hát, ca sĩ hoặc link YouTube…" : "Tên bài hát, ca sĩ…"}
+          placeholder={nut?.o ?? "Tìm tên bài hát hoặc ca sĩ…"}
           aria-label={nguon === "http" ? "Link âm thanh trực tiếp" : "Tìm bài hát"}
           className="h-10 min-w-0 flex-1"
         />
@@ -108,12 +95,12 @@ export function TimNhac({
         </Button>
       </form>
       <p className="mt-2 text-xs text-muted-foreground">
-        {goiY}
+        {nut?.goiY}
         {coLoa || nguon === "http"
           ? ""
-          : nguon === "youtube"
-            ? " · chưa chọn loa: nút tai nghe để nghe trên máy này, nút màn hình để xem video"
-            : " · chưa chọn loa: bấm nút tai nghe để nghe trên máy này"}
+          : nguon === "youtube" || nguon === "facebook"
+            ? " Chưa chọn loa: nút tai nghe để nghe trên máy này, nút màn hình để xem video."
+            : " Chưa chọn loa: bấm nút tai nghe để nghe trên máy này."}
       </p>
       {nguon !== "http" && laLinkPlaylist(tuKhoa) && (
         <Button type="button" variant="outline" className="mt-2 h-9 w-full" disabled={dangLuuPlaylist} onClick={luuCaPlaylist}>
@@ -156,7 +143,7 @@ export function TimNhac({
                 <div
                   className={cn(
                     "relative shrink-0 overflow-hidden rounded-lg bg-[var(--muted)]",
-                    bai.source === "youtube" ? "aspect-video w-24 sm:w-28" : "size-14",
+                    bai.source === "youtube" || bai.source === "facebook" ? "aspect-video w-24 sm:w-28" : "size-14",
                   )}
                 >
                   {/^https?:\/\//.test(bai.thumbnail) ? (
@@ -181,7 +168,7 @@ export function TimNhac({
                   </div>
                 </div>
                 {bai.source !== "http" && <ThemVaoPlaylist bai={bai} kho={kho} />}
-                {bai.source === "youtube" && (
+                {(bai.source === "youtube" || bai.source === "facebook") && (
                   <Button
                     type="button"
                     size="icon"

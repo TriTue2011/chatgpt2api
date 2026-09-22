@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import io
 import json
+import math
 import re
 import shutil
 import sys
@@ -688,6 +689,108 @@ def resolve_youtube_audio(
         "headers": headers,
         "content_type": CONTENT_TYPES.get(extension, "audio/mp4"),
     }
+
+
+def doc_muc_luc_mp4(buf: bytes) -> tuple[int, list[tuple[int, int, float]]] | None:
+    """(độ dài đoạn mở đầu, các khúc ``(offset, độ dài, giây)``) hoặc None.
+
+    Tệp tiếng YouTube là MP4 cắt mảnh: mục lục mẫu trong ``moov`` rỗng, thời lượng
+    thật nằm ở hộp ``sidx``. Một tệp liền khiến iPhone chờ một lượng tỷ lệ với
+    cả bài. Trả về từng mảnh (~10 giây) để phát mảnh đầu rồi tải tiếp.
+
+    None khi không có ``sidx`` đủ trong ``buf``, hoặc một mảnh trỏ tới mục lục
+    khác chứ không phải tiếng — người gọi giữ đường tệp liền.
+    """
+    i = 0
+    sidx: tuple[int, int] | None = None
+    while i + 8 <= len(buf):
+        size = int.from_bytes(buf[i:i + 4], "big")
+        typ = buf[i + 4:i + 8]
+        hdr = 8
+        if size == 1:
+            if i + 16 > len(buf):
+                return None
+            size = int.from_bytes(buf[i + 8:i + 16], "big")
+            hdr = 16
+        if size < hdr or i + size > len(buf):
+            return None
+        if typ == b"sidx":
+            sidx = (i, size)
+            break
+        i += size
+    if sidx is None:
+        return None
+    dau, size = sidx
+    p = dau + (16 if int.from_bytes(buf[dau:dau + 4], "big") == 1 else 8)
+    if p + 4 > dau + size:
+        return None
+    ver = buf[p]
+    p += 4  # version + flags
+    if p + 8 > dau + size:
+        return None
+    p += 4  # reference_ID
+    timescale = int.from_bytes(buf[p:p + 4], "big")
+    p += 4
+    if timescale <= 0:
+        return None
+    if ver == 0:
+        if p + 8 > dau + size:
+            return None
+        p += 4  # earliest_presentation_time
+        first_offset = int.from_bytes(buf[p:p + 4], "big")
+        p += 4
+    else:
+        if p + 16 > dau + size:
+            return None
+        p += 8
+        first_offset = int.from_bytes(buf[p:p + 8], "big")
+        p += 8
+    if p + 4 > dau + size:
+        return None
+    p += 2  # reserved
+    count = int.from_bytes(buf[p:p + 2], "big")
+    p += 2
+    if count <= 0 or p + count * 12 > dau + size:
+        return None
+    khuc: list[tuple[int, int, float]] = []
+    vi_tri = dau + size + first_offset
+    for _ in range(count):
+        tu = int.from_bytes(buf[p:p + 4], "big")
+        dai = tu & 0x7FFFFFFF
+        if tu >> 31:
+            return None
+        giay_don = int.from_bytes(buf[p + 4:p + 8], "big")
+        p += 12
+        if dai <= 0:
+            return None
+        khuc.append((vi_tri, dai, giay_don / timescale))
+        vi_tri += dai
+    return dau, khuc
+
+
+def danh_sach_hls(khoi_dai: int, khuc: list[tuple[int, int, float]], url_khuc: str) -> str:
+    """Danh sách phát HLS: đoạn mở đầu một lần, rồi từng khúc theo byte.
+
+    iPhone phát sau khúc đầu (~10 giây tiếng) dù cả bài dài hàng giờ. ``url_khuc``
+    là địa chỉ trả đúng khoảng byte được hỏi, không phải cả tệp.
+    """
+    if khoi_dai < 8 or not khuc or not url_khuc:
+        raise ValueError("danh_sach_hls_rong")
+    muc = max(1, math.ceil(max(giay for _, _, giay in khuc) - 1e-6))
+    dong = [
+        "#EXTM3U",
+        "#EXT-X-VERSION:7",
+        f"#EXT-X-TARGETDURATION:{muc}",
+        "#EXT-X-PLAYLIST-TYPE:VOD",
+        "#EXT-X-MEDIA-SEQUENCE:0",
+        f'#EXT-X-MAP:URI="{url_khuc}",BYTERANGE="{khoi_dai}@0"',
+    ]
+    for bat_dau, dai, giay in khuc:
+        dong.append(f"#EXTINF:{giay:.3f},")
+        dong.append(f"#EXT-X-BYTERANGE:{dai}@{bat_dau}")
+        dong.append(url_khuc)
+    dong.append("#EXT-X-ENDLIST")
+    return "\n".join(dong) + "\n"
 
 
 def _la_luong_chi_tieng(item: dict) -> bool:

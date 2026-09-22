@@ -340,6 +340,9 @@ class ApiTabTest(_CoSo):
         self.assertEqual((False, "search_unavailable"), (d["ok"], d["ma"]))
         d = self.client.get("/api/youtube-phat/tim", params={"q": ""}).json()
         self.assertEqual("invalid_search_query", d["ma"])
+        d = self.client.get("/api/youtube-phat/tim", params={"source": "facebook", "q": "ten bai"}).json()
+        self.assertEqual("invalid_facebook_query", d["ma"])
+        self.assertIn("link", d["error"].lower())
 
 
 def _luong_da_ky(video_id: str) -> str:

@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 from fastapi import APIRouter, Header, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 
 from api.support import require_admin, resolve_image_base_url
 from services.ingress_guard import BodyTooLarge, read_json_limited
@@ -39,6 +39,8 @@ from services.youtube_phat.search import SearchUnavailableError
 from services.youtube_phat.streaming import (
     InvalidStreamTokenError,
     StreamUnavailableError,
+    danh_sach_hls,
+    doc_muc_luc_mp4,
     verify_stream_token,
 )
 from utils.log import logger
@@ -53,6 +55,29 @@ _KHA_NANG = ["history", "play", "search", "session", "sessions", "status", "stop
 #: khoảng 450 lần. Khúc quá nhỏ thì tốn nhiều lượt mở kết nối, 4 MB là chỗ đã đo
 #: thấy đầy tốc ngay từ khúc đầu (0,09 giây) mà vẫn vào tiếng sớm.
 KHUC_LUONG = 4 * 1024 * 1024
+#: Đủ cho mục lục sidx của một bài rất dài (mỗi khúc ~12 byte). Bài 3 giờ đo
+#: 22/09/2026 chỉ chiếm khoảng 14 KB.
+_DAU_MUC_LUC = 256 * 1024
+_IOS = re.compile(r"iPhone|iPad|iPod")
+
+
+def _la_ios(request: Request) -> bool:
+    return _IOS.search(request.headers.get("user-agent") or "") is not None
+
+
+def _ios_can_danh_sach(token: str, request: Request) -> bool:
+    """iPhone nhận danh sách khúc, trừ khi đang xin đúng một khoảng byte của khúc.
+
+    Loa và Android không đi đây: chúng phát tốt tệp liền. Zing/Facebook cũng không
+    — chỉ tiếng YouTube mới là MP4 cắt mảnh làm iPhone chờ theo độ dài cả bài.
+    """
+    if request.query_params.get("khoi") == "1" or not _la_ios(request):
+        return False
+    try:
+        source, _target = verify_stream_token(token, dich_vu.core().integration_token)
+    except InvalidStreamTokenError:
+        return False
+    return source == "youtube"
 
 
 def _tong_co_tep(up) -> int:
@@ -325,6 +350,49 @@ def create_router() -> APIRouter:
             return None, _json(502, {"error": "stream_unavailable"})
         return resolved, None
 
+    def _url_khuc(request: Request) -> str:
+        """Địa chỉ trả một khoảng byte. Bỏ «.m3u8» nếu đang đứng ở danh sách."""
+        goc = str(request.url).split("?", 1)[0]
+        if goc.endswith(".m3u8"):
+            goc = goc[: -len(".m3u8")]
+        return goc + "?khoi=1"
+
+    async def _danh_sach_khuc(token: str, request: Request):
+        """Danh sách HLS của một bài YouTube. Hỏng mục lục thì 502, không trả
+        tệp liền — trả tệp liền là đúng cái cách iPhone đang chờ lâu."""
+        resolved, loi = await _mo_luong(token, request)
+        if loi is not None:
+            return loi
+
+        def _doc_dau():
+            headers = {**resolved["headers"], "Accept-Encoding": "identity",
+                       "Range": f"bytes=0-{_DAU_MUC_LUC - 1}"}
+            up = urlopen(UrlRequest(resolved["url"], headers=headers), timeout=20)
+            try:
+                return up.read(_DAU_MUC_LUC)
+            finally:
+                dong = getattr(up, "close", None)
+                if dong:
+                    dong()
+
+        try:
+            buf = await asyncio.to_thread(_doc_dau)
+        except (OSError, HTTPError) as exc:
+            logger.warning({"event": "youtube_phat_muc_luc_loi", "loi": str(exc)[:160]})
+            return _json(502, {"error": "stream_unavailable"})
+        muc = doc_muc_luc_mp4(buf)
+        if muc is None:
+            logger.warning({"event": "youtube_phat_muc_luc_loi", "loi": "khong_co_sidx"})
+            return _json(502, {"error": "stream_unavailable"})
+        khoi, khuc = muc
+        try:
+            body = danh_sach_hls(khoi, khuc, _url_khuc(request))
+        except ValueError:
+            return _json(502, {"error": "stream_unavailable"})
+        return Response(body, media_type="application/vnd.apple.mpegurl", headers={
+            "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
+        })
+
     @router.get(f"{TIEN_TO}/api/stream/{{token}}")
     async def proxy_stream(token: str, request: Request):
         """Tiếp sóng luồng âm thanh cho loa — loa không gọi thẳng googlevideo.com
@@ -344,7 +412,17 @@ def create_router() -> APIRouter:
         Hậu quả đã thấy: loa Google Cast báo "Failed to cast media … Reachable from
         the cast device" (log HA 17:05:28) vì nó tải nhỏ giọt rồi bỏ cuộc, còn điện
         thoại thì nằm ở "đang tải mà không có dữ liệu".
+
+        iPhone thì còn một lớp nữa. Hộp đen 22/09/2026: fetch lấy 2 byte trong khoảng
+        0,1 giây mà phần tử âm thanh đứng «nap=0» tới 12 giây, bài càng dài càng lâu.
+        Tệp là MP4 cắt mảnh, iPhone chờ theo độ dài cả tệp. Máy đó được chuyển sang
+        danh sách khúc khoảng 10 giây để vào tiếng sau khúc đầu rồi tải tiếp. Loa
+        và Android giữ đường tệp liền.
         """
+        if token.endswith(".m3u8"):
+            return await _danh_sach_khuc(token[: -len(".m3u8")], request)
+        if _ios_can_danh_sach(token, request):
+            return RedirectResponse(str(request.url).split("?", 1)[0] + ".m3u8", status_code=302)
         range_header = request.headers.get("range")
         if range_header and not re.fullmatch(r"bytes=\d*-\d*", range_header):
             return _json(400, {"error": "invalid_range"})
@@ -422,6 +500,8 @@ def create_router() -> APIRouter:
     @router.head(f"{TIEN_TO}/api/stream/{{token}}")
     async def head_stream(token: str, request: Request):
         """Loa DLNA hỏi HEAD trước khi GET — trả kiểu, cỡ, ranges, không tải audio."""
+        if not token.endswith(".m3u8") and _ios_can_danh_sach(token, request):
+            return RedirectResponse(str(request.url).split("?", 1)[0] + ".m3u8", status_code=302)
         resolved, loi = await _mo_luong(token, request)
         if loi is not None:
             return Response(status_code=loi.status_code, headers={"Content-Length": "0"})
@@ -499,9 +579,17 @@ def create_router() -> APIRouter:
         try:
             items = await asyncio.to_thread(dich_vu.core().search, source, query, 20)
         except ValueError as error:
-            return _loi(str(error))
-        except SearchUnavailableError:
-            return _loi("search_unavailable")
+            ma = str(error)
+            # Facebook không có tìm theo chữ. Mã chung «invalid_search_query» dành cho
+            # YouTube; trang này cần một câu nói đúng việc người dùng vừa làm.
+            if source == "facebook" and ma == "invalid_search_query":
+                ma = "invalid_facebook_query"
+            return _loi(ma)
+        except SearchUnavailableError as error:
+            ma = str(error)
+            if ma not in _THONG_BAO:
+                ma = "search_unavailable"
+            return _loi(ma)
         return {"ok": True, "items": items}
 
     @router.get("/api/youtube-phat/playlist")

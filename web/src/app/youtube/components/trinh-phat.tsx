@@ -33,7 +33,7 @@ import { cn } from "@/lib/utils";
 
 import { DangPhat, type HinhRieng, type VideoMo, type ViTri } from "./dang-phat";
 import { DanhSachThietBi } from "./danh-sach-thiet-bi";
-import { type BaiHat, dangHoatDong, dangPhatBai, goi, type Nguon, type Phien, type ThietBi } from "./lib";
+import { type BaiHat, dangHoatDong, dangPhatBai, goi, laFacebook, type Nguon, type Phien, type ThietBi } from "./lib";
 import * as mayNghe from "./nghe-tren-may";
 import { DanhSachPlaylist, type NguonHang, useKhoPlaylist } from "./playlist";
 import { TimNhac } from "./tim-nhac";
@@ -306,6 +306,30 @@ export function TrinhPhat() {
     }
   };
 
+  /** Facebook không nhúng được như YouTube. Hình đi qua máy chủ, cùng đường thẻ
+   *  Home Assistant dùng khi khung YouTube bị từ chối. */
+  const moHinh = (bai: BaiHat, voiLoa: boolean) => {
+    const nguonHinh = bai.source === "facebook" ? "facebook_video" : "youtube_video";
+    setVideo({
+      bai, src: "about:blank", theoLoa: voiLoa, ngheTrenMay: false, theoMay: !voiLoa,
+      hinh: { trangThai: "lay" },
+    });
+    void goi<{ url: string; direct_url?: string; height?: number; bitrate_kbps?: number }>("nghe", {
+      source: nguonHinh, target: bai.url || bai.id, max_height: caoHinh(),
+    }).then((r) => setVideo((v) => {
+      if (!v || v.bai.id !== bai.id || !v.hinh) return v;
+      if (!r) return { ...v, hinh: { trangThai: "loi" } };
+      return {
+        ...v,
+        hinh: {
+          trangThai: r.direct_url ? "thang" : dongYNgoaiNha.current ? "ky" : "ngoai",
+          thang: r.direct_url, ky: r.url, cao: r.height,
+          mbPhut: Math.max(1, Math.round(((r.bitrate_kbps || 1000) * 60) / 8 / 1000)),
+        },
+      };
+    }));
+  };
+
   const dongVideo = () => {
     dongYNgoaiNha.current = false;
     nhung.datLai();
@@ -319,6 +343,7 @@ export function TrinhPhat() {
     void mayNghe.ngheBai(bai, hangMoi, batDau);
     // Video đang mở thì theo bài mới, tắt tiếng, chạy theo tiếng; chỉ nghe hoặc bài không có video thì đóng.
     if (video && laVideo(bai) && !dongHinh) moVideo(bai, false, batDau, true);
+    else if (video && laFacebook(bai) && !dongHinh) moHinh(bai, false);
     else if (video) dongVideo();
   };
 
@@ -406,6 +431,13 @@ export function TrinhPhat() {
         moVideo(bai, false);
         return;
       }
+      if (xem && laFacebook(bai)) {
+        mayNghe.moKhoaTruoc();
+        setHangVideo(hangMoi);
+        void mayNghe.ngheBai(bai, hangMoi, 0);
+        moHinh(bai, false);
+        return;
+      }
       if (bai.source === "http") {
         toast.error("Tích loa hoặc tivi để phát link audio.");
         return;
@@ -449,9 +481,12 @@ export function TrinhPhat() {
     }
     if (xem && laVideo(bai)) {
       moVideo(bai, true);
+    } else if (xem && laFacebook(bai)) {
+      moHinh(bai, true);
     } else if (video) {
-      // Hình theo loa: bài YouTube tắt tiếng và bám loa; nguồn chỉ có tiếng thì đóng hình.
+      // Hình theo loa: bài có hình thì bám loa; nguồn chỉ có tiếng thì đóng hình.
       if (laVideo(bai)) moVideo(bai, true);
+      else if (laFacebook(bai)) moHinh(bai, true);
       else dongVideo();
     }
     void taiThietBi(true);
@@ -522,9 +557,11 @@ export function TrinhPhat() {
     if (baiPhienXem.id === video.bai.id) return;
     if (laVideo(baiPhienXem)) {
       moVideo(baiPhienXem, true);
+    } else if (laFacebook(baiPhienXem)) {
+      moHinh(baiPhienXem, true);
     } else {
       dongVideo();
-      toast.message("Loa này đang phát Zing/link audio — không có video.");
+      toast.message("Loa này đang phát Zing hoặc link audio — không có video.");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baiPhienXem?.id, video?.theoLoa]);
@@ -998,10 +1035,12 @@ export function TrinhPhat() {
   const coDieuKhien = loaPhien.some((t) => t.trang_thai !== "unavailable" && (t.tam_dung || t.dung));
   const rap = !!video && cheDo === "rap";
 
+  // Cùng bố cục thẻ: video rồi loa bên trái, danh sách bên phải.
+  // Khung video không quá 80% bề ngang.
   return (
-    <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+    <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,80%)_minmax(240px,1fr)] lg:grid-rows-[auto_auto]">
       <DangPhat
-        className={cn("min-w-0", rap ? "lg:col-span-2" : "lg:col-start-2 lg:row-start-1")}
+        className={cn("min-w-0", rap ? "lg:col-span-2" : "lg:col-start-1 lg:row-start-1")}
         phien={phienXem}
         cacPhienKhac={cacPhienKhac}
         ngheCungTen={ngheCungIds.map((id) => theoMa.get(id)?.ten ?? id)}
@@ -1031,8 +1070,8 @@ export function TrinhPhat() {
           video
             ? null
             : nghe
-              ? laVideo(nghe) ? () => moVideo(nghe, false, mayNghe.thoiGian(), true) : null
-              : laVideo(phienXem?.item) ? () => moVideo(phienXem!.item!, loaPhien.some(dangHoatDong)) : null
+              ? laVideo(nghe) ? () => moVideo(nghe, false, mayNghe.thoiGian(), true) : laFacebook(nghe) ? () => moHinh(nghe, false) : null
+              : laVideo(phienXem?.item) ? () => moVideo(phienXem!.item!, loaPhien.some(dangHoatDong)) : laFacebook(phienXem?.item) ? () => moHinh(phienXem!.item!, true) : null
         }
         chonNhom={chonNhom}
         ngheCung={ngheCungIds.length ? () => void ngheCung() : null}
@@ -1040,7 +1079,7 @@ export function TrinhPhat() {
         doiNgheTrenMay={doiNgheTrenMay}
       />
       <DanhSachThietBi
-        className={cn("min-w-0", "lg:col-start-2 lg:row-start-2")}
+        className="min-w-0 lg:col-start-1 lg:row-start-2"
         thietBi={thietBi}
         loi={loiHa}
         chon={chon}
@@ -1050,7 +1089,7 @@ export function TrinhPhat() {
         taiLai={() => void taiThietBi(false)}
       />
       <TimNhac
-        className={cn("min-w-0", rap ? "lg:col-start-1 lg:row-start-2" : "lg:col-start-1 lg:row-span-2 lg:row-start-1")}
+        className={cn("min-w-0", rap ? "lg:col-start-1 lg:row-start-2" : "lg:col-start-2 lg:row-span-2 lg:row-start-1")}
         nguon={nguon}
         doiNguon={(n) => {
           setNguon(n);

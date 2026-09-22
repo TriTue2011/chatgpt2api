@@ -2,7 +2,7 @@ import { toast } from "sonner";
 
 import { httpRequest } from "@/lib/request";
 
-export type Nguon = "youtube" | "zing" | "http";
+export type Nguon = "youtube" | "zing" | "facebook" | "http";
 
 export type ThietBi = {
   entity_id: string;
@@ -101,7 +101,17 @@ export const NHAN_KET_NOI: Record<string, string> = {
   unsupported: "Không nhận phát nhạc",
 };
 
-export const TEN_NGUON: Record<Nguon, string> = { youtube: "YouTube", zing: "Zing MP3", http: "Link audio" };
+export const TEN_NGUON: Record<Nguon, string> = {
+  youtube: "YouTube",
+  zing: "Zing MP3",
+  facebook: "Facebook",
+  http: "Link",
+};
+
+/** Mã video Facebook là chuỗi số, không phải mã 11 ký tự của YouTube. */
+export function laFacebook(bai: BaiHat | null | undefined): bai is BaiHat {
+  return !!bai && bai.source === "facebook" && /^[0-9]{5,25}$/.test(bai.id);
+}
 
 /** Loa đã báo đúng bài này chưa. Vừa gửi bài mới, loa còn báo vị trí của bài cũ vài
  *  giây — dùng vị trí đó thì video và tiến độ nhảy tới giây cũ rồi mới về đầu. */

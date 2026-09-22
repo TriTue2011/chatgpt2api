@@ -31,8 +31,8 @@ export default function YoutubePage() {
       <div>
         <h1 className="text-lg font-semibold">YouTube</h1>
         <p className="text-xs text-muted-foreground">
-          Tìm YouTube, Zing MP3 hoặc dán link audio rồi phát ra loa và tivi trong nhà. Tivi mở thẳng ứng dụng YouTube; loa
-          nhận âm thanh qua c2a.
+          Cùng các đường với thẻ trên Home Assistant: YouTube, Zing MP3, Facebook và link
+          audio. Tivi mở ứng dụng YouTube; loa nhận tiếng qua c2a.
         </p>
       </div>
       <KetNoiHa />

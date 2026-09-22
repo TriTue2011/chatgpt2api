@@ -364,7 +364,7 @@ export function DanhSachPlaylist({ kho, coLoa, dangPhatMa, dangGuiMa, phat, moSa
                               {[bai.channel || bai.artist || TEN_NGUON[bai.source], thoiLuong(bai.duration)].filter(Boolean).join(" · ")}
                             </div>
                           </div>
-                          {bai.source === "youtube" && (
+                          {(bai.source === "youtube" || bai.source === "facebook") && (
                             <Button type="button" size="icon" variant="ghost" className="size-8 shrink-0 rounded-full text-muted-foreground" disabled={!!dangGuiMa} aria-label={`Xem video ${bai.title}`} title="Xem video" onClick={() => phat(bai, true, hang)}>
                               <MonitorPlay />
                             </Button>
