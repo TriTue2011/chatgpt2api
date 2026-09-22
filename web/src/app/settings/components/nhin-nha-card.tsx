@@ -510,7 +510,8 @@ export function NhinNhaCard() {
                       { ten: tenLa[x.id] === "__moi__" ? tenMoiLa[x.id] : tenLa[x.id], hoc: true }),
                       (d) => d.trung
                         ? "Ảnh này đã có trong dữ liệu nhận diện, không thêm bản trùng."
-                        : `Đã thêm vào dữ liệu nhận diện và học lại.${d.xet_lai ? ` ${d.xet_lai} cụm Mặt khác vừa vào đúng tên.` : ""}`}>
+                        : "Đã thêm vào dữ liệu nhận diện và học lại."
+                          + (d.xet_lai ? " " + d.xet_lai + " cụm Mặt khác vừa vào đúng tên." : "")}>
                     Thêm vào dữ liệu nhận diện
                   </Button>
                   <Button size="sm" variant="outline" className="h-7 text-[11px]"
