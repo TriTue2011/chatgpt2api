@@ -240,7 +240,9 @@ def create_router() -> APIRouter:
         from services import nhin_nha, so_mat_nha
 
         try:
-            kq = await run_in_threadpool(so_mat_nha.dat_ten_mat_la, ma, str(body.get("ten") or ""))
+            hoc = True if body.get("hoc") is None else bool(body.get("hoc"))
+            kq = await run_in_threadpool(so_mat_nha.dat_ten_mat_la, ma,
+                                         str(body.get("ten") or ""), hoc=hoc)
         except (so_mat_nha.LoiSoMat, nhin_nha.ChuaCoModel) as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, **kq}
@@ -282,8 +284,12 @@ def create_router() -> APIRouter:
         from services import so_mat_nha
 
         try:
-            kq = await run_in_threadpool(so_mat_nha.chuyen_su_kien, su_kien_id,
-                                         str(body.get("ten") or ""))
+            hoc = True if body.get("hoc") is None else bool(body.get("hoc"))
+            if body.get("ve_khac"):
+                kq = await run_in_threadpool(so_mat_nha.chuyen_ve_khac, su_kien_id, hoc=hoc)
+            else:
+                kq = await run_in_threadpool(so_mat_nha.chuyen_su_kien, su_kien_id,
+                                             str(body.get("ten") or ""), day_luon=hoc)
         except so_mat_nha.LoiSoMat as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, **kq}

@@ -327,18 +327,45 @@ def _gio(ts: float) -> str:
     return datetime.fromtimestamp(ts, _TZ).strftime("%H:%M")
 
 
-def _luu_anh_bao(anh, hop) -> str:
-    """Ảnh vùng người/mặt cho tin báo → URL /images/ (cùng thư viện ảnh camera)."""
+def _vung_mat(anh, hop, moc=None):
+    """Ảnh chỉ còn khuôn mặt, để xem và để dạy lại.
+
+    Ảnh báo trước nới hộp 1,2 lần mỗi cạnh rồi cộng thêm hai lần chiều cao
+    xuống dưới — ra cả người, mặt nhỏ ở phía trên. Bộ dò thu ảnh ấy về 640
+    thì mất mặt, nên bấm «thêm vào nguồn» không học được.
+
+    Có năm điểm mốc thì căn thẳng mặt cho đầy khung. Không có thì cắt sát hộp
+    với một ít lề, cùng cách sổ mặt lưu ảnh nguồn.
+    """
+    import cv2
+    import numpy as np
+
+    from services.khuon_mat_nha import can_mat
+    from services.so_mat_nha import _LE
+
+    if moc is not None:
+        diem = np.asarray(moc, np.float32)
+        if diem.shape == (5, 2) and np.isfinite(diem).all():
+            return can_mat(anh, diem, canh=256)
+    # `_cat_mat` trả JPEG. Ở đây cần mảng để người gọi nén một lần.
+    cao, rong = anh.shape[:2]
+    x1, y1, x2, y2 = (float(v) for v in hop)
+    le_x, le_y = (x2 - x1) * _LE, (y2 - y1) * _LE
+    a, b = int(max(0, x1 - le_x)), int(max(0, y1 - le_y))
+    c, d = int(min(rong, x2 + le_x)), int(min(cao, y2 + le_y))
+    if c <= a or d <= b:
+        return anh
+    return anh[b:d, a:c]
+
+
+def _luu_anh_bao(anh, hop, moc=None) -> str:
+    """Ảnh mặt cho tin báo → URL /images/ (cùng thư viện ảnh camera)."""
     import cv2
 
     from services.local_gateway import gateway_base_url
 
-    cao, rong = anh.shape[:2]
-    x1, y1, x2, y2 = hop
-    le_x, le_y = (x2 - x1) * 1.2, (y2 - y1) * 1.2
-    a, b = int(max(0, x1 - le_x)), int(max(0, y1 - le_y))
-    c, d = int(min(rong, x2 + le_x)), int(min(cao, y2 + le_y * 2))
-    ok, buf = cv2.imencode(".jpg", anh[b:d, a:c], [cv2.IMWRITE_JPEG_QUALITY, 88])
+    mat = _vung_mat(anh, hop, moc)
+    ok, buf = cv2.imencode(".jpg", mat, [cv2.IMWRITE_JPEG_QUALITY, 92])
     if not ok:
         return ""
     thu_muc = config.images_dir / time.strftime("%Y") / time.strftime("%m") / time.strftime("%d")
@@ -505,7 +532,7 @@ def xu_ly(camera: str, nguon: str) -> dict[str, Any]:
             continue                     # vẫn lượt cũ — không ghi, không báo lại
         anh_url = ""
         try:
-            anh_url = _luu_anh_bao(anh, m["hop"])
+            anh_url = _luu_anh_bao(anh, m["hop"], m.get("moc"))
         except Exception as exc:
             logger.info({"event": "canh_camera_luu_anh_loi", "loi": str(exc)[:120]})
         sk = so_mat_nha.ghi_su_kien(camera, nguon, m["loai"], nguoi_id=m["nguoi_id"],

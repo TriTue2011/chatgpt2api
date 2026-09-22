@@ -173,9 +173,49 @@ def _doc_anh_su_kien(url: str) -> bytes | None:
     return tep.read_bytes()
 
 
+def _do_them_cua_so(may, anh):
+    """Dò lại bằng cửa sổ cỡ đầu vào của bộ dò, khi dò cả ảnh không ra mặt.
+
+    Bộ dò luôn thu ảnh về 640. Ảnh chụp cả người thì mặt chiếm ít, thu xong
+    mặt biến mất — đúng ảnh «mặt mở» đã lưu trước đây. Cửa sổ 640 giữ nguyên
+    cỡ mặt. Toạ độ trả về là của ảnh gốc.
+    """
+    import numpy as np
+
+    cao, rong = anh.shape[:2]
+    cua = 640
+    if max(cao, rong) <= int(cua * 1.2):
+        return []
+    buoc = cua // 2
+    thay = []
+    so_cua = 0
+    y = 0
+    while y < cao and so_cua < 12:
+        x = 0
+        while x < rong and so_cua < 12:
+            manh = anh[y:y + cua, x:x + cua]
+            if manh.shape[0] >= 80 and manh.shape[1] >= 80:
+                so_cua += 1
+                for m in may.do(manh):
+                    x1, y1, x2, y2 = m.hop
+                    m.hop = (x1 + x, y1 + y, x2 + x, y2 + y)
+                    m.moc = np.asarray(m.moc, np.float32) + np.array([x, y], np.float32)
+                    thay.append(m)
+            if x + cua >= rong:
+                break
+            x += buoc
+        if y + cua >= cao:
+            break
+        y += buoc
+    return thay
+
+
 def _mat_to_nhat(may, anh):
     """Mặt to nhất (theo diện tích) và mặt cỡ thứ hai — cho bước dò lại."""
-    mats = sorted(may.do(anh), key=lambda m: -(m.rong * m.cao))
+    mats = list(may.do(anh))
+    if not mats:
+        mats = _do_them_cua_so(may, anh)
+    mats.sort(key=lambda m: -(m.rong * m.cao))
     return (mats[0] if mats else None), (mats[1] if len(mats) > 1 else None)
 
 
@@ -337,10 +377,12 @@ def day(ten: str, du_lieu_anh: bytes, *, nguon: str = "chat", ep: bool = False) 
         so_mat = conn.execute("SELECT COUNT(*) FROM mat WHERE nguoi_id = ?",
                               (nguoi_id,)).fetchone()[0]
         _bo_bang()
+    # Vừa thêm mẫu thì các cụm «mặt khác» có thể đã đủ giống người này.
+    xet = xet_lai_mat_la()
     logger.info({"event": "so_mat_day", "nguoi_id": nguoi_id, "moi": moi,
-                 "so_mat": so_mat, "nguon": nguon})
+                 "so_mat": so_mat, "nguon": nguon, "xet_lai": len(xet)})
     return {"nguoi_id": nguoi_id, "ten": ten if moi else cu["ten"], "nguoi_moi": moi,
-            "so_mat": so_mat, "diem_do": round(mat.diem, 3)}
+            "so_mat": so_mat, "diem_do": round(mat.diem, 3), "xet_lai": len(xet)}
 
 
 def nhan_dien(du_lieu_anh: bytes) -> dict[str, Any]:
@@ -358,6 +400,16 @@ def nhan_dien(du_lieu_anh: bytes) -> dict[str, Any]:
     return nhan_dien_anh(anh, nhin_nha.mat())
 
 
+def _moc_ra(moc) -> list[list[float]]:
+    """Năm điểm mốc thành số. Mốc giả trong test (một chuỗi tên) thì bỏ."""
+    try:
+        if len(moc) != 5:
+            return []
+        return [[float(p[0]), float(p[1])] for p in moc]
+    except (TypeError, ValueError, IndexError):
+        return []
+
+
 def nhan_dien_anh(anh, may) -> dict[str, Any]:
     """Như ``nhan_dien`` nhưng nhận sẵn ảnh BGR và bộ máy (cho luồng canh camera)."""
     cao, rong = anh.shape[:2]
@@ -365,7 +417,7 @@ def nhan_dien_anh(anh, may) -> dict[str, Any]:
     for m in sorted(may.phan_tich(anh), key=lambda m: m.hop[0]):
         ra.append({"hop": [round(x) for x in m.hop], "diem_do": round(m.diem, 3),
                    "nho": min(m.rong, m.cao) < MAT_NHO_NHAT,
-                   "vector": m.vector, **khop(m.vector)})
+                   "vector": m.vector, "moc": _moc_ra(m.moc), **khop(m.vector)})
     return {"rong": rong, "cao": cao, "mat": ra}
 
 
@@ -608,14 +660,11 @@ def chuyen_su_kien(su_kien_id: int, ten: str, *, day_luon: bool = True) -> dict[
         conn.commit()
         _bo_bang()
     ten_that = ten if moi else cu["ten"]
-    # HỌC LUÔN TỪ CHÍNH TẤM ẢNH ẤY. Chủ máy vừa nhìn một tấm và khẳng định đây là
-    # ai — đó là dữ liệu gán nhãn TAY, thứ đáng tin nhất trong cả hệ. Trước đây hàm
-    # này chỉ sửa đúng dòng lịch sử rồi thôi, nên lần sau máy vẫn nhận nhầm y hệt;
-    # chủ máy báo 20/09/2026: "khi tôi chỉ đây là ai thì dùng chính cái đó làm dữ
-    # liệu tạo vector nhận diện tiếp".
-    # Dạy HỎNG thì KHÔNG được làm hỏng việc gán: việc gán đã xong và đã ghi rồi.
-    # Gọi NGOÀI khối khoá vì `day` tự lấy khoá của nó.
-    da_day, day_loi = False, ""
+    nguoi_cu = r["nguoi_id"]
+    # `day_luon` tách lịch sử khỏi dữ liệu nhận diện. Tắt thì chỉ sửa dòng lịch
+    # sử. Bật thì ảnh này vào mẫu của người đúng, và mẫu của người cũ nào đang
+    # kéo nhầm mặt này thì bỏ — đó là lý do lần sau còn nhận sai.
+    da_day, day_loi, bo_mau = False, "", None
     if day_luon and r["anh"]:
         try:
             du_lieu = _doc_anh_su_kien(r["anh"])
@@ -624,12 +673,17 @@ def chuyen_su_kien(su_kien_id: int, ten: str, *, day_luon: bool = True) -> dict[
             else:
                 day(ten_that, du_lieu, nguon="camera", ep=True)
                 da_day = True
+                if nguoi_cu and nguoi_cu != nguoi_id:
+                    vec = _vector_anh(du_lieu)
+                    if vec is not None:
+                        bo_mau = bo_mau_gay_nham(vec, nguoi_cu)
         except Exception as exc:
             day_loi = str(exc)[:120]
             logger.info({"event": "so_mat_chuyen_su_kien_day_loi", "loi": day_loi})
-    logger.info({"event": "so_mat_chuyen_su_kien", "nguoi_moi": moi, "da_day": da_day})
+    logger.info({"event": "so_mat_chuyen_su_kien", "nguoi_moi": moi, "da_day": da_day,
+                 "bo_mau": bo_mau})
     return {"nguoi_id": nguoi_id, "ten": ten_that, "nguoi_moi": moi,
-            "da_day": da_day, "day_loi": day_loi}
+            "da_day": da_day, "day_loi": day_loi, "bo_mau": bo_mau}
 
 
 def su_kien_gan(so_gio: float = 24.0, *, camera: str = "", nguoi_id: str = "",
@@ -715,27 +769,160 @@ def thoi_hoi_mat_la(ma: str) -> bool:
     return bool(n)
 
 
-def dat_ten_mat_la(ma: str, ten: str) -> dict[str, Any]:
-    """Mặt lạ này là ``ten``: dạy mặt từ ảnh cụm, chuyển mọi lượt cũ sang người đó."""
-    r = mat_la(ma)
-    if r is None:
-        raise LoiSoMat(f"Không có mặt lạ mã «{ma}».")
-    p = duong_anh(r["anh"])
-    if p is None:
-        raise LoiSoMat("Ảnh của mặt lạ này đã mất, không dạy được.")
-    # ep=True: chính chủ nhà vừa nói đây là ai — không hỏi lại «giống người khác».
-    kq = day(ten, p.read_bytes(), nguon="camera", ep=True)
+def _vector_anh(du_lieu: bytes):
+    """Vector mặt to nhất trong ảnh, hoặc None nếu không dò ra."""
+    from services import nhin_nha, yolo_nha
+
+    try:
+        anh = yolo_nha.doc_anh(du_lieu)
+    except ValueError:
+        return None
+    may = nhin_nha.mat()
+    mat, _ = _mat_to_nhat(may, anh)
+    if mat is None:
+        return None
+    may.vector(anh, mat)
+    return mat.vector
+
+
+def bo_mau_gay_nham(vector, nguoi_id: str) -> str | None:
+    """Bỏ một ảnh mẫu của người vừa bị nhận nhầm, nếu ảnh đó giống mặt này.
+
+    Chỉ bỏ mẫu gần nhất và chỉ khi độ giống đạt ngưỡng «có thể». Mẫu không
+    liên quan thì giữ. Trả mã ảnh đã bỏ.
+    """
+    import numpy as np
+
+    from services import nhin_nha
+
+    v = np.asarray(vector, np.float32)
+    co_the, _ = nhin_nha.nguong_mat()
+    with _khoa:
+        rows = _db().execute(
+            "SELECT id, vector FROM mat WHERE nguoi_id = ? AND bo = ?",
+            (nguoi_id, nhin_nha.bo_mat().ma)).fetchall()
+    if not rows:
+        return None
+    diem = sorted(((float(np.dot(_vec(r["vector"]), v)) * 100.0, r["id"]) for r in rows),
+                  reverse=True)
+    d, ma = diem[0]
+    if d < co_the:
+        return None
+    xoa_mat(ma)
+    return ma
+
+
+def _gan_cum_vao_nguoi(ma: str, nguoi_id: str) -> tuple[int, str | None]:
+    """Chuyển mọi lượt của cụm sang người, rồi xoá cụm. Trả (số lượt, ảnh cụm)."""
     with _khoa:
         conn = _db()
-        n = conn.execute("UPDATE su_kien SET nguoi_id = ?, mat_la_id = NULL, loai = 'quen' "
-                         "WHERE mat_la_id = ?", (kq["nguoi_id"], ma)).rowcount
-        conn.execute("UPDATE nguoi SET so_lan = so_lan + ?, lan_cuoi = MAX(COALESCE(lan_cuoi, 0), ?) "
-                     "WHERE id = ?", (n, r["lan_cuoi"], kq["nguoi_id"]))
+        la = conn.execute("SELECT lan_cuoi, anh FROM mat_la WHERE id = ?", (ma,)).fetchone()
+        if la is None:
+            return 0, None
+        n = conn.execute(
+            "UPDATE su_kien SET nguoi_id = ?, mat_la_id = NULL, loai = 'quen' WHERE mat_la_id = ?",
+            (nguoi_id, ma)).rowcount
+        if n:
+            conn.execute(
+                "UPDATE nguoi SET so_lan = so_lan + ?, "
+                "lan_cuoi = MAX(COALESCE(lan_cuoi, 0), ?) WHERE id = ?",
+                (n, la["lan_cuoi"], nguoi_id))
         conn.execute("DELETE FROM mat_la WHERE id = ?", (ma,))
         conn.commit()
         _bo_bang()
-    _xoa_anh(r["anh"])
-    return {**kq, "so_luot": n}
+    return n, la["anh"]
+
+
+def xet_lai_mat_la() -> list[dict[str, Any]]:
+    """Cụm mặt khác nào giờ nhận chắc một người thì chuyển lịch sử sang người đó.
+
+    Không thêm ảnh cụm vào dữ liệu nhận diện. Ảnh camera chỉ vào sổ mẫu khi
+    chủ nhà bấm học.
+    """
+    with _khoa:
+        rows = list(_db().execute(
+            "SELECT id, vector FROM mat_la WHERE bo_qua = 0").fetchall())
+    ra = []
+    for r in rows:
+        k = khop(_vec(r["vector"]))
+        if k.get("loai") != "quen" or not k.get("nguoi_id"):
+            continue
+        n, rel = _gan_cum_vao_nguoi(r["id"], k["nguoi_id"])
+        if rel:
+            _xoa_anh(rel)
+        ra.append({"mat_la_id": r["id"], "ten": k["ten"], "so_luot": n})
+    if ra:
+        logger.info({"event": "so_mat_xet_lai_mat_la", "so": len(ra)})
+    return ra
+
+
+def chuyen_ve_khac(su_kien_id: int, *, hoc: bool = True) -> dict[str, Any]:
+    """Đưa một lượt lịch sử về «Mặt khác». Học thì bỏ mẫu của người cũ gây nhầm."""
+    with _khoa:
+        conn = _db()
+        r = conn.execute("SELECT nguoi_id, ts, anh FROM su_kien WHERE id = ?",
+                         (int(su_kien_id),)).fetchone()
+        if r is None:
+            raise LoiSoMat(f"Không có lượt gặp số {su_kien_id}.")
+        nguoi_cu = r["nguoi_id"]
+        if nguoi_cu:
+            conn.execute("UPDATE nguoi SET so_lan = MAX(0, so_lan - 1) WHERE id = ?", (nguoi_cu,))
+            conn.execute("UPDATE nguoi SET lan_cuoi = "
+                         "(SELECT MAX(ts) FROM su_kien WHERE nguoi_id = ? AND id != ?) "
+                         "WHERE id = ?", (nguoi_cu, int(su_kien_id), nguoi_cu))
+        conn.execute("UPDATE su_kien SET nguoi_id = NULL, mat_la_id = NULL, loai = 'la' "
+                     "WHERE id = ?", (int(su_kien_id),))
+        conn.commit()
+        _bo_bang()
+    bo_mau = None
+    if hoc and nguoi_cu and r["anh"]:
+        du_lieu = _doc_anh_su_kien(r["anh"])
+        vec = _vector_anh(du_lieu) if du_lieu else None
+        if vec is not None:
+            bo_mau = bo_mau_gay_nham(vec, nguoi_cu)
+    return {"nguoi_id": None, "ten": None, "da_day": False, "bo_mau": bo_mau}
+
+
+def dat_ten_mat_la(ma: str, ten: str, *, hoc: bool = True) -> dict[str, Any]:
+    """Mặt khác này là ``ten``.
+
+    ``hoc`` bật: ảnh cụm vào dữ liệu nhận diện rồi xét lại các cụm còn lại.
+    ``hoc`` tắt: chỉ đưa các lượt chụp vào lịch sử của người đó.
+    """
+    ten = " ".join(str(ten or "").split())
+    if not ten:
+        raise LoiSoMat("Chưa có tên người cho mặt này.")
+    r = mat_la(ma)
+    if r is None:
+        raise LoiSoMat(f"Không có mặt lạ mã «{ma}».")
+    kq: dict[str, Any] = {"nguoi_id": "", "ten": ten, "nguoi_moi": False, "so_mat": 0, "xet_lai": 0}
+    if hoc:
+        p = duong_anh(r["anh"])
+        if p is None:
+            raise LoiSoMat("Ảnh của mặt lạ này đã mất, không dạy được.")
+        # ep=True: chính chủ nhà vừa nói đây là ai — không hỏi lại «giống người khác».
+        kq = day(ten, p.read_bytes(), nguon="camera", ep=True)
+    else:
+        with _khoa:
+            conn = _db()
+            cu = _tim_nguoi_theo_ten(conn, ten)
+            moi = cu is None
+            nguoi_id = _ma() if moi else cu["id"]
+            if moi:
+                conn.execute("INSERT INTO nguoi (id, ten, tao_luc) VALUES (?, ?, ?)",
+                             (nguoi_id, ten, time.time()))
+                conn.commit()
+            kq = {"nguoi_id": nguoi_id, "ten": ten if moi else cu["ten"],
+                  "nguoi_moi": moi, "so_mat": 0, "xet_lai": 0}
+    # `day` có thể đã xét lại và chuyển cụm này. Còn thì chuyển nốt.
+    if mat_la(ma) is not None:
+        n, rel = _gan_cum_vao_nguoi(ma, kq["nguoi_id"])
+        if rel:
+            _xoa_anh(rel)
+        kq = {**kq, "so_luot": n}
+    else:
+        kq = {**kq, "so_luot": 0}
+    return kq
 
 
 def _reset_for_tests() -> None:

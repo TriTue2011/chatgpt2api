@@ -58,7 +58,7 @@ class _Nen(unittest.TestCase):
                               lambda anh, **kw: nhin_nha.KhungDaXem(1280, 720, [], list(self.mat))),
             mock.patch("services.thong_bao.gui",
                        lambda khoa, tin, anh_url="": self.gui.append((khoa, tin, anh_url)) or 1),
-            mock.patch.object(cc, "_luu_anh_bao", lambda anh, hop: "http://cong/images/x.jpg"),
+            mock.patch.object(cc, "_luu_anh_bao", lambda anh, hop, moc=None: "http://cong/images/x.jpg"),
             mock.patch.object(cc.time, "time", lambda: self.gio[0]),
         ]
         for x in self.p:
@@ -632,3 +632,45 @@ class PhanTichKhungDuPhongTests(unittest.TestCase):
         self.assertEqual(len(lan), 2)          # thử hộp Frigate rồi mới rơi về YOLO
         self.assertEqual(len(k.mat), 1)
         self.assertEqual(k.vat_the, hop_yolo)  # kết quả cuối là của YOLO
+
+
+class AnhMatSatTests(unittest.TestCase):
+    """Ảnh lưu cho lịch sử phải là mặt, không phải cả người."""
+
+    def test_cat_sat_hop_khong_mo_rong_thanh_ca_nguoi(self):
+        pytest.importorskip("cv2")
+        anh = np.zeros((1000, 1000, 3), np.uint8)
+        hop = [400, 300, 480, 400]          # mặt 80×100
+        ra = cc._vung_mat(anh, hop)
+        # Lề sổ mặt là 0,6 lần cạnh. Cả người cũ nới 1,2 và thêm 2 lần chiều cao.
+        self.assertLess(ra.shape[1], 200)
+        self.assertLess(ra.shape[0], 250)
+        self.assertGreater(ra.shape[0], 80)
+
+    def test_co_moc_thi_mat_day_khung_vuong(self):
+        pytest.importorskip("cv2")
+        from services.khuon_mat_nha import _MOC_CHUAN
+
+        anh = np.full((400, 400, 3), 40, np.uint8)
+        moc = np.asarray(_MOC_CHUAN, np.float32) + 100
+        ra = cc._vung_mat(anh, [100, 100, 220, 240], moc)
+        self.assertEqual(ra.shape, (256, 256, 3))
+
+
+class DoCuaSoTests(unittest.TestCase):
+    def test_anh_rong_khong_ra_mat_thi_do_trong_cua_so(self):
+        from services.khuon_mat_nha import Mat
+        from services.so_mat_nha import _mat_to_nhat
+
+        class May:
+            def do(self, anh):
+                if anh.shape[1] > 700:
+                    return []
+                moc = np.array([[10, 10], [30, 10], [20, 20], [12, 36], [28, 36]], np.float32)
+                return [Mat((8, 8, 40, 48), 0.9, moc)]
+
+        anh = np.zeros((900, 1200, 3), np.uint8)
+        mat, _ = _mat_to_nhat(May(), anh)
+        self.assertIsNotNone(mat)
+        # Cửa sổ đầu ở (0, 0): hộp dịch đúng bằng gốc cửa sổ.
+        self.assertEqual(mat.hop, (8, 8, 40, 48))

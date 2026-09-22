@@ -426,6 +426,55 @@ class SoMatTests(unittest.TestCase):
             self.sm.chuyen_mat("khong-co-mat-nay", "Lan")
         self.assertIn("khong-co-mat-nay", str(ng.exception))
 
+    def test_chi_sua_lich_su_khong_them_anh_mau(self):
+        a = self.sm.day("Việt", _anh(10))
+        b = self.sm.day("Lan", _anh(11))
+        import time as _t
+        sk = self.sm.ghi_su_kien("Cam cửa", "yolo", "quen", nguoi_id=a["nguoi_id"],
+                                 anh="http://x/images/2026/09/20/a.jpg", ts=_t.time() - 30)
+        kq = self.sm.chuyen_su_kien(sk["id"], "Lan", day_luon=False)
+        self.assertFalse(kq["da_day"])
+        self.assertEqual(len(self.sm.mat_cua(b["nguoi_id"])), 1)
+        con = {s["id"]: s for s in self.sm.su_kien_gan(24)}
+        self.assertEqual(con[sk["id"]]["nguoi_id"], b["nguoi_id"])
+
+    def test_chuyen_ve_khac_dua_luot_ra_khoi_nguoi(self):
+        import time as _t
+        a = self.sm.day("Việt", _anh(10))
+        sk = self.sm.ghi_su_kien("Cam cửa", "yolo", "quen", nguoi_id=a["nguoi_id"], ts=_t.time() - 20)
+        kq = self.sm.chuyen_ve_khac(sk["id"], hoc=False)
+        self.assertIsNone(kq["nguoi_id"])
+        con = {s["id"]: s for s in self.sm.su_kien_gan(24)}
+        self.assertIsNone(con[sk["id"]]["nguoi_id"])
+        self.assertEqual(con[sk["id"]]["loai"], "la")
+        self.assertEqual({n["id"]: n for n in self.sm.danh_sach_nguoi()}[a["nguoi_id"]]["so_lan"], 0)
+
+    def test_bo_mau_gay_nham_chi_bo_mau_giong_mat_vua_sua(self):
+        a = self.sm.day("Việt", _anh(10))
+        self.assertEqual(len(self.sm.mat_cua(a["nguoi_id"])), 1)
+        ma = self.sm.bo_mau_gay_nham(self.vec["buffalo_s"]["viet"], a["nguoi_id"])
+        self.assertTrue(ma)
+        self.assertEqual(self.sm.mat_cua(a["nguoi_id"]), [])
+        # Vector của người khác không đụng mẫu Việt.
+        self.sm.day("Việt", _anh(10))
+        self.assertIsNone(self.sm.bo_mau_gay_nham(self.vec["buffalo_s"]["lan"], a["nguoi_id"]))
+        self.assertEqual(len(self.sm.mat_cua(a["nguoi_id"])), 1)
+
+    def test_xet_lai_dua_cum_mat_khac_vao_lich_su_dung_ten(self):
+        """Sau khi có mẫu, cụm mặt khác đủ giống thì vào lịch sử, không vào sổ mẫu."""
+        import time as _t
+        a = self.sm.day("Việt", _anh(10))
+        self.assertEqual(len(self.sm.mat_cua(a["nguoi_id"])), 1)
+        anh = yn.doc_anh(_anh(10))
+        ma, _ = self.sm.gom_mat_la(self.vec["buffalo_s"]["viet"], anh, (10, 10, 90, 90), "Cam cửa")
+        sk = self.sm.ghi_su_kien("Cam cửa", "yolo", "la", mat_la_id=ma, ts=_t.time() - 15)
+        ra = self.sm.xet_lai_mat_la()
+        self.assertEqual([x["ten"] for x in ra], ["Việt"])
+        self.assertIsNone(self.sm.mat_la(ma))
+        con = {s["id"]: s for s in self.sm.su_kien_gan(24)}
+        self.assertEqual(con[sk["id"]]["nguoi_id"], a["nguoi_id"])
+        self.assertEqual(len(self.sm.mat_cua(a["nguoi_id"])), 1)
+
     def test_anh_tung_luot_gap_gom_theo_cum_moi_nhat_truoc_va_co_tran(self):
         """Cụm giữ một ảnh đại diện; muốn biết cụm có lẫn người phải xem từng lượt."""
         anh = yn.doc_anh(_anh(11))

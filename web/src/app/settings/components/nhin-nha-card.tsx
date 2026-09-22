@@ -302,8 +302,13 @@ export function NhinNhaCard() {
           {msg ? <span className="text-xs text-muted-foreground">{msg}</span> : null}
         </div>
 
-        {/* ── Ảnh khuôn mặt: mỗi người quen một tab, cuối là tab mặt khác ── */}
+        {/* ── 1. Dữ liệu nhận diện: ảnh mẫu dùng để so các lần chụp sau ── */}
         <div className="space-y-2">
+          <p className="text-sm font-medium">Dữ liệu nhận diện</p>
+          <p className="text-xs text-muted-foreground">
+            Chỉ những ảnh ở đây được dùng để nhận người. Ảnh camera chụp được nằm ở
+            lịch sử bên dưới, không tự vào sổ mẫu.
+          </p>
           <div className="flex flex-wrap gap-1">
             {nguoi.map((n) => (
               <Button key={n.id} size="sm" variant={tabHt === n.id ? "default" : "outline"}
@@ -316,10 +321,6 @@ export function NhinNhaCard() {
               Mặt khác ({matLa.length})
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">
-            Mở từng tab để soi có ảnh nào bị nhận nhầm. Thấy ảnh lạc chỗ thì chọn
-            «Chuyển sang…» ngay dưới ảnh đó — ảnh giữ nguyên, chỉ đổi chủ, không phải dạy lại.
-          </p>
           <div className="flex flex-wrap gap-2">
             {nguoi.filter((n) => n.id === tabHt).map((n) => (
               <div key={n.id} className="w-full rounded border border-border/70 p-2 space-y-2">
@@ -416,7 +417,7 @@ export function NhinNhaCard() {
           </div>
           <div className="rounded border border-dashed border-border/70 p-3 space-y-2">
             <p className="text-sm font-medium">
-              {nguoiHt ? `Thêm ảnh cho «${nguoiHt.ten}»` : "Dạy mặt mới"}
+              {nguoiHt ? `Thêm ảnh mẫu cho «${nguoiHt.ten}»` : "Dạy mặt mới vào dữ liệu nhận diện"}
             </p>
             <div className="flex flex-wrap items-center gap-2">
               {/* Đang ở tab của một người thì khỏi gõ lại tên — gõ sai một ký tự
@@ -495,15 +496,22 @@ export function NhinNhaCard() {
                   <Input autoFocus placeholder="Tên người mới" value={tenMoiLa[x.id] || ""}
                     onChange={(e) => setTenMoiLa({ ...tenMoiLa, [x.id]: e.target.value })} />
                 ) : null}
-                <div className="flex gap-1">
-                  <Button size="sm" variant="outline"
+                <div className="flex flex-col gap-1">
+                  <Button size="sm" variant="outline" className="h-7 text-[11px]"
                     disabled={!((tenLa[x.id] === "__moi__" ? tenMoiLa[x.id] : tenLa[x.id]) || "").trim()}
                     onClick={() => goi(() => request.post(`/api/nhin-nha/mat-la/${x.id}/dat-ten`,
-                      { ten: tenLa[x.id] === "__moi__" ? tenMoiLa[x.id] : tenLa[x.id] }),
-                      "Đã nhớ tên.")}>
-                    Đặt tên
+                      { ten: tenLa[x.id] === "__moi__" ? tenMoiLa[x.id] : tenLa[x.id], hoc: false }),
+                      "Đã đưa các ảnh chụp vào lịch sử, chưa thêm vào dữ liệu nhận diện.")}>
+                    Đưa vào lịch sử
                   </Button>
-                  <Button size="sm" variant="outline"
+                  <Button size="sm" variant="outline" className="h-7 text-[11px]"
+                    disabled={!((tenLa[x.id] === "__moi__" ? tenMoiLa[x.id] : tenLa[x.id]) || "").trim()}
+                    onClick={() => goi(() => request.post(`/api/nhin-nha/mat-la/${x.id}/dat-ten`,
+                      { ten: tenLa[x.id] === "__moi__" ? tenMoiLa[x.id] : tenLa[x.id], hoc: true }),
+                      (d) => `Đã thêm vào dữ liệu nhận diện và học lại.${d.xet_lai ? ` ${d.xet_lai} cụm mặt khác vừa khớp tên.` : ""}`)}>
+                    Thêm vào dữ liệu nhận diện
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-7 text-[11px]"
                     onClick={() => goi(() => request.post(`/api/nhin-nha/mat-la/${x.id}/thoi-hoi`),
                                        "Sẽ không hỏi về mặt này nữa.")}>
                     Đừng hỏi
@@ -515,29 +523,48 @@ export function NhinNhaCard() {
         </div>
         ) : null}
 
-        {/* ── Lịch sử nhận diện, chia theo TAB đang mở ──────────────────
-            Đây mới là chỗ soi được nhận nhầm: ảnh mẫu chỉ có vài tấm, còn lịch
-            sử là mọi lần máy ĐÃ kết luận ai là ai. */}
+        {/* ── 2. Ảnh thực tế camera chụp, máy so với dữ liệu nhận diện ── */}
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <p className="text-sm font-medium">
-              Lịch sử 7 ngày · {nguoiHt ? `máy bảo là «${nguoiHt.ten}»` : "máy không nhận ra ai"}
+              Lịch sử ảnh chụp · {nguoiHt ? `giống «${nguoiHt.ten}»` : "chưa nhận ra"}
               {" "}({lichSu.length} lượt)
             </p>
             <Button size="sm" variant="outline" onClick={() => void tai()}>Làm mới</Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Ảnh nào <b>không phải</b> người của tab này là một lần nhận nhầm — chọn «Đây là ai?»
-            ngay dưới ảnh để gán lại. Chỉ sửa đúng lượt đó, không đụng lượt khác.
+            Cả tuần: {suKien.filter((s) => s.nguoi_id).length} lượt đã nhận ra,{" "}
+            {suKien.filter((s) => !s.nguoi_id).length} lượt ở Mặt khác.
+            Nhận sai thì chuyển lịch sử sang người đúng hoặc về Mặt khác.
+            «Học lại» lấy chính ảnh đó: thêm vào dữ liệu của người đúng và bỏ mẫu
+            của người cũ nếu mẫu đó là thứ gây nhầm. Sau khi học, các cụm Mặt khác
+            đủ giống sẽ tự vào lịch sử của đúng tên.
           </p>
           {lichSu.length === 0 ? (
             <p className="text-xs text-muted-foreground">Chưa có lượt nào trong tab này.</p>
           ) : null}
           <div className="flex flex-wrap gap-2">
             {lichSu.map((s) => {
+              const veKhac = ganTen[s.id] === "__khac";
               const dich = ganTen[s.id] === "__moi__" ? (ganMoi[s.id] || "") : (ganTen[s.id] || "");
+              const tenDich = veKhac ? "" : dich.trim();
+              const bao = (hoc: boolean) => (d: { da_day?: boolean; day_loi?: string; bo_mau?: string; xet_lai?: number; ten?: string }) => {
+                if (veKhac) {
+                  return hoc
+                    ? `Đã chuyển về Mặt khác${d.bo_mau ? " và bỏ mẫu gây nhầm" : ""}.`
+                    : "Đã chuyển lịch sử về Mặt khác, chưa đụng dữ liệu nhận diện.";
+                }
+                const ten = tenDich || s.ten || "";
+                if (!hoc) return `Đã sửa lịch sử sang «${ten}», chưa học.`;
+                if (d.da_day) return `Đã học lại từ ảnh này cho «${ten}»${d.bo_mau ? ", bỏ mẫu gây nhầm" : ""}.`;
+                return `Đã gán «${ten}» — chưa học được mặt${d.day_loi ? ` (${d.day_loi})` : ""}.`;
+              };
+              const gui = (hoc: boolean) => goi(
+                () => request.post(`/api/nhin-nha/su-kien/${s.id}/chuyen`,
+                  veKhac ? { ve_khac: true, hoc } : { ten: tenDich || s.ten, hoc }),
+                bao(hoc));
               return (
-                <div key={s.id} className="w-32 space-y-1 rounded border border-border/70 p-1">
+                <div key={s.id} className="w-36 space-y-1 rounded border border-border/70 p-1">
                   {s.anh_nho ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={s.anh_nho} alt={`lượt ${s.id}`}
@@ -548,42 +575,49 @@ export function NhinNhaCard() {
                       lượt cũ,<br />không kèm ảnh
                     </div>
                   )}
+                  <p className="text-[11px] font-medium leading-tight">
+                    {s.ten ? `Nhận ra «${s.ten}»` : "Chưa nhận ra"}
+                    {s.loai === "co_the" ? " · chưa chắc" : ""}
+                  </p>
                   <p className="text-[10px] text-muted-foreground">
                     {luc(s.ts)} · {s.camera} · {s.nguon}
                     {s.loai === "co_the" ? ` · ngờ ${Math.round(s.do_giong)}/100` : ""}
+                    {s.loai === "quen" && s.do_giong ? ` · ${Math.round(s.do_giong)}/100` : ""}
                     {s.loai === "la" && s.mat_la_id ? ` · nhóm «${s.mat_la_id.slice(-4)}»` : ""}
                   </p>
                   <select
                     className="w-full rounded border border-border/70 bg-background px-1 py-0.5 text-[11px]"
                     value={ganTen[s.id] ?? ""}
                     onChange={(e) => setGanTen({ ...ganTen, [s.id]: e.target.value })}>
-                    <option value="">Đây là ai?</option>
+                    <option value="">{s.ten ? `Đang là «${s.ten}»` : "Chọn người"}</option>
                     {nguoi.map((k) => <option key={k.id} value={k.ten}>{k.ten}</option>)}
                     <option value="__moi__">➕ Người mới…</option>
+                    <option value="__khac">Mặt khác</option>
                   </select>
                   {ganTen[s.id] === "__moi__" ? (
                     <Input className="h-7 text-xs" placeholder="Tên người mới"
                       value={ganMoi[s.id] || ""}
                       onChange={(e) => setGanMoi({ ...ganMoi, [s.id]: e.target.value })} />
                   ) : null}
-                  {dich.trim() ? (
+                  {(tenDich || veKhac) ? (
+                    <>
+                      <Button size="sm" variant="outline" className="h-7 w-full text-[11px]"
+                        onClick={() => void gui(false)}>
+                        Chỉ chuyển lịch sử
+                      </Button>
+                      <Button size="sm" variant="outline" className="h-7 w-full text-[11px]"
+                        onClick={() => void gui(true)}>
+                        Chuyển và học lại
+                      </Button>
+                    </>
+                  ) : s.ten ? (
                     <Button size="sm" variant="outline" className="h-7 w-full text-[11px]"
-                      onClick={async () => {
-                        // Gán lượt nay còn DẠY luôn từ chính tấm ảnh ấy, nên lời báo
-                        // phải nói rõ học được hay không — báo chung chung thì chủ
-                        // máy tưởng đã học xong trong khi có thể ảnh không có mặt nào.
-                        await goi(() => request.post(`/api/nhin-nha/su-kien/${s.id}/chuyen`,
-                          { ten: dich.trim() }),
-                          (d) => d.da_day
-                            ? `Đã gán lượt này cho «${dich.trim()}» và học mặt từ chính ảnh này.`
-                            : `Đã gán lượt này cho «${dich.trim()}» — chưa học được mặt`
-                              + `${d.day_loi ? ` (${d.day_loi})` : ""}.`);
-                        setGanTen({ ...ganTen, [s.id]: "" });
-                        setGanMoi({ ...ganMoi, [s.id]: "" });
-                      }}>
-                      Gán lại
+                      onClick={() => void gui(true)}>
+                      Thêm vào dữ liệu «{s.ten}»
                     </Button>
-                  ) : null}
+                  ) : (
+                    <p className="text-[10px] text-muted-foreground">Chọn người, hoặc để ở Mặt khác.</p>
+                  )}
                 </div>
               );
             })}
