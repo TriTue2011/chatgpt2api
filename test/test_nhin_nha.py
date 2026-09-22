@@ -222,7 +222,7 @@ class SoMatTests(unittest.TestCase):
     def test_day_nguoi_moi_roi_them_mat_cung_ten_khong_dau(self):
         a = self.sm.day("Việt", _anh(10))
         self.assertTrue(a["nguoi_moi"])
-        b = self.sm.day("viet", _anh(10))
+        b = self.sm.day("viet", _anh(15))
         self.assertFalse(b["nguoi_moi"])
         self.assertEqual((b["nguoi_id"], b["so_mat"], b["ten"]), (a["nguoi_id"], 2, "Việt"))
 
@@ -331,10 +331,10 @@ class SoMatTests(unittest.TestCase):
                                  ts=_t.time() - 60)
         with mock.patch.object(self.sm, "_doc_anh_su_kien", return_value=_anh(11)):
             kq = self.sm.chuyen_su_kien(sk["id"], "Lan")
-        self.assertTrue(kq["da_day"], kq)
+        self.assertTrue(kq["trung"], kq)
         self.assertEqual(kq["nguoi_id"], b["nguoi_id"])
-        # Đã học thêm MỘT ảnh cho Lan, và lượt vẫn được gán đúng như cũ.
-        self.assertEqual(len(self.sm.mat_cua(b["nguoi_id"])), 2)
+        # Ảnh camera trùng mẫu Lan đang có thì không giữ bản thứ hai.
+        self.assertEqual(len(self.sm.mat_cua(b["nguoi_id"])), 1)
 
     def test_chuyen_su_kien_day_hong_thi_van_gan_xong(self):
         """Ảnh không có mặt nào thì học hỏng — nhưng việc gán đã xong, không được huỷ."""
@@ -361,7 +361,7 @@ class SoMatTests(unittest.TestCase):
     def test_xoa_mot_anh_mat_khong_dung_toi_nguoi(self):
         """Xoá đúng một ảnh xấu, không phải xoá cả người rồi dạy lại từ đầu."""
         a = self.sm.day("Việt", _anh(10))
-        self.sm.day("Việt", _anh(17))
+        self.sm.day("Việt", _anh(15))
         ds = self.sm.mat_cua(a["nguoi_id"])
         self.assertEqual(len(ds), 2)
         self.assertTrue(self.sm.xoa_mat(ds[0]["id"]))
@@ -458,6 +458,36 @@ class SoMatTests(unittest.TestCase):
         # Vector của người khác không đụng mẫu Việt.
         self.sm.day("Việt", _anh(10))
         self.assertIsNone(self.sm.bo_mau_gay_nham(self.vec["buffalo_s"]["lan"], a["nguoi_id"]))
+        self.assertEqual(len(self.sm.mat_cua(a["nguoi_id"])), 1)
+
+    def test_anh_khong_ra_mat_chi_tinh_lai_mot_lan(self):
+        """Ảnh cụm không còn mặt thì đánh dấu hỏng, không dò lại mỗi lần bấm."""
+        anh = yn.doc_anh(_anh(14))
+        self.sm.gom_mat_la(self.vec["buffalo_s"]["la"], anh, (10, 10, 40, 40), "Cam cửa")
+        self.sm._db().execute("UPDATE mat_la SET bo = 'cu'")
+        self.sm._db().commit()
+        calls = []
+        goc = self.may.do
+
+        def dem(anh, nguong=0.5):
+            calls.append(1)
+            return goc(anh, nguong)
+
+        self.may.do = dem
+        self.sm._bo_bang()
+        self.sm.khop(self.vec["buffalo_s"]["viet"])
+        self.assertEqual(len(calls), 1)
+        self.sm._bo_bang()
+        self.sm.khop(self.vec["buffalo_s"]["viet"])
+        self.assertEqual(len(calls), 1)
+        bo = self.sm._db().execute("SELECT bo FROM mat_la").fetchone()[0]
+        self.assertEqual(bo, "buffalo_s#hong")
+
+    def test_day_lan_hai_cung_anh_khong_giu_ban_trung(self):
+        a = self.sm.day("Việt", _anh(10))
+        b = self.sm.day("Việt", _anh(10))
+        self.assertTrue(b["trung"])
+        self.assertEqual(b["nguoi_id"], a["nguoi_id"])
         self.assertEqual(len(self.sm.mat_cua(a["nguoi_id"])), 1)
 
     def test_xet_lai_dua_cum_mat_khac_vao_lich_su_dung_ten(self):

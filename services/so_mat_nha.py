@@ -40,6 +40,9 @@ MAT_NHO_NHAT = 40
 #: Dạy từ ảnh nhiều mặt: mặt to nhất phải to gấp ngần này mặt thứ hai mới chắc
 #: là mặt người được nêu tên. Ngang nhau thì hỏi lại, không đoán.
 TO_GAP = 2.0
+#: Hai mẫu của cùng một người giống nhau từ mức này (0–100) thì là một mặt
+#: chụp lại, không giữ cả hai.
+NGUONG_TRUNG = 92.0
 #: Lề quanh hộp mặt khi cắt ảnh lưu — đủ rộng để dò lại mặt lúc đổi bộ model.
 _LE = 0.6
 
@@ -210,10 +213,14 @@ def _do_them_cua_so(may, anh):
     return thay
 
 
-def _mat_to_nhat(may, anh):
-    """Mặt to nhất (theo diện tích) và mặt cỡ thứ hai — cho bước dò lại."""
-    mats = list(may.do(anh))
-    if not mats:
+def _mat_to_nhat(may, anh, *, cua_so: bool = True):
+    """Mặt to nhất (theo diện tích) và mặt cỡ thứ hai — cho bước dò lại.
+
+    ``cua_so=False`` khi tính lại vector đã lưu: ảnh hỏng thì một lần dò là
+    đủ, không quét thêm mười hai cửa sổ cho mỗi dòng.
+    """
+    mats = list(may.do(anh)) if anh is not None else []
+    if not mats and cua_so and anh is not None:
         mats = _do_them_cua_so(may, anh)
     mats.sort(key=lambda m: -(m.rong * m.cao))
     return (mats[0] if mats else None), (mats[1] if len(mats) > 1 else None)
@@ -230,9 +237,15 @@ def _tinh_lai(conn: sqlite3.Connection, bang: str, may) -> int:
             anh = yolo_nha.doc_anh(p.read_bytes()) if p is not None else None
         except ValueError:
             anh = None
-        mat = _mat_to_nhat(may, anh)[0] if anh is not None else None
+        mat = _mat_to_nhat(may, anh, cua_so=False)[0] if anh is not None else None
         if mat is None:
             hong += 1
+            # Đánh dấu đúng bộ model này đã thử và hỏng. Lần nạp sau không dò
+            # lại cùng ảnh — đo trên máy chủ 23/09/2026: 22 cụm mặt khác hỏng
+            # bị dò lại mỗi lần bấm, nút xong mà việc không chạy.
+            conn.execute(
+                f"UPDATE {bang} SET bo = ? WHERE id = ?",  # noqa: S608
+                (f"{may.bo.ma}#hong", r["id"]))
             logger.warning({"event": "so_mat_tinh_lai_hong", "bang": bang, "id": r["id"]})
             continue
         may.vector(anh, mat)
@@ -254,8 +267,13 @@ def _nap_bang() -> dict[str, Any]:
         if _bang is not None and _bang["bo"] == bo:
             return _bang
         conn = _db()
-        lech = conn.execute("SELECT COUNT(*) FROM mat WHERE bo != ?", (bo,)).fetchone()[0]
-        lech_la = conn.execute("SELECT COUNT(*) FROM mat_la WHERE bo != ?", (bo,)).fetchone()[0]
+        # Dòng ``bộ#hong`` là ảnh đã thử với đúng bộ này và không ra mặt.
+        lech = conn.execute(
+            "SELECT COUNT(*) FROM mat WHERE bo != ? AND bo != ?",
+            (bo, f"{bo}#hong")).fetchone()[0]
+        lech_la = conn.execute(
+            "SELECT COUNT(*) FROM mat_la WHERE bo != ? AND bo != ?",
+            (bo, f"{bo}#hong")).fetchone()[0]
         if lech or lech_la:
             may = nhin_nha.mat()
             hong = _tinh_lai(conn, "mat", may) + _tinh_lai(conn, "mat_la", may)
@@ -328,7 +346,33 @@ def _them_mat(conn: sqlite3.Connection, nguoi_id: str, may, anh, mat, nguon: str
     return ma
 
 
-def day(ten: str, du_lieu_anh: bytes, *, nguon: str = "chat", ep: bool = False) -> dict[str, Any]:
+def _bo_ban_trung(conn: sqlite3.Connection, nguoi_id: str) -> list[str]:
+    """Xoá mẫu trùng của một người. Giữ bản cũ hơn, bỏ bản thêm sau.
+
+    Trả đường ảnh của các mẫu đã xoá để người gọi xoá file.
+    """
+    import numpy as np
+
+    from services import nhin_nha
+
+    rows = conn.execute(
+        "SELECT id, vector, anh FROM mat WHERE nguoi_id = ? AND bo = ? ORDER BY tao_luc",
+        (nguoi_id, nhin_nha.bo_mat().ma)).fetchall()
+    giu: list = []
+    bo: list[str] = []
+    for r in rows:
+        v = _vec(r["vector"])
+        if any(float(np.dot(v, u)) * 100.0 >= NGUONG_TRUNG for u in giu):
+            conn.execute("DELETE FROM mat WHERE id = ?", (r["id"],))
+            if r["anh"]:
+                bo.append(r["anh"])
+        else:
+            giu.append(v)
+    return bo
+
+
+def day(ten: str, du_lieu_anh: bytes, *, nguon: str = "chat", ep: bool = False,
+        xet_lai: bool = True) -> dict[str, Any]:
     """Dạy: ảnh này là mặt của ``ten``. Người chưa có thì tạo, có rồi thì thêm mặt.
 
     Ném ``LoiSoMat`` khi ảnh không dạy được — không thấy mặt, mặt quá nhỏ, nhiều
@@ -372,17 +416,25 @@ def day(ten: str, du_lieu_anh: bytes, *, nguon: str = "chat", ep: bool = False) 
         if moi:
             conn.execute("INSERT INTO nguoi (id, ten, tao_luc) VALUES (?, ?, ?)",
                          (nguoi_id, ten, time.time()))
+        truoc = conn.execute("SELECT COUNT(*) FROM mat WHERE nguoi_id = ?",
+                             (nguoi_id,)).fetchone()[0]
         _them_mat(conn, nguoi_id, may, anh, mat, nguon)
+        anh_trung = _bo_ban_trung(conn, nguoi_id)
         conn.commit()
         so_mat = conn.execute("SELECT COUNT(*) FROM mat WHERE nguoi_id = ?",
                               (nguoi_id,)).fetchone()[0]
         _bo_bang()
-    # Vừa thêm mẫu thì các cụm «mặt khác» có thể đã đủ giống người này.
-    xet = xet_lai_mat_la()
+    for rel in anh_trung:
+        _xoa_anh(rel)
+    trung = so_mat <= truoc
+    # Chỉ xét lại mặt khác khi sổ mẫu thực sự đổi. Ảnh trùng không đổi kết quả
+    # mà quét hết cụm làm nút bấm đứng lâu rồi tưởng là không xử lý.
+    xet = xet_lai_mat_la() if xet_lai and not trung else []
     logger.info({"event": "so_mat_day", "nguoi_id": nguoi_id, "moi": moi,
-                 "so_mat": so_mat, "nguon": nguon, "xet_lai": len(xet)})
+                 "so_mat": so_mat, "nguon": nguon, "trung": trung, "xet_lai": len(xet)})
     return {"nguoi_id": nguoi_id, "ten": ten if moi else cu["ten"], "nguoi_moi": moi,
-            "so_mat": so_mat, "diem_do": round(mat.diem, 3), "xet_lai": len(xet)}
+            "so_mat": so_mat, "diem_do": round(mat.diem, 3), "trung": trung,
+            "xet_lai": len(xet)}
 
 
 def nhan_dien(du_lieu_anh: bytes) -> dict[str, Any]:
@@ -664,16 +716,17 @@ def chuyen_su_kien(su_kien_id: int, ten: str, *, day_luon: bool = True) -> dict[
     # `day_luon` tách lịch sử khỏi dữ liệu nhận diện. Tắt thì chỉ sửa dòng lịch
     # sử. Bật thì ảnh này vào mẫu của người đúng, và mẫu của người cũ nào đang
     # kéo nhầm mặt này thì bỏ — đó là lý do lần sau còn nhận sai.
-    da_day, day_loi, bo_mau = False, "", None
+    da_day, day_loi, bo_mau, trung = False, "", None, False
     if day_luon and r["anh"]:
         try:
             du_lieu = _doc_anh_su_kien(r["anh"])
             if du_lieu is None:
                 day_loi = "không đọc được ảnh của lượt này"
             else:
-                day(ten_that, du_lieu, nguon="camera", ep=True)
-                da_day = True
-                if nguoi_cu and nguoi_cu != nguoi_id:
+                hoc = day(ten_that, du_lieu, nguon="camera", ep=True)
+                trung = bool(hoc.get("trung"))
+                da_day = not trung
+                if da_day and nguoi_cu and nguoi_cu != nguoi_id:
                     vec = _vector_anh(du_lieu)
                     if vec is not None:
                         bo_mau = bo_mau_gay_nham(vec, nguoi_cu)
@@ -681,9 +734,9 @@ def chuyen_su_kien(su_kien_id: int, ten: str, *, day_luon: bool = True) -> dict[
             day_loi = str(exc)[:120]
             logger.info({"event": "so_mat_chuyen_su_kien_day_loi", "loi": day_loi})
     logger.info({"event": "so_mat_chuyen_su_kien", "nguoi_moi": moi, "da_day": da_day,
-                 "bo_mau": bo_mau})
+                 "trung": trung, "bo_mau": bo_mau})
     return {"nguoi_id": nguoi_id, "ten": ten_that, "nguoi_moi": moi,
-            "da_day": da_day, "day_loi": day_loi, "bo_mau": bo_mau}
+            "da_day": da_day, "day_loi": day_loi, "bo_mau": bo_mau, "trung": trung}
 
 
 def su_kien_gan(so_gio: float = 24.0, *, camera: str = "", nguoi_id: str = "",
@@ -836,21 +889,54 @@ def _gan_cum_vao_nguoi(ma: str, nguoi_id: str) -> tuple[int, str | None]:
 def xet_lai_mat_la() -> list[dict[str, Any]]:
     """Cụm mặt khác nào giờ nhận chắc một người thì chuyển lịch sử sang người đó.
 
-    Không thêm ảnh cụm vào dữ liệu nhận diện. Ảnh camera chỉ vào sổ mẫu khi
-    chủ nhà bấm học.
+    So một lần với cả sổ mẫu, ghi một lần. Không thêm ảnh cụm vào dữ liệu
+    nhận diện — ảnh camera chỉ vào sổ mẫu khi chủ nhà bấm học.
     """
+    import numpy as np
+
+    from services import nhin_nha
+
+    bang = _nap_bang()
+    if len(bang["nguoi_id"]) == 0:
+        return []
+    _, chac = nhin_nha.nguong_mat()
     with _khoa:
         rows = list(_db().execute(
             "SELECT id, vector FROM mat_la WHERE bo_qua = 0").fetchall())
-    ra = []
-    for r in rows:
-        k = khop(_vec(r["vector"]))
-        if k.get("loai") != "quen" or not k.get("nguoi_id"):
-            continue
-        n, rel = _gan_cum_vao_nguoi(r["id"], k["nguoi_id"])
-        if rel:
-            _xoa_anh(rel)
-        ra.append({"mat_la_id": r["id"], "ten": k["ten"], "so_luot": n})
+    if not rows:
+        return []
+    mau = np.vstack([_vec(r["vector"]) for r in rows])
+    diem = np.clip(bang["ma_tran"] @ mau.T, 0.0, None) * 100.0
+    chon = diem.argmax(axis=0)
+    cao = diem.max(axis=0)
+    viec = [(rows[j]["id"], bang["nguoi_id"][int(chon[j])], bang["ten"][int(chon[j])])
+            for j in range(len(rows)) if float(cao[j]) >= chac]
+    if not viec:
+        return []
+    ra: list[dict[str, Any]] = []
+    anh_xoa: list[str] = []
+    with _khoa:
+        conn = _db()
+        for ma, nguoi_id, ten in viec:
+            la = conn.execute("SELECT lan_cuoi, anh FROM mat_la WHERE id = ?", (ma,)).fetchone()
+            if la is None:
+                continue
+            n = conn.execute(
+                "UPDATE su_kien SET nguoi_id = ?, mat_la_id = NULL, loai = 'quen' "
+                "WHERE mat_la_id = ?", (nguoi_id, ma)).rowcount
+            if n:
+                conn.execute(
+                    "UPDATE nguoi SET so_lan = so_lan + ?, "
+                    "lan_cuoi = MAX(COALESCE(lan_cuoi, 0), ?) WHERE id = ?",
+                    (n, la["lan_cuoi"], nguoi_id))
+            conn.execute("DELETE FROM mat_la WHERE id = ?", (ma,))
+            if la["anh"]:
+                anh_xoa.append(la["anh"])
+            ra.append({"mat_la_id": ma, "ten": ten, "so_luot": n})
+        conn.commit()
+        _bo_bang()
+    for rel in anh_xoa:
+        _xoa_anh(rel)
     if ra:
         logger.info({"event": "so_mat_xet_lai_mat_la", "so": len(ra)})
     return ra
@@ -901,7 +987,7 @@ def dat_ten_mat_la(ma: str, ten: str, *, hoc: bool = True) -> dict[str, Any]:
         if p is None:
             raise LoiSoMat("Ảnh của mặt lạ này đã mất, không dạy được.")
         # ep=True: chính chủ nhà vừa nói đây là ai — không hỏi lại «giống người khác».
-        kq = day(ten, p.read_bytes(), nguon="camera", ep=True)
+        kq = day(ten, p.read_bytes(), nguon="camera", ep=True, xet_lai=False)
     else:
         with _khoa:
             conn = _db()
@@ -922,6 +1008,8 @@ def dat_ten_mat_la(ma: str, ten: str, *, hoc: bool = True) -> dict[str, Any]:
         kq = {**kq, "so_luot": n}
     else:
         kq = {**kq, "so_luot": 0}
+    if hoc and not kq.get("trung"):
+        kq = {**kq, "xet_lai": len(xet_lai_mat_la())}
     return kq
 
 

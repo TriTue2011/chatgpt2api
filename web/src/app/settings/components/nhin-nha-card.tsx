@@ -508,7 +508,9 @@ export function NhinNhaCard() {
                     disabled={!((tenLa[x.id] === "__moi__" ? tenMoiLa[x.id] : tenLa[x.id]) || "").trim()}
                     onClick={() => goi(() => request.post(`/api/nhin-nha/mat-la/${x.id}/dat-ten`,
                       { ten: tenLa[x.id] === "__moi__" ? tenMoiLa[x.id] : tenLa[x.id], hoc: true }),
-                      (d) => `Đã thêm vào dữ liệu nhận diện và học lại.${d.xet_lai ? ` ${d.xet_lai} cụm mặt khác vừa khớp tên.` : ""}`)}>
+                      (d) => d.trung
+                        ? "Ảnh này đã có trong dữ liệu nhận diện, không thêm bản trùng."
+                        : `Đã thêm vào dữ liệu nhận diện và học lại.${d.xet_lai ? ` ${d.xet_lai} cụm Mặt khác vừa vào đúng tên.` : ""}`}>
                     Thêm vào dữ liệu nhận diện
                   </Button>
                   <Button size="sm" variant="outline" className="h-7 text-[11px]"
@@ -556,7 +558,8 @@ export function NhinNhaCard() {
                 }
                 const ten = tenDich || s.ten || "";
                 if (!hoc) return `Đã sửa lịch sử sang «${ten}», chưa học.`;
-                if (d.da_day) return `Đã học lại từ ảnh này cho «${ten}»${d.bo_mau ? ", bỏ mẫu gây nhầm" : ""}.`;
+                if (d.trung) return `Ảnh này đã có trong dữ liệu của «${ten}», không thêm bản trùng.`;
+                if (d.da_day) return `Đã học lại từ ảnh này cho «${ten}»${d.bo_mau ? ", bỏ mẫu gây nhầm" : ""}${d.xet_lai ? `. ${d.xet_lai} cụm Mặt khác vừa vào đúng tên.` : "."}`;
                 return `Đã gán «${ten}» — chưa học được mặt${d.day_loi ? ` (${d.day_loi})` : ""}.`;
               };
               const gui = (hoc: boolean) => goi(
