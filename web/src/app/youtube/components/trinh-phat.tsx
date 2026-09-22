@@ -1012,17 +1012,26 @@ export function TrinhPhat() {
   // trình duyệt từ chối phát): khung tự giữ tiếng lại, dừng và bật tiếng để một chạm vào
   // video là phát có tiếng. Cứ bám theo tiếng câm thì chạm phát trong khung là bị dừng lại
   // (chủ máy 15/09/2026, card HA: "Kích vào play trên khung video thì giật rồi dừng").
+  // Chờ nửa giây rồi xét lại phần tử: Chrome Android từ chối play() một lúc rồi vẫn phát
+  // (22/09/2026). Đang có dữ liệu hoặc đang chạy thì không cắt.
   const coNghe = !!nghe;
   const tiengMayTuChoi = !!mayTrangThai.tuChoi;
   useEffect(() => {
     if (!video?.theoMay || video.hinh || (coNghe && !tiengMayTuChoi)) return;
-    if (coNghe) mayNghe.dung();
-    tiengMayHong.current = true;
-    nhung.lenh("pauseVideo");
-    nhung.lenh("unMute");
-    setVideo({ ...video, theoMay: false, ngheTrenMay: true });
+    const hen = setTimeout(() => {
+      const tt = mayNghe.layTrangThai();
+      const a = mayNghe.amThat();
+      if (tt.bai && !tt.tuChoi) return;
+      if (a && !a.error && (a.readyState >= 2 || !a.paused)) return;
+      if (tt.bai) mayNghe.dung();
+      tiengMayHong.current = true;
+      nhung.lenh("pauseVideo");
+      nhung.lenh("unMute");
+      setVideo((v) => (v?.theoMay ? { ...v, theoMay: false, ngheTrenMay: true } : v));
+    }, 500);
+    return () => clearTimeout(hen);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [coNghe, tiengMayTuChoi, video?.theoMay]);
+  }, [coNghe, tiengMayTuChoi, video?.theoMay, video?.hinh]);
 
   // Tải thẳng hình quá 8 giây chưa có hình: coi như không tải thẳng được.
   const giaiDoanHinh = video?.hinh?.trangThai;
@@ -1035,10 +1044,10 @@ export function TrinhPhat() {
   const coDieuKhien = loaPhien.some((t) => t.trang_thai !== "unavailable" && (t.tam_dung || t.dung));
   const rap = !!video && cheDo === "rap";
 
-  // Cùng bố cục thẻ: video rồi loa bên trái, danh sách bên phải.
-  // Khung video không quá 80% bề ngang.
+  // Cùng bố cục thẻ: video rồi loa bên trái, danh sách bên phải, hai cột ngang nhau.
+  // Cột 80% đẩy cột tìm xuống dưới 20% và thông báo lỗi che hết ô tìm.
   return (
-    <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,80%)_minmax(240px,1fr)] lg:grid-rows-[auto_auto]">
+    <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:grid-rows-[auto_auto]">
       <DangPhat
         className={cn("min-w-0", rap ? "lg:col-span-2" : "lg:col-start-1 lg:row-start-1")}
         phien={phienXem}

@@ -19,6 +19,7 @@
 import { toast } from "sonner";
 
 import { type BaiHat, goi, TEN_NGUON } from "./lib";
+import { cachXuLyTuChoi } from "./tu-choi-phat";
 
 export type Hang = { items: BaiHat[]; index: number };
 /** `tuChoi` = lý do trình duyệt không phát tiếng bài đang nghe ("" = không có). */
@@ -35,6 +36,8 @@ const TRONG: TrangThaiNghe = { bai: null, hang: null, chay: false, cungLoa: fals
 let am: HTMLAudioElement | null = null;
 let trangThai: TrangThaiNghe = TRONG;
 let luot = 0;
+// Tăng mỗi lần đổi nguồn. Sự kiện `error` của nguồn cũ tới muộn thì bỏ.
+let lanNguon = 0;
 let mucCungLoa = "";
 let dungKhiAn = false;
 let henAn: ReturnType<typeof setTimeout> | undefined;
@@ -96,9 +99,17 @@ function theAm(): HTMLAudioElement {
     if (amThat() && trangThai.bai && !trangThai.cungLoa) chuyen(1);
   });
   a.addEventListener("error", () => {
-    if (!amThat()) return;
-    dat({ tuChoi: `MediaError ${a.error?.code ?? "?"}` });
-    toast.error(`Không phát được bài này trên máy này (mã lỗi ${a.error?.code ?? "?"}).`);
+    const ma = a.error?.code;
+    // 1 = MEDIA_ERR_ABORTED: đổi nguồn thì trình duyệt huỷ lượt cũ, không phải hỏng.
+    if (!ma || ma === 1) return;
+    const lan = lanNguon;
+    // Chờ một nhịp. Chrome Android báo lỗi rồi vẫn phát được; chỉ kết luận khi
+    // lỗi còn đó và vẫn là nguồn này.
+    setTimeout(() => {
+      if (lan !== lanNguon || !amThat() || !a.error || a.error.code === 1) return;
+      dat({ tuChoi: `MediaError ${a.error.code}` });
+      toast.error(`Không phát được bài này trên máy này (mã lỗi ${a.error.code}).`);
+    }, 400);
   });
   // Nút "Nghe khi tắt màn hình" đang tắt: trang bị ẩn thì dừng, mở lại thì phát tiếp —
   // chỉ phát tiếp những gì chính đoạn này đã dừng.
@@ -196,15 +207,49 @@ async function linkSan(bai: BaiHat): Promise<{ url: string } | null> {
 /** Đặt nguồn rồi phát, vào đúng giây bằng mảnh địa chỉ `#t=` — không chờ
  *  `loadedmetadata` rồi mới tua, vì cú tua muộn ấy còn đè lên vị trí mới hơn mà vòng
  *  canh vừa đặt (dựng lại được trong Chrome 21/09/2026: tiếng nhảy lùi hai giây). */
-function datNguon(a: HTMLAudioElement, url: string, batDau: number) {
+function datNguon(a: HTMLAudioElement, url: string, batDau: number, goiY?: string) {
+  lanNguon++;
   a.src = batDau >= 1 ? `${url}#t=${Math.floor(batDau)}` : url;
-  a.play().catch((e) => tuChoiPhat(e));
+  // Gán `src` chưa xoá `error` của nguồn cũ trong cùng lượt. Không gọi `load()`
+  // thì `play()` nhìn lỗi cũ và từ chối NotSupportedError dù nguồn mới phát được.
+  a.load();
+  phatHoacThuLai(a, goiY);
 }
 
-/** play() bị từ chối. AbortError chỉ là bài mới hoặc lệnh dừng chen ngang, không phải lỗi. */
+/** play() bị từ chối. NotSupportedError lúc nguồn chưa có lỗi thì thử lại khi đã
+ *  có dữ liệu — xem `cachXuLyTuChoi`. */
+function phatHoacThuLai(a: HTMLAudioElement, goiY?: string, daThuLai = false) {
+  const lan = lanNguon;
+  void a.play().catch((e: unknown) => {
+    if (lan !== lanNguon) return;
+    const ten = e instanceof DOMException ? e.name : "Error";
+    const cach = cachXuLyTuChoi(ten, !!a.error, daThuLai);
+    if (cach === "bo") return;
+    if (cach === "lai") {
+      let xong = false;
+      const lai = () => {
+        if (xong) return;
+        xong = true;
+        a.removeEventListener("loadeddata", lai);
+        a.removeEventListener("canplay", lai);
+        if (lan !== lanNguon || !amThat()) return;
+        phatHoacThuLai(a, goiY, true);
+      };
+      if (a.readyState >= 2) lai();
+      else {
+        a.addEventListener("loadeddata", lai);
+        a.addEventListener("canplay", lai);
+      }
+      return;
+    }
+    tuChoiPhat(e, goiY);
+  });
+}
+
+/** play() bị từ chối và đây là kết luận (không phải lượt đổi nguồn). */
 function tuChoiPhat(e: unknown, goiY = "bấm ▶ để nghe") {
   const ten = e instanceof DOMException ? e.name : "Error";
-  if (ten === "AbortError") return;
+  if (cachXuLyTuChoi(ten, true, true) !== "bao") return;
   dat({ tuChoi: ten });
   if (ten === "NotAllowedError") toast.message(`Trình duyệt chặn tự phát có tiếng — ${goiY}.`);
   else toast.error(`Máy này không phát được tiếng bài này (${ten}).`);
@@ -255,12 +300,13 @@ export function chuyen(buoc: number): boolean {
 export function phatTamDung() {
   const a = amThat();
   if (!a) return;
-  if (a.paused) void a.play().catch((e) => tuChoiPhat(e));
+  if (a.paused) phatHoacThuLai(a);
   else a.pause();
 }
 
 function tatAm() {
   luot++;
+  lanNguon++;
   mucCungLoa = "";
   if (am) {
     am.pause();
@@ -325,6 +371,5 @@ export async function taiCungLoa(bai: BaiHat, batDau = 0): Promise<void> {
   /* Vào đúng chỗ NGAY TRONG ĐỊA CHỈ (`#t=`), đừng chờ `loadedmetadata` rồi mới tua: cú
      tua muộn ấy còn đè lên vị trí mới hơn mà vòng canh vừa đặt — dựng lại được trong
      Chrome 21/09/2026, tiếng nhảy lùi hai giây ngay khi vừa bắt đầu. */
-  a.src = batDau >= 1 ? `${r.url}#t=${Math.floor(batDau)}` : r.url;
-  a.play().catch((e) => tuChoiPhat(e, "bấm lại nút nghe trên máy này"));
+  datNguon(a, r.url, batDau, "bấm lại nút nghe trên máy này");
 }
