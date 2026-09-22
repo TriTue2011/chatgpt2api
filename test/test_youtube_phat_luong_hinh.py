@@ -47,8 +47,11 @@ class ChonLuongHinhTest(unittest.TestCase):
         r = self.giai("Xruhj0zOI7A:1080")
         self.assertEqual((GV.format(137), "video/mp4", 1080, 2806), (r["url"], r["content_type"], r["height"], r["bitrate_kbps"]))
         self.assertEqual((GV.format(136), 720), (self.giai("Xruhj0zOI7A:720")["url"], self.giai("Xruhj0zOI7A:720")["height"]))
-        # Không có avc1 ở độ cao đó thì lấy vp9 (webm).
-        chi_vp9 = {"formats": [f for f in TROT_TIN["formats"] if not f["vcodec"].startswith("avc1")]}
+        # vp9 1080 không được thắng avc1 720: iPhone không giải vp9.
+        lech = {"formats": [dinh_dang(248, "webm", "vp9", 1080, 2014), dinh_dang(136, "mp4", "avc1.4d401f", 720, 1002)]}
+        self.assertEqual((GV.format(136), 720), (self.giai("Xruhj0zOI7A:1080", lech)["url"], self.giai("Xruhj0zOI7A:1080", lech)["height"]))
+        # Không có avc1 thì mới lấy vp9 (webm).
+        chi_vp9 = {"formats": [f for f in TROT_TIN["formats"] if not str(f["vcodec"]).startswith("avc1")]}
         self.assertEqual((GV.format(247), "video/webm"), (lambda x: (x["url"], x["content_type"]))(self.giai("Xruhj0zOI7A:720", chi_vp9)))
 
     def test_video_goc_480p_thi_lay_480p_va_khong_co_hinh_thi_bao_loi(self) -> None:

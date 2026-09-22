@@ -614,7 +614,11 @@ def _youtube_video_format(info: dict, max_height: int) -> dict:
         candidates.append((height, rank, item.get("acodec") in (None, "none"), float(item.get("tbr") or 0), item))
     if not candidates:
         raise StreamUnavailableError("unsupported_stream_format")
-    return max(candidates, key=lambda c: c[:4])[4]
+    # H.264 phát được trên iPhone, Chrome và Android. vp9 1080 cao hơn nhưng
+    # iPhone không giải, nên bài chỉ có vp9 ở 1080 mà avc1 ở 720 thì lấy avc1.
+    # Không có avc1 thì mới lấy mã còn lại.
+    avc = [c for c in candidates if str(c[4].get("vcodec") or "").lower().startswith("avc1")]
+    return max(avc or candidates, key=lambda c: c[:4])[4]
 
 
 def resolve_youtube_video(target: str, *, timeout: int = 20, extractor=extract_with_yt_dlp) -> dict:
