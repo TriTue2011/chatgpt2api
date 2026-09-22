@@ -614,6 +614,22 @@ def tts_cache_mb() -> int:
         return 64
 
 
+def tts_paragraph_silence_ms() -> int:
+    """Khoảng lặng giữa hai đoạn văn (xuống dòng). Dài hơn nghỉ giữa hai câu.
+
+    Lấy từ wyoming-vietnamese (`TTS_PARAGRAPH_SILENCE_MS`, mặc định 600).
+    Câu trong cùng một đoạn vẫn dùng `sentence_silence_ms`. Đặt 0 thì xuống
+    dòng nghỉ bằng nghỉ giữa câu.
+    """
+    raw = _sub("tts").get("paragraph_silence_ms")
+    if raw is None or str(raw).strip() == "":
+        return 600
+    try:
+        return max(0, min(int(raw), 3000))
+    except (TypeError, ValueError):
+        return 600
+
+
 def tts_sentence_silence_ms() -> int:
     """Khoảng lặng chèn GIỮA hai câu. 0 = tắt (đọc dính liền).
 

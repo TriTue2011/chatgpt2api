@@ -189,6 +189,29 @@ class ClauseSplitTests(unittest.TestCase):
         parts = engines._split_clauses("Vâng, tôi đã bật đèn phòng khách rồi.")
         self.assertEqual(len(parts), 1)      # "Vâng," quá ngắn → gộp
 
+    def test_spaced_dash_is_a_clause_hyphenated_word_is_not(self) -> None:
+        # "Wi-Fi" dính chữ. "Sài Gòn - Hà Nội" có khoảng trắng nên là hai vế.
+        mot = "Mạng Wi-Fi trong nhà hôm nay đang chậm hơn mọi ngày."
+        self.assertEqual(engines._split_clauses(mot), [mot])
+        hai = engines._split_clauses(
+            "Từ Sài Gòn đi ra Hà Nội bằng tàu, chặng này khá dài.")
+        # phẩy vẫn cắt; gạch nối trong Wi-Fi thì không.
+        gach = engines._split_clauses(
+            "Đoạn đường Sài Gòn - Hà Nội mất khoảng một ngày đêm.")
+        self.assertEqual(len(gach), 2)
+        self.assertTrue(gach[0].rstrip().endswith("-"))
+        self.assertGreaterEqual(len(hai), 1)
+
+    def test_newline_is_a_paragraph_not_a_sentence(self) -> None:
+        text = ("Đoạn đầu đủ dài để đứng một mình.\n\n"
+                "Đoạn sau cũng đủ dài để đứng một mình.")
+        kinds = [k for _, k in engines._split_segments(text, clause_ms=0)]
+        self.assertEqual(kinds, ["paragraph", "sentence"])
+
+    def test_period_inside_a_number_is_not_a_sentence(self) -> None:
+        text = "Giá niêm yết là 1.000 đồng cho mỗi suất ăn trưa hôm nay."
+        self.assertEqual(len(engines._split_sentences(text)), 1)
+
     def test_segments_mark_clause_and_sentence_boundaries(self) -> None:
         text = "Hôm nay trời rất đẹp, nắng vàng rực rỡ. Chúng ta đi dạo nhé."
         kinds = [k for _, k in engines._split_segments(text, clause_ms=180)]

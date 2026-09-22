@@ -14,6 +14,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import queue
 import socket
 import subprocess
 import tempfile
@@ -447,20 +448,27 @@ def synthesize_da_ngu(text: str, lang: str, sid: int = -1) -> bytes:
     return _pcm_to_wav(_float_to_pcm16(samples), int(audio.sample_rate), 2, 1)
 
 
-def _kokoro_tts(text: str, voice: str) -> bytes:
-    """Giọng "kokoro:<tên>" → WAV 24 kHz (chỉ đọc tiếng Anh)."""
+def _kokoro_cau(text: str, voice: str):
+    """Một lần gọi Kokoro tiếng Anh, trả từng câu qua callback sherpa."""
     tts = _get_kokoro()
     name = voice[len(vcfg.KOKORO_PREFIX):].strip() \
         if voice.startswith(vcfg.KOKORO_PREFIX) else ""
-    with _kokoro_lock:
-        audio = tts.generate(text, sid=vcfg.kokoro_sid(name), speed=1.0)
-    samples = audio.samples or []
-    if not samples:
+    sid = vcfg.kokoro_sid(name)
+
+    def chay(cb):
+        with _kokoro_lock:
+            return tts.generate(text, sid=sid, speed=1.0, callback=cb)
+
+    yield from _tu_callback(chay)
+
+
+def _kokoro_tts(text: str, voice: str) -> bytes:
+    """Giọng "kokoro:<tên>" → WAV 24 kHz (chỉ đọc tiếng Anh)."""
+    khuc = list(_phat_cau(text, 24000, lambda doan: _kokoro_cau(doan, voice), chen_nghi=False))
+    pcm = b"".join(buf for _r, buf in khuc)
+    if not pcm:
         raise VoiceError("Kokoro không tạo được âm thanh.")
-    # numpy nhanh hơn vòng lặp Python từng sample ~15x (giống _float_to_pcm16
-    # dùng cho VieNeu phía trên).
-    pcm = _float_to_pcm16(samples)
-    return _pcm_to_wav(pcm, int(audio.sample_rate), 2, 1)
+    return _pcm_to_wav(pcm, 24000, 2, 1)
 
 
 # ── TTS: NghiTTS (19 giọng tiếng Việt, VITS 22,05 kHz qua sherpa-onnx) ───────
@@ -526,14 +534,92 @@ def _nghi_tts(text: str, voice: str) -> bytes:
     """Giọng "nghi:<mã>" → WAV 22,05 kHz tiếng Việt."""
     from services.voice import nghitts_voices as nv
 
-    tts = _get_nghi(_nghi_voice_id(voice) or nv.DEFAULT_ID)
-    # Mỗi model một giọng (num_speakers = 1) nên sid luôn 0.
-    with _nghi_lock:
-        audio = tts.generate(text, sid=0, speed=1.0)
-    samples = audio.samples if audio is not None else None
-    if samples is None or len(samples) == 0:
+    pcm = b"".join(buf for _rate, buf in _nghi_phat(text, voice, chen_nghi=False))
+    if not pcm:
         raise VoiceError("NghiTTS không tạo được âm thanh.")
-    return _pcm_to_wav(_float_to_pcm16(samples), int(audio.sample_rate), 2, 1)
+    return _pcm_to_wav(pcm, nv.SAMPLE_RATE, 2, 1)
+
+
+def _tu_callback(chay):
+    """Chạy ``chay(callback)`` ở thread riêng, yield từng câu float32.
+
+    Callback trả 1 để model đọc tiếp (đo sherpa 1.13.4: trả 0 thì dừng sau
+    câu đầu). Không có callback nào thì dùng mẫu trả về cuối.
+    """
+    import numpy as np
+
+    hop: queue.Queue = queue.Queue()
+    thay = False
+
+    def cb(samples, _tien) -> int:
+        nonlocal thay
+        audio = np.array(samples, dtype=np.float32, copy=True).ravel()
+        if audio.size:
+            thay = True
+            hop.put(audio)
+        return 1
+
+    def vong() -> None:
+        try:
+            xong = chay(cb)
+            mau = getattr(xong, "samples", None)
+            if not thay and mau is not None and len(mau):
+                hop.put(np.array(mau, dtype=np.float32, copy=True).ravel())
+        except Exception as exc:
+            hop.put(exc)
+        finally:
+            hop.put(None)
+
+    threading.Thread(target=vong, name="tts-cau", daemon=True).start()
+    while True:
+        muc = hop.get()
+        if muc is None:
+            return
+        if isinstance(muc, Exception):
+            raise muc
+        yield muc
+
+
+def _nghi_cau(text: str, voice: str):
+    """Một lần gọi NghiTTS, trả từng câu ngay khi sherpa đọc xong câu đó."""
+    from services.voice import nghitts_voices as nv
+
+    tts = _get_nghi(_nghi_voice_id(voice) or nv.DEFAULT_ID)
+
+    def chay(cb):
+        with _nghi_lock:
+            return tts.generate(text, sid=0, speed=1.0, callback=cb)
+
+    yield from _tu_callback(chay)
+
+
+def _phat_cau(text: str, rate: int, lay_cau, *, chen_nghi: bool = True):
+    """Yield (rate, pcm16). ``lay_cau(đoạn)`` yield float32 từng câu của một lần generate."""
+    sent_ms, _clause, para_ms, jitter = _silence_plan() if chen_nghi else (0, 0, 0, 0)
+    khoi = _tach_doan(text) or [(text, "")]
+    da_co = False
+    for piece, _sau in khoi:
+        dau_doan = True
+        for mau in lay_cau(piece):
+            if da_co:
+                kind = "paragraph" if dau_doan else "sentence"
+                base = para_ms if kind == "paragraph" else sent_ms
+                gap = _silence_pcm(_jitter_ms(base, jitter), rate) if base > 0 else b""
+                if gap:
+                    yield rate, gap
+            dau_doan = False
+            da_co = True
+            pcm = _float_to_pcm16(mau)
+            if pcm:
+                yield rate, pcm
+
+
+def _nghi_phat(text: str, voice: str, *, chen_nghi: bool = True):
+    """Yield (22050, pcm16). Một lần generate cho cả đoạn, nghỉ chèn giữa câu."""
+    from services.voice import nghitts_voices as nv
+
+    return _phat_cau(
+        text, nv.SAMPLE_RATE, lambda doan: _nghi_cau(doan, voice), chen_nghi=chen_nghi)
 
 
 # ── TTS: Kokoro tiếng Việt + vig2p (14 giọng, 24 kHz, ONNX) ─────────────────
@@ -781,8 +867,20 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
         raise VoiceError("Không có nội dung để đọc.")
     if (voice or "").startswith("dangu:"):
         return synthesize_da_ngu(text, voice[len("dangu:"):])
-    sent_ms, clause_ms, jitter = _silence_plan()
-    if sent_ms <= 0 and clause_ms <= 0:
+    if (voice or "").startswith(vcfg.NGHI_PREFIX):
+        # Một lần generate cho cả đoạn, câu nào xong phát câu đó.
+        khuc = list(_nghi_phat(text, voice))
+        if not khuc:
+            raise VoiceError("NghiTTS không tạo được âm thanh.")
+        return _pcm_to_wav(b"".join(pcm for _r, pcm in khuc), khuc[0][0], 2, 1)
+    if ((voice or "").startswith(vcfg.KOKORO_PREFIX)
+            and not (voice or "").startswith(vcfg.KOKORO_VI_PREFIX)):
+        khuc = list(_phat_cau(text, 24000, lambda doan: _kokoro_cau(doan, voice)))
+        if not khuc:
+            raise VoiceError("Kokoro không tạo được âm thanh.")
+        return _pcm_to_wav(b"".join(pcm for _r, pcm in khuc), khuc[0][0], 2, 1)
+    sent_ms, clause_ms, para_ms, jitter = _silence_plan()
+    if sent_ms <= 0 and clause_ms <= 0 and not ("\n" in text and para_ms > 0):
         return _synthesize_one(text, voice, style=style)
     segs = _split_segments(text, clause_ms=clause_ms)
     if len(segs) <= 1:
@@ -804,9 +902,7 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
             continue
         pcm_parts.append(pcm)
         if i < len(segs) - 1 and (width, channels) == (2, 1):
-            gap = _silence_pcm(
-                _jitter_ms(sent_ms if kind == "sentence" else clause_ms, jitter),
-                rate)
+            gap = _silence_pcm(_nghi_ms(kind, sent_ms, clause_ms, para_ms, jitter), rate)
             if gap:
                 pcm_parts.append(gap)
     if fmt is None or not pcm_parts:
@@ -824,8 +920,9 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
 import random as _random
 import re as _re
 
-# Kết thúc câu: . ! ? … và xuống dòng. Giữ ranh giới để không mất dấu.
-_SENT_SPLIT = _re.compile(r"(?<=[.!?…。！？])\s+|\n+")
+# Kết thúc câu, hoặc xuống dòng (đoạn văn). Nhóm 1 có dấu câu; nhóm 2 là
+# xuống dòng trần. Khoảng trắng sau dấu mà chứa xuống dòng vẫn là đoạn văn.
+_RANH_CAU = _re.compile(r"(?<=[.!?…。！？])([ \t]*\n[\t \n]*|[ \t]+)|(\n+)")
 
 _MAX_GAP_MS = 3000
 _gap_rng = _random.Random()
@@ -867,43 +964,88 @@ def _comma_cut(s: str, limit: int) -> int:
     return -1
 
 
-def _split_sentences(text: str, max_chars: int = 240) -> list[str]:
-    """Cắt text thành mẩu ngắn để đọc dần. Gộp mẩu quá ngắn, xẻ mẩu quá dài
-    theo dấu phẩy để câu đầu ra audio sớm (giảm thời gian chờ)."""
-    out: list[str] = []
-    for raw in _SENT_SPLIT.split(text or ""):
-        s = raw.strip()
-        if not s:
+def _la_cham_trong_so(text: str, dau: int, cuoi: int) -> bool:
+    """Dấu chấm/phẩy nằm giữa hai chữ số thì không phải hết câu hay hết vế.
+
+    "33,8" và "1.000" mà cắt ở đó thì engine đọc thành hai số rời. Cách này
+    lấy từ wyoming-vietnamese (`_is_numeric_separator`).
+    """
+    if dau <= 0 or not text[dau - 1].isdigit():
+        return False
+    return cuoi >= len(text) or text[cuoi].isdigit()
+
+
+def _tach_doan(text: str) -> list[tuple[str, str]]:
+    """[(đoạn, loại ranh giới sau đoạn)]. Loại là paragraph, sentence, hoặc rỗng.
+
+    Xuống dòng — kể cả sau dấu chấm — là hết đoạn văn, nghỉ dài hơn hết câu.
+    Dấu chấm giữa hai chữ số không cắt.
+    """
+    s = text or ""
+    out: list[tuple[str, str]] = []
+    pos = 0
+    for m in _RANH_CAU.finditer(s):
+        sep = m.group(0)
+        if m.group(1) and _la_cham_trong_so(s, m.start() - 1, m.end()):
             continue
-        while len(s) > max_chars:
-            cut = _comma_cut(s, max_chars)
-            cut = cut if cut > max_chars // 2 else max_chars
-            out.append(s[:cut].strip())
-            s = s[cut:].strip(" ,")
-        if s:
-            out.append(s)
-    # Dồn mẩu tí hon (<15 ký tự, vd "Vâng.", "OK.") SANG mẩu sau để tránh clip
-    # audio vụn <1s, nhưng vẫn giữ câu bình thường tách riêng cho stream mượt.
-    merged: list[str] = []
+        piece = s[pos:m.start()].strip()
+        if piece:
+            out.append((piece, "paragraph" if "\n" in sep else "sentence"))
+        pos = m.end()
+    tail = s[pos:].strip()
+    if tail:
+        out.append((tail, ""))
+    return out
+
+
+def _xe_dai(s: str, max_chars: int) -> list[str]:
+    """Xẻ đoạn quá dài theo dấu phẩy (không cắt giữa số) để câu đầu ra tiếng sớm."""
+    out: list[str] = []
+    while len(s) > max_chars:
+        cut = _comma_cut(s, max_chars)
+        cut = cut if cut > max_chars // 2 else max_chars
+        out.append(s[:cut].strip())
+        s = s[cut:].strip(" ,")
+    if s:
+        out.append(s)
+    return out
+
+
+def _split_blocks(text: str, max_chars: int = 240) -> list[tuple[str, str]]:
+    """[(mẩu, loại ranh giới sau mẩu)] sau khi xẻ đoạn dài và gộp mẩu tí hon."""
+    tho: list[tuple[str, str]] = []
+    for piece, kind in _tach_doan(text):
+        khuc = _xe_dai(piece, max_chars)
+        for i, s in enumerate(khuc):
+            tho.append((s, kind if i == len(khuc) - 1 else "sentence"))
+    merged: list[tuple[str, str]] = []
     buf = ""
-    for s in out:
+    for s, kind in tho:
         if buf:
             s = (buf + " " + s).strip()
             buf = ""
         if len(s) < 15:
             buf = s
         else:
-            merged.append(s)
+            merged.append((s, kind))
     if buf:
         if merged:
-            merged[-1] = merged[-1] + " " + buf
+            merged[-1] = (merged[-1][0] + " " + buf, merged[-1][1])
         else:
-            merged.append(buf)
+            merged.append((buf, ""))
     return merged
 
 
-# Ranh giới MỆNH ĐỀ trong một câu: phẩy, chấm phẩy, hai chấm.
+def _split_sentences(text: str, max_chars: int = 240) -> list[str]:
+    """Cắt text thành mẩu ngắn để đọc dần. Gộp mẩu quá ngắn, xẻ mẩu quá dài
+    theo dấu phẩy để câu đầu ra audio sớm (giảm thời gian chờ)."""
+    return [s for s, _k in _split_blocks(text, max_chars)]
+
+
+# Ranh giới MỆNH ĐỀ trong một câu: phẩy, chấm phẩy, hai chấm, gạch ngang có
+# khoảng trắng. Gạch dính chữ ("Wi-Fi", "TP-HCM") không phải ranh giới.
 _CLAUSE_MARKS = ",;:，；："
+_GACH_MENH_DE = "-–—"
 
 
 def _split_clauses(s: str, min_chars: int = 12) -> list[str]:
@@ -920,12 +1062,19 @@ def _split_clauses(s: str, min_chars: int = 12) -> list[str]:
     buf = ""
     for i, ch in enumerate(s):
         buf += ch
-        if ch not in _CLAUSE_MARKS:
+        if ch in _GACH_MENH_DE:
+            truoc = s[i - 1] if i > 0 else ""
+            sau = s[i + 1] if i + 1 < len(s) else ""
+            # "Wi-Fi" dính chữ thì giữ. "Sài Gòn - Hà Nội" có khoảng trắng thì nghỉ.
+            if not (truoc.isspace() or sau.isspace()):
+                continue
+        elif ch not in _CLAUSE_MARKS:
             continue
-        truoc = s[i - 1] if i > 0 else ""
-        sau = s[i + 1] if i + 1 < len(s) else ""
-        if truoc.isdigit() and sau.isdigit():
-            continue
+        else:
+            truoc = s[i - 1] if i > 0 else ""
+            sau = s[i + 1] if i + 1 < len(s) else ""
+            if truoc.isdigit() and sau.isdigit():
+                continue
         piece = buf.strip()
         if len(piece) >= min_chars:
             out.append(piece)
@@ -941,24 +1090,37 @@ def _split_clauses(s: str, min_chars: int = 12) -> list[str]:
 
 def _split_segments(text: str, max_chars: int = 240, *,
                     clause_ms: int = 0) -> list[tuple[str, str]]:
-    """Cắt text thành [(mẩu, loại ranh giới SAU mẩu)] — loại ∈ sentence|clause.
+    """Cắt text thành [(mẩu, loại ranh giới SAU mẩu)].
 
-    Caller dựa vào loại ranh giới để chọn khoảng lặng dài (hết câu) hay ngắn
-    (hết mệnh đề). `clause_ms <= 0` → không xẻ theo mệnh đề, mỗi mẩu là một câu
-    y như `_split_sentences`.
+    Loại là paragraph (xuống dòng), sentence (hết câu) hoặc clause (hết vế).
+    `clause_ms <= 0` → không xẻ theo mệnh đề.
     """
     out: list[tuple[str, str]] = []
-    for sent in _split_sentences(text, max_chars):
+    for sent, after in _split_blocks(text, max_chars):
         parts = _split_clauses(sent) if clause_ms > 0 else [sent]
         for i, p in enumerate(parts):
-            out.append((p, "sentence" if i == len(parts) - 1 else "clause"))
+            if i < len(parts) - 1:
+                out.append((p, "clause"))
+            else:
+                out.append((p, after or "sentence"))
     return out
 
 
-def _silence_plan() -> tuple[int, int, int]:
-    """(nghỉ hết câu, nghỉ hết mệnh đề, dao động %) — đọc config một lần/lượt."""
+def _silence_plan() -> tuple[int, int, int, int]:
+    """(nghỉ hết câu, nghỉ hết vế, nghỉ hết đoạn, dao động %)."""
     return (vcfg.tts_sentence_silence_ms(), vcfg.tts_clause_silence_ms(),
-            vcfg.tts_silence_jitter_percent())
+            vcfg.tts_paragraph_silence_ms(), vcfg.tts_silence_jitter_percent())
+
+
+def _nghi_ms(kind: str, sent_ms: int, clause_ms: int, para_ms: int, jitter: int) -> int:
+    """Mili giây nghỉ sau một mẩu, đã rải ngẫu nhiên."""
+    if kind == "paragraph":
+        base = para_ms if para_ms > 0 else sent_ms
+    elif kind == "clause":
+        base = clause_ms
+    else:
+        base = sent_ms
+    return _jitter_ms(base, jitter)
 
 
 def _vieneu_stream(text: str, voice: str, style: str = ""):
@@ -1153,12 +1315,27 @@ def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
         else:
             captured.append(item)
 
-    sent_ms, clause_ms, jitter = _silence_plan()
+    if v.startswith(vcfg.NGHI_PREFIX) or (
+            v.startswith(vcfg.KOKORO_PREFIX) and not v.startswith(vcfg.KOKORO_VI_PREFIX)):
+        try:
+            nguon = (_nghi_phat(text, v) if v.startswith(vcfg.NGHI_PREFIX)
+                     else _phat_cau(text, 24000, lambda doan: _kokoro_cau(doan, v)))
+            for item in nguon:
+                _keep(item)
+                yield item
+            if captured:
+                tts_cache.put(ck, captured, size_bytes=_captured_bytes)
+            return
+        except Exception as exc:
+            logger.warning("voice: stream sherpa that bai, fallback cau: %s", str(exc)[:160])
+            captured, _captured_bytes = ([] if _limit > 0 else None), 0
+
+    sent_ms, clause_ms, para_ms, jitter = _silence_plan()
     segs = _split_segments(text, clause_ms=clause_ms)
 
     def _gap_ms(kind: str) -> int:
         """Khoảng lặng (đã rải ngẫu nhiên) cho ranh giới vừa đọc xong."""
-        return _jitter_ms(sent_ms if kind == "sentence" else clause_ms, jitter)
+        return _nghi_ms(kind, sent_ms, clause_ms, para_ms, jitter)
 
     if v.startswith(vcfg.VIENEU_PREFIX):
         try:
@@ -1167,7 +1344,7 @@ def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
             prev_kind = ""
             # Không đặt khoảng lặng nào → giữ đường cũ: một lần gọi cho cả đoạn,
             # engine tự lo nhịp (ngữ điệu liền mạch nhất).
-            khuc = segs if (sent_ms > 0 or clause_ms > 0) else [(text, "")]
+            khuc = segs if (sent_ms > 0 or clause_ms > 0 or ("\n" in text and para_ms > 0)) else [(text, "")]
             for seg, kind in khuc:
                 if prev_kind and last_rate:
                     gap = _silence_pcm(_gap_ms(prev_kind), last_rate)
@@ -1308,8 +1485,10 @@ def _get_recognizer(lang: str = "vi"):
             sample_rate=16000,
             feature_dim=80,
             decoding_method=decoding_method,
+            provider="cpu",
             **extra,
         )
+        _lam_am_stt(rec)
         _recognizers[lang] = (key, rec)
         return rec
 
@@ -1348,6 +1527,7 @@ def _get_sense_recognizer(lang: str, model_dir: Path):
             language=lang,
             use_itn=True,
         )
+        _lam_am_stt(rec)
         _recognizers[lang] = (key, rec)
         return rec
 
@@ -1376,6 +1556,25 @@ def _bpe_to_tokens(model_dir: Path, tokens: Path) -> None:
                 tokens, sp.get_piece_size())
 
 
+def _lam_am_stt(rec) -> None:
+    """Một lần decode im lặng lúc nạp model, để câu nói đầu không chịu lạnh.
+
+    wyoming-vietnamese làm vậy trước request thật. Bộ giả trong test không có
+    ``create_stream`` thì bỏ qua.
+    """
+    import numpy as np
+
+    tao = getattr(rec, "create_stream", None)
+    if tao is None:
+        return
+    try:
+        stream = tao()
+        stream.accept_waveform(16000, np.zeros(1600, dtype=np.float32))
+        rec.decode_stream(stream)
+    except Exception as exc:
+        logger.info("voice: lam am STT bo qua: %s", str(exc)[:120])
+
+
 def _sherpa_local(wav16: bytes, lang: str = "vi") -> str:
     import numpy as np
 
@@ -1385,7 +1584,9 @@ def _sherpa_local(wav16: bytes, lang: str = "vi") -> str:
         raise VoiceError("STT cần WAV 16-bit.")
     # numpy nhanh hơn list comprehension ~15x — thấy rõ khi audio dài.
     # sherpa-onnx nhận thẳng mảng float32, đừng .tolist() kẻo mất cái lợi đó.
-    floats = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+    # Một mảng float32, không astype rồi chia thêm một bản. Cách wyoming-vietnamese.
+    floats = np.multiply(
+        np.frombuffer(pcm, dtype="<i2"), np.float32(1.0 / 32768.0), dtype=np.float32)
     # OfflineRecognizer dùng CHUNG giữa các request không thread-safe ở tầng
     # native — decode đồng thời (2 voice note cùng lúc, VD Telegram+Zalo) có
     # thể crash cả tiến trình gateway. Khoá tuần tự quanh create_stream/decode.

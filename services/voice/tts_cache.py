@@ -165,6 +165,7 @@ def key(kind: str, text: str, voice: str, style: str) -> bytes:
             vcfg.tts_backend(),
             vcfg.vieneu_precision(),
             str(vcfg.tts_length_scale()),
+            str(vcfg.tts_paragraph_silence_ms()),
             str(vcfg.tts_sentence_silence_ms()),
             str(vcfg.tts_clause_silence_ms()),
             str(vcfg.tts_silence_jitter_percent()),

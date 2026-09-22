@@ -642,7 +642,16 @@ export function VoiceSpeakersCard() {
           </div>
 
           {/* Nhịp nghỉ khi đọc — áp cho mọi engine, xem services/voice/engines.py */}
-          <div className="sm:col-span-2 grid gap-2 sm:grid-cols-3 rounded-md border border-border/60 bg-muted/20 p-2.5">
+          <div className="sm:col-span-2 grid gap-2 sm:grid-cols-4 rounded-md border border-border/60 bg-muted/20 p-2.5">
+            <div>
+              <label className="text-xs text-muted-foreground">Nghỉ giữa hai đoạn (ms)</label>
+              <Input type="number" min={0} max={3000} step={10}
+                value={String(ttsCfg.paragraph_silence_ms ?? "")}
+                onChange={(e) => patchVoice("tts", {
+                  paragraph_silence_ms: e.target.value === "" ? "" : Number(e.target.value),
+                })}
+                placeholder="600 (mặc định)" />
+            </div>
             <div>
               <label className="text-xs text-muted-foreground">Nghỉ giữa hai câu (ms)</label>
               <Input type="number" min={0} max={3000} step={10}
@@ -670,11 +679,12 @@ export function VoiceSpeakersCard() {
                 })}
                 placeholder="25 (mặc định)" />
             </div>
-            <p className="sm:col-span-3 text-[10px] text-muted-foreground">
+            <p className="sm:col-span-4 text-[10px] text-muted-foreground">
               Áp cho <b>mọi giọng</b> (VieNeu, NghiTTS, Piper, Kokoro, Wyoming): văn bản được
-              cắt thành mẩu, mỗi mẩu đọc một lần rồi nối lại bằng khoảng lặng. Nghỉ sau dấu
-              phẩy &gt; 0 cho nhịp rõ hơn nhưng đọc lâu hơn và ngữ điệu từng mệnh đề tách rời
-              nhau — thấy gượng thì để 0. Cả hai ô nghỉ = 0 → đọc trọn đoạn trong một lần,
+              cắt thành mẩu, mỗi mẩu đọc một lần rồi nối lại bằng khoảng lặng. Xuống dòng
+              nghỉ dài hơn hết câu. Nghỉ sau dấu phẩy &gt; 0 cho nhịp rõ hơn nhưng đọc lâu
+              hơn và ngữ điệu từng mệnh đề tách rời nhau — thấy gượng thì để 0. Cả ba ô
+              nghỉ = 0 → đọc trọn đoạn trong một lần,
               nhanh nhất và liền mạch nhất. Dao động rải ngẫu nhiên ±% quanh mỗi khoảng nghỉ
               để nhịp không đều tăm tắp như máy đếm. Số trong ngoặc chỉ là gợi ý — ô trống
               nghĩa là dùng mặc định.
