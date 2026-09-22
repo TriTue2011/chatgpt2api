@@ -1,6 +1,6 @@
 "use client";
 
-import { AudioLines, Facebook, Headphones, Link2, ListMusic, ListPlus, LoaderCircle, MonitorPlay, Music2, Play, Search, Youtube } from "lucide-react";
+import { AudioLines, Facebook, Headphones, ListMusic, ListPlus, LoaderCircle, MonitorPlay, Music2, Play, Search, Youtube } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -10,13 +10,11 @@ import { cn } from "@/lib/utils";
 import { type BaiHat, type Nguon, TEN_NGUON, thoiLuong } from "./lib";
 import { type KhoPlaylist, laLinkPlaylist, ThemVaoPlaylist } from "./playlist";
 
-/** Cùng hàng với thẻ Home Assistant: YouTube, Zing, Facebook, rồi Playlist.
- *  Link giữ lại vì c2a phát được file âm thanh trực tiếp, thẻ cũng nhận nguồn này. */
-const NUT_NGUON: { khoa: Nguon; Icon: typeof Youtube; nhan: string; goiY: string; o: string }[] = [
+/** YouTube, Zing, Facebook, rồi Playlist. Không có nguồn dán file âm thanh trực tiếp. */
+const NUT_NGUON: { khoa: Exclude<Nguon, "http">; Icon: typeof Youtube; nhan: string; goiY: string; o: string }[] = [
   { khoa: "youtube", Icon: Youtube, nhan: "YouTube", goiY: "Tivi mở ứng dụng YouTube, loa nhận tiếng.", o: "Tìm tên bài hát, ca sĩ hoặc dán link YouTube…" },
   { khoa: "zing", Icon: Music2, nhan: "Zing MP3", goiY: "Bài công khai, không VIP.", o: "Tìm tên bài hát hoặc ca sĩ…" },
   { khoa: "facebook", Icon: Facebook, nhan: "Facebook", goiY: "Chỉ dán link. Reel, watch hoặc link chia sẻ đều được.", o: "Dán link video Facebook (reel, watch hoặc link chia sẻ)…" },
-  { khoa: "http", Icon: Link2, nhan: "Link", goiY: "File MP3, AAC, FLAC, OGG hoặc HLS.", o: "https://…/bai-hat.mp3" },
 ];
 
 type Props = {
@@ -65,7 +63,7 @@ export function TimNhac({
   );
   return (
     <section className={cn("rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 sm:p-5", className)}>
-      <div role="group" aria-label="Nguồn nhạc và playlist" className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--muted)] p-1 sm:grid-cols-3 xl:grid-cols-5">
+      <div role="group" aria-label="Nguồn nhạc và playlist" className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--muted)] p-1 sm:grid-cols-4">
         {NUT_NGUON.map(({ khoa, Icon, nhan }) => (
           <span key={khoa} className="contents">{nutNguon(!xemPlaylist && nguon === khoa, nhan, Icon, () => { doiXemPlaylist(false); doiNguon(khoa); })}</span>
         ))}
@@ -86,23 +84,23 @@ export function TimNhac({
           onChange={(e) => setTuKhoa(e.target.value)}
           maxLength={nguon === "zing" ? 120 : 2048}
           placeholder={nut?.o ?? "Tìm tên bài hát hoặc ca sĩ…"}
-          aria-label={nguon === "http" ? "Link âm thanh trực tiếp" : "Tìm bài hát"}
+          aria-label="Tìm bài hát"
           className="h-10 min-w-0 flex-1"
         />
         <Button type="submit" className="h-10 shrink-0" disabled={dangTim || !tuKhoa.trim()}>
-          {dangTim ? <LoaderCircle className="animate-spin" /> : nguon === "http" ? <Link2 /> : <Search />}
-          <span className="hidden sm:inline">{nguon === "http" ? "Thêm" : "Tìm"}</span>
+          {dangTim ? <LoaderCircle className="animate-spin" /> : <Search />}
+          <span className="hidden sm:inline">Tìm</span>
         </Button>
       </form>
       <p className="mt-2 text-xs text-muted-foreground">
         {nut?.goiY}
-        {coLoa || nguon === "http"
+        {coLoa
           ? ""
           : nguon === "youtube" || nguon === "facebook"
             ? " Chưa chọn loa: nút tai nghe để nghe trên máy này, nút màn hình để xem video."
             : " Chưa chọn loa: bấm nút tai nghe để nghe trên máy này."}
       </p>
-      {nguon !== "http" && laLinkPlaylist(tuKhoa) && (
+      {laLinkPlaylist(tuKhoa) && (
         <Button type="button" variant="outline" className="mt-2 h-9 w-full" disabled={dangLuuPlaylist} onClick={luuCaPlaylist}>
           {dangLuuPlaylist ? <LoaderCircle className="animate-spin" /> : <ListPlus />}
           Lưu cả playlist này vào Playlist
@@ -123,7 +121,7 @@ export function TimNhac({
         ) : !ketQua.length ? (
           <div className="flex flex-col items-center gap-2 py-10 text-center text-sm text-muted-foreground">
             <Music2 className="size-8 opacity-40" />
-            {nguon === "http" ? "Dán link âm thanh để phát." : "Tìm một bài để bắt đầu."}
+            Tìm một bài để bắt đầu.
           </div>
         ) : (
           ketQua.map((bai) => {

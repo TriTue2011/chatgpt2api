@@ -25,12 +25,11 @@ import { cn } from "@/lib/utils";
 import { type BaiHat, type Phien, TEN_NGUON, type ThietBi, thoiLuong } from "./lib";
 import type { CheDoXem, VideoNhung } from "./video-nhung";
 
-/** Hình riêng khi YouTube không cho nhúng: lấy link → thử tải thẳng (máy trong nhà) →
- *  không được là đang ở ngoài nhà, chờ người xem đồng ý → link đã ký qua máy chủ. */
+/** Hình riêng khi YouTube không cho nhúng: thử lần lượt link thẳng rồi đường máy nhà. */
 export type HinhRieng = {
-  trangThai: "lay" | "thang" | "ngoai" | "ky" | "loi";
-  thang?: string;
-  ky?: string;
+  trangThai: "lay" | "thang" | "loi";
+  thu?: string[];
+  dang?: number;
   mbPhut?: number;
   cao?: number;
   coHinh?: boolean;
@@ -58,8 +57,6 @@ type Props = {
   /** Thẻ hình riêng lỗi hoặc quá lâu chưa có hình. */
   hinhLoi: () => void;
   hinhSan: () => void;
-  /** Ở ngoài nhà: người xem bấm Xem hình (trang hỏi lại trước khi mở). */
-  xemHinhNgoaiNha: () => void;
   nhung: VideoNhung;
   cheDo: CheDoXem;
   doiCheDo: (c: CheDoXem) => void;
@@ -308,11 +305,11 @@ export function DangPhat(p: Props) {
                   className="absolute inset-0 bg-black bg-contain bg-center bg-no-repeat"
                   style={{ backgroundImage: `url(https://i.ytimg.com/vi/${video.bai.id}/hqdefault.jpg)` }}
                 >
-                  {(video.hinh.trangThai === "thang" || video.hinh.trangThai === "ky") && (
+                  {video.hinh.trangThai === "thang" && video.hinh.thu?.[video.hinh.dang ?? 0] && (
                     <video
-                      key={video.hinh.trangThai}
+                      key={`${video.hinh.dang ?? 0}`}
                       ref={nhung.ganHinh}
-                      src={video.hinh.trangThai === "thang" ? video.hinh.thang : video.hinh.ky}
+                      src={video.hinh.thu[video.hinh.dang ?? 0]}
                       muted
                       playsInline
                       preload="auto"
@@ -324,17 +321,10 @@ export function DangPhat(p: Props) {
                   {!video.hinh.coHinh && (
                     <div className="absolute inset-x-2 bottom-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-black/75 px-3 py-1.5 text-xs text-white">
                       <span>
-                        {video.hinh.trangThai === "ngoai"
-                          ? `Đang nghe tiếng · ở ngoài mạng nhà, hình ~${video.hinh.mbPhut ?? 1} MB/phút`
-                          : video.hinh.trangThai === "loi"
-                            ? "Đang nghe tiếng · không mở được hình"
-                            : "Đang nghe tiếng · đang lấy hình…"}
+                        {video.hinh.trangThai === "loi"
+                          ? "Đang nghe tiếng · không mở được hình"
+                          : `Đang nghe tiếng · đang mở hình (~${video.hinh.mbPhut ?? 1} MB/phút)`}
                       </span>
-                      {video.hinh.trangThai === "ngoai" && (
-                        <button type="button" onClick={p.xemHinhNgoaiNha} className="rounded-full bg-white px-3 py-1 font-semibold text-black">
-                          Xem hình
-                        </button>
-                      )}
                     </div>
                   )}
                 </div>

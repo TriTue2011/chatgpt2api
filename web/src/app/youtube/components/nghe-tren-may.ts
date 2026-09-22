@@ -41,6 +41,8 @@ let lanNguon = 0;
 let mucCungLoa = "";
 let dungKhiAn = false;
 let henAn: ReturnType<typeof setTimeout> | undefined;
+/** Dòng gần như im, chỉ để WebKit khỏi cắt trang khi tiếng nằm trong khung nhúng. */
+let nenGiu: HTMLAudioElement | null = null;
 const nguoiNghe = new Set<() => void>();
 
 function dat(moi: Partial<TrangThaiNghe>) {
@@ -58,6 +60,35 @@ export function dangKy(bao: () => void): () => void {
 
 export const layTrangThai = () => trangThai;
 export const layTrangThaiMayChu = () => TRONG;
+
+/** Giữ trang sống trên iPhone/Safari khi tiếng ở trong khung. Gọi trong cú bấm.
+ *  Không đụng thẻ đang phát bài thật — iOS chỉ cho một luồng, chen vào là mất nhạc. */
+export function batGiuNen() {
+  const that = amThat();
+  if (that && !that.paused) return;
+  if (!nenGiu) {
+    const a = document.createElement("audio");
+    a.setAttribute("playsinline", "");
+    a.setAttribute("webkit-playsinline", "");
+    a.loop = true;
+    a.src = AM_LANG;
+    Object.assign(a.style, {
+      position: "fixed", top: "-9999px", left: "-9999px",
+      width: "1px", height: "1px", opacity: "0.01",
+    });
+    document.body.append(a);
+    nenGiu = a;
+  }
+  void nenGiu.play().catch(() => undefined);
+}
+
+export function giuNenNeuDung() {
+  if (nenGiu?.paused) void nenGiu.play().catch(() => undefined);
+}
+
+export function tatGiuNen() {
+  nenGiu?.pause();
+}
 
 export function ngheNenDangBat(): boolean {
   try {
