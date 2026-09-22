@@ -55,6 +55,12 @@ const luc = (ts: number | null) =>
                                                      day: "2-digit", month: "2-digit" }) : "—";
 const loiCua = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+function baoThemNhanDien(d: { trung?: boolean; xet_lai?: number }) {
+  if (d.trung) return "Ảnh này đã có trong dữ liệu nhận diện, không thêm bản trùng.";
+  const them = d.xet_lai ? " " + d.xet_lai + " cụm Mặt khác vừa vào đúng tên." : "";
+  return "Đã thêm vào dữ liệu nhận diện và học lại." + them;
+}
+
 export function NhinNhaCard() {
   const config = useSettingsStore((s) => s.config);
   const saveConfig = useSettingsStore((s) => s.saveConfig);
@@ -508,10 +514,7 @@ export function NhinNhaCard() {
                     disabled={!((tenLa[x.id] === "__moi__" ? tenMoiLa[x.id] : tenLa[x.id]) || "").trim()}
                     onClick={() => goi(() => request.post(`/api/nhin-nha/mat-la/${x.id}/dat-ten`,
                       { ten: tenLa[x.id] === "__moi__" ? tenMoiLa[x.id] : tenLa[x.id], hoc: true }),
-                      (d) => d.trung
-                        ? "Ảnh này đã có trong dữ liệu nhận diện, không thêm bản trùng."
-                        : "Đã thêm vào dữ liệu nhận diện và học lại."
-                          + (d.xet_lai ? " " + d.xet_lai + " cụm Mặt khác vừa vào đúng tên." : "")}>
+                      baoThemNhanDien)}>
                     Thêm vào dữ liệu nhận diện
                   </Button>
                   <Button size="sm" variant="outline" className="h-7 text-[11px]"
