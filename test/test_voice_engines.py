@@ -803,3 +803,43 @@ def test_hong_giua_chung_khong_doc_lai_tu_dau(monkeypatch):
     ra = list(engines._stream_tao("Một câu. Hai câu.", "zerotts:maichi"))
     assert len(ra) == 2
     goi_lai.assert_not_called()
+
+
+# ── Nhả model TTS không dùng (23/09/2026) ───────────────────────────────────
+
+
+def _dat_nha(monkeypatch, gan_mac_dinh="manhdung", loa=()):
+    monkeypatch.setattr(vcfg, "tts_voice", lambda: gan_mac_dinh)
+    from services.voice import speakers
+    monkeypatch.setattr(speakers, "list_speakers", lambda: [{"voice": v} for v in loa])
+    monkeypatch.setattr(engines, "_GIU_ASSIST", set())
+    monkeypatch.setattr(engines, "_vieneu", object())
+    monkeypatch.setattr(engines, "_zerotts", object())
+    monkeypatch.setattr(engines, "_DUNG_LUC", {"vieneu": 0.0, "zerotts": 0.0})
+
+
+def test_nha_model_khong_gan_sau_30_phut_giu_model_dang_gan(monkeypatch):
+    _dat_nha(monkeypatch, loa=["zerotts:maichi"])
+    assert engines.nha_model_nhan_roi(bay_gio=29 * 60) == []          # chưa đủ 30 phút
+    assert engines.nha_model_nhan_roi(bay_gio=31 * 60) == ["vieneu"]
+    assert engines._vieneu is None
+    assert engines._zerotts is not None                                 # loa phòng khách dùng
+    assert "vieneu" not in engines._DUNG_LUC
+
+
+def test_giong_assist_da_goi_thi_giu(monkeypatch):
+    _dat_nha(monkeypatch)
+    engines.giu_cho_assist("vieneu:Trúc Ly")
+    assert engines.nha_model_nhan_roi(bay_gio=31 * 60) == ["zerotts"]
+    assert engines._vieneu is not None
+
+
+def test_model_dang_doc_do_thi_de_luot_sau(monkeypatch):
+    _dat_nha(monkeypatch)
+    import threading as _th
+    khoa = _th.Lock()
+    monkeypatch.setattr(engines, "_vieneu_lock", khoa)
+    with khoa:                                                          # đang đọc dở
+        assert "vieneu" not in engines.nha_model_nhan_roi(bay_gio=31 * 60)
+    assert engines._vieneu is not None
+    assert "vieneu" in engines._DUNG_LUC                                # còn chờ lượt sau

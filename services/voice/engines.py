@@ -181,6 +181,111 @@ def to_wav_16k_mono(audio: bytes, src_hint: str = "") -> bytes:
 
 # ── TTS: VieNeu v3 Turbo (ONNX/CPU, 48 kHz, song ngữ Việt–Anh) ───────────────
 
+# ── Nhả model TTS không dùng ────────────────────────────────────────────────
+# Model đã nạp thì nằm lại trong tiến trình tới lần khởi động sau. Đo 23/09/2026:
+# uvicorn 5,4 GB, gần hết là vùng nhớ ẩn danh của model; mốc 15/09: nạp VieNeu +
+# ZeroTTS làm c2a từ 2,1 lên 4,1 GB. VieNeu không gán cho giọng mặc định, loa hay
+# pipeline nào — chỉ ai đọc thử là chiếm ~1,5 GB mãi. Chủ máy chọn 23/09/2026:
+# họ model nào 30 phút không dùng thì nhả, TRỪ họ đang được gán (giọng mặc định,
+# giọng từng loa) hoặc đã được Assist gọi qua Wyoming — gán thì phải đọc ngay,
+# không chờ nạp lại.
+
+_NHA_SAU_GIAY = 30 * 60
+_NHA_NHIP_GIAY = 5 * 60
+_DUNG_LUC: dict[str, float] = {}
+_GIU_ASSIST: set[str] = set()
+_nha_luong: threading.Thread | None = None
+
+
+def _dung(ho: str) -> None:
+    """Ghi mốc vừa dùng họ model; lần đầu thì dựng luồng dọn."""
+    import time as _time
+
+    global _nha_luong
+    _DUNG_LUC[ho] = _time.monotonic()
+    if _nha_luong is None:
+        _nha_luong = threading.Thread(target=_vong_nha, name="tts-nha-model", daemon=True)
+        _nha_luong.start()
+
+
+def giu_cho_assist(voice: str) -> None:
+    """Assist (Wyoming) vừa đọc giọng này: giữ họ ấy trong RAM."""
+    if voice:
+        _GIU_ASSIST.add(_ho_engine(voice))
+
+
+def _ho_dang_gan() -> set[str]:
+    giu = {_ho_engine(vcfg.tts_voice())} | set(_GIU_ASSIST)
+    try:
+        from services.voice import speakers
+        giu |= {_ho_engine(str(sp.get("voice"))) for sp in speakers.list_speakers() if sp.get("voice")}
+    except Exception as exc:   # không đọc được sổ loa thì thôi nhả lượt này
+        logger.warning("voice: khong doc duoc so loa de giu model: %s", str(exc)[:120])
+        return {"vieneu", "zerotts", "kokorovi", "kokoro", "nghi", "dangu"}
+    return giu
+
+
+def _bo_model(ho: str) -> bool:
+    """Bỏ model của một họ. Đang đọc dở (khoá bận) thì để lượt sau."""
+    global _vieneu, _vieneu_loaded_precision, _kokoro, _kokoro_vi, _zerotts
+    khoa = {"vieneu": _vieneu_lock, "kokoro": _kokoro_lock, "zerotts": _zerotts_lock,
+            "kokorovi": _kokoro_vi_lock, "nghi": _nghi_lock, "dangu": _da_ngu_lock}.get(ho)
+    if khoa is None or not khoa.acquire(blocking=False):
+        return False
+    try:
+        if ho == "vieneu":
+            _vieneu, _vieneu_loaded_precision = None, ""
+        elif ho == "kokoro":
+            _kokoro = None
+        elif ho == "zerotts":
+            _zerotts = None
+        elif ho == "kokorovi":
+            _kokoro_vi = None
+            _kokoro_vi_vp.clear()
+        elif ho == "nghi":
+            _nghi.clear()
+        elif ho == "dangu":
+            _da_ngu.clear()
+    finally:
+        khoa.release()
+    return True
+
+
+def nha_model_nhan_roi(bay_gio: float | None = None) -> list[str]:
+    """Nhả họ model quá `_NHA_SAU_GIAY` không dùng và không được gán."""
+    import gc
+    import time as _time
+
+    bay_gio = _time.monotonic() if bay_gio is None else bay_gio
+    giu = _ho_dang_gan()
+    da_nha = [ho for ho, luc in list(_DUNG_LUC.items())
+              if ho not in giu and bay_gio - luc >= _NHA_SAU_GIAY and _bo_model(ho)]
+    for ho in da_nha:
+        _DUNG_LUC.pop(ho, None)
+    if da_nha:
+        gc.collect()
+        # glibc giữ lại heap vừa giải phóng; không trả thì RSS chỉ giảm ~900/1240 MB
+        # (đo 23/09/2026 với VieNeu). malloc_trim đưa phần trống về hệ điều hành.
+        try:
+            import ctypes
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
+        logger.info("voice: nha model khong dung: %s (giu: %s)", ",".join(da_nha), ",".join(sorted(giu)))
+    return da_nha
+
+
+def _vong_nha() -> None:
+    import time as _time
+
+    while True:
+        _time.sleep(_NHA_NHIP_GIAY)
+        try:
+            nha_model_nhan_roi()
+        except Exception as exc:
+            logger.warning("voice: vong nha model loi: %s", str(exc)[:160])
+
+
 _vieneu_lock = threading.Lock()
 _vieneu = None               # instance Vieneu (nạp 1 lần — mất vài giây + RAM)
 _vieneu_loaded_precision: str = ""  # precision lúc nạp instance hiện tại
@@ -195,6 +300,7 @@ def _reset_vieneu() -> None:
 
 
 def _get_vieneu():
+    _dung("vieneu")
     if not vcfg.vieneu_model_ready():
         raise VoiceError(
             "Model VieNeu chưa tải (chạy scripts/download_vieneu_model.py).")
@@ -285,6 +391,7 @@ _kokoro = None               # sherpa_onnx.OfflineTts (nạp 1 lần)
 
 
 def _get_kokoro():
+    _dung("kokoro")
     model_dir = vcfg.kokoro_model_dir()
     if model_dir is None:
         raise VoiceError(
@@ -319,6 +426,7 @@ _da_ngu: dict = {}   # "zh" | "ja-ko" → sherpa_onnx.OfflineTts (nạp 1 lần)
 
 
 def _get_kokoro_zh():
+    _dung("dangu")
     """Kokoro đa ngữ v1.1 — 100 giọng TRUNG (thu âm chuyên nghiệp) + 3 Anh.
 
     Khác gói kokoro-en đang chạy đúng phần frontend: thêm lexicon zh/en,
@@ -355,6 +463,7 @@ def _get_kokoro_zh():
 
 
 def _get_supertonic():
+    _dung("dangu")
     """Supertonic-3 (31 ngôn ngữ, dùng cho ja/ko) — frontend theo Unicode,
     không cần espeak-ng-data; sherpa-onnx ≥1.13.2 (bản ghim 1.13.4 có)."""
     d = vcfg.SUPERTONIC_DIR
@@ -488,6 +597,7 @@ def _nghi_voice_id(voice: str) -> str:
 
 
 def _get_nghi(voice_id: str):
+    _dung("nghi")
     """Engine sherpa-onnx cho một giọng, nạp một lần rồi tái dùng."""
     from services.voice import nghitts_voices as nv
 
@@ -633,6 +743,7 @@ _kokoro_vi_vp: dict[str, object] = {}     # mã giọng → voicepack numpy (500
 
 
 def _get_kokoro_vi(voice_id: str):
+    _dung("kokorovi")
     from services.voice import kokoro_vi as kv
 
     if kv.get(voice_id) is None:
@@ -704,6 +815,7 @@ _zerotts = None
 
 
 def _get_zerotts():
+    _dung("zerotts")
     base = vcfg.zerotts_model_dir()
     if base is None:
         raise VoiceError("Model ZeroTTS chưa tải (chạy scripts/download_zerotts.py).")

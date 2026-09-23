@@ -736,6 +736,9 @@ def _produce(text: str, voice: str, queue: asyncio.Queue,
     try:
         if stop.is_set():
             return
+        # Giọng Assist dùng (pipeline cài ở HA, c2a chỉ biết qua lượt gọi) không
+        # bị nhả khỏi RAM — Assist phải đọc ngay, không chờ nạp lại model.
+        engines.giu_cho_assist(voice)
         stream = iter(engines.stream_synthesize(text, voice))
         while not stop.is_set():
             try:
