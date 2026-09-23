@@ -522,13 +522,19 @@ def chuyen_bai(session_id: Any, buoc: Any, base_url: str | None = None, *,
     vi_tri = int(hang.get("index", -1)) + buoc
     if int(hang.get("index", -1)) < 0 or not 0 <= vi_tri < len(items):
         raise ValueError("het_hang_doi")
-    bai = items[vi_tri]
-    url = base_url or _url_theo_phien.get(str(session_id)) or url_goc_nen()
+    return phat_bai_trong_phien(phien, items[vi_tri], base_url, goi=goi)
+
+
+def phat_bai_trong_phien(phien: dict[str, Any], bai: dict[str, Any], base_url: str | None = None, *,
+                         goi: Callable[[str, str, dict], bool] | None = None) -> dict[str, Any]:
+    """Phát một bài ra đúng các loa của phiên, giữ nguyên phiên (bài kế, bài từ Queue)."""
+    session_id = str(phien["session_id"])
+    url = base_url or _url_theo_phien.get(session_id) or url_goc_nen()
     if not url:
         raise ValueError("public_base_url_required")
     return phat(str(bai.get("source") or "youtube"), str(bai.get("url") or bai.get("id")),
                 list(phien["output_entity_ids"]), url, media_content_type=bai.get("media_content_type"),
-                session_id=str(session_id), goi=goi)
+                session_id=session_id, goi=goi)
 
 
 def dung_phien(session_id: Any, *, goi: Callable[[str, str, dict], bool] | None = None) -> list[str]:

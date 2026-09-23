@@ -37,6 +37,7 @@ import { type BaiHat, dangHoatDong, dangPhatBai, goi, laFacebook, type Nguon, ty
 import { duongNgheKhiTatMan, moVideoKhiTatMan } from "./nghe-khi-tat-man";
 import * as mayNghe from "./nghe-tren-may";
 import { DanhSachPlaylist, type NguonHang, useKhoPlaylist } from "./playlist";
+import { BangQueue, coBaiKe, khoaMay, type MucQueue, useQueue } from "./queue";
 import { TimNhac } from "./tim-nhac";
 import { type CheDoXem, laTao, laVideo, srcNhung, useVideoNhung } from "./video-nhung";
 
@@ -61,6 +62,17 @@ type KetQuaPhat = { da_gui: string[]; bo_qua: { entity_id: string; ly_do: string
 type Hang = mayNghe.Hang;
 
 // Ô tìm và kết quả giữ theo trang web: chuyển sang tab khác rồi quay lại vẫn còn.
+const KHOA_AN_MUC = "c2a-youtube:an-muc";
+const NGUON_TIM = ["youtube", "zing", "facebook"] as const;
+
+function docAnMuc(): Set<string> {
+  try {
+    const luu = JSON.parse(localStorage.getItem(KHOA_AN_MUC) || "[]");
+    return new Set(Array.isArray(luu) ? luu.filter((x): x is string => typeof x === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
 const ghiNhoTim = { nguon: "youtube" as Nguon, tuKhoa: "", ketQua: [] as BaiHat[], xemPlaylist: false };
 
 function docChon(): Set<string> {
@@ -83,7 +95,11 @@ function luuChon(chon: Set<string>) {
 const cungBai = (a: BaiHat, b: BaiHat) => (a.url || a.id) === (b.url || b.id);
 
 export function TrinhPhat() {
-  const [nguon, setNguon] = useState<Nguon>(ghiNhoTim.nguon === "http" ? "youtube" : ghiNhoTim.nguon);
+  const [nguon, setNguon] = useState<Nguon>(() => {
+    const n: Nguon = ghiNhoTim.nguon === "http" ? "youtube" : ghiNhoTim.nguon;
+    const an = typeof window === "undefined" ? new Set<string>() : docAnMuc();
+    return an.has(n) ? NGUON_TIM.find((x) => !an.has(x)) ?? n : n;
+  });
   const [tuKhoa, setTuKhoa] = useState(ghiNhoTim.tuKhoa);
   const [ketQua, setKetQua] = useState<BaiHat[]>(ghiNhoTim.ketQua);
   useEffect(() => {
@@ -92,6 +108,11 @@ export function TrinhPhat() {
   const [dangTim, setDangTim] = useState(false);
   const khoPlaylist = useKhoPlaylist();
   const [xemPlaylist, setXemPlaylist] = useState(ghiNhoTim.xemPlaylist);
+  const [xemQueue, setXemQueue] = useState(false);
+  // Mã máy và mục bị ẩn nằm ở trình duyệt (như cheDo/ngheNen bên dưới).
+  const [mayKhoa] = useState(() => (typeof window === "undefined" ? "" : khoaMay()));
+  const [anMuc, setAnMuc] = useState<Set<string>>(docAnMuc);
+  const { ds: dsQueue, tai: taiQueue, lenh: lenhQueue } = useQueue();
   const [playlistMoSan, setPlaylistMoSan] = useState("");
   const [dangLuuPlaylist, setDangLuuPlaylist] = useState(false);
   useEffect(() => {
@@ -135,6 +156,9 @@ export function TrinhPhat() {
   const dongBo = useRef({ luiTuaDen: 0, luiTuaAm: 0, giuDen: 0, choTua: null as null | { id: string; tu: number; luc: number } });
 
   const hetVideo = useRef<() => void>(() => undefined);
+  // Hai móc hết bài gọi Queue qua ref này; khối Queue nằm SAU «nhuongTiengChoLoa»
+  // vì phát từ Queue đi qua «phat», mà «phat» dùng hàm ấy.
+  const queueTiepRef = useRef<() => boolean>(() => false);
   // Ở ngoài nhà người xem đã đồng ý xem hình (qua máy chủ) trong lần xem này.
 
   // Thẻ âm thanh không lấy được tiếng cho video đang xem: đừng thử chuyển tiếng sang nó nữa.
@@ -485,11 +509,18 @@ export function TrinhPhat() {
   const baiPhienXem = phienXem?.item ?? null;
   const moiNhat = useRef({ chuyenBai, video, thietBi, loaPhien, nhung, baiPhienXem, ngheNen, chuyenTiengSangMay, hinhLoi });
   useEffect(() => {
+    // Thẻ âm thanh hết bài: Queue của máy này trước (rời trang thì gỡ móc).
+    mayNghe.datKhiHet(() => queueTiepRef.current());
+    return () => mayNghe.datKhiHet(null);
+  }, []);
+  useEffect(() => {
     moiNhat.current = { chuyenBai, video, thietBi, loaPhien, nhung, baiPhienXem, ngheNen, chuyenTiengSangMay, hinhLoi };
     hetVideo.current = () => {
-      // Hết video xem một mình: tự sang bài kế trên trang. Có loa thì máy chủ lo.
+      // Hết video xem một mình: Queue của máy này trước, rồi bài kế trên trang. Có loa thì máy chủ lo.
       const v = moiNhat.current.video;
-      if (v && !v.theoLoa && !v.theoMay) void moiNhat.current.chuyenBai(1);
+      if (!v || v.theoLoa || v.theoMay) return;
+      if (queueTiepRef.current()) return;
+      void moiNhat.current.chuyenBai(1);
     };
     loiVideo.current = () => {
       // Không để khung chết: tiếng vẫn phát (loa hoặc thẻ âm thanh), hình lấy riêng qua máy chủ.
@@ -625,6 +656,65 @@ export function TrinhPhat() {
       if (loa?.trang_thai === "playing") nhuong();
     }, 800);
   };
+
+  /* ===== QUEUE =====
+     Khoá: loa tích ĐẦU TIÊN (Set giữ thứ tự tích), không tích loa thì máy này. */
+  const khoaQueue = [...chon][0] ?? mayKhoa;
+  const tenQueue = khoaQueue.startsWith("device:") ? "Máy này" : theoMa.get(khoaQueue)?.ten ?? khoaQueue;
+  const phatTuQueue = (bai: MucQueue, khoa: string) => {
+    // Chế độ của Queue quyết định xem hay chỉ nghe; bài không có hình thì luôn nghe.
+    const xem = dsQueue[khoa]?.mode !== "audio" && (laVideo(bai) || laFacebook(bai));
+    void phat(bai, xem, { items: [bai] });
+  };
+  const themVaoQueue = async (bai: BaiHat) => {
+    if (!khoaQueue) return;
+    const r = await lenhQueue(khoaQueue, { action: "add", items: [bai] });
+    if (r) toast.success(`Đã thêm “${bai.title || bai.id}” vào Queue · ${tenQueue} (${r.queue.items.length} bài).`);
+  };
+  /** Hết bài trên MÁY NÀY: còn bài kế trong Queue của máy này thì phát, trả true.
+      Đang tích loa thì bài kế ra loa do máy chủ lo, máy này không tự phát. */
+  const queueTiep = () => {
+    if (chon.size || !mayKhoa || !coBaiKe(dsQueue[mayKhoa])) return false;
+    const k = mayKhoa;
+    void lenhQueue(k, { action: "next" }).then((r) => {
+      if (r?.item) phatTuQueue(r.item, k);
+    });
+    return true;
+  };
+  useEffect(() => {
+    if (khoaQueue) void taiQueue(khoaQueue);
+    // Loa sang bài (máy chủ tự chuyển) thì tải lại để tô đúng bài đang phát.
+  }, [khoaQueue, phienXem?.item?.id, phienXem?.queue?.index, taiQueue]);
+  useEffect(() => {
+    // Queue của máy này phải có sẵn để lúc hết bài hỏi được ngay.
+    if (mayKhoa && khoaQueue !== mayKhoa) void taiQueue(mayKhoa);
+  }, [mayKhoa, khoaQueue, taiQueue]);
+  const datAn = (muc: string, an: boolean) => {
+    const moi = new Set(anMuc);
+    if (an) moi.add(muc);
+    else moi.delete(muc);
+    setAnMuc(moi);
+    try {
+      localStorage.setItem(KHOA_AN_MUC, JSON.stringify([...moi]));
+    } catch {
+      /* chỉ sống tới khi tải lại */
+    }
+    // Ẩn đúng mục đang mở thì dời sang mục còn hiện.
+    if (!an) return;
+    if (muc === "queue") setXemQueue(false);
+    if (muc === "playlist") setXemPlaylist(false);
+    if (muc === nguon) {
+      const con = NGUON_TIM.find((n) => !moi.has(n));
+      if (con) {
+        setNguon(con);
+        setKetQua([]);
+      }
+    }
+  };
+
+  useEffect(() => {
+    queueTiepRef.current = queueTiep;
+  });
 
   const loaNhapVideo = async (tb: ThietBi, v: VideoMo) => {
     const tu = nhung.thoiGian();
@@ -1112,6 +1202,25 @@ export function TrinhPhat() {
         doiXemPlaylist={setXemPlaylist}
         luuCaPlaylist={() => void luuCaPlaylist()}
         dangLuuPlaylist={dangLuuPlaylist}
+        xemQueue={xemQueue}
+        doiXemQueue={setXemQueue}
+        soQueue={dsQueue[khoaQueue]?.items.length ?? 0}
+        themVaoQueue={(bai) => void themVaoQueue(bai)}
+        an={anMuc}
+        datAn={datAn}
+        bangQueue={
+          <BangQueue
+            ten={tenQueue}
+            q={dsQueue[khoaQueue]}
+            phatUid={(uid) => {
+              const k = khoaQueue;
+              void lenhQueue(k, { action: "select", uid }).then((r) => {
+                if (r?.item) phatTuQueue(r.item, k);
+              });
+            }}
+            lenh={(body) => void lenhQueue(khoaQueue, body)}
+          />
+        }
         bangPlaylist={
           <DanhSachPlaylist
             kho={khoPlaylist}

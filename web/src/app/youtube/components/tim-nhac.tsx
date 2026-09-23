@@ -1,6 +1,7 @@
 "use client";
 
-import { AudioLines, Facebook, Headphones, ListMusic, ListPlus, LoaderCircle, MonitorPlay, Music2, Play, Search, Youtube } from "lucide-react";
+import { AudioLines, Facebook, Headphones, ListEnd, ListMusic, ListPlus, ListVideo, LoaderCircle, MonitorPlay, Music2, Play, Search, SlidersHorizontal, Youtube } from "lucide-react";
+import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -40,12 +41,34 @@ type Props = {
   luuCaPlaylist: () => void;
   dangLuuPlaylist: boolean;
   bangPlaylist: ReactNode;
+  /** Đang xem Queue (bài phát kế tiếp) thay cho tìm nhạc. */
+  xemQueue: boolean;
+  doiXemQueue: (v: boolean) => void;
+  bangQueue: ReactNode;
+  soQueue: number;
+  themVaoQueue: (bai: BaiHat) => void;
+  /** Mục chủ máy đã ẩn trên máy này: "youtube" | "zing" | "facebook" | "playlist" | "queue". */
+  an: Set<string>;
+  datAn: (muc: string, an: boolean) => void;
 };
+
+/** Tên lớp phải viết sẵn cho Tailwind — số cột theo số mục còn hiện. */
+const COT: Record<number, string> = {
+  1: "grid-cols-1", 2: "grid-cols-2", 3: "grid-cols-3", 4: "grid-cols-2 sm:grid-cols-4", 5: "grid-cols-3 sm:grid-cols-5",
+};
+const MUC_AN: { khoa: string; nhan: string }[] = [
+  { khoa: "youtube", nhan: "YouTube" }, { khoa: "zing", nhan: "Zing MP3" }, { khoa: "facebook", nhan: "Facebook" },
+  { khoa: "playlist", nhan: "Playlist" }, { khoa: "queue", nhan: "Queue" },
+];
 
 export function TimNhac({
   className, nguon, doiNguon, tuKhoa, setTuKhoa, tim, dangTim, ketQua, dangPhatMa, dangGuiMa, coLoa, phat,
   kho, xemPlaylist, doiXemPlaylist, luuCaPlaylist, dangLuuPlaylist, bangPlaylist,
+  xemQueue, doiXemQueue, bangQueue, soQueue, themVaoQueue, an, datAn,
 }: Props) {
+  const [moAn, setMoAn] = useState(false);
+  const nguonHien = NUT_NGUON.filter((n) => !an.has(n.khoa));
+  const soMuc = nguonHien.length + (an.has("playlist") ? 0 : 1) + (an.has("queue") ? 0 : 1);
   const nut = NUT_NGUON.find((n) => n.khoa === nguon);
   const nutNguon = (dang: boolean, nhan: string, Icon: typeof Search, bam: () => void) => (
     <button
@@ -63,14 +86,47 @@ export function TimNhac({
   );
   return (
     <section className={cn("rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 sm:p-5", className)}>
-      <div role="group" aria-label="Nguồn nhạc và playlist" className="grid grid-cols-2 gap-1 rounded-xl bg-[var(--muted)] p-1 sm:grid-cols-4">
-        {NUT_NGUON.map(({ khoa, Icon, nhan }) => (
-          <span key={khoa} className="contents">{nutNguon(!xemPlaylist && nguon === khoa, nhan, Icon, () => { doiXemPlaylist(false); doiNguon(khoa); })}</span>
-        ))}
-        {nutNguon(xemPlaylist, `Playlist${kho.ds?.length ? ` (${kho.ds.length})` : ""}`, ListMusic, () => doiXemPlaylist(true))}
+      <div className="flex items-start gap-1">
+        <div role="group" aria-label="Nguồn nhạc, playlist và Queue" className={cn("grid min-w-0 flex-1 gap-1 rounded-xl bg-[var(--muted)] p-1", COT[soMuc] ?? COT[2])}>
+          {nguonHien.map(({ khoa, Icon, nhan }) => (
+            <span key={khoa} className="contents">{nutNguon(!xemPlaylist && !xemQueue && nguon === khoa, nhan, Icon, () => { doiXemPlaylist(false); doiXemQueue(false); doiNguon(khoa); })}</span>
+          ))}
+          {!an.has("playlist") && nutNguon(xemPlaylist, `Playlist${kho.ds?.length ? ` (${kho.ds.length})` : ""}`, ListMusic, () => { doiXemQueue(false); doiXemPlaylist(true); })}
+          {!an.has("queue") && nutNguon(xemQueue, `Queue${soQueue ? ` (${soQueue})` : ""}`, ListVideo, () => { doiXemPlaylist(false); doiXemQueue(true); })}
+        </div>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          aria-expanded={moAn}
+          aria-label="Ẩn hoặc hiện mục"
+          title="Ẩn / hiện mục trên máy này"
+          className="size-9 shrink-0 rounded-full text-muted-foreground"
+          onClick={() => setMoAn((v) => !v)}
+        >
+          <SlidersHorizontal />
+        </Button>
       </div>
+      {moAn && (
+        <div className="mt-2 rounded-xl border border-[var(--border)] p-3 text-sm">
+          <div className="mb-2 text-xs text-muted-foreground">Mục hiện trên máy này (bỏ chọn để ẩn):</div>
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            {MUC_AN.map(({ khoa, nhan }) => {
+              const hien = !an.has(khoa);
+              // Phải còn ít nhất một nguồn tìm nhạc — ẩn hết thì không còn đường tìm bài.
+              const khoa_cuoi = hien && NUT_NGUON.some((n) => n.khoa === khoa) && nguonHien.length === 1;
+              return (
+                <label key={khoa} className={cn("flex items-center gap-1.5", khoa_cuoi && "opacity-50")}>
+                  <input type="checkbox" checked={hien} disabled={khoa_cuoi} onChange={(e) => datAn(khoa, !e.target.checked)} />
+                  {nhan}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
-      {xemPlaylist ? bangPlaylist : (<>
+      {xemQueue ? bangQueue : xemPlaylist ? bangPlaylist : (<>
       <form
         className="mt-3 flex gap-2"
         onSubmit={(e) => {
@@ -165,6 +221,19 @@ export function TimNhac({
                     <span className="truncate">{bai.channel || bai.artist || TEN_NGUON[bai.source]}</span>
                   </div>
                 </div>
+                {bai.source !== "http" && !an.has("queue") && (
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="shrink-0 rounded-full text-muted-foreground"
+                    aria-label={`Thêm ${bai.title || bai.id} vào Queue`}
+                    title="Thêm vào Queue — phát sau bài đang nghe"
+                    onClick={() => themVaoQueue(bai)}
+                  >
+                    <ListEnd />
+                  </Button>
+                )}
                 {bai.source !== "http" && <ThemVaoPlaylist bai={bai} kho={kho} />}
                 {(bai.source === "youtube" || bai.source === "facebook") && (
                   <Button

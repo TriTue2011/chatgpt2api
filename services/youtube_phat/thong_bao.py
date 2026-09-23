@@ -42,6 +42,14 @@ THONG_BAO = {
     "invalid_share_code": "Mã chia sẻ không đúng hoặc bị cắt mất một phần.",
     "playlist_unavailable": "Không đọc được playlist này — link sai, playlist riêng tư, hoặc YouTube/Zing đang lỗi; thử lại sau.",
     "playlist_empty": "Playlist này không có bài nào nghe được (riêng tư, VIP hoặc đã xoá).",
+    "invalid_queue_key": "Không xác định được máy hoặc loa của Queue.",
+    "invalid_items": "Bài này không thêm vào Queue được.",
+    "queue_full": "Queue đã đủ 200 bài — xoá bớt rồi thêm.",
+    "item_not_found": "Bài đó không còn trong Queue.",
+    "invalid_mode": "Chế độ Queue không hỗ trợ.",
+    "invalid_order": "Thứ tự Queue không hỗ trợ.",
+    "invalid_action": "Lệnh Queue không hỗ trợ.",
+    "too_many_queues": "Đã quá nhiều Queue — xoá bớt Queue của máy/loa cũ.",
 }
 
 

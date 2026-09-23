@@ -33,7 +33,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response, Streamin
 
 from api.support import require_admin, resolve_image_base_url
 from services.ingress_guard import BodyTooLarge, read_json_limited
-from services.youtube_phat import dich_vu, phat_ha
+from services.youtube_phat import dich_vu, hang_cho, phat_ha
 from services.youtube_phat.thong_bao import THONG_BAO as _THONG_BAO
 from services.youtube_phat.search import SearchUnavailableError
 from services.youtube_phat.streaming import (
@@ -607,6 +607,27 @@ def create_router() -> APIRouter:
             return _loi("invalid_request")
         ma, body = await _playlist(payload)
         return {"ok": True, **body} if ma == 200 else _loi(body["error"])
+
+    @router.get("/api/youtube-phat/queue")
+    async def queue_lay(request: Request, authorization: str | None = Header(default=None)):
+        """Queue của một máy (`device:<mã>`) hoặc một loa (`media_player.x`)."""
+        require_admin(authorization)
+        try:
+            q = hang_cho.kho().lay(request.query_params.get("key"))
+        except ValueError as error:
+            return _loi(str(error))
+        return {"ok": True, "queue": q}
+
+    @router.post("/api/youtube-phat/queue")
+    async def queue_doi(request: Request, authorization: str | None = Header(default=None)):
+        """add / remove / clear / set / select / next — trả Queue mới và bài cần phát."""
+        require_admin(authorization)
+        try:
+            payload = await _doc_json(request, 64_000)
+            q, bai = await asyncio.to_thread(hang_cho.kho().doi, payload)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as error:
+            return _loi(str(error))
+        return {"ok": True, "queue": q, "item": bai}
 
     @router.post("/api/youtube-phat/phat")
     async def phat(request: Request, authorization: str | None = Header(default=None)):

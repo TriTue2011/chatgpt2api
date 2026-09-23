@@ -47,7 +47,7 @@ def quan_sat(tracker: dict[str, Any], trang_thai: str, vi_tri: float | None,
 
 def mot_vong(bay_gio: float | None = None) -> list[str]:
     """Một lượt kiểm; trả session_id đã chuyển bài (để test)."""
-    from . import phat_ha
+    from . import hang_cho, phat_ha
 
     bay_gio = time.monotonic() if bay_gio is None else bay_gio
     phien = [p for p in phat_ha.cac_phien()
@@ -71,6 +71,21 @@ def mot_vong(bay_gio: float | None = None) -> list[str]:
         if dan["trang_thai"] in DANG_PHAT and not phat_ha.dang_phat_bai(dan, p.get("item")):
             continue  # loa còn báo bài trước: chưa phải bài của phiên này
         if not quan_sat(tracker, dan["trang_thai"], dan.get("vi_tri"), dan.get("thoi_luong") or (p.get("item") or {}).get("duration"), bay_gio):
+            continue
+        # Queue của loa tích đầu tiên đi TRƯỚC hàng đợi phiên (chủ máy 23/09/2026).
+        # Phát một bài từ ô tìm kiếm thì hàng đợi phiên chính là kết quả tìm kiếm
+        # (session.py `_search_queues`) — không ưu tiên thì Queue không tới lượt.
+        # Hết Queue thì phiên chạy tiếp như cũ (kết quả tìm / playlist đã chọn).
+        loa_dau = p["output_entity_ids"][0]
+        try:
+            if hang_cho.kho().co_bai_ke(loa_dau):
+                bai = hang_cho.kho().tiep(loa_dau)
+                if bai:
+                    phat_ha.phat_bai_trong_phien(p, bai)
+                    da_chuyen.append(p["session_id"])
+                continue
+        except (ValueError, OSError, RuntimeError) as error:
+            logger.warning({"event": "youtube_phat_queue_loi", "phien": p["session_id"], "loi": str(error)[:160]})
             continue
         if int(hang.get("index", -1)) + 1 >= len(hang.get("items") or []):
             continue

@@ -127,7 +127,10 @@ function theAm(): HTMLAudioElement {
   });
   a.addEventListener("ended", () => {
     // Hết bài khi nghe một mình: sang bài kế, kể cả khi đang ở trang khác.
-    if (amThat() && trangThai.bai && !trangThai.cungLoa) chuyen(1);
+    // Queue của máy này đi trước hàng đợi trên trang (xem «datKhiHet»).
+    if (!amThat() || !trangThai.bai || trangThai.cungLoa) return;
+    if (khiHet?.()) return;
+    chuyen(1);
   });
   a.addEventListener("error", () => {
     const ma = a.error?.code;
@@ -317,6 +320,13 @@ export async function ngheBai(bai: BaiHat, hang: Hang, batDau = 0): Promise<void
     return;
   }
   datNguon(a, r.url, batDau);
+}
+
+let khiHet: (() => boolean) | null = null;
+
+/** Hết bài trên máy này: gọi `fn` trước; trả true = nó đã lo bài kế (Queue). */
+export function datKhiHet(fn: (() => boolean) | null) {
+  khiHet = fn;
 }
 
 /** Bài kế (+1) / bài trước (-1) của hàng đợi trên trang; false = hết hàng. */
