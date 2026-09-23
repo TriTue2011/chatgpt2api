@@ -919,18 +919,26 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
         raise VoiceError("Không có nội dung để đọc.")
     if (voice or "").startswith("dangu:"):
         return synthesize_da_ngu(text, voice[len("dangu:"):])
+    mot_lan = None
     if (voice or "").startswith(vcfg.NGHI_PREFIX):
         # Một lần generate cho cả đoạn, câu nào xong phát câu đó.
-        khuc = list(_nghi_phat(text, voice))
-        if not khuc:
-            raise VoiceError("NghiTTS không tạo được âm thanh.")
-        return _pcm_to_wav(b"".join(pcm for _r, pcm in khuc), khuc[0][0], 2, 1)
-    if ((voice or "").startswith(vcfg.KOKORO_PREFIX)
+        mot_lan = lambda: _nghi_phat(text, voice)  # noqa: E731
+    elif ((voice or "").startswith(vcfg.KOKORO_PREFIX)
             and not (voice or "").startswith(vcfg.KOKORO_VI_PREFIX)):
-        khuc = list(_phat_cau(text, 24000, lambda doan: _kokoro_cau(doan, voice)))
-        if not khuc:
-            raise VoiceError("Kokoro không tạo được âm thanh.")
-        return _pcm_to_wav(b"".join(pcm for _r, pcm in khuc), khuc[0][0], 2, 1)
+        mot_lan = lambda: _phat_cau(text, 24000, lambda doan: _kokoro_cau(doan, voice))  # noqa: E731
+    if mot_lan is not None:
+        try:
+            khuc = list(mot_lan())
+            if khuc:
+                return _pcm_to_wav(b"".join(pcm for _r, pcm in khuc), khuc[0][0], 2, 1)
+            raise VoiceError("Không tạo được âm thanh.")
+        except Exception as exc:
+            # Đường một lần hỏng (thiếu model, sherpa lỗi) thì đi đường thường,
+            # nơi có sẵn lùi về Piper — 5d5da29 bỏ mất bước này, giọng NghiTTS
+            # thiếu model là tin nhắn thoại và thông báo loa hỏng hẳn.
+            logger.warning("voice: %s mot lan that bai, di duong thuong: %s",
+                           voice, str(exc)[:160])
+            return _synthesize_one(text, voice, style=style)
     if (voice or "").startswith((vcfg.VIENEU_PREFIX, vcfg.ZEROTTS_PREFIX)):
         # Hai engine tự cắt câu và tự nghỉ. Cắt thêm từng vế là prefill lại —
         # đoạn thời tiết đo 23/09/2026 khựng tới 3,3 giây.
@@ -1384,7 +1392,85 @@ def warmup_tts(voice: str = "") -> dict:
         return {"ok": False, "engine": "", "ms": ms, "detail": str(exc)[:160]}
 
 
+# ── Đệm đầu thông minh ───────────────────────────────────────────────────────
+# VieNeu và ZeroTTS trên máy .38 tạo CHẬM hơn tốc độ đọc — đo 23/09/2026 qua
+# /api/voice/stream, đoạn 30 giây: VieNeu RTF 1,61 (loa im tổng 17,9s, lần dài
+# nhất 3,0s giữa câu), ZeroTTS 1,35 (11,6s). Thêm luồng không cứu: ZeroTTS 4/6/8
+# luồng = RTF 1,45/2,05/2,83, VieNeu 2 và 4 luồng cùng ~1,7 (LXC dùng chung nhân).
+# Phát ngay thì mọi chỗ hụt thành chỗ ngắt giữa câu. Chủ máy chọn 23/09/2026:
+# chờ đầu vừa đủ rồi đọc liền mạch.
+# Nếu tạo chậm hơn đọc r lần và đoạn dài D giây, bắt đầu phát khi đã có sẵn
+# D·(1 − 1/r) giây thì tới cuối không còn hụt. r đo ngay trong lượt (thời gian
+# từ lúc bắt đầu / số giây đã tạo), D ước theo số ký tự × giây-mỗi-ký-tự học
+# được của HỌ engine đó. Engine nhanh hơn đọc (r ≤ 1) thì không giữ gì.
+# Trong lúc giữ phát khoảng lặng đúng nhịp thời gian thực: cả hai nơi nhận
+# (loa qua HTTP, Home Assistant qua Wyoming) đều phát ngay khi nhận, nên lặng
+# chính là thời gian chờ — và loa không bỏ cuộc vì lâu không thấy byte nào.
+
+_TOC_DO: dict[str, dict[str, float]] = {}   # họ engine → {"rtf", "giay_moi_chu"}
+# Tiếng Việt đọc ~13 ký tự/giây. Chỉ dùng tới khi họ ấy đọc xong lượt đầu.
+_GIAY_MOI_CHU_MAC_DINH = 0.075
+_DU_PHONG_DEM = 1.1            # giữ dư 10% cho sai số ước lượng
+
+
+def _ho_engine(voice: str) -> str:
+    return voice.split(":", 1)[0] if ":" in voice else "piper"
+
+
+def _dem_dau(nguon, text: str, ho: str):
+    """Bọc một nguồn (rate, pcm16): giữ lại tới khi đủ để đọc liền mạch."""
+    import time as _time
+
+    t0 = _time.monotonic()
+    hoc = _TOC_DO.get(ho) or {}
+    du_kien = len(text) * hoc.get("giay_moi_chu", _GIAY_MOI_CHU_MAC_DINH)
+    giu: list[tuple[int, bytes]] = []
+    da_tao = 0.0
+    tha = False
+    lang_da_phat = 0.0
+    luc_co_tieng = None
+    for rate, pcm in nguon:
+        da_tao += len(pcm) / (2 * rate) if rate else 0.0
+        if tha:
+            yield rate, pcm
+            continue
+        giu.append((rate, pcm))
+        bay_gio = _time.monotonic()
+        t = bay_gio - t0
+        # r đo ngay trong lượt khi đã có ≥1s tiếng; trước đó dùng số đã học.
+        r = t / da_tao if da_tao >= 1.0 else hoc.get("rtf")
+        if r is not None and da_tao >= du_kien * max(0.0, 1.0 - 1.0 / r) * _DU_PHONG_DEM:
+            tha = True
+            yield from giu
+            giu = []
+            continue
+        if luc_co_tieng is None:
+            luc_co_tieng = bay_gio
+        thieu = (bay_gio - luc_co_tieng) - lang_da_phat
+        if thieu >= 0.25:
+            lang_da_phat += thieu
+            yield rate, _silence_pcm(int(thieu * 1000), rate)
+    yield from giu
+    tong = _time.monotonic() - t0
+    if da_tao >= 2.0 and text:
+        cu = _TOC_DO.get(ho)
+        moi = {"rtf": tong / da_tao, "giay_moi_chu": da_tao / len(text)}
+        _TOC_DO[ho] = moi if not cu else {k: 0.7 * cu[k] + 0.3 * moi[k] for k in moi}
+
+
 def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
+    """Như `_stream_tao`, cộng cache và đệm đầu thông minh (xem `_dem_dau`)."""
+    text = (text or "").strip()
+    v = (voice or vcfg.tts_voice()).strip()
+    if text and not v.startswith("dangu:"):
+        hit = tts_cache.get(tts_cache.key("stream", text, v, style))
+        if hit is not None:
+            yield from hit
+            return
+    yield from _dem_dau(_stream_tao(text, voice, style=style), text, _ho_engine(v))
+
+
+def _stream_tao(text: str, voice: str = "", *, style: str = ""):
     """Generator yield (sample_rate, pcm16_mono_bytes) — đọc tới đâu phát tới đó.
 
     VieNeu và ZeroTTS → một lần gọi cho cả đoạn, khung âm thanh ra ngay khi
@@ -1435,16 +1521,23 @@ def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
 
     if v.startswith(vcfg.NGHI_PREFIX) or (
             v.startswith(vcfg.KOKORO_PREFIX) and not v.startswith(vcfg.KOKORO_VI_PREFIX)):
+        yielded = False
         try:
             nguon = (_nghi_phat(text, v) if v.startswith(vcfg.NGHI_PREFIX)
                      else _phat_cau(text, 24000, lambda doan: _kokoro_cau(doan, v)))
             for item in nguon:
+                yielded = True
                 _keep(item)
                 yield item
             if captured:
                 tts_cache.put(ck, captured, size_bytes=_captured_bytes)
             return
         except Exception as exc:
+            # ĐÃ PHÁT MỘT PHẦN thì dừng ở đó. Rơi xuống đường dự phòng là đọc lại
+            # cả đoạn từ đầu — người nghe nghe hai lần, lần sau bằng giọng khác.
+            if yielded:
+                logger.warning("voice: stream sherpa hong giua chung, dung: %s", str(exc)[:160])
+                return
             logger.warning("voice: stream sherpa that bai, fallback cau: %s", str(exc)[:160])
             captured, _captured_bytes = ([] if _limit > 0 else None), 0
 
@@ -1460,6 +1553,10 @@ def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
                     tts_cache.put(ck, captured, size_bytes=_captured_bytes)
                 return
         except Exception as exc:
+            if yielded:   # đã phát một phần: không đọc lại từ đầu (xem nhánh sherpa)
+                logger.warning("voice: stream zerotts hong giua chung, dung: %s",
+                               str(exc)[:160])
+                return
             logger.warning("voice: stream zerotts that bai, fallback cau: %s",
                            str(exc)[:160])
         captured, _captured_bytes = ([] if _limit > 0 else None), 0
@@ -1487,6 +1584,10 @@ def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
                     tts_cache.put(ck, captured, size_bytes=_captured_bytes)
                 return
         except Exception as exc:
+            if yielded:   # đã phát một phần: không đọc lại từ đầu (xem nhánh sherpa)
+                logger.warning("voice: stream vieneu hong giua chung, dung: %s",
+                               str(exc)[:160])
+                return
             logger.warning("voice: stream vieneu that bai, fallback cau: %s",
                            str(exc)[:160])
         captured, _captured_bytes = ([] if _limit > 0 else None), 0

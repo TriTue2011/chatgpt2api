@@ -322,9 +322,13 @@ class _FakeTts:
     def __init__(self, *a, **k) -> None:
         self.calls: list[tuple[str, int]] = []
 
-    def generate(self, text, sid=0, speed=1.0):
+    def generate(self, text, sid=0, speed=1.0, callback=None):
+        # sherpa-onnx 1.13.4 thật: có callback thì báo từng câu vừa đọc xong.
         self.calls.append((text, sid))
-        return _FakeAudio()
+        audio = _FakeAudio()
+        if callback is not None:
+            callback(audio.samples, 1.0)
+        return audio
 
 
 def _fake_sherpa() -> types.ModuleType:
@@ -404,7 +408,7 @@ class EngineDispatchTests(unittest.TestCase):
 
     def test_empty_audio_raises_instead_of_silent_wav(self) -> None:
         class _Silent(_FakeTts):
-            def generate(self, text, sid=0, speed=1.0):
+            def generate(self, text, sid=0, speed=1.0, callback=None):
                 return _FakeAudio(0)
 
         fake = _fake_sherpa()

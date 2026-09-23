@@ -143,12 +143,16 @@ class SynthesizeRoutingTests(unittest.TestCase):
         self.assertEqual(piper.call_args.args[1], "")
 
     def test_kokoro_voice_uses_kokoro_engine(self) -> None:
+        # Từ 5d5da29 Kokoro tiếng Anh gọi sherpa MỘT lần cho cả đoạn (_phat_cau +
+        # _kokoro_cau), không còn qua _kokoro_tts — test cũ vá theo hợp đồng mới.
         with mock.patch.object(vcfg, "tts_backend", return_value="local"), \
-                mock.patch.object(engines, "_kokoro_tts",
-                                  return_value=b"RIFFkok") as kok:
+                mock.patch.object(engines, "_kokoro_cau") as cau, \
+                mock.patch.object(engines, "_phat_cau",
+                                  side_effect=lambda _t, _r, lay: (lay("hello there"),
+                                                                   [(24000, b"\x01\x00" * 8)])[1]):
             out = engines.synthesize("hello there", "kokoro:af_sky")
-        self.assertEqual(out, b"RIFFkok")
-        kok.assert_called_once()
+        self.assertTrue(out.startswith(b"RIFF"))
+        cau.assert_called_once_with("hello there", "kokoro:af_sky")
 
 
 class SentenceSplitTests(unittest.TestCase):
@@ -698,3 +702,104 @@ def test_env_hong_thi_bo_qua_chu_khong_no(monkeypatch):
 
     monkeypatch.setenv("VIENEU_THREADS", "nhieu-vao")
     assert vcfg.vieneu_threads() == vcfg.auto_tts_threads()
+
+
+# ── Đệm đầu thông minh (23/09/2026) ─────────────────────────────────────────
+
+
+class _DongHo:
+    """Đồng hồ giả: nguồn giả gọi `buoc(giay)` để mô phỏng thời gian tạo tiếng."""
+
+    def __init__(self):
+        self.t = 100.0
+
+    def __call__(self):
+        return self.t
+
+    def buoc(self, giay):
+        self.t += giay
+
+
+def _nguon(dong_ho, rtf, tong_giay, khuc=0.25, rate=48000):
+    """Engine giả: mỗi khúc `khuc` giây tiếng mất `khuc*rtf` giây để tạo."""
+    da = 0.0
+    while da < tong_giay - 1e-9:
+        dong_ho.buoc(khuc * rtf)
+        da += khuc
+        yield rate, b"\x01\x00" * int(rate * khuc)
+
+
+def _loa(dong_ho_ra):
+    """Loa phát ngay từ khúc đầu nhận được; trả (tổng giây phải chờ, số giây lặng đầu)."""
+    phat_tu = None
+    het = 0.0
+    cho = 0.0
+    lang = 0.0
+    thay_tieng = False
+    for luc, rate, pcm in dong_ho_ra:
+        dai = len(pcm) / (2 * rate)
+        if phat_tu is None:
+            phat_tu = het = luc
+        if luc > het:
+            cho += luc - het
+            het = luc
+        het += dai
+        if not thay_tieng and pcm.strip(b"\x00"):
+            thay_tieng = True
+        elif not thay_tieng:
+            lang += dai
+    return cho, lang
+
+
+def _chay(monkeypatch, rtf, tong_giay, text_len, hoc=None):
+    dong_ho = _DongHo()
+    monkeypatch.setattr(engines, "_TOC_DO", dict(hoc or {}))
+    import time as _time
+    monkeypatch.setattr(_time, "monotonic", dong_ho)
+    ra = [(dong_ho(), r, p) for r, p in engines._dem_dau(
+        _nguon(dong_ho, rtf, tong_giay), "x" * text_len, "vieneu")]
+    return ra
+
+
+def test_dem_dau_engine_cham_doc_lien_mach_khong_ngat(monkeypatch):
+    # VieNeu đo thật: RTF 1,61, đoạn ~28s cho ~370 ký tự.
+    ra = _chay(monkeypatch, 1.61, 28.0, 370,
+               hoc={"vieneu": {"rtf": 1.6, "giay_moi_chu": 28.0 / 370}})
+    cho, lang = _loa(ra)
+    assert cho < 0.3            # không còn ngắt giữa chừng (trước là 17,9s)
+    assert 5.0 < lang < 25.0    # đổi lại: chờ đầu, phát bằng khoảng lặng
+
+
+def test_dem_dau_engine_nhanh_khong_cho_gi(monkeypatch):
+    ra = _chay(monkeypatch, 0.1, 20.0, 260,
+               hoc={"vieneu": {"rtf": 0.1, "giay_moi_chu": 20.0 / 260}})
+    cho, lang = _loa(ra)
+    assert (cho, lang) == (0.0, 0.0)
+    assert all(p.strip(b"\x00") for _, _, p in ra)   # không chèn lặng nào
+
+
+def test_dem_dau_lan_dau_chua_hoc_van_do_duoc_ngay_trong_luot(monkeypatch):
+    ra = _chay(monkeypatch, 1.4, 30.0, 400)          # chưa có số học
+    cho, _lang = _loa(ra)
+    assert cho < 1.0
+    hoc = engines._TOC_DO["vieneu"]
+    assert abs(hoc["rtf"] - 1.4) < 0.1               # học được cho lượt sau
+    assert abs(hoc["giay_moi_chu"] - 30.0 / 400) < 1e-6
+
+
+def test_hong_giua_chung_khong_doc_lai_tu_dau(monkeypatch):
+    """ZeroTTS phát 2 khúc rồi hỏng: KHÔNG được rơi xuống Piper đọc lại cả đoạn."""
+    monkeypatch.setattr(vcfg, "tts_backend", lambda: "local")
+    monkeypatch.setattr(tts_cache, "get", lambda _k: None)
+
+    def hong(_text, _voice):
+        yield 48000, b"\x01\x00" * 4800
+        yield 48000, b"\x01\x00" * 4800
+        raise RuntimeError("onnx hong")
+
+    monkeypatch.setattr(engines, "_zerotts_stream", hong)
+    goi_lai = mock.Mock(side_effect=AssertionError("doc lai tu dau"))
+    monkeypatch.setattr(engines, "synthesize", goi_lai)
+    ra = list(engines._stream_tao("Một câu. Hai câu.", "zerotts:maichi"))
+    assert len(ra) == 2
+    goi_lai.assert_not_called()
