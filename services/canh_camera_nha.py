@@ -254,10 +254,21 @@ def yeu_cau(camera: str, nguon: str) -> bool:
 
 
 def _vong_xu_ly() -> None:
+    from services import so_mat_nha
+
+    bao_tri_luc = 0.0
+    cho_bao_tri = 0.0
     while not _stop.is_set():
         try:
             camera, nguon = _hang.get(timeout=1.0)
         except queue.Empty:
+            # Rảnh thì dọn «Mặt khác» — CÙNG luồng với nhận mặt nên không tranh
+            # model; mỗi lần ngắn (`_BU_MOI_LAN`) để lượt có người không chờ lâu.
+            if time.time() - bao_tri_luc >= cho_bao_tri:
+                bao_tri_luc = time.time()
+                kq = _bao_tri()
+                cho_bao_tri = (so_mat_nha.BAO_TRI_KHI_BU_GIAY if kq and kq.get("bu_vector")
+                               else so_mat_nha.BAO_TRI_GIAY)
             continue
         with _khoa:
             _dang_cho.discard(camera)
@@ -269,6 +280,18 @@ def _vong_xu_ly() -> None:
             _stats["loi"] += 1
             _stats["loi_cuoi"] = f"{camera}: {str(exc)[:160]}"
             logger.warning({"event": "canh_camera_loi", "camera": camera, "loi": str(exc)[:200]})
+
+
+def _bao_tri() -> dict[str, Any] | None:
+    from services import nhin_nha, so_mat_nha
+
+    try:
+        if cfg()["bat"] and nhin_nha.co_mat():
+            _stats["bao_tri"] = so_mat_nha.bao_tri()
+            return _stats["bao_tri"]
+    except Exception as exc:
+        logger.warning({"event": "canh_camera_bao_tri_loi", "loi": str(exc)[:200]})
+    return None
 
 
 # ── Nguồn: YOLO tự quét ─────────────────────────────────────────────────────
@@ -422,9 +445,9 @@ def _chon_dai_dien(ung_vien: list[tuple[float, dict[str, Any], Any]],
     """
     import numpy as np
 
-    from services import nhin_nha
+    from services import so_mat_nha
 
-    co_the, _chac = nhin_nha.nguong_mat()
+    co_the, _chac = so_mat_nha.nguong_hieu_luc()
     # Người đã biết (kể cả «có thể là») gom theo danh tính. Mặt LẠ chưa có danh
     # tính nên gom theo ĐỘ GIỐNG giữa chính các vector — cùng luật mà
     # `so_mat_nha.gom_mat_la` dùng. Gom chung hết thành một là gộp nhầm hai khách
@@ -541,7 +564,7 @@ def xu_ly(camera: str, nguon: str) -> dict[str, Any]:
             logger.info({"event": "canh_camera_luu_anh_loi", "loi": str(exc)[:120]})
         sk = so_mat_nha.ghi_su_kien(camera, nguon, m["loai"], nguoi_id=m["nguoi_id"],
                                     mat_la_id=mat_la_id, do_giong=m["do_giong"],
-                                    hop=m["hop"], anh=anh_url, ts=now)
+                                    hop=m["hop"], anh=anh_url, ts=now, vector=m.get("vector"))
         _stats["su_kien"] += 1
         ra["su_kien"].append(sk)
         _bao(camera, m, mat_la_id, anh_url, now, c)

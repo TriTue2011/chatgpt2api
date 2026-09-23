@@ -26,6 +26,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +88,14 @@ def _db() -> sqlite3.Connection:
             "CREATE INDEX IF NOT EXISTS idx_sk_ts ON su_kien(ts);"
             "CREATE INDEX IF NOT EXISTS idx_sk_nguoi ON su_kien(nguoi_id, ts);"
         )
+        # Vector của TỪNG lượt gặp (24/09/2026) — dọn «Mặt khác» so theo lượt,
+        # không theo vector trung bình của cụm. `bo` rỗng = chưa bù.
+        cot = {r[1] for r in conn.execute("PRAGMA table_info(su_kien)")}
+        if "vector" not in cot:
+            conn.execute("ALTER TABLE su_kien ADD COLUMN vector BLOB")
+        if "bo" not in cot:
+            conn.execute("ALTER TABLE su_kien ADD COLUMN bo TEXT NOT NULL DEFAULT ''")
+        conn.commit()
         _conn = conn
     return _conn
 
@@ -293,8 +302,38 @@ def _nap_bang() -> dict[str, Any]:
             "la_id": [r["id"] for r in la],
             "la_ma_tran": (np.vstack([_vec(r["vector"]) for r in la]) if la
                            else np.zeros((0, 512), np.float32)),
+            "tran_khac": None,
         }
+        ids = _bang["nguoi_id"]
+        if len(set(ids)) >= 2:
+            a = np.asarray(ids)
+            diem = _bang["ma_tran"] @ _bang["ma_tran"].T * 100.0
+            _bang["tran_khac"] = float(diem[a[:, None] != a[None, :]].max())
         return _bang
+
+
+# NGƯỠNG "CÓ THỂ" TỰ CHỈNH THEO CAMERA NHÀ (chủ máy 24/09/2026: "không so sánh
+# khuôn mặt khi nhận được khuôn mặt mới, trùng của ai thì cho vào lịch sử người
+# đó"). IRIS (anhnvme/facedetect) dùng 40/55 nhưng dặn "calibrate them against
+# the actual cameras". Đo 24/09/2026 trên 17 ảnh mẫu (buffalo_l, đều cắt từ
+# camera): hai ảnh CÙNG người giống 14–57, hai người KHÁC nhau cao nhất 29 — ở
+# 40, phần lớn lượt của người nhà rơi vào «Mặt khác» (9 cụm ≥40 và 22 cụm 30–40
+# kiểm bằng mắt: từ 35 trở lên gần như đều đúng người, dưới 35 bắt đầu sai).
+# Nguyên tắc thay cho con số: ngưỡng nằm TRÊN mọi cặp khác người đã biết một
+# biên an toàn; không vượt cấu hình, không dưới sàn. Thêm mẫu là tự tính lại.
+_BIEN_AN_TOAN = 6.0
+_SAN_CO_THE = 30.0
+
+
+def nguong_hieu_luc(bang: dict[str, Any] | None = None) -> tuple[float, float]:
+    """``(có thể là, chắc chắn)`` dùng thật — mọi nơi so mặt đều gọi hàm này."""
+    from services import nhin_nha
+
+    co_the, chac = nhin_nha.nguong_mat()
+    tran = (bang or _nap_bang()).get("tran_khac")
+    if tran is not None:
+        co_the = min(co_the, max(_SAN_CO_THE, tran + _BIEN_AN_TOAN))
+    return co_the, max(co_the, chac)
 
 
 def _bo_bang() -> None:
@@ -311,10 +350,8 @@ def khop(vector) -> dict[str, Any]:
     """
     import numpy as np
 
-    from services import nhin_nha
-
     bang = _nap_bang()
-    co_the, chac = nhin_nha.nguong_mat()
+    co_the, chac = nguong_hieu_luc(bang)
     if not bang["nguoi_id"]:
         return {"nguoi_id": None, "ten": None, "do_giong": 0.0, "loai": "la"}
     diem = np.clip(bang["ma_tran"] @ np.asarray(vector, np.float32), 0.0, None) * 100.0
@@ -581,9 +618,6 @@ def xoa_mat(mat_id: str) -> bool:
 
 # ── Mặt lạ (cụm) và sự kiện camera ──────────────────────────────────────────
 
-#: Tâm cụm nhận vector mới với trọng số tối đa ngần này lượt: vẫn theo kịp khi
-#: người đó đổi kiểu tóc, nhưng một khung xấu không kéo lệch hẳn cụm.
-_TRONG_SO_CUM = 10
 #: Hỏi tên một mặt lạ tối đa ngần này lần — cùng mức với `so_ten_nha._HOI_TOI_DA`.
 HOI_TOI_DA = 3
 
@@ -599,8 +633,8 @@ def gom_mat_la(vector, anh, hop, camera: str) -> tuple[str, bool]:
     from services import nhin_nha
 
     v = np.asarray(vector, np.float32)
-    co_the, _ = nhin_nha.nguong_mat()
     bang = _nap_bang()
+    co_the, _ = nguong_hieu_luc(bang)
     with _khoa:
         conn = _db()
         if bang["la_id"]:
@@ -608,14 +642,13 @@ def gom_mat_la(vector, anh, hop, camera: str) -> tuple[str, bool]:
             i = int(diem.argmax())
             if float(diem[i]) >= co_the:
                 ma = bang["la_id"][i]
-                r = conn.execute("SELECT so_lan, vector FROM mat_la WHERE id = ?", (ma,)).fetchone()
-                if r is not None:
-                    tam = _vec(r["vector"]) * min(max(int(r["so_lan"]), 1), _TRONG_SO_CUM) + v
-                    tam = (tam / np.linalg.norm(tam)).astype(np.float32)
-                    conn.execute("UPDATE mat_la SET vector = ?, lan_cuoi = ?, camera = ? WHERE id = ?",
-                                 (_vec_bytes(tam), time.time(), camera, ma))
+                # KHÔNG cộng dồn vector: trung bình nhiều mặt mờ trôi về «mặt
+                # trung bình» rồi hút mọi người (đo 24/09/2026). Vector cụm là
+                # một mặt thật — mặt đầu tiên, `don_mat_la` đổi sang medoid.
+                n = conn.execute("UPDATE mat_la SET lan_cuoi = ?, camera = ? WHERE id = ?",
+                                 (time.time(), camera, ma)).rowcount
+                if n:
                     conn.commit()
-                    bang["la_ma_tran"][i] = tam
                     return ma, False
         ma = _ma()
         now = time.time()
@@ -631,18 +664,25 @@ def gom_mat_la(vector, anh, hop, camera: str) -> tuple[str, bool]:
 
 def ghi_su_kien(camera: str, nguon: str, loai: str, *, nguoi_id: str | None = None,
                 mat_la_id: str | None = None, do_giong: float = 0.0, hop=(),
-                anh: str = "", ts: float | None = None) -> dict[str, Any]:
-    """Ghi MỘT lượt gặp, tăng số lượt của người/cụm tương ứng."""
+                anh: str = "", ts: float | None = None, vector=None) -> dict[str, Any]:
+    """Ghi MỘT lượt gặp, tăng số lượt của người/cụm tương ứng.
+
+    ``vector``: vector của chính mặt ấy — để `don_mat_la` so theo từng lượt.
+    """
     import json
 
+    from services import nhin_nha
+
     ts = float(ts or time.time())
+    bo = nhin_nha.bo_mat().ma if vector is not None else ""
     with _khoa:
         conn = _db()
         cur = conn.execute(
-            "INSERT INTO su_kien (ts, camera, nguon, loai, nguoi_id, mat_la_id, do_giong, hop, anh) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO su_kien (ts, camera, nguon, loai, nguoi_id, mat_la_id, do_giong, hop, anh, "
+            "vector, bo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (ts, camera, nguon, loai, nguoi_id, mat_la_id, float(do_giong or 0),
-             json.dumps([round(float(x)) for x in hop]), anh or ""))
+             json.dumps([round(float(x)) for x in hop]), anh or "",
+             _vec_bytes(vector) if vector is not None else None, bo))
         if nguoi_id:
             conn.execute("UPDATE nguoi SET lan_cuoi = ?, so_lan = so_lan + 1 WHERE id = ?",
                          (ts, nguoi_id))
@@ -754,7 +794,8 @@ def su_kien_gan(so_gio: float = 24.0, *, camera: str = "", nguoi_id: str = "",
             "SELECT s.*, n.ten FROM su_kien s LEFT JOIN nguoi n ON n.id = s.nguoi_id "
             f"WHERE {' AND '.join(dk)} ORDER BY s.ts DESC LIMIT ?",  # noqa: S608 — chỉ ghép tên cột cố định
             (*tham, int(gioi_han))).fetchall()
-    return [dict(r) for r in rows]
+    # Vector là dữ liệu sinh trắc và là bytes — không đi ra API/web.
+    return [{k: r[k] for k in r.keys() if k not in ("vector", "bo")} for r in rows]
 
 
 def mat_la(ma: str) -> dict[str, Any] | None:
@@ -849,7 +890,7 @@ def bo_mau_gay_nham(vector, nguoi_id: str) -> str | None:
     from services import nhin_nha
 
     v = np.asarray(vector, np.float32)
-    co_the, _ = nhin_nha.nguong_mat()
+    co_the, _ = nguong_hieu_luc()
     with _khoa:
         rows = _db().execute(
             "SELECT id, vector FROM mat WHERE nguoi_id = ? AND bo = ?",
@@ -886,60 +927,276 @@ def _gan_cum_vao_nguoi(ma: str, nguoi_id: str) -> tuple[int, str | None]:
     return n, la["anh"]
 
 
-def xet_lai_mat_la() -> list[dict[str, Any]]:
-    """Cụm mặt khác nào giờ nhận chắc một người thì chuyển lịch sử sang người đó.
+# ── Dọn «Mặt khác» theo TỪNG LƯỢT GẶP ──────────────────────────────────────
+#
+# Chủ máy 24/09/2026: "tách mặt sai be bét… trùng của ai thì cho vào lịch sử
+# người đó". Đo trên dữ liệu thật cùng ngày (570 lượt tính lại vector từ ảnh):
+#
+# * Cụm cũ giữ MỘT vector trung bình cộng dồn. Trung bình nhiều mặt mờ trôi về
+#   «mặt trung bình»: cụm 44 lượt và cụm 28 lượt của HAI người khác nhau giống
+#   nhau 67/100, nên gộp/xét theo vector cụm là trộn vợ, chồng, con vào một.
+# * Từng mặt riêng lẻ thì khác hẳn: hai người khác nhau hiếm khi vượt 35.
+#   Gom lượt gặp bằng điểm TRUNG BÌNH giữa các cặp (average linkage) ở ngưỡng
+#   hiệu lực: bốn cụm lớn nhất đúng bốn người nhà, không cụm nào lẫn hai người
+#   có tên; tường (bộ dò cũ bắt nhầm) tự thành cụm riêng.
+# * Mỗi lượt lạ còn phải qua kNN: giống người ấy nhất theo ba mốc gần nhất và
+#   đạt ngưỡng. Kiểm bỏ-một-ra trên 117 lượt «quen»: 117 đúng, 0 sai.
+#
+# MỐC chỉ là mẫu trong sổ và lượt «quen». Lượt do bước này chuyển về người ghi
+# «co_the» nên KHÔNG thành mốc — không có vòng tự khẳng định (cùng bẫy `do_ai`
+# của tầng học nhà).
 
-    So một lần với cả sổ mẫu, ghi một lần. Không thêm ảnh cụm vào dữ liệu
-    nhận diện — ảnh camera chỉ vào sổ mẫu khi chủ nhà bấm học.
+#: Số lượt gần nhất (mỗi loại) đem ra gom một lần — n² bộ nhớ, dưới một giây.
+_DON_TOI_DA = 1500
+#: kNN: trung bình ba mốc giống nhất của mỗi người.
+_K_GAN = 3
+#: Cụm chỉ được coi là của một người khi người ấy chiếm ngần này phần mốc.
+_DA_SO = 0.8
+#: Cứ ngần này giây lúc rảnh thì bảo trì một lần; còn lượt chưa bù thì mau hơn.
+BAO_TRI_GIAY = 300.0
+BAO_TRI_KHI_BU_GIAY = 30.0
+#: Mỗi lần bù ngần này lượt: đo 24/09/2026 trên máy chủ 0,65 giây/lượt, nên một
+#: lần bù giữ luồng nhận mặt chừng sáu giây — người vừa tới không phải chờ lâu.
+_BU_MOI_LAN = 10
+
+
+def _gom_trung_binh(x, nguong: float) -> list[list[int]]:
+    """Gom hàng của ``x`` (vector đơn vị) bằng average linkage, dừng dưới ``nguong``.
+
+    Cập nhật Lance–Williams trên ma trận điểm: hai nhóm gộp thì điểm của nhóm
+    mới với nhóm khác là trung bình có trọng số theo cỡ. KHÔNG nối chuỗi — A
+    giống B, B giống C chưa đủ để A là C.
     """
     import numpy as np
 
-    from services import nhin_nha
+    n = len(x)
+    if n == 0:
+        return []
+    d = (x @ x.T * 100.0).astype(np.float64)
+    np.fill_diagonal(d, -np.inf)
+    co = np.ones(n)
+    nhom: list[list[int]] = [[i] for i in range(n)]
+    while n > 1:
+        i, j = divmod(int(d.argmax()), n)
+        if d[i, j] < nguong:
+            break
+        d[i, :] = (d[i, :] * co[i] + d[j, :] * co[j]) / (co[i] + co[j])
+        d[:, i] = d[i, :]
+        d[i, i] = -np.inf
+        d[j, :] = -np.inf
+        d[:, j] = -np.inf
+        co[i] += co[j]
+        nhom[i] += nhom[j]
+        nhom[j] = []
+    return [g for g in nhom if g]
+
+
+def _vector_luot(may, anh):
+    """Vector của mặt trong ảnh một lượt gặp đã lưu, hoặc None.
+
+    Ảnh mới là mặt đã căn thẳng lấp đầy khung — bộ dò cần thấy cả viền quanh
+    mặt, nên không ra thì đệm viền rồi dò lại. Ảnh cũ chụp cả người có thể lọt
+    mặt người đứng cạnh: cùng luật với lúc dạy (`TO_GAP`), mặt to nhất phải to
+    gấp đôi mặt thứ hai, không thì không đoán.
+    """
+    import cv2
+
+    from services.khuon_mat_nha import moc_la_mat
+
+    mat, thu_hai = _mat_to_nhat(may, anh, cua_so=False)
+    if mat is None:
+        cao, rong = anh.shape[:2]
+        anh = cv2.copyMakeBorder(anh, cao // 2, cao // 2, rong // 2, rong // 2,
+                                 cv2.BORDER_CONSTANT, value=0)
+        mat, thu_hai = _mat_to_nhat(may, anh, cua_so=False)
+    if mat is None or not moc_la_mat(mat.hop, mat.moc):
+        return None
+    if thu_hai is not None and mat.rong * mat.cao < TO_GAP * thu_hai.rong * thu_hai.cao:
+        return None
+    return may.vector(anh, mat)
+
+
+def bu_vector_su_kien(gioi_han: int = _BU_MOI_LAN) -> int:
+    """Tính vector cho lượt gặp chưa có (ghi trước khi lưu vector, hoặc khác bộ
+    model) từ ảnh đã lưu, mới nhất trước. Ảnh hỏng đánh dấu ``bộ#hong`` để không
+    thử lại. Trả số lượt đã xử lý — 0 là đã bù xong."""
+    from services import nhin_nha, yolo_nha
+
+    may = nhin_nha.mat()
+    bo = may.bo.ma
+    with _khoa:
+        rows = _db().execute(
+            "SELECT id, anh FROM su_kien WHERE anh != '' AND bo != ? AND bo != ? "
+            "ORDER BY ts DESC LIMIT ?", (bo, f"{bo}#hong", int(gioi_han))).fetchall()
+    kq = []
+    for r in rows:
+        du_lieu = _doc_anh_su_kien(r["anh"])
+        try:
+            anh = yolo_nha.doc_anh(du_lieu) if du_lieu else None
+        except ValueError:
+            anh = None
+        kq.append((r["id"], _vector_luot(may, anh) if anh is not None else None))
+    if kq:
+        with _khoa:
+            conn = _db()
+            for ma, v in kq:
+                if v is None:
+                    conn.execute("UPDATE su_kien SET bo = ? WHERE id = ?", (f"{bo}#hong", ma))
+                else:
+                    conn.execute("UPDATE su_kien SET bo = ?, vector = ? WHERE id = ?",
+                                 (bo, _vec_bytes(v), ma))
+            conn.commit()
+    return len(kq)
+
+
+def don_mat_la() -> dict[str, Any]:
+    """Chuyển lượt «Mặt khác» (và «có thể là» của người khác) về đúng người, rồi
+    xếp lại các lượt lạ còn lại thành cụm mỗi cụm một người.
+
+    Chỉ đụng lượt đã có vector của bộ model hiện tại, và không đụng cụm chủ nhà
+    đã bấm bỏ qua. Trả ``{"ve_nguoi": [{"ten", "so_luot"}], "cum": số cụm lạ}``.
+    """
+    import numpy as np
 
     bang = _nap_bang()
-    if len(bang["nguoi_id"]) == 0:
-        return []
-    _, chac = nhin_nha.nguong_mat()
+    bo = bang["bo"]
+    co_the, _chac = nguong_hieu_luc(bang)
     with _khoa:
-        rows = list(_db().execute(
-            "SELECT id, vector FROM mat_la WHERE bo_qua = 0").fetchall())
-    if not rows:
-        return []
-    mau = np.vstack([_vec(r["vector"]) for r in rows])
-    diem = np.clip(bang["ma_tran"] @ mau.T, 0.0, None) * 100.0
-    chon = diem.argmax(axis=0)
-    cao = diem.max(axis=0)
-    viec = [(rows[j]["id"], bang["nguoi_id"][int(chon[j])], bang["ten"][int(chon[j])])
-            for j in range(len(rows)) if float(cao[j]) >= chac]
-    if not viec:
-        return []
-    ra: list[dict[str, Any]] = []
+        conn = _db()
+        moc = conn.execute(
+            "SELECT nguoi_id, vector FROM su_kien WHERE loai = 'quen' AND nguoi_id IS NOT NULL "
+            "AND bo = ? ORDER BY ts DESC LIMIT ?", (bo, _DON_TOI_DA)).fetchall()
+        luot = conn.execute(
+            "SELECT s.id, s.nguoi_id, s.mat_la_id, s.ts, s.vector FROM su_kien s "
+            "LEFT JOIN mat_la m ON m.id = s.mat_la_id "
+            "WHERE s.bo = ? AND ((s.mat_la_id IS NOT NULL AND m.bo_qua = 0) OR s.loai = 'co_the') "
+            "ORDER BY s.ts DESC LIMIT ?", (bo, _DON_TOI_DA)).fetchall()
+        ten = dict(conn.execute("SELECT id, ten FROM nguoi").fetchall())
+    if not luot:
+        return {"ve_nguoi": [], "cum": 0}
+    nhan = list(bang["nguoi_id"]) + [r["nguoi_id"] for r in moc]
+    x_moc = np.vstack([bang["ma_tran"], *[_vec(r["vector"]) for r in moc]]) if nhan else \
+        np.zeros((0, 512), np.float32)
+    x_luot = np.vstack([_vec(r["vector"]) for r in luot])
+    so_moc = len(nhan)
+    nhom = _gom_trung_binh(np.vstack([x_moc, x_luot]), co_the)
+
+    nhan_arr = np.asarray(nhan)
+    nguoi = sorted(set(nhan))
+    diem = x_luot @ x_moc.T * 100.0 if so_moc else np.zeros((len(luot), 0))
+
+    def knn(k: int) -> tuple[str | None, float]:
+        tot, cao = None, -1.0
+        for p in nguoi:
+            d = np.sort(diem[k, nhan_arr == p])[::-1][:_K_GAN]
+            if len(d) and float(d.mean()) > cao:
+                tot, cao = p, float(d.mean())
+        return tot, cao
+
+    chuyen: list[tuple[int, str, float]] = []      # (chỉ số lượt, người, điểm)
+    nhom_la: list[list[int]] = []
+    for g in nhom:
+        cua_moc = [nhan[i] for i in g if i < so_moc]
+        ca = [i - so_moc for i in g if i >= so_moc]
+        chu = None
+        if cua_moc:
+            p, so = Counter(cua_moc).most_common(1)[0]
+            chu = p if so >= _DA_SO * len(cua_moc) else None
+        con: list[int] = []
+        for k in ca:
+            if chu is not None:
+                p, d = knn(k)
+                if p == chu and d >= co_the:
+                    if luot[k]["nguoi_id"] != chu:
+                        chuyen.append((k, chu, d))
+                    continue
+            if luot[k]["mat_la_id"]:
+                con.append(k)
+        if con:
+            nhom_la.append(con)
+
+    ve: Counter = Counter()
     anh_xoa: list[str] = []
     with _khoa:
         conn = _db()
-        for ma, nguoi_id, ten in viec:
-            la = conn.execute("SELECT lan_cuoi, anh FROM mat_la WHERE id = ?", (ma,)).fetchone()
-            if la is None:
-                continue
-            n = conn.execute(
-                "UPDATE su_kien SET nguoi_id = ?, mat_la_id = NULL, loai = 'quen' "
-                "WHERE mat_la_id = ?", (nguoi_id, ma)).rowcount
-            if n:
+        for k, p, d in chuyen:
+            r = luot[k]
+            conn.execute("UPDATE su_kien SET nguoi_id = ?, mat_la_id = NULL, loai = 'co_the', "
+                         "do_giong = ? WHERE id = ?", (p, round(d, 1), r["id"]))
+            if r["nguoi_id"]:
+                conn.execute("UPDATE nguoi SET so_lan = MAX(0, so_lan - 1) WHERE id = ?",
+                             (r["nguoi_id"],))
+            conn.execute("UPDATE nguoi SET so_lan = so_lan + 1, "
+                         "lan_cuoi = MAX(COALESCE(lan_cuoi, 0), ?) WHERE id = ?", (r["ts"], p))
+            ve[p] += 1
+        # Lượt lạ còn lại: mỗi nhóm một cụm. Nhóm lớn chọn trước cụm cũ chứa nhiều
+        # lượt của nó nhất; cụm cũ đã có chủ thì nhóm sau lập cụm mới — cụm trộn
+        # hai người được TÁCH, không chỉ được gộp.
+        da_chon: set[str] = set()
+        cham: set[str] = {luot[k]["mat_la_id"] for g in nhom_la for k in g}
+        cham |= {luot[k]["mat_la_id"] for k, _p, _d in chuyen if luot[k]["mat_la_id"]}
+        for g in sorted(nhom_la, key=len, reverse=True):
+            dem = Counter(luot[k]["mat_la_id"] for k in g)
+            dich = next((m for m, _ in dem.most_common() if m not in da_chon), None)
+            v = x_luot[g]
+            giua = g[int((v @ v.T).sum(axis=1).argmax())]      # medoid: không trôi
+            if dich is None:
+                dich = _ma()
+                du_lieu = _doc_anh_su_kien(_anh_luot(conn, luot[giua]["id"]))
+                cu = conn.execute("SELECT anh FROM mat_la WHERE id = ?",
+                                  (luot[giua]["mat_la_id"],)).fetchone()
+                anh = _luu_anh(du_lieu, "la") if du_lieu else (cu["anh"] if cu else "")
                 conn.execute(
-                    "UPDATE nguoi SET so_lan = so_lan + ?, "
-                    "lan_cuoi = MAX(COALESCE(lan_cuoi, 0), ?) WHERE id = ?",
-                    (n, la["lan_cuoi"], nguoi_id))
-            conn.execute("DELETE FROM mat_la WHERE id = ?", (ma,))
-            if la["anh"]:
-                anh_xoa.append(la["anh"])
-            ra.append({"mat_la_id": ma, "ten": ten, "so_luot": n})
+                    "INSERT INTO mat_la (id, bo, vector, anh, diem_do, so_lan, lan_dau, lan_cuoi, camera) "
+                    "VALUES (?, ?, ?, ?, 0, 0, ?, ?, '')",
+                    (dich, bo, _vec_bytes(x_luot[giua]), anh,
+                     min(luot[k]["ts"] for k in g), max(luot[k]["ts"] for k in g)))
+            else:
+                conn.execute("UPDATE mat_la SET vector = ? WHERE id = ?",
+                             (_vec_bytes(x_luot[giua]), dich))
+            da_chon.add(dich)
+            conn.executemany("UPDATE su_kien SET mat_la_id = ? WHERE id = ?",
+                             [(dich, luot[k]["id"]) for k in g])
+            cham.add(dich)
+        for m in cham:
+            n, dau, cuoi = conn.execute(
+                "SELECT COUNT(*), MIN(ts), MAX(ts) FROM su_kien WHERE mat_la_id = ?", (m,)).fetchone()
+            if n:
+                conn.execute("UPDATE mat_la SET so_lan = ?, lan_dau = ?, lan_cuoi = ? WHERE id = ?",
+                             (n, dau, cuoi, m))
+            else:
+                r = conn.execute("SELECT anh FROM mat_la WHERE id = ?", (m,)).fetchone()
+                if r is not None:
+                    anh_xoa.append(r["anh"])
+                    conn.execute("DELETE FROM mat_la WHERE id = ?", (m,))
         conn.commit()
         _bo_bang()
     for rel in anh_xoa:
-        _xoa_anh(rel)
+        if rel:
+            _xoa_anh(rel)
+    ra = [{"ten": ten.get(p, p), "so_luot": n} for p, n in ve.most_common()]
     if ra:
-        logger.info({"event": "so_mat_xet_lai_mat_la", "so": len(ra)})
-    return ra
+        logger.info({"event": "so_mat_don_mat_la", "ve_nguoi": sum(ve.values()),
+                     "cum": len(nhom_la)})
+    return {"ve_nguoi": ra, "cum": len(nhom_la)}
+
+
+def _anh_luot(conn: sqlite3.Connection, su_kien_id: int) -> str:
+    r = conn.execute("SELECT anh FROM su_kien WHERE id = ?", (su_kien_id,)).fetchone()
+    return r["anh"] if r else ""
+
+
+def xet_lai_mat_la() -> list[dict[str, Any]]:
+    """Sau khi sổ mẫu đổi: lượt «Mặt khác» nào giờ là của một người thì vào lịch
+    sử người đó. Cùng đường với bảo trì định kỳ (`don_mat_la`) — không còn xét
+    theo vector trung bình của cụm (xem khối chú thích ở trên)."""
+    return don_mat_la()["ve_nguoi"]
+
+
+def bao_tri() -> dict[str, Any]:
+    """Việc nền lúc rảnh: bù vector cho lượt cũ, rồi dọn «Mặt khác»."""
+    bu = bu_vector_su_kien()
+    return {"bu_vector": bu, **don_mat_la()}
 
 
 def chuyen_ve_khac(su_kien_id: int, *, hoc: bool = True) -> dict[str, Any]:

@@ -513,7 +513,8 @@ class SoMatTests(unittest.TestCase):
         self.assertEqual(len(self.sm.mat_cua(a["nguoi_id"])), 1)
         anh = yn.doc_anh(_anh(10))
         ma, _ = self.sm.gom_mat_la(self.vec["buffalo_s"]["viet"], anh, (10, 10, 90, 90), "Cam cửa")
-        sk = self.sm.ghi_su_kien("Cam cửa", "yolo", "la", mat_la_id=ma, ts=_t.time() - 15)
+        sk = self.sm.ghi_su_kien("Cam cửa", "yolo", "la", mat_la_id=ma, ts=_t.time() - 15,
+                                 vector=self.vec["buffalo_s"]["viet"])
         ra = self.sm.xet_lai_mat_la()
         self.assertEqual([x["ten"] for x in ra], ["Việt"])
         self.assertIsNone(self.sm.mat_la(ma))
@@ -536,6 +537,108 @@ class SoMatTests(unittest.TestCase):
         self.assertTrue(ds[0].endswith("m4.jpg"))            # mới nhất đứng trước
         self.assertEqual(len(self.sm.anh_su_kien_cua(ma, 2)), 2)
         self.assertEqual(self.sm.anh_su_kien_cua("khong-co-cum-nay"), [])
+
+
+    # ── Dọn «Mặt khác» theo từng lượt (24/09/2026) ──────────────────────────
+
+    def _luot_la(self, ma, vec, ts, **kw):
+        return self.sm.ghi_su_kien("Cam cửa", "yolo", "la", mat_la_id=ma, ts=ts, vector=vec, **kw)
+
+    def test_gom_trung_binh_khong_noi_chuoi(self):
+        """A giống B, B giống C, A không giống C: không được dồn cả ba làm một."""
+        a, b, c = _don_vi(1, 0), _don_vi(0.8, 0.6), _don_vi(0.28, 0.96)   # AB 80, BC 80, AC 28
+        nhom = self.sm._gom_trung_binh(np.vstack([a, b, c]), 60.0)
+        self.assertEqual(sorted(len(g) for g in nhom), [1, 2])
+        self.assertEqual(len(self.sm._gom_trung_binh(np.vstack([a, b, c]), 20.0)), 1)
+
+    def test_gom_mat_la_khong_cong_don_vector_cum(self):
+        """Vector cụm là một mặt thật, không trung bình trôi dần theo mặt mờ."""
+        anh = yn.doc_anh(_anh(14))
+        ma, moi = self.sm.gom_mat_la(self.vec["buffalo_s"]["la"], anh, (10, 10, 90, 90), "Cam cửa")
+        gan = _don_vi(0, 0.3, 1)                                            # giống «la» 95
+        ma2, moi2 = self.sm.gom_mat_la(gan, anh, (10, 10, 90, 90), "Cam bếp")
+        self.assertTrue(moi)
+        self.assertEqual((ma2, moi2), (ma, False))
+        v = self.sm._vec(self.sm._db().execute("SELECT vector FROM mat_la").fetchone()[0])
+        np.testing.assert_allclose(v, self.vec["buffalo_s"]["la"])
+
+    def test_ghi_su_kien_luu_vector_cua_luot(self):
+        self._luot_la(None, self.vec["buffalo_s"]["viet"], 100.0)
+        self.sm.ghi_su_kien("Cam cửa", "yolo", "la", ts=101.0)
+        rows = self.sm._db().execute("SELECT bo, vector FROM su_kien ORDER BY ts").fetchall()
+        self.assertEqual(rows[0]["bo"], "buffalo_s")
+        np.testing.assert_allclose(self.sm._vec(rows[0]["vector"]), self.vec["buffalo_s"]["viet"])
+        self.assertEqual((rows[1]["bo"], rows[1]["vector"]), ("", None))
+
+    def test_don_dua_luot_ve_dung_nguoi_va_tach_cum_tron(self):
+        """Một cụm cũ lẫn Việt với hai người lạ: lượt của Việt về lịch sử Việt,
+        hai người lạ tách thành hai cụm — không ai bị gộp nhầm."""
+        a = self.sm.day("Việt", _anh(10))
+        self.sm.day("Lan", _anh(11))
+        anh = yn.doc_anh(_anh(14))
+        ma, _ = self.sm.gom_mat_la(self.vec["buffalo_s"]["la"], anh, (10, 10, 90, 90), "Cam cửa")
+        la2 = _don_vi(0, 0, 0, 1)
+        viet = [self._luot_la(ma, self.vec["buffalo_s"]["viet"], 100.0 + i)["id"] for i in range(2)]
+        la = [self._luot_la(ma, self.vec["buffalo_s"]["la"], 110.0 + i)["id"] for i in range(3)]
+        khac = [self._luot_la(ma, la2, 120.0 + i)["id"] for i in range(2)]
+        kq = self.sm.don_mat_la()
+        self.assertEqual(kq["ve_nguoi"], [{"ten": "Việt", "so_luot": 2}])
+        self.assertEqual(kq["cum"], 2)
+        sk = {r["id"]: r for r in self.sm._db().execute("SELECT * FROM su_kien").fetchall()}
+        for i in viet:
+            self.assertEqual((sk[i]["nguoi_id"], sk[i]["mat_la_id"], sk[i]["loai"]),
+                             (a["nguoi_id"], None, "co_the"))
+        # Nhóm đông giữ cụm cũ, nhóm sau có cụm mới; số lượt đếm lại đúng.
+        self.assertEqual({sk[i]["mat_la_id"] for i in la}, {ma})
+        moi = {sk[i]["mat_la_id"] for i in khac}
+        self.assertEqual(len(moi), 1)
+        self.assertNotIn(ma, moi)
+        cum = {r["id"]: r["so_lan"] for r in self.sm.danh_sach_mat_la()}
+        self.assertEqual(cum, {ma: 3, moi.pop(): 2})
+        self.assertEqual({n["ten"]: n["so_lan"] for n in self.sm.danh_sach_nguoi()}["Việt"], 2)
+
+    def test_luot_do_don_chuyen_khong_thanh_moc(self):
+        """Lượt về người nhờ bước dọn ghi «co_the» — không tự khẳng định vòng quanh."""
+        self.sm.day("Việt", _anh(10))
+        anh = yn.doc_anh(_anh(14))
+        ma, _ = self.sm.gom_mat_la(self.vec["buffalo_s"]["viet"], anh, (10, 10, 90, 90), "Cam cửa")
+        self._luot_la(ma, self.vec["buffalo_s"]["viet"], 100.0)
+        self.sm.don_mat_la()
+        self.assertEqual(self.sm._db().execute(
+            "SELECT COUNT(*) FROM su_kien WHERE loai = 'quen'").fetchone()[0], 0)
+        # Lần dọn sau không làm gì thêm.
+        self.assertEqual(self.sm.don_mat_la()["ve_nguoi"], [])
+
+    def test_don_khong_dung_cum_da_bo_qua_va_luot_chua_co_vector(self):
+        self.sm.day("Việt", _anh(10))
+        anh = yn.doc_anh(_anh(14))
+        ma, _ = self.sm.gom_mat_la(self.vec["buffalo_s"]["viet"], anh, (10, 10, 90, 90), "Cam cửa")
+        self._luot_la(ma, self.vec["buffalo_s"]["viet"], 100.0)
+        self.sm.ghi_su_kien("Cam cửa", "yolo", "la", mat_la_id=ma, ts=101.0)   # chưa có vector
+        self.sm._db().execute("UPDATE mat_la SET bo_qua = 1")
+        self.sm._db().commit()
+        self.assertEqual(self.sm.don_mat_la()["ve_nguoi"], [])
+        self.sm._db().execute("UPDATE mat_la SET bo_qua = 0")
+        self.sm._db().commit()
+        self.assertEqual(self.sm.don_mat_la()["ve_nguoi"], [{"ten": "Việt", "so_luot": 1}])
+        # Lượt chưa có vector ở lại cụm cũ, cụm vẫn còn.
+        self.assertEqual(self.sm.mat_la(ma)["so_lan"], 1)
+
+    def test_bu_vector_tu_anh_luot_cu_anh_hong_danh_dau(self):
+        tot = self.sm.ghi_su_kien("Cam cửa", "yolo", "la", ts=100.0, anh="http://x/images/tot.jpg")
+        hai = self.sm.ghi_su_kien("Cam cửa", "yolo", "la", ts=101.0, anh="http://x/images/hai.jpg")
+        hong = self.sm.ghi_su_kien("Cam cửa", "yolo", "la", ts=102.0, anh="http://x/images/hong.jpg")
+        # tot: một mặt Việt; hai: hai mặt ngang cỡ — không biết lượt ấy là ai; hong: không có mặt.
+        anh = {"tot": _anh(10), "hai": _anh(12), "hong": _anh(14)}
+        with mock.patch.object(self.sm, "_doc_anh_su_kien",
+                               lambda u: anh[u.rsplit("/", 1)[1][:-4]]):
+            self.assertEqual(self.sm.bu_vector_su_kien(), 3)
+            self.assertEqual(self.sm.bu_vector_su_kien(), 0)          # không thử lại
+        rows = {r["id"]: r for r in self.sm._db().execute("SELECT id, bo, vector FROM su_kien")}
+        self.assertEqual(rows[tot["id"]]["bo"], "buffalo_s")
+        np.testing.assert_allclose(self.sm._vec(rows[tot["id"]]["vector"]), self.vec["buffalo_s"]["viet"])
+        for x in (hai, hong):
+            self.assertEqual((rows[x["id"]]["bo"], rows[x["id"]]["vector"]), ("buffalo_s#hong", None))
 
 
 class AnhSuKienTests(unittest.TestCase):
