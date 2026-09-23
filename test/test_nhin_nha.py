@@ -21,6 +21,22 @@ from services import khuon_mat_nha as km  # noqa: E402
 from services import yolo_nha as yn  # noqa: E402
 
 
+class MocLaMatTests(unittest.TestCase):
+    def test_nam_diem_dung_hinh_mat(self):
+        hop = (0, 0, 100, 120)
+        moc = np.array([[30, 40], [70, 42], [50, 65], [35, 90], [65, 92]], np.float32)
+        self.assertTrue(km.moc_la_mat(hop, moc))
+
+    def test_canh_doc_khong_phai_mat(self):
+        """Năm điểm xếp dọc như cạnh cửa — đúng ảnh tường máy vừa lưu."""
+        hop = (0, 0, 100, 160)
+        moc = np.array([[50, 20], [52, 45], [51, 70], [49, 100], [53, 130]], np.float32)
+        self.assertFalse(km.moc_la_mat(hop, moc))
+
+    def test_thieu_moc_thi_khong_ket_luan(self):
+        self.assertTrue(km.moc_la_mat((0, 0, 10, 10), "viet"))
+
+
 class GiaiMaYoloTests(unittest.TestCase):
     TEN = {0: "person", 2: "car", 15: "cat"}
 

@@ -464,6 +464,7 @@ def xu_ly(camera: str, nguon: str) -> dict[str, Any]:
     mặt ở luồng phụ 640×480 chỉ còn vài pixel.
     """
     from services import camera_nha, nhin_nha, so_mat_nha, yolo_nha
+    from services.khuon_mat_nha import moc_la_mat
 
     c = cfg()
     if not nhin_nha.co_mat():
@@ -508,6 +509,9 @@ def xu_ly(camera: str, nguon: str) -> dict[str, Any]:
             anh, k = anh_i, k_i
         for m in k_i.mat:
             if m["nho"] or m["diem_do"] < DIEM_DO_TOI_THIEU:
+                continue
+            # Tường và cạnh cửa vẫn có điểm dò cao. Năm mốc không thành mặt thì bỏ.
+            if not moc_la_mat(m["hop"], m.get("moc")):
                 continue
             ung_vien.append((_diem_chat_luong(anh_i, m), m, anh_i))
     if anh is None:

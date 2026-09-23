@@ -201,6 +201,42 @@ def can_mat(anh, moc, canh: int = CANH_MAT):
     return cv2.warpAffine(anh, m, (canh, canh), borderValue=0.0)
 
 
+def moc_la_mat(hop, moc) -> bool:
+    """Năm điểm mốc có đúng hình một khuôn mặt không.
+
+    SCRFD chấm điểm cao cả cạnh cửa và tường phẳng (đo 23/09/2026, Cam cửa:
+    ảnh lưu là tường trắng + cạnh cửa, vẫn vượt ngưỡng 0,6). Tường không có
+    hai mắt nằm ngang, mũi ở dưới và miệng ở dưới mũi. Thiếu mốc thì không
+    kết luận — caller cũ không luôn có mốc.
+    """
+    import numpy as np
+
+    try:
+        m = np.asarray(moc, np.float32)
+    except (TypeError, ValueError):
+        return True
+    if m.shape != (5, 2) or not np.isfinite(m).all():
+        return True
+    le, re, mui, tm, pm = m
+    rong = max(1.0, float(hop[2]) - float(hop[0]))
+    khoang_mat = float(np.linalg.norm(re - le))
+    if not (0.15 * rong <= khoang_mat <= 1.05 * rong):
+        return False
+    if le[0] >= re[0]:
+        return False
+    giua_y = (le[1] + re[1]) * 0.5
+    if not (le[0] - 0.35 * khoang_mat <= mui[0] <= re[0] + 0.35 * khoang_mat):
+        return False
+    if mui[1] <= giua_y:
+        return False
+    if tm[0] >= pm[0] or (tm[1] + pm[1]) * 0.5 <= mui[1]:
+        return False
+    if float(np.linalg.norm(pm - tm)) < 0.2 * khoang_mat:
+        return False
+    cao = (tm[1] + pm[1]) * 0.5 - giua_y
+    return 0.2 * khoang_mat <= cao <= 3.0 * khoang_mat
+
+
 def do_giong(a, b) -> float:
     """Độ giống kiểu IRIS: cosine của hai vector đã chuẩn hoá, kẹp ≥ 0, thang 0–100."""
     import numpy as np
@@ -247,8 +283,13 @@ class BoNhanMat:
         with self._khoa:
             ra = self._do.run(self._ten_ra_do, {self._do.get_inputs()[0].name: blob})
         det, moc = giai_ma_scrfd(ra, CANH_DO, ti_le, nguong)
-        return [Mat(tuple(float(x) for x in det[i, :4]), float(det[i, 4]), moc[i])
-                for i in range(det.shape[0])]
+        ra_mat = []
+        for i in range(det.shape[0]):
+            hop = tuple(float(x) for x in det[i, :4])
+            if not moc_la_mat(hop, moc[i]):
+                continue
+            ra_mat.append(Mat(hop, float(det[i, 4]), moc[i]))
+        return ra_mat
 
     def vector(self, anh, mat: Mat):
         """Tính vector cho một mặt đã dò (gán vào ``mat.vector`` và trả về)."""
