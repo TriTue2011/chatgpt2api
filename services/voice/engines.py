@@ -17,6 +17,7 @@ import logging
 import queue
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import wave
@@ -694,8 +695,9 @@ def _kokoro_vi_tts(text: str, voice: str) -> bytes:
 
 # ── TTS: ZeroTTS (8 giọng tiếng Việt, 48 kHz, ONNX) ─────────────────────────
 # Đo 15/09/2026 trên máy chủ: sai thanh 0/1409 âm tiết trong câu thường (ngang
-# Kokoro Việt), nhưng CPU này chạy chậm hơn thời gian thực (RTF ~1,1–1,3 ở 4
-# luồng) — hợp tin nhắn thoại hơn là đọc loa tức thì.
+# Kokoro Việt). RTF ~1,2 ở 4 luồng nên đoạn dài vẫn chậm hơn thời gian thực,
+# nhưng synthesize_stream có tiếng sau khung đầu (~0,3s khi model đã nạp)
+# thay vì chờ hết câu.
 
 _zerotts_lock = threading.Lock()
 _zerotts = None
@@ -712,30 +714,75 @@ def _get_zerotts():
                 from zerotts import ZeroTTS
             except Exception as exc:
                 raise VoiceError("Chưa cài gói zerotts trong image.") from exc
+            # Constructor warmup=True: đẩy một khung giả qua mọi session để
+            # lần đọc thật không gánh allocator. Đo 23/09/2026: nạp + warm ~11s.
             _zerotts = ZeroTTS(base, intra_op_num_threads=vcfg.zerotts_threads())
         return _zerotts
 
 
-def _zerotts_tts(text: str, voice: str) -> bytes:
-    """Giọng "zerotts:<mã>" → WAV 48 kHz."""
-    import numpy as np
+def _zerotts_voice_id(voice: str) -> str:
+    return voice[len(vcfg.ZEROTTS_PREFIX):].strip() or vcfg.ZEROTTS_VOICES[0][0]
+
+
+def _zerotts_doan(text: str) -> list[str]:
+    """Chuẩn hoá số/ngày rồi cắt đoạn dài — model học trên từng câu.
+
+    Cả đường WAV lẫn đường stream dùng chung hàm này. Hai đường cắt khác nhau
+    là hai giọng khác nhau cho cùng một câu.
+    """
     from zerotts import normalize_vi_text
     from zerotts.chunking import chunk_text, clean_segment_punctuation, normalize_punctuation
 
-    vid = voice[len(vcfg.ZEROTTS_PREFIX):].strip() or vcfg.ZEROTTS_VOICES[0][0]
-    tts = _get_zerotts()
-    # synthesize() KHÔNG tự chuẩn hoá số/ngày; model học trên từng câu nên đoạn
-    # dài phải cắt — đúng hai bước README của ZeroTTS dặn.
-    parts = []
+    out: list[str] = []
     for seg in chunk_text(normalize_punctuation(normalize_vi_text(text)), max_chunk_sec=15):
         seg = clean_segment_punctuation(seg)
-        if not seg.strip():
-            continue
+        if seg.strip():
+            out.append(seg)
+    return out
+
+
+def _zerotts_tts(text: str, voice: str) -> bytes:
+    """Giọng "zerotts:<mã>" → WAV 48 kHz. Chờ trọn câu — chỉ cho API không stream."""
+    import numpy as np
+
+    vid = _zerotts_voice_id(voice)
+    tts = _get_zerotts()
+    parts = []
+    for seg in _zerotts_doan(text):
         with _zerotts_lock:
             parts.append(np.asarray(tts.synthesize(seg, voice=vid), dtype=np.float32).reshape(-1))
     if not parts:
         raise VoiceError("ZeroTTS không tạo được âm thanh.")
     return _pcm_to_wav(_float_to_pcm16(np.concatenate(parts)), int(tts.sample_rate), 2, 1)
+
+
+def _zerotts_stream(text: str, voice: str):
+    """Yield (48000, pcm16) ngay khi có khung đầu.
+
+    synthesize() gom hết frame rồi mới giải mã — đo 23/09/2026, câu thời tiết
+    ấm mất 8,5s mới có tiếng. synthesize_stream trả khung đầu (1 frame) rồi
+    nhân đôi tới 16: cùng câu, tiếng đầu 0,26s.
+    """
+    import numpy as np
+
+    vid = _zerotts_voice_id(voice)
+    tts = _get_zerotts()
+    segs = _zerotts_doan(text)
+    if not segs:
+        raise VoiceError("ZeroTTS không tạo được âm thanh.")
+    rate = int(tts.sample_rate)
+    yielded = False
+    # Giữ khoá suốt stream: session ONNX không chịu hai request một lúc.
+    with _zerotts_lock:
+        for seg in segs:
+            for chunk in tts.synthesize_stream(seg, voice=vid):
+                audio = np.asarray(chunk, dtype=np.float32).reshape(-1)
+                if audio.size == 0:
+                    continue
+                yielded = True
+                yield (rate, _float_to_pcm16(audio))
+    if not yielded:
+        raise VoiceError("ZeroTTS không tạo được âm thanh.")
 
 
 # ── TTS ──────────────────────────────────────────────────────────────────────
@@ -856,8 +903,10 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
 
     Khoảng lặng lấy từ config (`voice.tts.sentence_silence_ms`,
     `clause_silence_ms`, `silence_jitter_percent` — chỉnh trong Cài đặt) và áp
-    cho MỌI engine: text được cắt thành mẩu, mỗi mẩu một lần gọi engine, nối
-    lại bằng im lặng. Cả hai khoảng lặng = 0 → đọc trọn text một lần như cũ.
+    cho engine trả WAV từng câu (Piper, Kokoro Việt, Wyoming): text được cắt
+    thành mẩu, mỗi mẩu một lần gọi, nối lại bằng im lặng. VieNeu và ZeroTTS
+    đọc trọn text một lần. Cả hai khoảng lặng = 0 → mọi engine đọc trọn text
+    một lần.
 
     Hàm cắt/ghép nằm ở khối "TTS streaming" bên dưới (dùng chung với
     `stream_synthesize`).
@@ -879,6 +928,10 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
         if not khuc:
             raise VoiceError("Kokoro không tạo được âm thanh.")
         return _pcm_to_wav(b"".join(pcm for _r, pcm in khuc), khuc[0][0], 2, 1)
+    if (voice or "").startswith((vcfg.VIENEU_PREFIX, vcfg.ZEROTTS_PREFIX)):
+        # Hai engine tự cắt câu và tự nghỉ. Cắt thêm từng vế là prefill lại —
+        # đoạn thời tiết đo 23/09/2026 khựng tới 3,3 giây.
+        return _synthesize_one(text, voice, style=style)
     sent_ms, clause_ms, para_ms, jitter = _silence_plan()
     if sent_ms <= 0 and clause_ms <= 0 and not ("\n" in text and para_ms > 0):
         return _synthesize_one(text, voice, style=style)
@@ -913,9 +966,8 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
 
 # ── TTS streaming: "chữ sinh ra tới đâu đọc tới đó" ──────────────────────────
 # stream_synthesize() yield (sample_rate, pcm16_mono_bytes) NGAY khi có, để
-# caller phát dần. VieNeu chạy frame-level qua infer_stream (TTFA ~1s, RTF<1
-# ở 1 thread nên mượt). Các engine còn lại (Kokoro/Piper/Wyoming) không stream
-# theo frame → cắt câu rồi đọc từng câu: câu xong tới đâu phát tới đó.
+# caller phát dần. VieNeu và ZeroTTS nhả theo khung. Piper / Kokoro Việt /
+# Wyoming không stream theo khung → cắt câu rồi đọc từng câu.
 
 import random as _random
 import re as _re
@@ -1123,19 +1175,50 @@ def _nghi_ms(kind: str, sent_ms: int, clause_ms: int, para_ms: int, jitter: int)
     return _jitter_ms(base, jitter)
 
 
-def _vieneu_stream(text: str, voice: str, style: str = ""):
-    """Frame-level: yield (48000, pcm16) từng khối np.float32 do infer_stream trả.
+def _dat_so_khung_dau_vieneu(so: int) -> None:
+    """Số frame VieNeu gom trước mỗi lần yield khi đang chậm hơn thời gian thực.
 
-    max_chars nhỏ (config, mặc định 128) → prefill ngắn hơn câu đầu → TTFA thấp.
+    Thư viện chốt 4, và khi phát không kịp thì không phóng khối. Khối 4 frame
+    (~0,32s) mất ~0,5s để tạo nên cứ khựng. Đo 23/09/2026, đoạn thời tiết, model
+    đã nạp, 2 luồng: giữ 4 → tiếng đầu 1,03s và 20 lần thủng; 1 frame rồi 25 →
+    tiếng đầu 0,66s và 4 lần.
+    """
+    for ten in (
+        "vieneu._v3_turbo_engine.onnx_runtime_lite",
+        "vieneu._v3_turbo_engine.inference_v3_turbo",
+    ):
+        mod = sys.modules.get(ten)
+        if mod is None:
+            try:
+                mod = __import__(ten, fromlist=["_STREAM_LEADIN_FRAMES"])
+            except Exception:
+                continue
+        if hasattr(mod, "_STREAM_LEADIN_FRAMES"):
+            mod._STREAM_LEADIN_FRAMES = so
+
+
+def _vieneu_stream(text: str, voice: str, style: str = ""):
+    """Frame-level: yield (48000, pcm16) từng khối infer_stream trả.
+
+    Khung đầu 1 frame để có tiếng sớm, các khung sau 25 frame để bớt gọi codec.
+    max_chars (config, mặc định 128) giới hạn prefill của chunk chữ đầu.
     """
     eng = _get_vieneu()
     kwargs = _vieneu_kwargs(voice, style)
     # Giữ khoá suốt stream: session ONNX tuần tự; tránh 2 request giành graph.
     with _vieneu_lock:
-        for chunk in eng.infer_stream(text, **kwargs):
-            if chunk is None or len(chunk) == 0:
-                continue
-            yield (48000, _float_to_pcm16(chunk))
+        _dat_so_khung_dau_vieneu(1)
+        try:
+            da_co = False
+            for chunk in eng.infer_stream(text, **kwargs):
+                if chunk is None or len(chunk) == 0:
+                    continue
+                if not da_co:
+                    _dat_so_khung_dau_vieneu(25)
+                    da_co = True
+                yield (48000, _float_to_pcm16(chunk))
+        finally:
+            _dat_so_khung_dau_vieneu(4)
 
 
 def _probe_warm_ttfa(voice: str, min_pcm: int = 48000 // 5) -> float | None:
@@ -1203,6 +1286,23 @@ def _maybe_switch_int8_to_fp32(voice: str, warm_ttfa: float) -> dict:
     return info
 
 
+def _warm_zerotts() -> dict | None:
+    """Nạp ZeroTTS (constructor đã warmup). None nếu chưa tải model.
+
+    Không nạp thì request đầu của Home Assistant (giọng zerotts) trả tiền
+    nạp model cộng thời gian đọc hết câu — đo lạnh 17s, ấm mà gọi synthesize()
+    vẫn 8,5s mới có tiếng.
+    """
+    if vcfg.zerotts_model_dir() is None:
+        return None
+    import time as _time
+    t0 = _time.perf_counter()
+    _get_zerotts()
+    ms = int((_time.perf_counter() - t0) * 1000)
+    logger.info("voice: warmup ZeroTTS xong (%d ms)", ms)
+    return {"ok": True, "engine": "zerotts", "ms": ms}
+
+
 def warmup_tts(voice: str = "") -> dict:
     """Nạp model + warm + đo TTFA; int8 không đạt target → auto chuyển fp32.
 
@@ -1247,6 +1347,14 @@ def warmup_tts(voice: str = "") -> dict:
                 "warm_ttfa_s": None if warm is None else round(warm, 3),
             }
             out.update({k: adapt[k] for k in adapt if k not in out})
+            # ZeroTTS nạp thêm, không được làm hỏng kết quả VieNeu vừa warm.
+            try:
+                z = _warm_zerotts()
+            except Exception as exc:
+                logger.warning("voice: warmup ZeroTTS loi: %s", str(exc)[:160])
+                z = None
+            if z:
+                out["zerotts_ms"] = z["ms"]
             return out
         if v.startswith(vcfg.NGHI_PREFIX) and vcfg.nghi_ready():
             # Nạp lạnh một model VITS mất vài giây; warm trước để lần đọc đầu
@@ -1260,6 +1368,9 @@ def warmup_tts(voice: str = "") -> dict:
             ms = int((_time.perf_counter() - t0) * 1000)
             logger.info("voice: warmup Kokoro xong (%d ms)", ms)
             return {"ok": True, "engine": "kokoro", "ms": ms, "voice": v}
+        z = _warm_zerotts()
+        if z:
+            return z
         return {"ok": False, "engine": "", "ms": 0, "detail": "no local tts model"}
     except Exception as exc:
         ms = int((_time.perf_counter() - t0) * 1000)
@@ -1270,10 +1381,11 @@ def warmup_tts(voice: str = "") -> dict:
 def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
     """Generator yield (sample_rate, pcm16_mono_bytes) — đọc tới đâu phát tới đó.
 
-    VieNeu → frame-level; còn lại → theo câu (đọc xong câu nào phát câu đó).
-    Giữa hai mẩu chèn khoảng lặng theo config: hết câu dùng
+    VieNeu và ZeroTTS → một lần gọi cho cả đoạn, khung âm thanh ra ngay khi
+    model nhả (không chờ hết câu, không cắt lại theo khoảng lặng cấu hình).
+    Piper, Kokoro Việt và đường dự phòng → theo câu (đọc xong câu nào phát câu đó).
+    Giữa hai mẩu của đường theo câu chèn khoảng lặng theo config: hết câu dùng
     `sentence_silence_ms`, hết mệnh đề (dấu phẩy…) dùng `clause_silence_ms`.
-    Cả hai = 0 thì VieNeu đọc trọn đoạn trong một lần gọi như trước.
     Không bao giờ ném giữa chừng cho lỗi 1 câu: bỏ qua câu lỗi, đọc tiếp.
     `style` (tu_nhien|tin_tuc|doc_truyen) chỉ tác dụng với VieNeu.
 
@@ -1330,6 +1442,23 @@ def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
             logger.warning("voice: stream sherpa that bai, fallback cau: %s", str(exc)[:160])
             captured, _captured_bytes = ([] if _limit > 0 else None), 0
 
+    if v.startswith(vcfg.ZEROTTS_PREFIX):
+        try:
+            yielded = False
+            for item in _zerotts_stream(text, v):
+                yielded = True
+                _keep(item)
+                yield item
+            if yielded:
+                if captured:
+                    tts_cache.put(ck, captured, size_bytes=_captured_bytes)
+                return
+        except Exception as exc:
+            logger.warning("voice: stream zerotts that bai, fallback cau: %s",
+                           str(exc)[:160])
+        captured, _captured_bytes = ([] if _limit > 0 else None), 0
+        v = ""   # fallback về Piper mặc định theo câu ở dưới
+
     sent_ms, clause_ms, para_ms, jitter = _silence_plan()
     segs = _split_segments(text, clause_ms=clause_ms)
 
@@ -1340,23 +1469,13 @@ def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
     if v.startswith(vcfg.VIENEU_PREFIX):
         try:
             yielded = False
-            last_rate = 0
-            prev_kind = ""
-            # Không đặt khoảng lặng nào → giữ đường cũ: một lần gọi cho cả đoạn,
-            # engine tự lo nhịp (ngữ điệu liền mạch nhất).
-            khuc = segs if (sent_ms > 0 or clause_ms > 0 or ("\n" in text and para_ms > 0)) else [(text, "")]
-            for seg, kind in khuc:
-                if prev_kind and last_rate:
-                    gap = _silence_pcm(_gap_ms(prev_kind), last_rate)
-                    if gap:
-                        _keep((last_rate, gap))
-                        yield (last_rate, gap)
-                for item in _vieneu_stream(seg, v, style):
-                    yielded = True
-                    last_rate = item[0]
-                    _keep(item)
-                    yield item
-                prev_kind = kind
+            # Một infer_stream cho cả đoạn. Engine tự cắt chunk và tự chèn nghỉ
+            # (hết câu 0,5s, hết vế 0,3s, hết đoạn 0,7s). Cắt ngoài rồi gọi lại
+            # từng vế thì mỗi vế prefill từ đầu — đo 23/09/2026 khựng 3,3s.
+            for item in _vieneu_stream(text, v, style):
+                yielded = True
+                _keep(item)
+                yield item
             if yielded:
                 if captured:
                     tts_cache.put(ck, captured, size_bytes=_captured_bytes)

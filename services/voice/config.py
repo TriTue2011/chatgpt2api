@@ -676,10 +676,12 @@ def tts_paragraph_silence_ms() -> int:
 def tts_sentence_silence_ms() -> int:
     """Khoảng lặng chèn GIỮA hai câu. 0 = tắt (đọc dính liền).
 
-    Áp cho MỌI engine (Piper/Kokoro/NghiTTS/Wyoming/VieNeu): văn bản được cắt
-    thành câu, mỗi câu một lần gọi engine, nối lại bằng đúng khoảng lặng này.
-    Đặt 0 (cùng với clause_silence_ms) thì đọc trọn văn bản trong một lần gọi
-    như trước — nhanh nhất, ngữ điệu liền mạch nhất.
+    Áp cho engine trả WAV từng câu (Piper, Kokoro Việt, Wyoming): văn bản được
+    cắt thành câu, mỗi câu một lần gọi, nối lại bằng đúng khoảng lặng này.
+    VieNeu và ZeroTTS tự nghỉ trong một lần gọi — cắt thêm làm tiếng đầu và
+    chỗ nối chậm hơn, nên hai engine đó không dùng số này.
+    Đặt 0 (cùng với clause_silence_ms) thì các engine còn lại đọc trọn văn bản
+    trong một lần gọi.
     """
     raw = _sub("tts").get("sentence_silence_ms")
     if raw is None or str(raw).strip() == "":
@@ -693,9 +695,9 @@ def tts_sentence_silence_ms() -> int:
 def tts_clause_silence_ms() -> int:
     """Khoảng lặng sau dấu phẩy / chấm phẩy / hai chấm TRONG một câu. 0 = tắt.
 
-    Bật (vd 180 ms, như add-on wyoming-vietnamese) thì mỗi mệnh đề thành một
-    lần gọi engine riêng: nhịp nghỉ rõ hơn nhưng đổi lại engine đọc từng mệnh
-    đề như một câu độc lập (ngữ điệu tách rời) và tốn thêm thời gian tổng hợp.
+    Bật (vd 180 ms, như add-on wyoming-vietnamese) thì mỗi mệnh đề của Piper /
+    Kokoro Việt thành một lần gọi riêng: nhịp nghỉ rõ hơn nhưng ngữ điệu tách
+    và tốn thêm thời gian tổng hợp. VieNeu và ZeroTTS không cắt theo số này.
     Vì vậy mặc định 0 — người dùng tự bật trong Cài đặt nếu thích nhịp đó.
     """
     raw = _sub("tts").get("clause_silence_ms")

@@ -263,6 +263,17 @@ class SynthesizeSilenceTests(unittest.TestCase):
         _rate, _w, _c, pcm = engines._wav_parts(wav)
         self.assertEqual(len(pcm), 2 * (16 * 50 * 2) + 16 * 200 * 2)
 
+    def test_vieneu_and_zerotts_wav_skip_the_silence_split(self) -> None:
+        text = ("Hôm nay trời rất đẹp và nắng vàng rực rỡ. "
+                "Chúng ta cùng nhau đi dạo ngoài công viên nhé.")
+        p1, p2, p3 = self._patch(400, 180)
+        for voice in ("vieneu:Phạm Tuyên", "zerotts:maichi"):
+            self.calls.clear()
+            with p1, p2, p3, mock.patch.object(engines, "_synthesize_one",
+                                               side_effect=self._fake_one):
+                engines.synthesize(text, voice)
+            self.assertEqual(self.calls, [text], voice)
+
     def test_silence_off_reads_whole_text_in_one_call(self) -> None:
         text = ("Hôm nay trời rất đẹp và nắng vàng rực rỡ. "
                 "Chúng ta cùng nhau đi dạo ngoài công viên nhé.")
@@ -314,6 +325,26 @@ class StreamSynthesizeTests(unittest.TestCase):
         self.assertEqual(set(out[1][1]), {0})     # mẩu giữa là khoảng lặng
         self.assertTrue(all(r == 16000 and isinstance(p, bytes) for r, p in out))
 
+    def test_zerotts_streams_whole_text(self) -> None:
+        # Không cắt câu rồi synthesize(): khung đầu phải ra trước khi hết câu.
+        seen: list[str] = []
+
+        def fake_stream(text: str, voice: str):
+            seen.append(text)
+            yield (48000, b"\x01\x00" * 80)
+            yield (48000, b"\x02\x00" * 80)
+
+        text = ("Hôm nay trời rất đẹp và nắng vàng rực rỡ. "
+                "Chúng ta cùng nhau đi dạo ngoài công viên nhé.")
+        with mock.patch.object(vcfg, "tts_backend", return_value="local"), \
+                mock.patch.object(engines, "_zerotts_stream", side_effect=fake_stream), \
+                mock.patch.object(engines, "synthesize",
+                                  side_effect=AssertionError("khong duoc cho het cau")):
+            out = list(engines.stream_synthesize(text, "zerotts:maichi"))
+        self.assertEqual(seen, [text])
+        self.assertEqual(len(out), 2)
+        self.assertTrue(all(r == 48000 for r, _ in out))
+
     def test_vieneu_uses_frame_stream(self) -> None:
         def fake_stream(text: str, v: str, style: str = ""):
             yield (48000, b"\x00\x00" * 100)
@@ -325,8 +356,8 @@ class StreamSynthesizeTests(unittest.TestCase):
         self.assertEqual(len(out), 2)
         self.assertTrue(all(r == 48000 for r, _ in out))
 
-    def test_vieneu_gets_gap_between_sentences(self) -> None:
-        # Khoảng lặng áp cho MỌI engine, VieNeu cũng đọc theo câu khi bật.
+    def test_vieneu_streams_whole_text_even_when_silence_on(self) -> None:
+        # Khoảng lặng cấu hình không được cắt VieNeu: mỗi vế là một prefill mới.
         seen: list[str] = []
 
         def fake_stream(text: str, v: str, style: str = ""):
@@ -337,14 +368,38 @@ class StreamSynthesizeTests(unittest.TestCase):
                 "Chúng ta cùng nhau đi dạo ngoài công viên nhé.")
         with mock.patch.object(vcfg, "tts_backend", return_value="local"), \
                 mock.patch.object(vcfg, "tts_sentence_silence_ms", return_value=300), \
-                mock.patch.object(vcfg, "tts_clause_silence_ms", return_value=0), \
+                mock.patch.object(vcfg, "tts_clause_silence_ms", return_value=180), \
+                mock.patch.object(vcfg, "tts_paragraph_silence_ms", return_value=600), \
                 mock.patch.object(vcfg, "tts_silence_jitter_percent", return_value=0), \
                 mock.patch.object(engines, "_vieneu_stream", side_effect=fake_stream):
             out = list(engines.stream_synthesize(text, "vieneu:Phạm Tuyên"))
-        self.assertEqual(len(seen), 2)
-        self.assertEqual(len(out), 3)
-        self.assertEqual(set(out[1][1]), {0})              # mẩu giữa im lặng
-        self.assertEqual(len(out[1][1]), 48 * 300 * 2)     # 300 ms @48 kHz
+        self.assertEqual(seen, [text])
+        self.assertEqual(len(out), 1)
+
+    def test_vieneu_first_frame_then_larger_chunks(self) -> None:
+        # Khung đầu 1 frame, khung sau 25. Thư viện mặc định 4 và không phóng
+        # khi đang chậm, nên phải tự đổi số trong lúc stream.
+        import numpy as np
+
+        ten = "vieneu._v3_turbo_engine.onnx_runtime_lite"
+        mod = types.ModuleType(ten)
+        mod._STREAM_LEADIN_FRAMES = 4
+        seen: list[int] = []
+
+        class Eng:
+            def infer_stream(self, text: str, **kwargs):
+                seen.append(mod._STREAM_LEADIN_FRAMES)
+                yield np.ones(4, dtype=np.float32)
+                seen.append(mod._STREAM_LEADIN_FRAMES)
+                yield np.ones(4, dtype=np.float32)
+
+        with mock.patch.dict(sys.modules, {ten: mod}), \
+                mock.patch.object(engines, "_get_vieneu", return_value=Eng()), \
+                mock.patch.object(engines, "_vieneu_kwargs", return_value={}):
+            out = list(engines._vieneu_stream("xin chào", "vieneu:Mai Anh"))
+        self.assertEqual(seen, [1, 25])
+        self.assertEqual(mod._STREAM_LEADIN_FRAMES, 4)
+        self.assertEqual(len(out), 2)
 
     def test_vieneu_reads_whole_text_when_silence_off(self) -> None:
         seen: list[str] = []
@@ -417,13 +472,25 @@ class VieNeuThreadConfigTests(unittest.TestCase):
             self.assertEqual(vcfg.vieneu_precision(), "int8")
 
     def test_auto_threads_leaves_headroom_on_4cpu(self) -> None:
-        # 4 CPU LXC → 2 thread TTS, chừa 2 cho LLM/PDF (không chiếm hết).
-        with mock.patch.object(vcfg, "effective_cpu_count", return_value=4):
+        # Không có hạn mức CFS: 4 CPU → 2 thread, chừa chỗ cho LLM/PDF.
+        with mock.patch.object(vcfg, "_cpu_quota", return_value=None), \
+                mock.patch.object(vcfg, "effective_cpu_count", return_value=4):
             self.assertEqual(vcfg.auto_tts_threads(), 2)
-        with mock.patch.object(vcfg, "effective_cpu_count", return_value=2):
+        with mock.patch.object(vcfg, "_cpu_quota", return_value=None), \
+                mock.patch.object(vcfg, "effective_cpu_count", return_value=2):
             self.assertEqual(vcfg.auto_tts_threads(), 1)
-        with mock.patch.object(vcfg, "effective_cpu_count", return_value=16):
+        with mock.patch.object(vcfg, "_cpu_quota", return_value=None), \
+                mock.patch.object(vcfg, "effective_cpu_count", return_value=16):
             self.assertEqual(vcfg.auto_tts_threads(), 3)
+
+    def test_auto_threads_equals_docker_cpu_limit(self) -> None:
+        with mock.patch.object(vcfg, "_cpu_quota", return_value=2):
+            self.assertEqual(vcfg.auto_tts_threads(), 2)
+
+    def test_cpu_max_max_means_no_quota(self) -> None:
+        self.assertIsNone(vcfg._so_nhan_tu_cpu_max("max 100000"))
+        self.assertEqual(vcfg._so_nhan_tu_cpu_max("200000 100000"), 2)
+        self.assertEqual(vcfg._so_nhan_tu_cpu_max("50000 100000"), 1)
 
     def test_vieneu_threads_default_auto(self) -> None:
         with mock.patch.object(vcfg, "_sub", return_value={}), \
@@ -487,7 +554,8 @@ class WarmupTests(unittest.TestCase):
                 mock.patch.object(vcfg, "tts_precision_locked", return_value=False), \
                 mock.patch.object(vcfg, "vieneu_precision", return_value="fp32"), \
                 mock.patch.object(engines, "_vieneu_stream", side_effect=fake_stream), \
-                mock.patch.object(engines, "_probe_warm_ttfa", return_value=0.4):
+                mock.patch.object(engines, "_probe_warm_ttfa", return_value=0.4), \
+                mock.patch.object(engines, "_warm_zerotts", return_value=None):
             out = engines.warmup_tts("vieneu:Ngọc Trân")
         self.assertTrue(out["ok"])
         self.assertEqual(out["engine"], "vieneu")
@@ -528,6 +596,19 @@ class WarmupTests(unittest.TestCase):
             info = engines._maybe_switch_int8_to_fp32("vieneu:X", 1.5)
         self.assertFalse(info["switched"])
         self.assertIsNone(vcfg.tts_precision_override())
+
+
+class ZeroWarmupTests(unittest.TestCase):
+    def test_warmup_loads_zerotts_when_model_present(self) -> None:
+        with mock.patch.object(vcfg, "tts_voice", return_value="ngochuyennew"), \
+                mock.patch.object(vcfg, "vieneu_installed", return_value=False), \
+                mock.patch.object(vcfg, "vieneu_model_ready", return_value=False), \
+                mock.patch.object(vcfg, "zerotts_model_dir", return_value="/data/zerotts"), \
+                mock.patch.object(engines, "_get_zerotts", return_value=object()) as nap:
+            out = engines.warmup_tts("zerotts:maichi")
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["engine"], "zerotts")
+        nap.assert_called_once()
 
 
 class PlayTextOnPipelineTests(unittest.TestCase):
