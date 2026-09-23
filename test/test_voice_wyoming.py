@@ -454,7 +454,8 @@ class WyomingResourceGuardTests(unittest.TestCase):
             self.assertEqual(vcfg.wyoming_write_timeout(), 2.0)
             self.assertEqual(vcfg.wyoming_max_stt_buffer_bytes(), 3 * 1024 * 1024)
 
-    def test_client_im_lang_bi_timeout_va_dong(self) -> None:
+    def test_khung_chua_du_bi_timeout_va_dong(self) -> None:
+        """Header hứa thêm byte mà không gửi thì đóng. Im giữa hai event thì không cắt."""
         async def go() -> bytes:
             limiter = wy.ConnectionLimiter(maximum=1)
             budget = wy.ByteBudget(maximum=1024)
@@ -465,6 +466,8 @@ class WyomingResourceGuardTests(unittest.TestCase):
                     lambda r, w: wy._handle(r, w, "vi"), "127.0.0.1", 0)
                 port = server.sockets[0].getsockname()[1]
                 reader, writer = await asyncio.open_connection("127.0.0.1", port)
+                writer.write(b'{"type":"audio-chunk","data_length":5,"payload_length":0}\n')
+                await writer.drain()
                 closed = await asyncio.wait_for(reader.read(), timeout=1)
                 writer.close()
                 await writer.wait_closed()

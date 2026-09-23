@@ -326,26 +326,47 @@ def cpu_has_vnni() -> bool:
         return False
 
 
-def effective_cpu_count() -> int:
-    """Số CPU thực sự dùng được (cgroup Docker/LXC), không phải host full.
+def _so_nhan_tu_cpu_max(text: str) -> int | None:
+    """``cpu.max`` → số nhân. ``max`` nghĩa là không giới hạn."""
+    parts = (text or "").split()
+    if len(parts) < 2 or parts[0] == "max":
+        return None
+    try:
+        quota, period = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    if quota <= 0 or period <= 0:
+        return None
+    return max(1, (quota + period - 1) // period)
 
-    `os.cpu_count()` trong container hay trả 20+ core host dù LXC chỉ gán 4
-    → auto-thread cũ chiếm hết quota → LLM/PDF chết. Đọc cgroup trước.
+
+def _cpu_quota() -> int | None:
+    """Hạn mức CFS của container (Docker ``cpus:``), hoặc None nếu không đặt.
+
+    ``os.cpu_count()`` và ``os.process_cpu_count()`` không thấy hạn mức này:
+    chúng đếm nhân máy chủ hoặc cpuset. Đặt ``cpus: "2"`` mà để số luồng tự
+    động thì ONNX mở hàng chục luồng, tranh quota, câu nói đầu chậm thêm
+    khoảng 2 giây. Số luồng bằng đúng số nhân được cấp thì tiếng ra sau
+    khoảng 200–300 ms.
     """
-    # cgroup v2: "max 100000" hoặc "200000 100000"
-    for rel in ("/sys/fs/cgroup/cpu.max", "/sys/fs/cgroup/cpu.max"):
+    paths = [Path("/sys/fs/cgroup/cpu.max")]
+    # cgroupns=host: hạn mức nằm ở cgroup của tiến trình, không phải file gốc.
+    try:
+        for line in Path("/proc/self/cgroup").read_text(encoding="utf-8").splitlines():
+            parts = line.split(":", 2)
+            if len(parts) == 3 and parts[2] not in ("", "/"):
+                rel = parts[2].lstrip("/").replace("\\x2d", "-")
+                paths.append(Path("/sys/fs/cgroup") / rel / "cpu.max")
+    except Exception:
+        pass
+    for p in paths:
         try:
-            p = Path(rel)
-            if not p.is_file():
-                continue
-            parts = p.read_text(encoding="utf-8").strip().split()
-            if len(parts) >= 2 and parts[0] != "max":
-                quota, period = int(parts[0]), int(parts[1])
-                if quota > 0 and period > 0:
-                    return max(1, (quota + period - 1) // period)
+            if p.is_file():
+                n = _so_nhan_tu_cpu_max(p.read_text(encoding="utf-8"))
+                if n is not None:
+                    return n
         except Exception:
-            pass
-    # cgroup v1
+            continue
     try:
         q = Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")
         p = Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us")
@@ -355,6 +376,18 @@ def effective_cpu_count() -> int:
                 return max(1, (quota + period - 1) // period)
     except Exception:
         pass
+    return None
+
+
+def effective_cpu_count() -> int:
+    """Số CPU thực sự dùng được (cgroup Docker/LXC), không phải host full.
+
+    `os.cpu_count()` trong container hay trả 20+ core host dù LXC chỉ gán 4
+    → auto-thread cũ chiếm hết quota → LLM/PDF chết. Đọc hạn mức CFS trước.
+    """
+    quota = _cpu_quota()
+    if quota is not None:
+        return quota
     # cpuset list "0-3,8"
     for rel in (
         "/sys/fs/cgroup/cpuset.cpus.effective",
@@ -477,16 +510,26 @@ def tts_precision_prefer() -> str:
 
 
 def auto_tts_threads() -> int:
-    """Số thread TTS tự động: đủ TTFA ~0.5s, **không** chiếm hết CPU LXC/host.
+    """Số thread TTS tự động.
 
-    Dựa trên effective_cpu_count() (cgroup), chừa ≥½ core cho LLM/PDF/gateway:
+    Có hạn mức Docker/LXC (``cpus:``): dùng đúng số nhân đó. Ít hơn thì câu
+    đầu chậm; nhiều hơn số được cấp thì các luồng tranh quota và chậm thêm
+    khoảng 2 giây. Đo: số luồng = số nhân hạn mức thì có tiếng sau khoảng
+    200–300 ms.
+
+    Không đặt hạn mức: chừa CPU cho LLM/PDF/gateway.
       ≤2 CPU → 1 thread
-      3–4    → 2 thread  (½ của 4, còn 2 cho việc khác)
+      3–4    → 2 thread
       5–8    → 2 thread
-      ≥9     → min(3, n//4)  (16→3, vẫn chừa phần lớn)
+      ≥9     → min(3, n//4)
 
-    Ép tay: voice.tts.num_threads / voice.tts.vieneu_threads.
+    Ép tay: voice.tts.num_threads / voice.tts.vieneu_threads, hoặc
+    ``VIENEU_THREADS`` trong compose. Container wyoming-vietnamese dùng tên
+    ``CPU_THREADS`` cho cùng việc này.
     """
+    quota = _cpu_quota()
+    if quota is not None:
+        return quota
     n = effective_cpu_count()
     if n <= 2:
         return 1
@@ -1300,7 +1343,11 @@ def wyoming_max_connections() -> int:
 
 
 def wyoming_event_timeout() -> float:
-    """Số giây tối đa chờ một frame hoàn chỉnh từ client."""
+    """Số giây tối đa chờ nốt thân một frame sau khi đã có dòng header.
+
+    Không dùng cho khoảng im giữa hai event: Home Assistant thu tiếng xong
+    mới gửi audio-stop, khoảng đó dài hơn 30 giây là chuyện bình thường.
+    """
     return _wyoming_float("event_timeout_seconds", 30.0, 0.05, 600.0)
 
 

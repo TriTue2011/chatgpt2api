@@ -123,10 +123,15 @@ _TTS_JOBS = ConnectionLimiter(vcfg.wyoming_max_connections(), local_reserve=0)
 
 
 async def _read_event(reader: asyncio.StreamReader) -> dict[str, Any] | None:
-    """Đọc 1 event → {"type", "data", "payload"}. None = client đóng kết nối.
+    """Đọc 1 event → {"type", "data", "payload"}. None = client đóng hoặc khung dở.
 
     Chấp nhận cả hai kiểu client: data inline trong header ("data": {...})
     lẫn data tách dòng ("data_length": N) — thư viện wyoming dùng kiểu sau.
+
+    Chờ dòng header thì không cắt giờ. Home Assistant mở cổng nghe rồi mới thu
+    tiếng, có khi hơn 30 giây mới gửi audio-stop. Cắt lúc đó thì lệnh kết thúc
+    đụng đường đã đóng và không có chữ trả về (đo 23/09/2026, HA 172.16.10.200).
+    Giờ ngắn chỉ áp cho phần thân sau khi đã có header mà không tới đủ byte.
     """
     try:
         line = await reader.readline()
@@ -152,17 +157,27 @@ async def _read_event(reader: asyncio.StreamReader) -> dict[str, Any] | None:
         logger.warning("wyoming: event qua lon (data=%d, payload=%d) — dong ket noi",
                        dlen, plen)
         return None
-    if dlen:
+
+    async def _than() -> tuple[dict, bytes]:
+        extra = dict(data)
+        if dlen:
+            extra.update(json.loads(await reader.readexactly(dlen)))
+        payload = await reader.readexactly(plen) if plen else b""
+        return extra, payload
+
+    if dlen or plen:
         try:
-            data.update(json.loads(await reader.readexactly(dlen)))
-        except Exception:
+            data, payload = await asyncio.wait_for(
+                _than(), timeout=vcfg.wyoming_event_timeout())
+        except TimeoutError:
+            logger.warning(
+                "wyoming: khung chua du sau %.2fs — dong",
+                vcfg.wyoming_event_timeout())
             return None
-    payload = b""
-    if plen:
-        try:
-            payload = await reader.readexactly(plen)
-        except Exception:
+        except (ConnectionError, asyncio.IncompleteReadError, ValueError):
             return None
+    else:
+        payload = b""
     return {"type": str(header.get("type") or ""), "data": data, "payload": payload}
 
 
@@ -856,13 +871,7 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
     loop = asyncio.get_running_loop()
     try:
         while True:
-            try:
-                ev = await asyncio.wait_for(
-                    _read_event(reader), timeout=vcfg.wyoming_event_timeout())
-            except TimeoutError:
-                logger.warning("wyoming: client %s im/khung chua du sau %.2fs — dong",
-                               peer, vcfg.wyoming_event_timeout())
-                break
+            ev = await _read_event(reader)
             if ev is None:
                 break
             t = ev["type"]
