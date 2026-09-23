@@ -85,6 +85,23 @@ def bai_ke(q: dict[str, Any], rng: random.Random | None = None) -> dict[str, Any
     return items[vt] if vt < len(items) else None
 
 
+def bai_truoc(q: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Bài TRƯỚC `current` (nút lùi): lần lượt = bài đứng trước; trộn = bài vừa phát
+    trước bài này. Cùng luật `pick_prev` của thẻ. None = đã ở đầu."""
+    items = q["items"]
+    uids = [i["uid"] for i in items]
+    if q["current"] not in uids:
+        return q, None
+    if q["order"] == "shuffle":
+        lich_su = [u for u in q["played"] if u in uids]
+        if len(lich_su) < 2 or lich_su[-1] != q["current"]:
+            return q, None
+        truoc = lich_su[-2]
+        return {**q, "current": truoc, "played": lich_su[:-1]}, items[uids.index(truoc)]
+    vt = uids.index(q["current"]) - 1
+    return (_chon(q, uids[vt]), items[vt]) if vt >= 0 else (q, None)
+
+
 def _chon(q: dict[str, Any], uid: str) -> dict[str, Any]:
     return {**q, "current": uid, "played": [*[u for u in q["played"] if u != uid], uid]}
 
@@ -138,6 +155,8 @@ def thay_doi(q: dict[str, Any], payload: dict[str, Any], uid_moi: Callable[[], s
     if lenh == "next":
         item = bai_ke(q)
         return (_chon(q, item["uid"]), item) if item else (q, None)
+    if lenh == "prev":
+        return bai_truoc(q)
     raise ValueError("invalid_action")
 
 

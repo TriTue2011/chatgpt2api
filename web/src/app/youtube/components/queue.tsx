@@ -62,6 +62,17 @@ export function coBaiKe(q: HangCho | undefined): boolean {
   return items.findIndex((i) => i.uid === q.current) + 1 < items.length;
 }
 
+/** Lùi được trong Queue không — CÙNG LUẬT `bai_truoc` của hang_cho.py. */
+export function coBaiTruoc(q: HangCho | undefined): boolean {
+  const uids = (q?.items ?? []).map((i) => i.uid);
+  if (!q || !q.current || !uids.includes(q.current)) return false;
+  if (q.order === "shuffle") {
+    const lichSu = q.played.filter((u) => uids.includes(u));
+    return lichSu.length >= 2 && lichSu[lichSu.length - 1] === q.current;
+  }
+  return uids.indexOf(q.current) > 0;
+}
+
 type TraQueue = { queue: HangCho; item: MucQueue | null };
 
 /** Queue theo khoá, tải và gửi lệnh qua máy chủ. */

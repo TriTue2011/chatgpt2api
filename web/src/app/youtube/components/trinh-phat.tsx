@@ -37,7 +37,7 @@ import { type BaiHat, dangHoatDong, dangPhatBai, goi, laFacebook, type Nguon, ty
 import { duongNgheKhiTatMan, moVideoKhiTatMan } from "./nghe-khi-tat-man";
 import * as mayNghe from "./nghe-tren-may";
 import { DanhSachPlaylist, type NguonHang, useKhoPlaylist } from "./playlist";
-import { BangQueue, coBaiKe, khoaMay, type MucQueue, useQueue } from "./queue";
+import { BangQueue, coBaiKe, coBaiTruoc, khoaMay, type MucQueue, useQueue } from "./queue";
 import { TimNhac } from "./tim-nhac";
 import { type CheDoXem, laTao, laVideo, srcNhung, useVideoNhung } from "./video-nhung";
 
@@ -159,6 +159,8 @@ export function TrinhPhat() {
   // Hai móc hết bài gọi Queue qua ref này; khối Queue nằm SAU «nhuongTiengChoLoa»
   // vì phát từ Queue đi qua «phat», mà «phat» dùng hàm ấy.
   const queueTiepRef = useRef<() => boolean>(() => false);
+  // Nút bài trước/bài sau đi theo Queue (chủ máy 24/09/2026) — cùng lý do dùng ref.
+  const queueChuyenRef = useRef<(buoc: number) => boolean>(() => false);
   // Ở ngoài nhà người xem đã đồng ý xem hình (qua máy chủ) trong lần xem này.
 
   // Thẻ âm thanh không lấy được tiếng cho video đang xem: đừng thử chuyển tiếng sang nó nữa.
@@ -486,6 +488,7 @@ export function TrinhPhat() {
   const coBai = (buoc: number) => !!hang && hang.index >= 0 && !!hang.items[hang.index + buoc];
 
   const chuyenBai = async (buoc: number) => {
+    if (queueChuyenRef.current(buoc)) return;
     if (nghe) {
       mayNghe.chuyen(buoc);
       return;
@@ -712,8 +715,28 @@ export function TrinhPhat() {
     }
   };
 
+  /** Bài đang phát có phải bài hiện tại của Queue không — nút lùi chỉ lùi TRONG Queue
+      khi đang phát từ Queue; không thì để hàng đợi cũ. */
+  const dangPhatTuQueue = () => {
+    const q = dsQueue[khoaQueue];
+    const cur = q?.items.find((i) => i.uid === q.current);
+    const dang = nghe ?? video?.bai ?? phienXem?.item ?? null;
+    return !!cur && !!dang && dang.id === cur.id;
+  };
+  /** Bài sau: Queue còn bài kế thì đi Queue (như lúc hết bài tự nhiên). */
+  const coQueue = (buoc: number) =>
+    buoc > 0 ? coBaiKe(dsQueue[khoaQueue]) : dangPhatTuQueue() && coBaiTruoc(dsQueue[khoaQueue]);
+  const queueChuyen = (buoc: number) => {
+    if (!khoaQueue || !coQueue(buoc)) return false;
+    const k = khoaQueue;
+    void lenhQueue(k, { action: buoc > 0 ? "next" : "prev" }).then((r) => {
+      if (r?.item) phatTuQueue(r.item, k);
+    });
+    return true;
+  };
   useEffect(() => {
     queueTiepRef.current = queueTiep;
+    queueChuyenRef.current = queueChuyen;
   });
 
   const loaNhapVideo = async (tb: ThietBi, v: VideoMo) => {
@@ -1155,8 +1178,8 @@ export function TrinhPhat() {
         dangChay={dangChay}
         dangGui={!!dangGuiMa}
         layViTri={layViTri}
-        truoc={coBai(-1) ? () => void chuyenBai(-1) : null}
-        tiep={coBai(1) ? () => void chuyenBai(1) : null}
+        truoc={coBai(-1) || coQueue(-1) ? () => void chuyenBai(-1) : null}
+        tiep={coBai(1) || coQueue(1) ? () => void chuyenBai(1) : null}
         phatTamDung={nghe || video || coDieuKhien ? phatTamDung : null}
         dung={nghe || video || phienXem || coDieuKhien ? () => void dung() : null}
         xemTaiDay={

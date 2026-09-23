@@ -88,6 +88,30 @@ class KhoTest(unittest.TestCase):
         self.assertEqual(set(doc["queues"]), {MAY, LOA})
 
 
+class LuiBaiTest(KhoTest):
+    """Nút lùi bài trong Queue (chủ máy 24/09/2026)."""
+
+    def test_lan_luot_lui_toi_dau_roi_dung(self) -> None:
+        self.them(LOA, 3)
+        uids = [i["uid"] for i in self.kho.lay(LOA)["items"]]
+        self.kho.doi({"key": LOA, "action": "select", "uid": uids[2]})
+        _q, item = self.kho.doi({"key": LOA, "action": "prev"})
+        self.assertEqual(item["title"], "Bài 1")
+        _q, item = self.kho.doi({"key": LOA, "action": "prev"})
+        self.assertEqual(item["title"], "Bài 0")
+        _q, item = self.kho.doi({"key": LOA, "action": "prev"})
+        self.assertIsNone(item)
+
+    def test_tron_lui_theo_lich_su(self) -> None:
+        self.them(LOA, 4)
+        self.kho.doi({"key": LOA, "action": "set", "order": "shuffle"})
+        a = self.kho.tiep(LOA)
+        b = self.kho.tiep(LOA)
+        _q, item = self.kho.doi({"key": LOA, "action": "prev"})
+        self.assertEqual(item["uid"], a["uid"])
+        self.assertNotIn(b["uid"], self.kho.lay(LOA)["played"])
+
+
 class TuChuyenBaiQueueTest(unittest.TestCase):
     """Loa hết bài: Queue của loa tích đầu tiên đi TRƯỚC hàng đợi phiên."""
 
