@@ -778,3 +778,23 @@ def test_tts_giong_cho_tung_tieng(monkeypatch):
     monkeypatch.setitem(config.data, "voice",
                         {"dung_cho": {"loa": {"tts_giong": "nghi:ban-mai"}}})
     assert vc.tts_giong_cho("loa", "ja") == "nghi:ban-mai"   # tính năng thắng
+
+
+def test_ket_noi_wyoming_bat_keepalive_de_ket_noi_chet_tra_cho():
+    """5dab191 bỏ giờ chờ event kế; thiếu keepalive thì kết nối đứt nửa vời giữ chỗ mãi."""
+    import socket as _socket
+    from services.voice import wyoming_server as ws
+
+    nghe = _socket.create_server(("127.0.0.1", 0))
+    b = _socket.create_connection(nghe.getsockname())
+    a, _ = nghe.accept()
+    nghe.close()
+    try:
+        ws._bat_keepalive(a)
+        assert a.getsockopt(_socket.SOL_SOCKET, _socket.SO_KEEPALIVE) == 1
+        if hasattr(_socket, "TCP_KEEPIDLE"):
+            assert a.getsockopt(_socket.IPPROTO_TCP, _socket.TCP_KEEPIDLE) == 60
+            assert a.getsockopt(_socket.IPPROTO_TCP, _socket.TCP_KEEPCNT) == 3
+    finally:
+        a.close()
+        b.close()

@@ -839,6 +839,25 @@ async def _handle_synthesize(writer: asyncio.StreamWriter, text: str,
 # ── Kết nối ──────────────────────────────────────────────────────────────────
 
 
+def _bat_keepalive(sock) -> None:
+    """Kết nối CHẾT thì nhận ra sau ~90 giây; kết nối sống thì chờ bao lâu cũng được.
+
+    Từ 5dab191 máy chủ không cắt giờ khi chờ event kế (HA thu tiếng xong mới gửi
+    audio-stop, có khi hơn 30 giây). Nhưng không có keepalive thì một kết nối
+    đứt nửa vời — HA mất điện, rớt mạng giữa lúc nghe — giữ chỗ trong
+    `_CONNECTIONS` MÃI MÃI; đủ 16 cái là Assist hết nghe được tới khi khởi động
+    lại c2a. Keepalive của TCP hỏi thăm đầu kia: còn sống thì đáp, chết thì
+    readline() nhận lỗi và vòng _handle tự thoát, trả chỗ.
+    """
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        for ten, giay in (("TCP_KEEPIDLE", 60), ("TCP_KEEPINTVL", 10), ("TCP_KEEPCNT", 3)):
+            if hasattr(socket, ten):
+                sock.setsockopt(socket.IPPROTO_TCP, getattr(socket, ten), giay)
+    except OSError:
+        pass
+
+
 async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                   server_lang: str = "", vai: str = "both") -> None:
     peer = writer.get_extra_info("peername")
@@ -859,6 +878,7 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except OSError:
             pass
+        _bat_keepalive(sock)
     asr = {
         "rate": 16000, "width": 2, "channels": 1,
         "pcm": bytearray(),
