@@ -376,9 +376,8 @@ class StreamSynthesizeTests(unittest.TestCase):
         self.assertEqual(seen, [text])
         self.assertEqual(len(out), 1)
 
-    def test_vieneu_first_frame_then_larger_chunks(self) -> None:
-        # Khung đầu 1 frame, khung sau 25. Thư viện mặc định 4 và không phóng
-        # khi đang chậm, nên phải tự đổi số trong lúc stream.
+    def test_vieneu_giu_sau_khung_deu(self) -> None:
+        # 1 frame rồi 25 frame làm im 3 giây sau tiếng đầu. Giữ một cỡ suốt câu.
         import numpy as np
 
         ten = "vieneu._v3_turbo_engine.onnx_runtime_lite"
@@ -397,9 +396,30 @@ class StreamSynthesizeTests(unittest.TestCase):
                 mock.patch.object(engines, "_get_vieneu", return_value=Eng()), \
                 mock.patch.object(engines, "_vieneu_kwargs", return_value={}):
             out = list(engines._vieneu_stream("xin chào", "vieneu:Mai Anh"))
-        self.assertEqual(seen, [1, 25])
+        self.assertEqual(seen, [engines._VIENEU_KHUNG, engines._VIENEU_KHUNG])
+        self.assertEqual(engines._VIENEU_KHUNG, 6)
         self.assertEqual(mod._STREAM_LEADIN_FRAMES, 4)
         self.assertEqual(len(out), 2)
+
+    def test_zerotts_giu_sau_khung_deu(self) -> None:
+        import numpy as np
+
+        kw: dict = {}
+
+        class TTS:
+            sample_rate = 48000
+
+            def synthesize_stream(self, seg: str, voice: str | None = None, **kwargs):
+                kw.update(kwargs)
+                yield np.ones((1, 16), dtype=np.float32)
+
+        with mock.patch.object(engines, "_get_zerotts", return_value=TTS()), \
+                mock.patch.object(engines, "_zerotts_doan", return_value=["xin chào"]):
+            out = list(engines._zerotts_stream("xin chào", "zerotts:maichi"))
+        self.assertEqual(kw["first_chunk_frames"], engines._ZEROTTS_KHUNG)
+        self.assertEqual(kw["max_chunk_frames"], engines._ZEROTTS_KHUNG)
+        self.assertEqual(engines._ZEROTTS_KHUNG, 6)
+        self.assertEqual(len(out), 1)
 
     def test_vieneu_reads_whole_text_when_silence_off(self) -> None:
         seen: list[str] = []

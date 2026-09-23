@@ -757,11 +757,11 @@ def _zerotts_tts(text: str, voice: str) -> bytes:
 
 
 def _zerotts_stream(text: str, voice: str):
-    """Yield (48000, pcm16) ngay khi có khung đầu.
+    """Yield (48000, pcm16) theo khối đều `_ZEROTTS_KHUNG` frame.
 
-    synthesize() gom hết frame rồi mới giải mã — đo 23/09/2026, câu thời tiết
-    ấm mất 8,5s mới có tiếng. synthesize_stream trả khung đầu (1 frame) rồi
-    nhân đôi tới 16: cùng câu, tiếng đầu 0,26s.
+    synthesize() gom hết frame: câu thời tiết ấm mất 8,5s mới có tiếng.
+    Khối 1 frame rồi nhân đôi tới 16 có tiếng sau 0,24s nhưng im tới 1,0s
+    khi khối phình lên. Giữ 6 frame: tiếng đầu 0,75s, lỗ dài nhất 0,18s.
     """
     import numpy as np
 
@@ -775,7 +775,10 @@ def _zerotts_stream(text: str, voice: str):
     # Giữ khoá suốt stream: session ONNX không chịu hai request một lúc.
     with _zerotts_lock:
         for seg in segs:
-            for chunk in tts.synthesize_stream(seg, voice=vid):
+            for chunk in tts.synthesize_stream(
+                    seg, voice=vid,
+                    first_chunk_frames=_ZEROTTS_KHUNG,
+                    max_chunk_frames=_ZEROTTS_KHUNG):
                 audio = np.asarray(chunk, dtype=np.float32).reshape(-1)
                 if audio.size == 0:
                     continue
@@ -1175,13 +1178,20 @@ def _nghi_ms(kind: str, sent_ms: int, clause_ms: int, para_ms: int, jitter: int)
     return _jitter_ms(base, jitter)
 
 
+# Cỡ khối đều. Khối sau dài hơn audio đang phát thì loa im giữa chừng.
+# Đo ấm 23/09/2026, đoạn thời tiết, trên model đang chạy:
+#   VieNeu 1 frame rồi 25: tiếng đầu 0,82s, rồi im 3,2s.
+#   VieNeu giữ 6 frame (0,48s): tiếng đầu 1,29s, lỗ dài nhất 0,38s.
+#   ZeroTTS nhảy tới 16 frame: lỗ 1,0s. Giữ 6 frame: lỗ dài nhất 0,18s.
+_VIENEU_KHUNG = 6
+_ZEROTTS_KHUNG = 6
+
+
 def _dat_so_khung_dau_vieneu(so: int) -> None:
     """Số frame VieNeu gom trước mỗi lần yield khi đang chậm hơn thời gian thực.
 
-    Thư viện chốt 4, và khi phát không kịp thì không phóng khối. Khối 4 frame
-    (~0,32s) mất ~0,5s để tạo nên cứ khựng. Đo 23/09/2026, đoạn thời tiết, model
-    đã nạp, 2 luồng: giữ 4 → tiếng đầu 1,03s và 20 lần thủng; 1 frame rồi 25 →
-    tiếng đầu 0,66s và 4 lần.
+    Thư viện chốt 4 và không phóng khối khi phát không kịp. Giữ một cỡ suốt
+    câu: nhảy từ 1 frame lên 25 làm im 3 giây sau tiếng đầu.
     """
     for ten in (
         "vieneu._v3_turbo_engine.onnx_runtime_lite",
@@ -1200,22 +1210,18 @@ def _dat_so_khung_dau_vieneu(so: int) -> None:
 def _vieneu_stream(text: str, voice: str, style: str = ""):
     """Frame-level: yield (48000, pcm16) từng khối infer_stream trả.
 
-    Khung đầu 1 frame để có tiếng sớm, các khung sau 25 frame để bớt gọi codec.
-    max_chars (config, mặc định 128) giới hạn prefill của chunk chữ đầu.
+    Giữ đúng `_VIENEU_KHUNG` frame mỗi lần yield. max_chars (mặc định 128)
+    giới hạn prefill của chunk chữ đầu.
     """
     eng = _get_vieneu()
     kwargs = _vieneu_kwargs(voice, style)
     # Giữ khoá suốt stream: session ONNX tuần tự; tránh 2 request giành graph.
     with _vieneu_lock:
-        _dat_so_khung_dau_vieneu(1)
+        _dat_so_khung_dau_vieneu(_VIENEU_KHUNG)
         try:
-            da_co = False
             for chunk in eng.infer_stream(text, **kwargs):
                 if chunk is None or len(chunk) == 0:
                     continue
-                if not da_co:
-                    _dat_so_khung_dau_vieneu(25)
-                    da_co = True
                 yield (48000, _float_to_pcm16(chunk))
         finally:
             _dat_so_khung_dau_vieneu(4)
