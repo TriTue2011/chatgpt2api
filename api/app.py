@@ -303,6 +303,12 @@ def create_app() -> FastAPI:
             voice_wyoming.start()
         except Exception as exc:
             _record_startup_failure("voice_wyoming", str(exc))
+        # Camera thành vệ tinh Assist cho HA (mic qua go2rtc, loa qua cổng 37777).
+        try:
+            from services import ve_tinh_camera
+            ve_tinh_camera.start()
+        except Exception as exc:
+            _record_startup_failure("ve_tinh_camera", str(exc))
         # Prewarm TTS (VieNeu/Kokoro) nền — lần đọc đầu không trả cold-start 1–2s.
         try:
             from services.voice import config as _vconf

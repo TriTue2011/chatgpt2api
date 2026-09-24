@@ -78,9 +78,11 @@ def test_phien_noi_dung_trinh_tu_va_khung_tieng():
     with mock.patch.object(lc.time, "sleep"):
         with lc.KenhNoi("127.0.0.1", "admin", "mk", cong=cam.cong) as k:
             k.phat_pcm(pcm)
+    # Camera giả đọc hai kết nối trên hai luồng: chờ cả hai đọc xong mới kiểm.
     import time
-    for _ in range(50):
-        if any("DeleteObject" in s for s in cam.chu):
+    for _ in range(250):
+        if any("DeleteObject" in s for s in cam.chu) and \
+                sum(len(t) - 40 for t in cam.tieng) == len(pcm):
             break
         time.sleep(0.02)
     thu_tu = [next(m for m in ("AddObject", "AckSubChannel", "State:1", "State:0", "DeleteObject")

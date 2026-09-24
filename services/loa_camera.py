@@ -322,6 +322,90 @@ def phat(ten: str, am_thanh: bytes) -> dict[str, Any]:
     return {"ten": ten_that, "giay": round(giay, 1)}
 
 
+class PhatLuong:
+    """Phát ra loa camera theo luồng: tiếng tới khúc nào phát khúc đó.
+
+    Dùng cho vệ tinh (Home Assistant đẩy tiếng TTS thành từng khúc PCM). ffmpeg
+    đổi định dạng nguồn sang PCM16 8 kHz ngay khi nhận; một luồng nền rút ra và
+    gửi camera đúng nhịp. Giữ khoá của camera suốt phiên như ``phat``.
+    """
+
+    def __init__(self, ten: str, rate: int, width: int = 2, channels: int = 1) -> None:
+        from services import camera_nha
+
+        try:
+            self.ten, cam = camera_nha._lay(ten)
+        except camera_nha.LoiCamera as exc:
+            raise LoiLoa(str(exc)) from exc
+        if width != 2:
+            raise LoiLoa(f"chưa đọc được âm thanh {width * 8} bit")
+        ip, user, mk = dia_chi(cam)
+        with _khoa_chung:
+            self._khoa = _khoa.setdefault(ip, threading.Lock())
+        self._khoa.acquire()
+        self._giu_khoa = True
+        try:
+            self._kenh = KenhNoi(ip, user, mk).__enter__()
+            self._ff = subprocess.Popen(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "s16le",
+                 "-ar", str(int(rate)), "-ac", str(int(channels)), "-i", "pipe:0",
+                 "-ac", "1", "-ar", str(_TAN_SO), "-f", "s16le", "pipe:1"],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except BaseException:
+            self._dong()
+            raise
+        self.giay = 0.0
+        self._luong = threading.Thread(target=self._rut, name="loa-cam-luong", daemon=True)
+        self._luong.start()
+
+    def _rut(self) -> None:
+        du = b""
+        try:
+            while True:
+                b = self._ff.stdout.read(_KHOI)
+                if not b:
+                    break
+                du += b
+                while len(du) >= _KHOI:
+                    self._kenh.phat_pcm(du[:_KHOI])
+                    self.giay += _KHOI / (2 * _TAN_SO)
+                    du = du[_KHOI:]
+            if du:
+                self._kenh.phat_pcm(du)
+                self.giay += len(du) / (2 * _TAN_SO)
+        except (OSError, ValueError) as exc:
+            logger.warning({"event": "loa_camera_luong_hong", "camera": self.ten,
+                            "loi": str(exc)[:120]})
+
+    def them(self, pcm: bytes) -> None:
+        try:
+            self._ff.stdin.write(pcm)
+        except (BrokenPipeError, ValueError):
+            pass
+
+    def xong(self, cho: float = TOI_DA_GIAY) -> float:
+        """Hết tiếng: chờ phát nốt rồi đóng. Trả số giây đã phát."""
+        try:
+            self._ff.stdin.close()
+        except OSError:
+            pass
+        self._luong.join(cho)
+        self._dong()
+        logger.info({"event": "loa_camera_phat_luong", "camera": self.ten, "giay": round(self.giay, 1)})
+        return self.giay
+
+    def _dong(self) -> None:
+        ff = getattr(self, "_ff", None)
+        if ff is not None and ff.poll() is None:
+            ff.kill()
+        kenh = getattr(self, "_kenh", None)
+        if kenh is not None:
+            kenh.dong()
+        if self._giu_khoa:
+            self._giu_khoa = False
+            self._khoa.release()
+
+
 def noi(ten: str, cau: str, giong: str = "") -> dict[str, Any]:
     """Đọc ``cau`` bằng giọng TTS của c2a rồi phát ra loa camera ``ten``."""
     from services.voice import engines
