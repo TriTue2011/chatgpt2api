@@ -320,3 +320,15 @@ def test_dong_go2rtc_nha_tieng_ngay(client) -> None:
     khuc = _ma_hoa(struct.pack("<1024h", *([3000, -3000] * 512)))   # 128 ms A-law 8 kHz
     ra = _ra_truoc_khi_dong(lenh, khuc)
     assert ra >= 7 * 1024, f"chỉ {ra} byte ra trong lúc đang nói — đang gom rồi mới gửi"
+
+
+def test_bo_dam_do_tieng_nhan_duoc_de_chan_doan(phat_gia) -> None:
+    """Chủ máy 25/09/2026 "bật bộ đàm rồi không được": log phải nói được tiếng
+    có tới máy chủ không và to cỡ nào — khỏi đoán hỏng ở điện thoại hay ở loa."""
+    p = lc.BoDam("cửa", 16000)
+    p.them_pcm(b"\x00" * 16000)                               # 0,5 s im ở 16 kHz
+    p.them_pcm(struct.pack("<8000h", *[3000] * 8000))          # 0,5 s tiếng -20,8 dBFS
+    p.dong()
+    assert p.nhan_giay == pytest.approx(1.0)
+    assert -22 < p.muc_max_db < -20
+    assert p.giay > 0.4

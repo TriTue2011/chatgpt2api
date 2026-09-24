@@ -520,6 +520,9 @@ class BoDam:
         self._dem = b""                   # tiếng ngay trước lúc có người nói
         self._im = 0.0                    # số giây im liền từ tiếng cuối
         self.loi = ""                    # lỗi lần mở loa gần nhất ("" = ổn); khỏi ghi log dồn
+        # Đo để chẩn đoán "bật bộ đàm mà không ra loa": tiếng có tới máy chủ không, to cỡ nào.
+        self.nhan_giay = 0.0
+        self.muc_max_db = -120.0
 
     def them(self, alaw: bytes) -> None:
         self.them_pcm(alaw_sang_pcm(alaw))
@@ -529,7 +532,10 @@ class BoDam:
         if not pcm:
             return
         giay = len(pcm) / (2 * self.tan_so)
-        co_tieng = _muc_db(pcm) > BO_DAM_NGUONG_DB
+        muc = _muc_db(pcm)
+        self.nhan_giay += giay
+        self.muc_max_db = max(self.muc_max_db, muc)
+        co_tieng = muc > BO_DAM_NGUONG_DB
         self._im = 0.0 if co_tieng else self._im + giay
         if self._phat is None:
             if not co_tieng:

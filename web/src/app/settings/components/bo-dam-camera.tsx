@@ -13,6 +13,10 @@
  *
  * WebSocket không gửi được header nên xin vé một lần trước (khuôn SSE của
  * trang Đăng ký). Mic trình duyệt chỉ dùng được trên https.
+ *
+ * Xin quyền mic NGAY KHI MỞ, không đợi lúc bấm nút: bản đầu xin lúc ấn giữ, hộp
+ * hỏi quyền hiện lên cướp mất thao tác giữ nút (chủ máy 25/09/2026: "bật bộ đàm
+ * rồi không được" — hai phiên, 0 giây ra loa). Vạch mức mic cho thấy mic có thu.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -27,10 +31,13 @@ export function BoDamCamera({ ten, onClose }: { ten: string; onClose: () => void
   const [loi, setLoi] = useState("");
   const [dangNoi, setDangNoi] = useState(false);
   const [mucNghe, setMucNghe] = useState(0);
+  const [mucMic, setMucMic] = useState(0);
+  const [micSan, setMicSan] = useState<"" | "dang_xin" | "san">("");
   const ws = useRef<WebSocket | null>(null);
   const ctx = useRef<AudioContext | null>(null);
   const mic = useRef<MediaStream | null>(null);
   const noi = useRef(false);
+  const giu = useRef(false);          // ngón tay còn đang giữ nút
 
   useEffect(() => {
     let dong = false;
@@ -94,21 +101,25 @@ export function BoDamCamera({ ten, onClose }: { ten: string; onClose: () => void
   const batMic = async () => {
     if (mic.current || !ctx.current) return;
     if (!navigator.mediaDevices?.getUserMedia) {
-      setLoi("Trình duyệt chỉ cho dùng mic khi mở c2a bằng https.");
-      return;
+      throw new Error("trình duyệt chỉ cho dùng mic khi mở c2a bằng https");
     }
     const ac = ctx.current;
+    setMicSan("dang_xin");
     const m = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    });
+    }).catch((e) => { setMicSan(""); throw e; });
     mic.current = m;
+    setMicSan("san");
     const nguon = ac.createMediaStreamSource(m);
     // ScriptProcessor: cũ nhưng chạy mọi trình duyệt, không cần tệp worklet riêng.
     const xl = ac.createScriptProcessor(2048, 1, 1);
     xl.onaudioprocess = (e) => {
+      const f = e.inputBuffer.getChannelData(0);
+      let dinh = 0;
+      for (let i = 0; i < f.length; i++) dinh = Math.max(dinh, Math.abs(f[i]));
+      setMucMic(dinh);
       const s = ws.current;
       if (!noi.current || !s || s.readyState !== WebSocket.OPEN) return;
-      const f = e.inputBuffer.getChannelData(0);
       const i16 = new Int16Array(f.length);
       for (let i = 0; i < f.length; i++) i16[i] = Math.max(-1, Math.min(1, f[i])) * 32767;
       s.send(i16.buffer);
@@ -120,7 +131,13 @@ export function BoDamCamera({ ten, onClose }: { ten: string; onClose: () => void
     cam.connect(ac.destination);
   };
 
+  // Xin mic ngay khi mở bộ đàm (xem đầu tệp).
+  useEffect(() => {
+    batMic().catch((e) => setLoi(`Không mở được mic: ${e instanceof Error ? e.message : String(e)}`));
+  }, []);
+
   const batDau = async () => {
+    giu.current = true;
     setLoi("");
     try {
       await ctx.current?.resume();
@@ -129,11 +146,14 @@ export function BoDamCamera({ ten, onClose }: { ten: string; onClose: () => void
       setLoi(`Không mở được mic: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
+    // Thả tay trong lúc chờ (hộp hỏi quyền…) thì không bắt đầu nói.
+    if (!giu.current) return;
     noi.current = true;
     setDangNoi(true);
   };
 
   const ketThuc = () => {
+    giu.current = false;
     if (!noi.current) return;
     noi.current = false;
     setDangNoi(false);
@@ -150,6 +170,15 @@ export function BoDamCamera({ ten, onClose }: { ten: string; onClose: () => void
             style={{ width: `${Math.min(100, mucNghe * 300)}%` }} />
         </span>
         <Button size="sm" variant="outline" className="ml-auto" onClick={onClose}>Đóng</Button>
+      </div>
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <span>🎙️ Mic điện thoại:</span>
+        {micSan === "san" ? (
+          <span className="h-2 w-24 overflow-hidden rounded bg-muted" title="Mức mic điện thoại">
+            <span className={`block h-full transition-[width] ${dangNoi ? "bg-red-500" : "bg-sky-500"}`}
+              style={{ width: `${Math.min(100, mucMic * 200)}%` }} />
+          </span>
+        ) : <span>{micSan === "dang_xin" ? "đang xin quyền…" : "chưa có quyền"}</span>}
       </div>
       <button
         type="button"

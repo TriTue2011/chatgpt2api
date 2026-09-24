@@ -133,7 +133,9 @@ def create_router() -> APIRouter:
                 await asyncio.to_thread(phien.them, khuc)
         finally:
             await asyncio.to_thread(phien.dong)
-            logger.info({"event": "bo_dam_dong", "camera": ten, "giay": round(phien.giay, 1)})
+            logger.info({"event": "bo_dam_dong", "camera": ten, "giay": round(phien.giay, 1),
+                         "nhan_giay": round(phien.nhan_giay, 1),
+                         "muc_max_db": round(phien.muc_max_db, 1), "loi": phien.loi[:120]})
         return {"ok": True, "giay": round(phien.giay, 1)}
 
     @router.post("/api/camera/bo_dam/{ten}/ve")
@@ -205,7 +207,8 @@ def create_router() -> APIRouter:
             await asyncio.gather(tai, return_exceptions=True)
             await asyncio.to_thread(phien.dong)
             logger.info({"event": "bo_dam_web_dong", "camera": ten_that,
-                         "giay": round(phien.giay, 1)})
+                         "giay": round(phien.giay, 1), "nhan_giay": round(phien.nhan_giay, 1),
+                         "muc_max_db": round(phien.muc_max_db, 1), "loi": phien.loi[:120]})
 
     return router
 
