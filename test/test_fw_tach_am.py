@@ -166,3 +166,60 @@ def test_ngat_khi_tai_wav_van_don_workspace_va_startup_don_orphan(tmp_path):
     app._don_orphan(str(tmp_path))
     assert not orphan.exists()
     assert other.is_dir()
+
+
+# ── Ba graph ONNX cố định chạy trên GPU cho c2a (24/09/2026) ────────────────
+
+
+class _PhienGia:
+    def run(self, _ten_ra, vao):
+        return [vao["x"] + 1, vao["x"] * 3]
+
+
+def _request_than(than: bytes, *, api_token: str = "bi-mat-thu"):
+    async def nhan():
+        return {"type": "http.request", "body": than, "more_body": False}
+
+    return Request({"type": "http", "method": "POST", "path": "/onnx/det_10g/chay",
+                    "headers": [(b"x-api-key", api_token.encode())], "query_string": b"",
+                    "server": ("test", 80), "client": ("test", 1), "scheme": "http"}, nhan)
+
+
+@pytest.mark.pure
+def test_onnx_chay_npz_vao_ra_dung_thu_tu(monkeypatch):
+    import io
+
+    import numpy as np
+
+    app = _load()
+    monkeypatch.setattr(app, "API_TOKEN", "bi-mat-thu")
+    monkeypatch.setattr(app, "_onnx_nap", lambda ten: _PhienGia())
+    buf = io.BytesIO()
+    np.savez(buf, x=np.arange(3, dtype=np.float32))
+    tra = asyncio.run(app.onnx_chay("det_10g", _request_than(buf.getvalue())))
+    with np.load(io.BytesIO(tra.body), allow_pickle=False) as npz:
+        assert npz.files == ["o0", "o1"]
+        assert npz["o0"].tolist() == [1.0, 2.0, 3.0]
+        assert npz["o1"].tolist() == [0.0, 3.0, 6.0]
+
+
+@pytest.mark.pure
+def test_onnx_tu_choi_graph_la_pickle_va_sai_token(monkeypatch):
+    import io
+
+    import numpy as np
+
+    app = _load()
+    monkeypatch.setattr(app, "API_TOKEN", "bi-mat-thu")
+    monkeypatch.setattr(app, "_onnx_nap", lambda ten: _PhienGia())
+    with pytest.raises(HTTPException) as loi:
+        app._onnx_ten("mo_hinh_la")
+    assert loi.value.status_code == 404
+    buf = io.BytesIO()
+    np.save(buf, np.array([{"doc": "hai"}], dtype=object), allow_pickle=True)
+    with pytest.raises(HTTPException) as loi:
+        asyncio.run(app.onnx_chay("det_10g", _request_than(buf.getvalue())))
+    assert loi.value.status_code == 400
+    with pytest.raises(HTTPException) as loi:
+        asyncio.run(app.onnx_chay("det_10g", _request_than(b"", api_token="sai")))
+    assert loi.value.status_code == 401

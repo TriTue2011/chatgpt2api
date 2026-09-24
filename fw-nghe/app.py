@@ -34,11 +34,22 @@ _model = None
 
 MODEL = os.getenv("FW_MODEL", "large-v3")
 COMPUTE = os.getenv("FW_COMPUTE", "int8_float16")
+#: VRAM trống tối thiểu để nạp Whisper. Thiếu thì trả 503 — gateway nghe bằng
+#: CPU — thay vì CUDA OOM làm chết cả tiến trình. faster-whisper công bố
+#: large-v2 int8 ~2,9 GB trên GPU; từ 24/09/2026 nhận mặt + TTS của c2a nằm
+#: thường trực trên cùng card (~0,6 GB). Đo lại khi máy nghe chạy được.
+CAN_VRAM_MB = float(os.getenv("FW_CAN_VRAM_MB", "3000"))
 
 
 def _lay_model():
     global _model
     if _model is None:
+        g = _gpu_do()
+        if g and g["vram_tong_mb"] - g["vram_dung_mb"] < CAN_VRAM_MB:
+            from fastapi import HTTPException
+
+            raise HTTPException(503, f"VRAM trống {g['vram_tong_mb'] - g['vram_dung_mb']:.0f} MB "
+                                     f"< cần {CAN_VRAM_MB:.0f} MB — GPU đang bận việc khác.")
         from faster_whisper import WhisperModel
         _model = WhisperModel(MODEL, device="cuda", compute_type=COMPUTE,
                               download_root="/data")

@@ -768,8 +768,11 @@ def _get_kokoro_vi(voice_id: str):
             so = ort.SessionOptions()
             so.intra_op_num_threads = vcfg.tts_threads()
             so.inter_op_num_threads = 1
-            sess = ort.InferenceSession(str(base / kv.MODEL_FILE), so,
-                                        providers=["CPUExecutionProvider"])
+            from services import onnx_xa
+
+            # Chạy trên GPU nhà khi được (onnx_xa), lỗi thì CPU tại chỗ — cùng graph.
+            sess = onnx_xa.lai("kokoro_vi", ort.InferenceSession(
+                str(base / kv.MODEL_FILE), so, providers=["CPUExecutionProvider"]))
             cfg = json.loads((base / kv.CONFIG_FILE).read_text(encoding="utf-8"))
             _kokoro_vi = (sess, cfg["vocab"], int(cfg["plbert"]["max_position_embeddings"]))
         if voice_id not in _kokoro_vi_vp:

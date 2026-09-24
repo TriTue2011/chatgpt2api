@@ -266,9 +266,13 @@ class BoNhanMat:
             return ort.InferenceSession(str(thu_muc / tep), tc,
                                         providers=["CPUExecutionProvider"])
 
+        from services import onnx_xa
+
         self.bo = bo
-        self._do = _phien(bo.tep_do)
-        self._vec = _phien(bo.tep_vector)
+        # Chạy trên GPU nhà khi được (onnx_xa), lỗi thì CPU tại chỗ — cùng graph.
+        # Chủ máy chọn 24/09/2026: đưa nhận mặt lên GPU máy NVR trong LAN.
+        self._do = onnx_xa.lai(Path(bo.tep_do).stem, _phien(bo.tep_do))
+        self._vec = onnx_xa.lai(Path(bo.tep_vector).stem, _phien(bo.tep_vector))
         self._ten_ra_do = [o.name for o in self._do.get_outputs()]
         if len(self._ten_ra_do) != 9:
             raise ValueError(f"model dò mặt {bo.tep_do} có {len(self._ten_ra_do)} đầu ra, cần 9")

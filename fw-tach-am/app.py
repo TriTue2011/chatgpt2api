@@ -41,6 +41,10 @@ TIMEOUT_SECONDS = max(300, int(os.getenv("SEPARATOR_TIMEOUT_SECONDS", "10800")))
 MAX_UPLOAD_BYTES = max(1 << 20, int(os.getenv(
     "SEPARATOR_MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024))))
 API_TOKEN = os.getenv("SEPARATOR_API_TOKEN", "").strip()
+#: VRAM trống tối thiểu trước khi mở tiến trình tách: thiếu thì từ chối (gateway
+#: tách bằng CPU) thay vì CUDA OOM. Nhận mặt + TTS của c2a nằm thường trực trên
+#: cùng card từ 24/09/2026. Đo lại khi máy tách chạy được.
+CAN_VRAM_MB = float(os.getenv("TACH_AM_CAN_VRAM_MB", "1500"))
 
 _lock = threading.Lock()
 _admission = threading.Lock()
@@ -256,6 +260,11 @@ def _tach(input_path: str, output_dir: str, job_token: str) -> str:
                 # khe thấy None rồi trả thành công trước khi process bắt đầu.
                 if (_active_job_token != job_token or _cancel_requested):
                     raise RuntimeError("Job tách âm đã bị hủy trước khi khởi động.")
+                g = _gpu_do()
+                if g and g["vram_tong_mb"] - g["vram_dung_mb"] < CAN_VRAM_MB:
+                    raise RuntimeError(
+                        f"VRAM trống {g['vram_tong_mb'] - g['vram_dung_mb']:.0f} MB < cần "
+                        f"{CAN_VRAM_MB:.0f} MB — GPU đang bận việc khác.")
                 proc = subprocess.Popen(
                     _lenh_tach(input_path, output_dir), stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE, text=True, start_new_session=True)
@@ -445,3 +454,114 @@ def unload(request: Request):
     if not stopped:
         raise HTTPException(503, "Không dừng được tiến trình tách âm.")
     return {"status": "ok", "loaded": False, "busy": _busy, "gpu": _gpu_do()}
+
+
+# ── Ba graph ONNX cố định của c2a chạy trên GPU (24/09/2026) ─────────────────
+# Chủ máy chốt đưa nhận mặt và TTS lên GPU. c2a gửi TENSOR đầu vào của một
+# trong ba graph dưới, máy này chạy trên CUDA rồi trả tensor đầu ra — tiền/hậu
+# xử lý vẫn ở c2a, nên vector mặt và tiếng nói ra như chạy CPU tại chỗ.
+#
+# Graph cố định trong mã: tên, nguồn tải và sha256. Máy này TỰ tải từ nguồn
+# gốc; không có đường nào để bên ngoài đưa graph lên. Không có CUDA thì 503 —
+# c2a tự chạy CPU, máy NVR 4 nhân không bị ăn CPU thay. Phiên nằm thường trực
+# (~0,6 GB VRAM): nhận mặt và đọc Assist phải trả lời ngay; việc GPU nặng khác
+# đã xếp hàng ở c2a (services/gpu_queue.py).
+_INSIGHTFACE = "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
+_KOKORO_VI = ("https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/"
+              "9f210d622209fcc216fe2ac6159fed2ff381cb8a/kokoro_vi.onnx")
+ONNX_GRAPH = {
+    # tên: (nguồn, tệp trong zip hoặc None, sha256)
+    "det_10g": (_INSIGHTFACE, "det_10g.onnx",
+                "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91"),
+    "w600k_r50": (_INSIGHTFACE, "w600k_r50.onnx",
+                  "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43"),
+    "kokoro_vi": (_KOKORO_VI, None,
+                  "da191277f58633649a9c0d2ae8012e80ef57ea8e2a56e30323c0f7df1ca29087"),
+}
+ONNX_DIR = Path(os.getenv("ONNX_DIR", "/data/onnx"))
+ONNX_TOI_DA_CHAY = 32 * 1024 * 1024       # một lần chạy (ảnh dò mặt 640² ≈ 4,9 MB)
+_onnx_phien: dict[str, object] = {}
+_onnx_khoa = threading.Lock()
+
+
+def _onnx_ten(ten: str) -> str:
+    if ten not in ONNX_GRAPH:
+        raise HTTPException(404, "Không có graph này.")
+    return ten
+
+
+def _onnx_tai(ten: str) -> Path:
+    """Tải graph từ nguồn gốc về ONNX_DIR, kiểm sha256; đã có thì thôi."""
+    import hashlib
+    import urllib.request
+    import zipfile
+
+    nguon, trong_zip, sha = ONNX_GRAPH[ten]
+    dich = ONNX_DIR / f"{ten}.onnx"
+    if dich.is_file():
+        return dich
+    ONNX_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=ONNX_DIR) as tam:
+        tai = Path(tam) / "tai"
+        with urllib.request.urlopen(nguon, timeout=120) as r, tai.open("wb") as f:  # noqa: S310 — URL hằng
+            shutil.copyfileobj(r, f)
+        if trong_zip:
+            with zipfile.ZipFile(tai) as z:
+                ten_day_du = next(n for n in z.namelist() if n.endswith(trong_zip))
+                tai = Path(z.extract(ten_day_du, tam))
+        if hashlib.sha256(tai.read_bytes()).hexdigest() != sha:
+            raise RuntimeError(f"{ten}: sha256 không khớp nguồn đã ghim")
+        tai.replace(dich)
+    return dich
+
+
+def _onnx_nap(ten: str):
+    with _onnx_khoa:
+        phien = _onnx_phien.get(ten)
+        if phien is None:
+            import onnxruntime as ort
+
+            phien = ort.InferenceSession(str(_onnx_tai(ten)), providers=["CUDAExecutionProvider"])
+            # CUDA hỏng thì ORT âm thầm lùi về CPU — không nhận, để c2a tự chạy.
+            if phien.get_providers()[0] != "CUDAExecutionProvider":
+                raise HTTPException(503, "Không có CUDA cho ONNX.")
+            _onnx_phien[ten] = phien
+        return phien
+
+
+@app.get("/onnx/{ten}")
+async def onnx_xem(ten: str, request: Request):
+    """Nạp graph lên GPU (lần đầu tự tải) và trả tên/hình đầu vào, tên đầu ra."""
+    _xac_thuc(request)
+    phien = await asyncio.to_thread(_onnx_nap, _onnx_ten(ten))
+    return {"vao": [{"ten": i.name, "hinh": [d if isinstance(d, int) else None for d in i.shape]}
+                    for i in phien.get_inputs()],
+            "ra": [o.name for o in phien.get_outputs()]}
+
+
+@app.post("/onnx/{ten}/chay")
+async def onnx_chay(ten: str, request: Request):
+    """Thân là .npz các tensor đầu vào (không pickle); trả .npz đầu ra "o0", "o1"… theo thứ tự."""
+    import io
+
+    import numpy as np
+    from fastapi.responses import Response
+
+    _xac_thuc(request)
+    ten = _onnx_ten(ten)
+    than = await request.body()
+    if len(than) > ONNX_TOI_DA_CHAY:
+        raise HTTPException(413, "Đầu vào quá lớn.")
+    try:
+        with np.load(io.BytesIO(than), allow_pickle=False) as npz:
+            vao = {k: npz[k] for k in npz.files}
+    except Exception as exc:
+        raise HTTPException(400, "Đầu vào không phải .npz hợp lệ.") from exc
+    phien = await asyncio.to_thread(_onnx_nap, ten)
+    try:
+        ra = await asyncio.to_thread(phien.run, None, vao)
+    except Exception as exc:
+        raise HTTPException(400, f"ONNX lỗi: {str(exc)[:200]}") from exc
+    buf = io.BytesIO()
+    np.savez(buf, **{f"o{i}": np.asarray(x) for i, x in enumerate(ra)})
+    return Response(buf.getvalue(), media_type="application/octet-stream")
