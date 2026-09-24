@@ -100,7 +100,7 @@ def test_lenh_mic_ma_hoa_mat_khau_trong_url():
                          "username": "u", "password": "m@t:1"})
     url = lenh[lenh.index("-i") + 1]
     assert url == "http://u:m%40t%3A1@172.16.10.200:1984/api/stream.mp4?src=cua-sub&video=none&audio=all"
-    assert lenh[-8:] == ["-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "pipe:1"]
+    assert lenh[-7:] == ["-ac", "1", "-ar", "16000", "-f", "s16le", "pipe:1"]
 
 
 def test_chi_camera_khai_cong_moi_thanh_ve_tinh():
@@ -164,3 +164,13 @@ def test_loa_tat_thi_tu_choi_phat():
             loa_camera.phat("Cam cửa", b"")
         with _pt.raises(loa_camera.LoiLoa, match="đang tắt"):
             loa_camera.PhatLuong("Cam cửa", 22050)
+
+
+def test_tang_mic_them_bo_loc_va_chan_dinh():
+    """Mic camera nhỏ; ô Mic volume của HA 2026.9 không áp vào vệ tinh Wyoming."""
+    goc = {"base": "http://h:1984", "src": "cua"}
+    lenh = vt._lenh_mic(goc)
+    assert lenh[lenh.index("-af") + 1] == "highpass=f=80"          # luôn bỏ DC
+    lenh = vt._lenh_mic({**goc, "mic_tang_db": 12})
+    assert lenh[lenh.index("-af") + 1].startswith("highpass=f=80,volume=12dB,alimiter=limit=0.9")
+    assert vt.mic_tang_db({"mic_tang_db": 99}) == 30.0 and vt.mic_tang_db({"mic_tang_db": "x"}) == 0.0

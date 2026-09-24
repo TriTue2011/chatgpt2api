@@ -26,6 +26,10 @@ Cấu hình nằm ngay trong bản ghi từng camera (sổ ``cameras``, sửa �
   ngoài (cổng, ban công) mà nghe thì người ngoài ra lệnh được cho nhà (chủ máy
   24/09/2026: "tránh ở cam cửa hàng xóm điều khiển nhà tôi").
 * ``cho_loa`` — cho phát ra loa (mặc định bật; chặn ở ``loa_camera``).
+* ``mic_tang_db`` — khuếch đại mic trước khi gửi HA (0–30 dB, mặc định 0). Mic
+  camera nhỏ (phòng yên -46…-51 dBFS, đo 24/09/2026) nên phải nói to; còn các ô
+  "Mic volume"/"Auto gain" của thiết bị Wyoming trong HA 2026.9 KHÔNG được áp vào
+  tiếng (vệ tinh Wyoming chỉ còn truyền thời gian chờ im lặng) — nên tăng ở đây.
 
 Đọc lại mỗi lượt: bật/tắt trên web có hiệu lực ngay, không cần khởi động lại;
 thêm/đổi/bỏ cổng thì tự mở/đóng trong vài giây.
@@ -91,6 +95,13 @@ def _info(ten: str) -> dict[str, Any]:
     }}
 
 
+def mic_tang_db(cam: dict[str, Any]) -> float:
+    try:
+        return max(0.0, min(30.0, float(cam.get("mic_tang_db") or 0)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _lenh_mic(cam: dict[str, Any]) -> list[str]:
     """Lệnh ffmpeg đọc tiếng mic camera qua go2rtc, ra PCM16 mono 16 kHz."""
     base = str(cam.get("base") or "").rstrip("/")
@@ -101,8 +112,15 @@ def _lenh_mic(cam: dict[str, Any]) -> list[str]:
                f"{quote(str(cam.get('password') or ''), safe='')}@{sau}"
     src = str(cam.get("src_ai") or cam.get("src") or "")
     url = f"{base}/api/stream.mp4?src={quote(src, safe='')}&video=none&audio=all"
+    # Mic camera lệch một chiều (DC): đo 24/09/2026 phòng khách, DC +0,0038 trong
+    # khi tiếng nền thật chỉ -63,6 dBFS — khuếch đại luôn cả DC là mất chỗ cho
+    # tiếng. Lọc thông cao 80 Hz bỏ DC (không đụng dải tiếng nói) TRƯỚC khi tăng,
+    # rồi chặn đỉnh để nói gần mic không vỡ tiếng.
+    loc = "highpass=f=80"
+    if (tang := mic_tang_db(cam)) > 0:
+        loc += f",volume={tang:g}dB,alimiter=limit=0.9:attack=5:release=50:level=false"
     return ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-i", url,
-            "-vn", "-ac", "1", "-ar", str(_TAN_SO), "-f", "s16le", "pipe:1"]
+            "-vn", "-af", loc, "-ac", "1", "-ar", str(_TAN_SO), "-f", "s16le", "pipe:1"]
 
 
 class _VeTinh:
@@ -115,6 +133,7 @@ class _VeTinh:
         self._mic: asyncio.Task | None = None
         self._phat = None
         self._ha_muon_nghe = False       # HA đã gửi run-satellite, chưa pause
+        self._tang_dang_dung: float | None = None   # mức tăng mic ffmpeg đang chạy
         self._canh: asyncio.Task | None = None
 
     async def ghi(self, loai: str, data: dict | None = None, payload: bytes = b"") -> None:
@@ -196,6 +215,16 @@ class _VeTinh:
         """Mic chạy khi VÀ CHỈ KHI HA muốn nghe và chủ nhà cho nghe camera này."""
         muon = self._ha_muon_nghe and await asyncio.to_thread(cho_nghe, self.ten)
         dang = self._mic is not None and not self._mic.done()
+        if dang and muon and self._tang_dang_dung is not None:
+            # Đổi mức tăng mic trên web: mở lại ffmpeg với mức mới.
+            from services import camera_nha
+            try:
+                moi = mic_tang_db(camera_nha._lay(self.ten)[1])
+            except camera_nha.LoiCamera:
+                moi = self._tang_dang_dung
+            if moi != self._tang_dang_dung:
+                await self._tat_mic()
+                dang = False
         if muon and not dang:
             await self._bat_mic()
         elif dang and not muon:
@@ -244,6 +273,7 @@ class _VeTinh:
                                 "loi": str(exc)[:160]})
                 await asyncio.sleep(30)
                 continue
+            self._tang_dang_dung = mic_tang_db(cam)
             proc = await asyncio.create_subprocess_exec(
                 *_lenh_mic(cam), stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL, stdin=asyncio.subprocess.DEVNULL)

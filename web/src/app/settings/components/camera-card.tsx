@@ -34,6 +34,9 @@ type Cam = {
   // Cổng trống = camera không làm vệ tinh. Nghe mặc định TẮT: camera hướng ra
   // ngoài mà nghe thì người ngoài ra lệnh được cho nhà.
   ve_tinh_cong?: number | ""; cho_nghe?: boolean; cho_loa?: boolean;
+  // Khuếch đại mic trước khi gửi HA (dB). Mic camera nhỏ; ô "Mic volume" của
+  // thiết bị Wyoming trong HA 2026.9 không áp vào tiếng nên tăng ở đây.
+  mic_tang_db?: number;
 };
 
 const RONG: Cam = { kind: "go2rtc", base: "", src: "", url: "", src_ai: "", url_ai: "",
@@ -111,7 +114,8 @@ export function CameraCard() {
     if (trung) { setMsg(`❌ Cổng ${cong} đang dùng cho camera «${trung[0]}».`); return; }
     // Công tắc nghe/loa bật tắt ở danh sách — sửa địa chỉ không được làm mất chúng.
     const veTinh = { ve_tinh_cong: cong ? cong : ("" as const), cho_nghe: cams[dangSua]?.cho_nghe === true,
-                     cho_loa: cams[dangSua]?.cho_loa !== false };
+                     cho_loa: cams[dangSua]?.cho_loa !== false,
+                     mic_tang_db: Number(cams[dangSua]?.mic_tang_db || 0) };
     const ban: Cam = moi.kind === "go2rtc"
       ? { kind: "go2rtc", base: moi.base!.trim().replace(/\/+$/, ""), src: moi.src!.trim(),
           src_ai: moi.src_ai?.trim() || "",
@@ -136,6 +140,12 @@ export function CameraCard() {
   };
 
   const huy = () => { setDangSua(""); setTen(""); setMoi({ ...RONG }); };
+
+  const doiMic = async (t: string, db: number) => {
+    const tiep = { ...cams, [t]: { ...cams[t], mic_tang_db: db } };
+    setCams(tiep);
+    await luu(tiep);
+  };
 
   // Bật/tắt nghe hoặc loa của một camera — lưu ngay, c2a áp trong vài giây.
   const doi = async (t: string, khoa: "cho_nghe" | "cho_loa") => {
@@ -217,6 +227,15 @@ export function CameraCard() {
                     onClick={() => void doi(t, "cho_loa")}>
                     🔊 Loa: {c.cho_loa !== false ? "Bật" : "Tắt"}
                   </Button>
+                  <select
+                    className="h-8 rounded border border-input bg-background px-1 text-xs"
+                    title="Khuếch đại mic trước khi gửi Home Assistant — phải nói to thì tăng lên"
+                    value={String(c.mic_tang_db || 0)}
+                    onChange={(e) => void doiMic(t, Number(e.target.value))}>
+                    {[0, 6, 12, 18, 24, 30].map((db) => (
+                      <option key={db} value={db}>🎚️ Mic {db ? `+${db}` : "±0"} dB</option>
+                    ))}
+                  </select>
                 </span>
               ) : null}
               <div className="ml-auto flex flex-wrap gap-1">
@@ -362,8 +381,10 @@ export function CameraCard() {
           </p>
           <p className="text-xs text-muted-foreground">
             <b>🎙️ Nghe</b> — cho HA nghe mic (mặc định Tắt). <b>🔊 Loa</b> — cho phát ra
-            loa (trả lời, thông báo, cảnh báo, «đọc ra camera»). Bấm là áp ngay; c2a chặn
-            ở phía mình nên HA đòi cũng không được.
+            loa (trả lời, thông báo, cảnh báo, «đọc ra camera»). <b>🎚️ Mic</b> — phải nói
+            to mới nhận thì tăng lên (+12 dB là mức bắt đầu hợp lý); ô «Mic volume» trong
+            trang thiết bị HA không có tác dụng với loại vệ tinh này. Bấm là áp ngay; c2a
+            chặn ở phía mình nên HA đòi cũng không được.
           </p>
           <p className="text-xs text-amber-600">
             ⚠️ <b>Đừng bật Nghe ở camera hướng ra ngoài</b> (cổng, cửa, ban công): ai đứng
