@@ -21,6 +21,10 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: vn-translate
+          # Đệm lớp dựng (chủ máy duyệt 24/09/2026): không có nó lớp pip nặng dựng
+          # lại mỗi lần, mã băm đổi, máy GPU phải tải lại ~1,8 GB dù chỉ sửa app.py.
+          cache-from: type=gha,scope=vn-translate
+          cache-to: type=gha,mode=max,scope=vn-translate
           push: true
           tags: |
             ghcr.io/tritue2011/vn-translate:latest
@@ -50,6 +54,10 @@ jobs:
         with:
           context: vn-translate
           file: vn-translate/Dockerfile.gpu
+          # Đệm lớp dựng (chủ máy duyệt 24/09/2026): không có nó lớp pip nặng dựng
+          # lại mỗi lần, mã băm đổi, máy GPU phải tải lại ~1,8 GB dù chỉ sửa app.py.
+          cache-from: type=gha,scope=vn-translate-gpu
+          cache-to: type=gha,mode=max,scope=vn-translate-gpu
           push: true
           tags: |
             ghcr.io/tritue2011/vn-translate-gpu:latest

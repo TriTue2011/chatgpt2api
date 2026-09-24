@@ -34,6 +34,10 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: fw-nghe
+          # Đệm lớp dựng (chủ máy duyệt 24/09/2026): không có nó lớp pip nặng dựng
+          # lại mỗi lần, mã băm đổi, máy GPU phải tải lại ~1,8 GB dù chỉ sửa app.py.
+          cache-from: type=gha,scope=fw-nghe
+          cache-to: type=gha,mode=max,scope=fw-nghe
           push: true
           tags: |
             ghcr.io/tritue2011/fw-nghe:latest
