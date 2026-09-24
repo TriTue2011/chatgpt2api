@@ -312,7 +312,10 @@ def create_app() -> FastAPI:
 
                 def _bg_tts_warm() -> None:
                     try:
-                        _warmup_tts()
+                        da = _warmup_tts()
+                        # Họ nhẹ đã từng đọc: nạp sẵn đúng giọng gần nhất.
+                        from services.voice.engines import nap_giong_da_dung
+                        nap_giong_da_dung(bo_qua=str(da.get("voice") or ""))
                     except Exception as exc:
                         _record_startup_failure("tts_warmup", str(exc))
 

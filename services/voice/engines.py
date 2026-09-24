@@ -203,6 +203,10 @@ _DUNG_LUC: dict[str, float] = {}
 _NHE_MB = 600.0
 _RAM_HO: dict[str, float] | None = None       # họ → MB trả về khi nhả (đã đo)
 _RAM_TEP = Path(vcfg.DATA_DIR) / "tts_ram_ho.json"
+# Giọng đọc gần nhất của từng họ: khởi động lại (đổi ảnh) thì nạp sẵn đúng giọng
+# ấy cho họ nhẹ, câu đầu không phải chờ nạp model (xem `nap_giong_da_dung`).
+_GIONG_CUOI: dict[str, str] | None = None
+_GIONG_TEP = Path(vcfg.DATA_DIR) / "tts_giong_cuoi.json"
 _GIU_ASSIST: set[str] = set()
 _nha_luong: threading.Thread | None = None
 
@@ -311,6 +315,56 @@ def _ram_ho() -> dict[str, float]:
         except (OSError, ValueError, AttributeError):
             _RAM_HO = {}
     return _RAM_HO
+
+
+def _giong_cuoi() -> dict[str, str]:
+    global _GIONG_CUOI
+    if _GIONG_CUOI is None:
+        try:
+            _GIONG_CUOI = {str(k): str(v) for k, v in json.loads(_GIONG_TEP.read_text()).items()}
+        except (OSError, ValueError, AttributeError):
+            _GIONG_CUOI = {}
+    return _GIONG_CUOI
+
+
+def _nho_giong(voice: str) -> None:
+    """Ghi giọng vừa đọc; chỉ ghi đĩa khi giọng của họ ấy đổi."""
+    if not voice:
+        return
+    cu = _giong_cuoi()
+    ho = _ho_engine(voice)
+    if cu.get(ho) == voice:
+        return
+    cu[ho] = voice
+    try:
+        _GIONG_TEP.write_text(json.dumps(cu, ensure_ascii=False))
+    except OSError as exc:
+        logger.warning("voice: khong ghi duoc so giong gan nhat: %s", str(exc)[:120])
+
+
+def nap_giong_da_dung(bo_qua: str = "") -> list[str]:
+    """Nạp sẵn họ NHẸ đã từng đọc, bằng giọng gần nhất của họ ấy.
+
+    Gọi nền lúc khởi động, sau `warmup_tts` (``bo_qua``: giọng nó vừa nạp).
+    Chỉ họ đã đo là nhẹ (`_RAM_HO` < `_NHE_MB`): họ nặng như VieNeu Turbo không
+    nạp sẵn. Lỗi họ nào bỏ họ ấy — lượt đọc thật tự nạp như cũ.
+    """
+    import time as _time
+
+    ram = _ram_ho()
+    da_nap = []
+    for ho, giong in list(_giong_cuoi().items()):
+        if giong == bo_qua or ram.get(ho, _NHE_MB) >= _NHE_MB:
+            continue
+        t0 = _time.perf_counter()
+        try:
+            synthesize("Xin chào.", giong)
+        except Exception as exc:
+            logger.warning("voice: nap san %s loi: %s", giong, str(exc)[:160])
+            continue
+        da_nap.append(ho)
+        logger.info("voice: nap san %s (%d ms)", giong, int((_time.perf_counter() - t0) * 1000))
+    return da_nap
 
 
 def _ghi_ram_ho(ram: dict[str, float]) -> None:
@@ -1233,6 +1287,7 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
     text = (text or "").strip()
     if not text:
         raise VoiceError("Không có nội dung để đọc.")
+    _nho_giong((voice or vcfg.tts_voice()).strip())
     if (voice or "").startswith("dangu:"):
         return synthesize_da_ngu(text, voice[len("dangu:"):])
     text = _doc_cong_thuc(text, voice)
@@ -1676,14 +1731,12 @@ def warmup_tts(voice: str = "") -> dict:
     t0 = _time.perf_counter()
     v = (voice or vcfg.tts_voice()).strip()
     try:
-        # Ưu tiên warm VieNeu khi model đã tải (kể cả voice mặc định đang là Piper)
-        # — cold load ONNX trên Xeon ~10s; warmup nền lúc startup cắt TTFA lần 1.
-        if vcfg.vieneu_installed() and vcfg.vieneu_model_ready():
-            if not v.startswith(vcfg.VIENEU_PREFIX):
-                cats = [x["id"] for x in vcfg.voice_catalog()
-                        if str(x.get("id", "")).startswith(vcfg.VIENEU_PREFIX)
-                        and x.get("downloaded")]
-                v = cats[0] if cats else f"{vcfg.VIENEU_PREFIX}"
+        # Warm VieNeu chỉ khi nó LÀ giọng mặc định. Trước 24/09/2026 cứ có model
+        # là nạp (kể cả mặc định Piper): ~1,2 GB và hàng chục giây CPU mỗi lần
+        # đổi ảnh cho họ không ai gán, 30 phút sau lại nhả. Giọng thật sự đang
+        # dùng thì `nap_giong_da_dung` nạp sẵn.
+        if (v.startswith(vcfg.VIENEU_PREFIX)
+                and vcfg.vieneu_installed() and vcfg.vieneu_model_ready()):
             # 1) Cold load + stream ngắn (bỏ qua TTFA cold).
             n = 0
             for _rate, pcm in _vieneu_stream("Xin chào.", v):
@@ -1841,6 +1894,7 @@ def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
     """Như `_stream_tao`, cộng cache và đệm đầu thông minh (xem `_dem_dau`)."""
     text = (text or "").strip()
     v = (voice or vcfg.tts_voice()).strip()
+    _nho_giong(v)
     if text and not v.startswith("dangu:"):
         hit = tts_cache.get(tts_cache.key("stream", text, v, style))
         if hit is not None:

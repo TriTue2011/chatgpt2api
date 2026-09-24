@@ -929,6 +929,46 @@ def test_ho_nhe_nha_mot_lan_roi_giu_luon_va_nho_qua_khoi_dong_lai(monkeypatch):
     assert engines._zerotts is not None                               # họ nhẹ giữ, không nhả thử lại
 
 
+def test_nho_giong_gan_nhat_moi_ho_ghi_khi_doi(monkeypatch):
+    tep = Path(tempfile.mkdtemp()) / "giong.json"
+    monkeypatch.setattr(engines, "_GIONG_TEP", tep)
+    monkeypatch.setattr(engines, "_GIONG_CUOI", None)
+    engines._nho_giong("nghi:ban-mai")
+    engines._nho_giong("kokorovi:mai_linh")
+    engines._nho_giong("nghi:my-tam")                                   # đổi giọng cùng họ
+    import json as _json
+    assert _json.loads(tep.read_text()) == {"nghi": "nghi:my-tam", "kokorovi": "kokorovi:mai_linh"}
+
+
+def test_nap_san_chi_ho_nhe_da_dung_bang_giong_gan_nhat(monkeypatch):
+    """Chủ máy 24/09/2026: đổi ảnh xong câu đầu không phải chờ nạp model."""
+    monkeypatch.setattr(engines, "_RAM_HO", {"nghi": 158.0, "zerotts": 464.0, "vieneu": 1240.0})
+    monkeypatch.setattr(engines, "_GIONG_CUOI", {
+        "nghi": "nghi:my-tam", "zerotts": "zerotts:maichi", "vieneu": "vieneu:Trúc Ly",
+        "kokorovi": "kokorovi:mai_linh"})                              # chưa đo → không nạp
+    goi: list[str] = []
+
+    def gia(text, voice):
+        goi.append(voice)
+        if voice == "zerotts:maichi":
+            raise engines.VoiceError("hong")
+        return b""
+
+    monkeypatch.setattr(engines, "synthesize", gia)
+    assert engines.nap_giong_da_dung() == ["nghi"]                     # zerotts lỗi thì bỏ qua
+    assert goi == ["nghi:my-tam", "zerotts:maichi"]                    # họ nặng không nạp
+    goi.clear()
+    assert engines.nap_giong_da_dung(bo_qua="nghi:my-tam") == []       # warmup vừa nạp rồi
+
+
+def test_warmup_khong_nap_vieneu_khi_mac_dinh_la_giong_khac(monkeypatch):
+    monkeypatch.setattr(vcfg, "vieneu_installed", lambda: True)
+    monkeypatch.setattr(vcfg, "vieneu_model_ready", lambda: True)
+    monkeypatch.setattr(engines, "_vieneu_stream", lambda *a, **k: (_ for _ in ()).throw(AssertionError("nap VieNeu")))
+    monkeypatch.setattr(engines, "_warm_zerotts", lambda: None)
+    assert engines.warmup_tts("manhdung")["ok"] is False
+
+
 def test_so_ram_hong_thi_coi_nhu_chua_do(monkeypatch):
     _dat_nha(monkeypatch)
     engines._RAM_TEP.write_text("khong phai json")
