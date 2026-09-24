@@ -880,6 +880,9 @@ def _dat_nha(monkeypatch, gan_mac_dinh="manhdung", loa=()):
     monkeypatch.setattr(engines, "_vieneu", object())
     monkeypatch.setattr(engines, "_zerotts", object())
     monkeypatch.setattr(engines, "_DUNG_LUC", {"vieneu": 0.0, "zerotts": 0.0})
+    monkeypatch.setattr(engines, "_RAM_HO", {})
+    monkeypatch.setattr(engines, "_RAM_TEP", Path(tempfile.mkdtemp()) / "ram.json")
+    monkeypatch.setattr(engines, "_rss_mb", lambda: 0.0)
 
 
 def test_nha_model_khong_gan_sau_30_phut_giu_model_dang_gan(monkeypatch):
@@ -907,6 +910,30 @@ def test_model_dang_doc_do_thi_de_luot_sau(monkeypatch):
         assert "vieneu" not in engines.nha_model_nhan_roi(bay_gio=31 * 60)
     assert engines._vieneu is not None
     assert "vieneu" in engines._DUNG_LUC                                # còn chờ lượt sau
+
+
+def test_ho_nhe_nha_mot_lan_roi_giu_luon_va_nho_qua_khoi_dong_lai(monkeypatch):
+    """Chủ máy 24/09/2026: NghiTTS nạp lại ~3 s sau mỗi 30 phút rảnh — "giữ nhẹ hợp lý"."""
+    _dat_nha(monkeypatch)
+    rss = iter([3000.0, 1760.0, 1760.0, 1700.0])     # vieneu trả 1240 MB, zerotts 60 MB
+    monkeypatch.setattr(engines, "_rss_mb", lambda: next(rss))
+    assert engines.nha_model_nhan_roi(bay_gio=31 * 60) == ["vieneu", "zerotts"]
+    assert engines._RAM_HO == {"vieneu": 1240.0, "zerotts": 60.0}
+
+    monkeypatch.setattr(engines, "_RAM_HO", None)                     # khởi động lại
+    monkeypatch.setattr(engines, "_vieneu", object())
+    monkeypatch.setattr(engines, "_zerotts", object())
+    monkeypatch.setattr(engines, "_DUNG_LUC", {"vieneu": 0.0, "zerotts": 0.0})
+    monkeypatch.setattr(engines, "_rss_mb", lambda: 0.0)
+    assert engines.nha_model_nhan_roi(bay_gio=31 * 60) == ["vieneu"]  # họ nặng vẫn nhả
+    assert engines._zerotts is not None                               # họ nhẹ giữ, không nhả thử lại
+
+
+def test_so_ram_hong_thi_coi_nhu_chua_do(monkeypatch):
+    _dat_nha(monkeypatch)
+    engines._RAM_TEP.write_text("khong phai json")
+    monkeypatch.setattr(engines, "_RAM_HO", None)
+    assert engines.nha_model_nhan_roi(bay_gio=31 * 60) == ["vieneu", "zerotts"]
 
 
 # ── ZeroTTS: chip khoẻ giữ fp32, không kịp thời gian thực thì int8 (24/09/2026) ──

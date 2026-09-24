@@ -193,6 +193,16 @@ def to_wav_16k_mono(audio: bytes, src_hint: str = "") -> bytes:
 _NHA_SAU_GIAY = 30 * 60
 _NHA_NHIP_GIAY = 5 * 60
 _DUNG_LUC: dict[str, float] = {}
+# Nhả họ nhẹ chẳng tiết kiệm được bao nhiêu mà lượt kế phải nạp lại vài giây
+# (NghiTTS ~3 s). Chủ máy 24/09/2026: "giữ nghi và kokoro, zero". Không liệt kê
+# họ nào nhẹ: lần nhả đầu ĐO RAM thật trả về; dưới ngưỡng thì từ đó giữ luôn.
+# Đo trên c2a cùng ngày (MB trả về khi nhả): nghi 80–158, kokorovi 338,
+# vieneunano 281, zerotts int8 464 — VieNeu Turbo ~1240 và ZeroTTS fp32 (máy
+# khoẻ tự chọn, 867 MB trên đĩa) vượt ngưỡng nên vẫn nhả. Số đo ghi ra đĩa để
+# khởi động lại (mỗi lần đổi ảnh) không phải nhả thử lần nữa.
+_NHE_MB = 600.0
+_RAM_HO: dict[str, float] | None = None       # họ → MB trả về khi nhả (đã đo)
+_RAM_TEP = Path(vcfg.DATA_DIR) / "tts_ram_ho.json"
 _GIU_ASSIST: set[str] = set()
 _nha_luong: threading.Thread | None = None
 
@@ -261,11 +271,14 @@ def nha_model_nhan_roi(bay_gio: float | None = None) -> list[str]:
 
     bay_gio = _time.monotonic() if bay_gio is None else bay_gio
     giu = _ho_dang_gan()
-    da_nha = [ho for ho, luc in list(_DUNG_LUC.items())
-              if ho not in giu and bay_gio - luc >= _NHA_SAU_GIAY and _bo_model(ho)]
-    for ho in da_nha:
-        _DUNG_LUC.pop(ho, None)
-    if da_nha:
+    ram = _ram_ho()
+    da_nha = []
+    for ho, luc in list(_DUNG_LUC.items()):
+        if ho in giu or bay_gio - luc < _NHA_SAU_GIAY or ram.get(ho, _NHE_MB) < _NHE_MB:
+            continue
+        truoc = _rss_mb()
+        if not _bo_model(ho):
+            continue
         gc.collect()
         # glibc giữ lại heap vừa giải phóng; không trả thì RSS chỉ giảm ~900/1240 MB
         # (đo 23/09/2026 với VieNeu). malloc_trim đưa phần trống về hệ điều hành.
@@ -274,8 +287,37 @@ def nha_model_nhan_roi(bay_gio: float | None = None) -> list[str]:
             ctypes.CDLL("libc.so.6").malloc_trim(0)
         except Exception:
             pass
-        logger.info("voice: nha model khong dung: %s (giu: %s)", ",".join(da_nha), ",".join(sorted(giu)))
+        ram[ho] = max(0.0, truoc - _rss_mb())
+        _DUNG_LUC.pop(ho, None)
+        da_nha.append(ho)
+    if da_nha:
+        _ghi_ram_ho(ram)
+        logger.info("voice: nha model khong dung: %s (giu: %s)",
+                    ", ".join(f"{ho} {ram[ho]:.0f} MB" for ho in da_nha), ",".join(sorted(giu)))
     return da_nha
+
+
+def _rss_mb() -> float:
+    import os
+    with open("/proc/self/statm") as f:
+        return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 2**20
+
+
+def _ram_ho() -> dict[str, float]:
+    global _RAM_HO
+    if _RAM_HO is None:
+        try:
+            _RAM_HO = {str(k): float(v) for k, v in json.loads(_RAM_TEP.read_text()).items()}
+        except (OSError, ValueError, AttributeError):
+            _RAM_HO = {}
+    return _RAM_HO
+
+
+def _ghi_ram_ho(ram: dict[str, float]) -> None:
+    try:
+        _RAM_TEP.write_text(json.dumps({k: round(v, 1) for k, v in ram.items()}))
+    except OSError as exc:
+        logger.warning("voice: khong ghi duoc so RAM ho model: %s", str(exc)[:120])
 
 
 def _vong_nha() -> None:
