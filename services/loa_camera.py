@@ -434,3 +434,104 @@ def noi(ten: str, cau: str, giong: str = "") -> dict[str, Any]:
     except Exception as exc:
         raise LoiLoa(f"không đọc được câu thành tiếng ({str(exc)[:100]})") from exc
     return phat(ten, wav)
+
+
+# ── Bộ đàm: mic điện thoại (qua go2rtc của HA) → loa camera ──────────────────
+#
+# Chủ máy 24/09/2026: "dùng mic điện thoại qua HA phát ra loa giữ nguyên gốc, rồi
+# nghe được người bên cam nói gì — giống như app Imou". Chiều nghe go2rtc đã có
+# (nguồn ``#audio=opus`` cho WebRTC). Chiều nói: thẻ WebRTC Camera gửi mic vào
+# go2rtc, go2rtc đẩy tiếng vào stdin một lệnh ``exec:…#backchannel=1`` (có từ
+# go2rtc 1.9.10), lệnh ấy POST luồng A-law 8 kHz tới đây.
+#
+# Kênh nói chỉ mở KHI CÓ TIẾNG NGƯỜI: camera tự tắt mic trong lúc kênh nói mở
+# (đo 24/09/2026), mà trình duyệt gửi tiếng liên tục suốt lúc thẻ còn mở mic —
+# mở kênh suốt thì không bao giờ nghe được người bên camera trả lời.
+
+#: Mức coi là có tiếng người (dBFS, RMS từng khúc). Mic bị tắt trong trình duyệt
+#: gửi số 0 tuyệt đối; phòng yên sau lọc ồn của trình duyệt dưới -55.
+BO_DAM_NGUONG_DB = -45.0
+#: Im ngần này giây thì đóng kênh để nghe bên kia.
+BO_DAM_IM_GIAY = 1.5
+#: Giữ ngần này giây tiếng ngay trước lúc có tiếng — khỏi mất âm đầu câu.
+BO_DAM_DEM_GIAY = 0.3
+
+
+def _bang_alaw() -> list[int]:
+    """G.711 A-law → PCM16 (đúng ``alaw2linear`` của bản mẫu ITU/Sun)."""
+    bang = []
+    for a in range(256):
+        a ^= 0x55
+        t = (a & 0x0F) << 4
+        seg = (a & 0x70) >> 4
+        t = t + 8 if seg == 0 else (t + 0x108) << (seg - 1)
+        bang.append(t if a & 0x80 else -t)
+    return bang
+
+
+_ALAW = _bang_alaw()
+
+
+def alaw_sang_pcm(b: bytes) -> bytes:
+    import array
+
+    return array.array("h", (_ALAW[x] for x in b)).tobytes()
+
+
+def _muc_db(pcm: bytes) -> float:
+    import array
+    import math
+
+    a = array.array("h", pcm[: len(pcm) // 2 * 2])
+    if not a:
+        return -120.0
+    tong = sum(x * x for x in a)
+    return 10 * math.log10(tong / len(a) / 32768.0 ** 2) if tong else -120.0
+
+
+class BoDam:
+    """Một phiên bộ đàm tới camera ``ten``: nhận A-law 8 kHz, mở loa khi có tiếng.
+
+    Không thread-safe: một luồng gọi ``them`` rồi ``dong``.
+    """
+
+    def __init__(self, ten: str) -> None:
+        self.ten = ten
+        self.giay = 0.0                   # tổng số giây đã phát ra loa
+        self._phat: PhatLuong | None = None
+        self._dem = b""                   # tiếng ngay trước lúc có người nói
+        self._im = 0.0                    # số giây im liền từ tiếng cuối
+        self._loi = ""                    # lỗi lần mở loa gần nhất (khỏi ghi log dồn)
+
+    def them(self, alaw: bytes) -> None:
+        if not alaw:
+            return
+        pcm = alaw_sang_pcm(alaw)
+        giay = len(pcm) / (2 * _TAN_SO)
+        co_tieng = _muc_db(pcm) > BO_DAM_NGUONG_DB
+        self._im = 0.0 if co_tieng else self._im + giay
+        if self._phat is None:
+            if not co_tieng:
+                self._dem = (self._dem + pcm)[-int(BO_DAM_DEM_GIAY * _TAN_SO) * 2:]
+                return
+            try:
+                self._phat = PhatLuong(self.ten, _TAN_SO)
+            except LoiLoa as exc:
+                if str(exc) != self._loi:
+                    self._loi = str(exc)
+                    logger.warning({"event": "bo_dam_khong_mo_duoc_loa", "camera": self.ten,
+                                    "loi": self._loi[:160]})
+                return
+            self._loi = ""
+            pcm, self._dem = self._dem + pcm, b""
+        self._phat.them(pcm)
+        if self._im >= BO_DAM_IM_GIAY:
+            self._dong_loa()
+
+    def _dong_loa(self) -> None:
+        phat, self._phat = self._phat, None
+        if phat is not None:
+            self.giay += phat.xong()
+
+    def dong(self) -> None:
+        self._dong_loa()
