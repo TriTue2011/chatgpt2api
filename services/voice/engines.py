@@ -1013,6 +1013,23 @@ def _zerotts_stream(text: str, voice: str):
 # ── TTS ──────────────────────────────────────────────────────────────────────
 
 
+def _doc_cong_thuc(text: str, voice: str) -> str:
+    """Công thức hoá học → lời đọc (xem services/voice/hoa_hoc.py) cho mọi giọng
+    tiếng Việt; Kokoro tiếng Anh và giọng đa ngữ giữ nguyên. Chạy nhiều lần vô
+    hại: lần sau không còn công thức nào để đổi."""
+    v = (voice or vcfg.tts_voice()).strip()
+    if v.startswith("dangu:") or (v.startswith(vcfg.KOKORO_PREFIX)
+                                  and not v.startswith(vcfg.KOKORO_VI_PREFIX)):
+        return text
+    from services.voice import hoa_hoc
+
+    try:
+        return hoa_hoc.doc(text)
+    except Exception as exc:  # noqa: BLE001 — chữ người dùng tuỳ ý: lỗi đọc công thức không được làm câm TTS
+        logger.warning("voice: doc cong thuc loi, doc nguyen van: %s", str(exc)[:160])
+        return text
+
+
 _chuan_hoa_vi = None
 _chuan_hoa_khoa = threading.Lock()
 
@@ -1176,6 +1193,7 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
         raise VoiceError("Không có nội dung để đọc.")
     if (voice or "").startswith("dangu:"):
         return synthesize_da_ngu(text, voice[len("dangu:"):])
+    text = _doc_cong_thuc(text, voice)
     mot_lan = None
     if (voice or "").startswith(vcfg.NGHI_PREFIX):
         # Một lần generate cho cả đoạn, câu nào xong phát câu đó.
@@ -1821,6 +1839,8 @@ def _stream_tao(text: str, voice: str = "", *, style: str = ""):
     if hit is not None:
         yield from hit
         return
+    # SAU khoá cache: khoá tính trên chữ hiển thị (stream_synthesize tra đúng khoá đó).
+    text = _doc_cong_thuc(text, v)
 
     # Gom bản sao audio để cache. Vượt trần mỗi mục thì bỏ gom luôn (captured =
     # None) — đằng nào cũng không nhét vừa, giữ tiếp chỉ phí RAM.
