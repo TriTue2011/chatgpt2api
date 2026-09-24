@@ -711,3 +711,36 @@ class NhinNhaCauHinhTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_mat_trong_vung_nguoi_doi_ca_hop_lan_moc_ve_toa_do_khung():
+    """Chủ máy 24/09/2026: ảnh lịch sử toàn tường, cửa. Hộp mặt được cộng bù
+    toạ độ vùng người nhưng năm điểm mốc thì không, nên ảnh căn theo mốc rơi vào
+    góc trên-trái khung. Dựng khung đen có một ô trắng làm "mặt" rồi kiểm ảnh lưu
+    đúng là ô trắng ấy."""
+    pytest.importorskip("cv2")
+    from services import canh_camera_nha as ccn
+    from services import nhin_nha as nn
+    from services import so_mat_nha as smn
+
+    khung = np.zeros((400, 400, 3), np.uint8)
+    khung[230:290, 230:290] = 255                       # "mặt" ở giữa người
+    nguoi = yn.VatThe("person", 0.9, (215, 215, 305, 390))
+    seen: list[tuple[int, int]] = []
+
+    def gia(vung, _may):
+        seen.append(vung.shape[:2])
+        # Vùng cắt bắt đầu ở (201, 188) — hộp người nới 15% — nên ô trắng
+        # nằm ở 29..89, 42..102 trong vùng cắt.
+        return {"mat": [{"hop": [29.0, 42.0, 89.0, 102.0], "diem_do": 0.9,
+                         "moc": [[44.0, 61.0], [74.0, 61.0], [59.0, 73.0], [47.0, 87.0], [71.0, 87.0]]}]}
+
+    with mock.patch.object(nn, "co_mat", return_value=True), \
+            mock.patch.object(nn, "mat", return_value=object()), \
+            mock.patch.object(smn, "nhan_dien_anh", gia):
+        k = nn.phan_tich_khung(khung, hop_nguoi=[nguoi])
+    m = k.mat[0]
+    assert m["hop"] == [230.0, 230.0, 290.0, 290.0]
+    assert m["moc"][0] == [245.0, 249.0]                # cùng hệ toạ độ với hộp
+    anh = ccn._vung_mat(khung, m["hop"], m["moc"])
+    assert anh[96:160, 96:160].mean() > 200              # giữa ảnh lưu là ô trắng, không phải nền đen

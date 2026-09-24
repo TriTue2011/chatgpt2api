@@ -184,7 +184,13 @@ def phan_tich_khung(anh, *, nhan_mat: bool = True,
         a, b = int(max(0, x1 - le_x)), int(max(0, y1 - le_y))
         c, d = int(min(rong, x2 + le_x)), int(min(cao, y2 + le_y))
         for m in so_mat_nha.nhan_dien_anh(anh[b:d, a:c], may)["mat"]:
+            # Mọi toạ độ của mặt về hệ của CẢ khung — hộp lẫn năm điểm mốc. Từ
+            # 6042b0a (22/09/2026) ảnh lưu được căn theo mốc trên cả khung; mốc
+            # còn theo vùng cắt thì ảnh ra góc trên-trái khung: tường, song cửa
+            # (chủ máy 24/09/2026: "toàn thấy tường nhà, cửa nhà").
             m["hop"] = [m["hop"][0] + a, m["hop"][1] + b, m["hop"][2] + a, m["hop"][3] + b]
+            if m.get("moc"):
+                m["moc"] = [[x + a, y + b] for x, y in m["moc"]]
             m["nguoi_so"] = i
             # Hai hộp người chồng nhau thì một mặt bị dò hai lần — giữ lần rõ hơn.
             trung = next((x for x in ra.mat if _iou(x["hop"], m["hop"]) > 0.5), None)
