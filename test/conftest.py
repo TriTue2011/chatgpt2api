@@ -50,19 +50,26 @@ os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
 _TEST_DATA_DIR = Path(tempfile.mkdtemp(prefix="c2a_suite_data_"))
 (_TEST_DATA_DIR / "agent").mkdir(parents=True, exist_ok=True)
 
-from services import config as _cfg  # noqa: E402  (phải sau khi đặt auth-key)
+try:
+    from services import config as _cfg  # noqa: E402  (phải sau khi đặt auth-key)
+except ModuleNotFoundError:
+    # CI của image phụ (fw-tach-am-build.yml) chỉ cài pytest + fastapi để test
+    # đúng app.py của nó — không nạp được services, mà cũng không cần: không
+    # test nào ở đó ghi vào data/. Thiếu nhánh này cả bước test đổ exit 4.
+    _cfg = None
 
-_cfg.DATA_DIR = _TEST_DATA_DIR
-_cfg.CONFIG_FILE = _TEST_DATA_DIR / "config.json"
-_cfg.CONFIG_DATA_FILE = _TEST_DATA_DIR / "config.json"
-_cfg.BACKUP_STATE_FILE = _TEST_DATA_DIR / "backup_state.json"
-_cfg.config.path = _cfg.CONFIG_FILE
-# Bắt buộc: `ConfigStore.__init__` gọi `_load()`, mà `_load()` gọi
-# `get_storage_backend()` — nên backend JSON đã dựng xong TRƯỚC dòng gán
-# DATA_DIR ở trên, và nó giữ cứng đường dẫn data/ thật trong `self.config_path`.
-# Đo 12/09/2026: thiếu đúng dòng này thì suite vẫn tạo lại data/config.json dù
-# mọi hằng số khác đã trỏ sang thư mục tạm. Thả về None để lần gọi sau dựng lại.
-_cfg.config._storage_backend = None
+if _cfg is not None:
+    _cfg.DATA_DIR = _TEST_DATA_DIR
+    _cfg.CONFIG_FILE = _TEST_DATA_DIR / "config.json"
+    _cfg.CONFIG_DATA_FILE = _TEST_DATA_DIR / "config.json"
+    _cfg.BACKUP_STATE_FILE = _TEST_DATA_DIR / "backup_state.json"
+    _cfg.config.path = _cfg.CONFIG_FILE
+    # Bắt buộc: `ConfigStore.__init__` gọi `_load()`, mà `_load()` gọi
+    # `get_storage_backend()` — nên backend JSON đã dựng xong TRƯỚC dòng gán
+    # DATA_DIR ở trên, và nó giữ cứng đường dẫn data/ thật trong `self.config_path`.
+    # Đo 12/09/2026: thiếu đúng dòng này thì suite vẫn tạo lại data/config.json dù
+    # mọi hằng số khác đã trỏ sang thư mục tạm. Thả về None để lần gọi sau dựng lại.
+    _cfg.config._storage_backend = None
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
