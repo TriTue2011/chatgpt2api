@@ -110,6 +110,12 @@ def _gon_ten(ten: str) -> str:
     return " ".join(re.split(r"\s+", fold(ten).strip()))
 
 
+def _khong_phai_mat(mat, bo) -> bool:
+    from services.khuon_mat_nha import khong_phai_mat
+
+    return khong_phai_mat(mat, bo)
+
+
 def _vec_bytes(v) -> bytes:
     import numpy as np
     return np.asarray(v, np.float32).tobytes()
@@ -439,7 +445,7 @@ def day(ten: str, du_lieu_anh: bytes, *, nguon: str = "chat", ep: bool = False,
         raise LoiSoMat(f"Mặt trong ảnh nhỏ quá ({int(min(mat.rong, mat.cao))} px) — "
                        "gửi ảnh chụp gần hơn ạ.")
     may.vector(anh, mat)
-    if 0.0 < mat.chuan < may.bo.chuan_toi_thieu:
+    if _khong_phai_mat(mat, may.bo):
         # Mẫu dạy xấu hỏng việc nhận cả người ấy về sau (xem `BoMat.chuan_toi_thieu`).
         raise LoiSoMat("Mặt trong ảnh mờ, cúi hoặc bị che quá — máy không nhận ra được. "
                        "Gửi ảnh nhìn rõ mặt hơn ạ.")
@@ -510,7 +516,7 @@ def nhan_dien_anh(anh, may) -> dict[str, Any]:
     for m in sorted(may.phan_tich(anh), key=lambda m: m.hop[0]):
         ra.append({"hop": [round(x) for x in m.hop], "diem_do": round(m.diem, 3),
                    "nho": min(m.rong, m.cao) < MAT_NHO_NHAT,
-                   "mo": 0.0 < m.chuan < may.bo.chuan_toi_thieu,
+                   "mo": _khong_phai_mat(m, may.bo),
                    "vector": m.vector, "moc": _moc_ra(m.moc), **khop(m.vector)})
     return {"rong": rong, "cao": cao, "mat": ra}
 
@@ -1019,8 +1025,8 @@ def _vector_luot(may, anh):
     if thu_hai is not None and mat.rong * mat.cao < TO_GAP * thu_hai.rong * thu_hai.cao:
         return None
     v = may.vector(anh, mat)
-    # Mặt không nhận được (tường, gáy — xem `BoMat.chuan_toi_thieu`) không vào gom cụm.
-    return None if 0.0 < mat.chuan < may.bo.chuan_toi_thieu else v
+    # Mặt không dùng được (tường, gáy — xem `khuon_mat_nha.khong_phai_mat`) không vào gom cụm.
+    return None if _khong_phai_mat(mat, may.bo) else v
 
 
 def bu_vector_su_kien(gioi_han: int = _BU_MOI_LAN) -> int:

@@ -106,6 +106,7 @@ class Mat:
     moc: object                    # ndarray (5, 2) float32
     vector: object = None          # ndarray (512,) float32, đã chuẩn hoá độ dài 1
     chuan: float = 0.0             # độ lớn vector gốc — thước đo mặt có nhận được không
+    net: float = -1.0              # độ nét vùng mặt đã căn (phương sai Laplace); -1 = chưa đo
 
     @property
     def rong(self) -> float:
@@ -210,6 +211,19 @@ def can_mat(anh, moc, canh: int = CANH_MAT):
     return cv2.warpAffine(anh, m, (canh, canh), borderValue=0.0)
 
 
+#: Vùng mặt đã căn (112×112) có độ nét dưới ngần này là mảng phẳng, không phải
+#: mặt. Đo 24/09/2026 trên 573 lượt camera thật: 0/122 mặt từng nhận «quen» có
+#: độ nét dưới 10; lượt «người lạ» lúc 13:56 là mảng tường xám, độ nét 1,0 —
+#: lọt qua ngưỡng độ lớn vector vì độ lớn lúc chạy vượt 16. Hai thước đo độc lập:
+#: độ lớn nói «nhận được không», độ nét nói «có hình gì không».
+NET_TOI_THIEU = 10.0
+
+
+def khong_phai_mat(mat: "Mat", bo: "BoMat") -> bool:
+    """Mặt dò được mà không dùng được: mảng phẳng, hoặc vector quá yếu để nhận."""
+    return (0.0 <= mat.net < NET_TOI_THIEU) or (0.0 < mat.chuan < bo.chuan_toi_thieu)
+
+
 def moc_la_mat(hop, moc) -> bool:
     """Năm điểm mốc có đúng hình một khuôn mặt không.
 
@@ -310,6 +324,7 @@ class BoNhanMat:
         import numpy as np
 
         mat_can = can_mat(anh, mat.moc)
+        mat.net = float(cv2.Laplacian(cv2.cvtColor(mat_can, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var())
         blob = cv2.dnn.blobFromImages([mat_can], 1.0 / _VEC_LECH, (CANH_MAT, CANH_MAT),
                                       (_VEC_TRUNG_BINH,) * 3, swapRB=True)
         with self._khoa:

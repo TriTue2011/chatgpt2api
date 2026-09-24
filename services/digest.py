@@ -201,6 +201,24 @@ def parse_target(target: str) -> tuple[str, str, str, str] | None:
 _TG_CHU_THICH = 1024
 
 
+def _lua_chon(khoa_phien: str, body: str) -> tuple[str, list[dict[str, str]]]:
+    """Bóc khối ``<<<ASK>>>…<<<END>>>`` khỏi tin thông báo: thay bằng danh sách
+    đánh số và đặt lựa chọn chờ theo ĐÚNG khoá phiên của kênh, để người nhận
+    trả lời "1" là thành đúng lệnh (vd «mặt lạ … là vợ tôi»).
+
+    Chủ máy 24/09/2026 chụp tin người lạ hiện nguyên "<<<ASK>>> … <<<END>>>":
+    đường trả lời chat đi qua `ask_choices.apply_to_result`, còn đường thông
+    báo gửi thẳng văn bản — khối nút chưa bao giờ được dựng ở đây.
+    """
+    from services.agent import ask_choices
+
+    sach, chon = ask_choices.extract(body)
+    if not chon:
+        return body, []
+    ask_choices.set_pending(khoa_phien, chon)
+    return ask_choices.format_numbered(sach, chon), chon
+
+
 def send_target(target: str, text: str, anh_url: str = "") -> bool:
     """Gửi text (kèm ẢNH nếu có ``anh_url``) tới MỘT kênh. Không raise.
 
@@ -228,14 +246,20 @@ def send_target(target: str, text: str, anh_url: str = "") -> bool:
                     tg._current.bot = bot
                 # Gửi đúng TOPIC nếu khóa kênh có '#<topic>'
                 tg._current.topic = topic
+                body, chon = _lua_chon(tg.khoa_phien(chat, topic or ""), body)
+                nut = None
+                if chon:
+                    from services.agent import ask_choices
+                    nut = ask_choices.telegram_inline_keyboard(chon)
                 if anh_url:
                     anh = tg._fetch_image_bytes(anh_url)
-                    if anh and len(body) <= _TG_CHU_THICH:
+                    # Có nút thì chữ đi tin riêng: chú thích ảnh không mang nút được.
+                    if anh and not nut and len(body) <= _TG_CHU_THICH:
                         if tg.send_photo(chat, anh, body).get("ok"):
                             return True
                     elif anh and tg.send_photo(chat, anh, "").get("ok"):
-                        return bool(tg.send_message(chat, body).get("ok"))
-                return bool(tg.send_message(chat, body).get("ok"))
+                        return bool(tg.send_message(chat, body, reply_markup=nut).get("ok"))
+                return bool(tg.send_message(chat, body, reply_markup=nut).get("ok"))
             finally:
                 tg._current.bot = prev_bot
                 tg._current.topic = prev_topic
@@ -246,6 +270,7 @@ def send_target(target: str, text: str, anh_url: str = "") -> bool:
             try:
                 if bot is not None:
                     zb._current.bot = bot
+                body, _chon = _lua_chon(zb._skey_zalo(chat, chat, False), body)
                 if anh_url and zb.send_photo(chat, anh_url, body).get("ok"):
                     return True
                 return bool(zb.send_message(chat, body))
@@ -254,6 +279,7 @@ def send_target(target: str, text: str, anh_url: str = "") -> bool:
         if plat == "zalop":
             from services import zalo_personal as zp
             loai = _zalop_thread_type(bot_id, chat)
+            body, _chon = _lua_chon(zp._skey_zalop(chat, loai, chat), body)
             if anh_url and zp._send_photo_robust(chat, anh_url, body, loai, account=bot_id):
                 return True
             return bool(zp.send_message(chat, body, loai, account=bot_id))
