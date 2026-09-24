@@ -721,6 +721,8 @@ def _phat_cau(text: str, rate: int, lay_cau, *, chen_nghi: bool = True):
             dau_doan = False
             da_co = True
             pcm = _float_to_pcm16(mau)
+            if pcm and chen_nghi:
+                pcm = _cat_lang_hai_dau(pcm, rate)
             if pcm:
                 yield rate, pcm
 
@@ -1076,6 +1078,8 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
             return _synthesize_one(text, voice, style=style)
         if not pcm:
             continue
+        if (width, channels) == (2, 1):
+            pcm = _cat_lang_hai_dau(pcm, rate)
         pcm_parts.append(pcm)
         if i < len(segs) - 1 and (width, channels) == (2, 1):
             gap = _silence_pcm(_nghi_ms(kind, sent_ms, clause_ms, para_ms, jitter), rate)
@@ -1121,6 +1125,36 @@ def _silence_pcm(ms: int, rate: int) -> bytes:
     if ms <= 0 or rate <= 0:
         return b""
     return bytes(round(rate * ms / 1000) * 2)
+
+
+#: Im lặng đầu/cuối mẩu giữ lại (ms) — đủ để âm cuối tắt tự nhiên.
+_GIU_BIEN_MS = 40
+
+
+def _cat_lang_hai_dau(pcm: bytes, rate: int, *, dau: bool = True, cuoi: bool = True) -> bytes:
+    """Bỏ im lặng model tự sinh ở hai đầu MỘT mẩu, chừa ``_GIU_BIEN_MS``.
+
+    Khoảng nghỉ người nghe thấy = đuôi lặng mẩu trước + nghỉ cấu hình + đầu
+    lặng mẩu sau. Đo 24/09/2026 trên máy chủ: Kokoro Việt tự thêm ~0,22 s mỗi
+    đầu, nên phẩy cấu hình 180 ms nghe thành 0,6–0,7 s còn chấm 400 ms thành
+    0,9 s — phẩy với chấm gần như nhau. Cắt đi thì số cấu hình là số nghe thấy.
+    Ngưỡng tương đối với đỉnh của chính mẩu (âm lượng mỗi giọng một khác).
+    """
+    import numpy as np
+
+    a = np.frombuffer(pcm, np.int16)
+    o = max(1, rate // 100)                       # cửa sổ 10 ms
+    n = a.size // o
+    if n == 0:
+        return pcm
+    muc = np.abs(a[:n * o].reshape(n, o).astype(np.int32)).max(axis=1)
+    co = np.nonzero(muc >= max(64, int(muc.max() * 0.015)))[0]
+    if co.size == 0:
+        return pcm
+    giu = rate * _GIU_BIEN_MS // 1000
+    tu = max(0, co[0] * o - giu) if dau else 0
+    den = min(a.size, (co[-1] + 1) * o + giu) if cuoi else a.size
+    return a[tu:den].tobytes()
 
 
 def _comma_cut(s: str, limit: int) -> int:
@@ -1530,44 +1564,74 @@ def _ho_engine(voice: str) -> str:
 
 
 def _dem_dau(nguon, text: str, ho: str):
-    """Bọc một nguồn (rate, pcm16): giữ lại tới khi đủ để đọc liền mạch."""
+    """Bọc một nguồn (rate, pcm16): giữ lại tới khi đủ để đọc liền mạch.
+
+    Tốc độ r đo TỪ KHỐI TIẾNG ĐẦU TIÊN, không từ lúc gọi: thời gian nạp model
+    và prefill đã trả xong trước khi có tiếng, không kéo dài phần còn lại.
+    Bản đo từ lúc gọi (cbbca81) gộp cả nạp model — sau 30 phút model tự nhả,
+    lượt kế ra r ~2,6 nên giữ ~70% đoạn mới phát (chủ máy 24/09/2026: "Kokoro
+    lâu hơn trước, không theo kiểu tts dần"), rồi số sai còn được học lại.
+    """
     import time as _time
 
-    t0 = _time.monotonic()
     hoc = _TOC_DO.get(ho) or {}
     du_kien = len(text) * hoc.get("giay_moi_chu", _GIAY_MOI_CHU_MAC_DINH)
     giu: list[tuple[int, bytes]] = []
     da_tao = 0.0
     tha = False
     lang_da_phat = 0.0
-    luc_co_tieng = None
+    luc_co_tieng = None      # lúc khối tiếng đầu tiên tới
+    dai_dau = 0.0            # độ dài khối đầu — không tính vào tốc độ
     for rate, pcm in nguon:
-        da_tao += len(pcm) / (2 * rate) if rate else 0.0
+        dai = len(pcm) / (2 * rate) if rate else 0.0
+        da_tao += dai
         if tha:
             yield rate, pcm
             continue
         giu.append((rate, pcm))
         bay_gio = _time.monotonic()
-        t = bay_gio - t0
-        # r đo ngay trong lượt khi đã có ≥1s tiếng; trước đó dùng số đã học.
-        r = t / da_tao if da_tao >= 1.0 else hoc.get("rtf")
+        if luc_co_tieng is None:
+            luc_co_tieng, dai_dau = bay_gio, dai
+        sau_dau = da_tao - dai_dau
+        # r đo trong lượt khi đã có ≥1s tiếng SAU khối đầu; trước đó dùng số đã học.
+        r = (bay_gio - luc_co_tieng) / sau_dau if sau_dau >= 1.0 else hoc.get("rtf")
         if r is not None and da_tao >= du_kien * max(0.0, 1.0 - 1.0 / r) * _DU_PHONG_DEM:
             tha = True
             yield from giu
             giu = []
             continue
-        if luc_co_tieng is None:
-            luc_co_tieng = bay_gio
         thieu = (bay_gio - luc_co_tieng) - lang_da_phat
         if thieu >= 0.25:
             lang_da_phat += thieu
             yield rate, _silence_pcm(int(thieu * 1000), rate)
     yield from giu
-    tong = _time.monotonic() - t0
-    if da_tao >= 2.0 and text:
+    if luc_co_tieng is not None and da_tao - dai_dau >= 1.0 and da_tao >= 2.0 and text:
         cu = _TOC_DO.get(ho)
-        moi = {"rtf": tong / da_tao, "giay_moi_chu": da_tao / len(text)}
+        moi = {"rtf": (_time.monotonic() - luc_co_tieng) / (da_tao - dai_dau),
+               "giay_moi_chu": da_tao / len(text)}
         _TOC_DO[ho] = moi if not cu else {k: 0.7 * cu[k] + 0.3 * moi[k] for k in moi}
+
+
+def noi_cau(nguon, truoc: str = ""):
+    """Audio của MỘT câu khi đọc nối từng câu (Wyoming theo luồng chữ).
+
+    Chèn nghỉ cấu hình theo ranh giới của câu trước (``truoc``: sentence /
+    clause / paragraph; rỗng = câu đầu) rồi bỏ im lặng model tự sinh ở đầu câu
+    — cùng lý do `_cat_lang_hai_dau`. Đuôi câu KHÔNG cắt ở đây: phải giữ khối
+    cuối lại chờ biết nó là cuối, tức chậm một khối; đường theo mẩu đã cắt
+    đuôi sẵn, VieNeu/ZeroTTS tự nghỉ.
+    """
+    sent_ms, clause_ms, para_ms, jitter = _silence_plan()
+    dau = True
+    for rate, pcm in nguon:
+        if dau and pcm.strip(b"\x00"):
+            dau = False
+            if truoc:
+                gap = _silence_pcm(_nghi_ms(truoc, sent_ms, clause_ms, para_ms, jitter), rate)
+                if gap:
+                    yield rate, gap
+            pcm = _cat_lang_hai_dau(pcm, rate, cuoi=False)
+        yield rate, pcm
 
 
 def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
@@ -1713,6 +1777,8 @@ def _stream_tao(text: str, voice: str = "", *, style: str = ""):
         try:
             wav = synthesize(sent, v, style=style)
             rate, width, _channels, pcm = _wav_parts(wav)
+            if width == 2 and pcm:
+                pcm = _cat_lang_hai_dau(pcm, rate)
             if width == 2 and pcm:
                 if last_rate and prev_kind:
                     gap = _silence_pcm(_gap_ms(prev_kind), last_rate)

@@ -583,6 +583,58 @@ class WyomingResourceGuardTests(unittest.TestCase):
         _run(go())
 
 
+class LuongChuTests(unittest.TestCase):
+    """HA gửi chữ dần (synthesize-start/chunk/…/stop): đủ câu là đọc câu đó."""
+
+    def test_tach_cau_xong_cho_dau_cham_chua_co_khoang_trang(self) -> None:
+        self.assertEqual(wy._tach_cau_xong("Xin chào. Nhiệt độ 3"), ([("Xin chào.", "sentence")], "Nhiệt độ 3"))
+        self.assertEqual(wy._tach_cau_xong("Nhiệt độ 3."), ([], "Nhiệt độ 3."))   # có thể là "3.5"
+        self.assertEqual(wy._tach_cau_xong("Dòng một\nDòng"), ([("Dòng một", "paragraph")], "Dòng"))
+        dai = "Hôm nay trời nhiều mây, " + "gió nhẹ " * 20
+        xong, con = wy._tach_cau_xong(dai)
+        self.assertEqual(xong, [("Hôm nay trời nhiều mây,", "clause")])
+        self.assertEqual(con.strip(), ("gió nhẹ " * 20).strip())
+
+    def test_doc_cau_dau_truoc_khi_ha_gui_het_chu_va_khong_doc_lai_toan_van(self) -> None:
+        da_doc: list[str] = []
+
+        def gia(text, voice=""):
+            da_doc.append(text)
+            yield 24000, b"\x10\x27" * 2400
+
+        async def go() -> None:
+            server = await asyncio.start_server(lambda r, w: wy._handle(r, w, "vi"), "127.0.0.1", 0)
+            port = server.sockets[0].getsockname()[1]
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+
+            async def doc_toi(loai: str) -> list[str]:
+                thay = []
+                while True:
+                    ev = await asyncio.wait_for(wy._read_event(reader), 2)
+                    thay.append(ev["type"])
+                    if ev["type"] == loai:
+                        return thay
+
+            await wy._write_event(writer, "synthesize-start", {"voice": {"name": "piper:x"}})
+            await wy._write_event(writer, "synthesize-chunk", {"text": "Xin chào anh. Hôm nay tr"})
+            # Câu đầu phải có tiếng khi LLM còn đang nhả chữ.
+            self.assertEqual(await doc_toi("audio-chunk"), ["audio-start", "audio-chunk"])
+            await wy._write_event(writer, "synthesize-chunk", {"text": "ời đẹp"})
+            await wy._write_event(writer, "synthesize", {"text": "Xin chào anh. Hôm nay trời đẹp"})
+            await wy._write_event(writer, "synthesize-stop")
+            cuoi = await doc_toi("synthesize-stopped")
+            self.assertEqual(cuoi[-2:], ["audio-stop", "synthesize-stopped"])
+            writer.close()
+            server.close()
+            await server.wait_closed()
+
+        with mock.patch.object(wy.engines, "stream_synthesize", side_effect=gia), \
+                mock.patch.object(wy, "_resolve_tts_voice", return_value="piper:x"), \
+                mock.patch.object(wy.engines, "giu_cho_assist"):
+            _run(go())
+        self.assertEqual(da_doc, ["Xin chào anh.", "Hôm nay trời đẹp"])
+
+
 class SttBufferCapTests(unittest.TestCase):
     """Satellite treo (audio-start rồi phát mãi) không được nhồi RAM gateway."""
 

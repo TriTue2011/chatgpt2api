@@ -787,6 +787,70 @@ def test_dem_dau_lan_dau_chua_hoc_van_do_duoc_ngay_trong_luot(monkeypatch):
     assert abs(hoc["giay_moi_chu"] - 30.0 / 400) < 1e-6
 
 
+def test_dem_dau_nap_model_lau_khong_bi_tinh_la_engine_cham(monkeypatch):
+    """Model vừa tự nhả phải nạp lại 5s, rồi đọc theo câu nhanh hơn thời gian
+    thực (Kokoro Việt). Trước đây r tính cả lúc nạp nên giữ gần hết đoạn."""
+    dong_ho = _DongHo()
+    monkeypatch.setattr(engines, "_TOC_DO", {})
+    import time as _time
+    monkeypatch.setattr(_time, "monotonic", dong_ho)
+
+    def kokoro(rate=24000):
+        dong_ho.buoc(5.0)                       # nạp model
+        for _ in range(6):                      # sáu câu, mỗi câu 2s tiếng, tạo mất 1,6s
+            dong_ho.buoc(1.6)
+            yield rate, b"\x01\x00" * (rate * 2)
+
+    ra = [(dong_ho(), r, p) for r, p in engines._dem_dau(kokoro(), "x" * 160, "kokorovi")]
+    cho, lang = _loa(ra)
+    assert cho == 0.0
+    assert lang < 2.0                           # phát sau câu thứ hai, không đợi cả đoạn
+    assert abs(engines._TOC_DO["kokorovi"]["rtf"] - 0.8) < 1e-6   # học không dính lúc nạp
+
+
+def test_cat_lang_hai_dau_giu_bien_ngan():
+    rate = 24000
+    lang = b"\x00\x00" * (rate // 4)            # 0,25s im lặng model tự sinh
+    tieng = (b"\x10\x27" + b"\xf0\xd8") * (rate // 2)   # 1s tiếng ±10000
+    ra = engines._cat_lang_hai_dau(lang + tieng + lang, rate)
+    thua = len(ra) // 2 - rate
+    assert abs(thua - 2 * rate * engines._GIU_BIEN_MS // 1000) <= rate // 100
+    assert engines._cat_lang_hai_dau(lang, rate) == lang      # toàn lặng: để nguyên
+
+
+def test_khoang_nghi_phay_ngan_hon_cham_sau_khi_ghep(monkeypatch):
+    """Engine theo câu tự thêm 0,22s lặng mỗi đầu mẩu (đo Kokoro Việt). Nghỉ
+    nghe thấy phải là số cấu hình: phẩy 180ms, chấm 400ms — không phải 0,6/0,9s."""
+    import numpy as np
+    rate = 24000
+    monkeypatch.setattr(vcfg, "tts_backend", lambda: "local")
+    monkeypatch.setattr(tts_cache, "get", lambda _k: None)
+    monkeypatch.setattr(engines, "_silence_plan", lambda: (400, 180, 600, 0))
+    dem = b"\x00\x00" * int(rate * 0.22)
+
+    def mot(text, voice="", *, style=""):
+        pcm = dem + (b"\x10\x27" + b"\xf0\xd8") * (rate // 2) + dem
+        return engines._pcm_to_wav(pcm, rate, 2, 1)
+
+    monkeypatch.setattr(engines, "_synthesize_one", mot)
+    pcm = b"".join(p for _r, p in engines._stream_tao(
+        "Sáng nay trời nhiều mây, có lúc nắng nhẹ rải rác. Chiều tối có mưa rào.", "piper:x"))
+    a = np.abs(np.frombuffer(pcm, np.int16).astype(np.int32))
+    im = a < 64
+    doan, i = [], 0
+    while i < a.size:
+        if im[i]:
+            j = i
+            while j < a.size and im[j]:
+                j += 1
+            doan.append((j - i) / rate)
+            i = j
+        else:
+            i += 1
+    giua = [round(d, 2) for d in doan if 0.1 < d < 1.0]
+    assert giua == [0.26, 0.48], giua          # phẩy 180+2×40ms, chấm 400+2×40ms
+
+
 def test_hong_giua_chung_khong_doc_lai_tu_dau(monkeypatch):
     """ZeroTTS phát 2 khúc rồi hỏng: KHÔNG được rơi xuống Piper đọc lại cả đoạn."""
     monkeypatch.setattr(vcfg, "tts_backend", lambda: "local")

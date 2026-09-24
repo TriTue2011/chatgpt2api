@@ -17,8 +17,9 @@ Multi-language bám wyoming-microsoft-stt + wyoming-microsoft-tts:
 Điểm sống còn cho HA (học từ apps/wyoming_server.py của tts-vietneu):
   - info phải khai ``supports_synthesize_streaming: true``
   - Sau AudioStop PHẢI gửi ``synthesize-stopped``
-  - HA gửi synthesize-start/chunk/stop + 1 event ``synthesize`` full-text —
-    chỉ xử lý cái sau
+  - HA gửi synthesize-start → synthesize-chunk* → ``synthesize`` toàn văn (để
+    tương thích) → synthesize-stop. Đọc theo chunk, bỏ qua bản toàn văn — xem
+    khối "TTS theo luồng chữ".
 
 Bật/tắt: ``voice.wyoming_server.enabled`` (mặc định BẬT).
 Cổng: ``voice.wyoming_server.port`` (mặc định 10600).
@@ -30,6 +31,7 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import queue as _hang
 import socket
 import threading
 import time
@@ -776,13 +778,7 @@ async def _handle_synthesize(writer: asyncio.StreamWriter, text: str,
     jobs = _TTS_JOBS
     if not jobs.try_acquire():
         logger.warning("wyoming: het ngan sach %d TTS job — bo request", jobs.maximum)
-        try:
-            await _write_event(writer, "audio-start",
-                               {"rate": 48000, "width": 2, "channels": 1})
-            await _write_event(writer, "audio-stop")
-            await _write_event(writer, "synthesize-stopped")
-        except Exception:
-            pass
+        await _ghi_rong(writer)
         return
     queue: asyncio.Queue = asyncio.Queue(maxsize=_QUEUE_MAX)
     loop = asyncio.get_running_loop()
@@ -795,6 +791,12 @@ async def _handle_synthesize(writer: asyncio.StreamWriter, text: str,
         jobs.release()
         raise
 
+    await _ghi_audio(writer, queue, producer, stop)
+
+
+async def _ghi_audio(writer: asyncio.StreamWriter, queue: asyncio.Queue,
+                     producer: asyncio.Future, stop: threading.Event) -> None:
+    """Chuyển (rate, pcm) từ worker thành audio-start/chunk/stop + synthesize-stopped."""
     started = False
     connection_ok = True
     try:
@@ -837,6 +839,142 @@ async def _handle_synthesize(writer: asyncio.StreamWriter, text: str,
                 await _write_event(writer, "synthesize-stopped")
             except Exception:
                 pass
+
+
+# ── TTS theo luồng chữ: chữ tới đâu đọc tới đó ───────────────────────────────
+# HA (components/wyoming/tts.py, đọc 24/09/2026) gửi synthesize-start →
+# synthesize-chunk mỗi khi LLM nhả thêm chữ → ``synthesize`` toàn văn (chỉ để
+# tương thích) → synthesize-stop, và đọc audio SONG SONG tới synthesize-stopped.
+# Bản trước bỏ qua chunk, đọc bản toàn văn — tức chờ LLM trả lời XONG mới bắt
+# đầu (chủ máy 24/09/2026: "Kokoro trả TTS cho HA lâu lắm… chữ tới đâu đọc tới
+# đó"). Nay đủ một câu là đọc câu đó, như wyoming-piper; chung cho mọi họ giọng.
+
+#: Chữ dồn quá ngần này mà chưa hết câu thì cắt ở dấu phẩy gần nhất — câu đầu
+#: dài của LLM không bắt người nghe chờ.
+_CAT_PHAY_KHI = 120
+
+
+def _tach_cau_xong(dem: str) -> tuple[list[tuple[str, str]], str]:
+    """Tách các câu ĐÃ XONG khỏi chữ đang dồn → ([(câu, ranh giới sau câu)], phần dở).
+
+    Câu xong = dấu hết câu có khoảng trắng theo sau, hoặc xuống dòng (cùng luật
+    `engines._tach_doan`, chấm giữa hai chữ số không tính). Dấu ở cuối chunk
+    chưa có khoảng trắng theo sau thì chờ chunk kế — có thể là "3.5".
+    """
+    ra: list[tuple[str, str]] = []
+    pos = 0
+    for m in engines._RANH_CAU.finditer(dem):
+        if m.group(1) and engines._la_cham_trong_so(dem, m.start() - 1, m.end()):
+            continue
+        cau = dem[pos:m.start()].strip()
+        if cau:
+            ra.append((cau, "paragraph" if "\n" in m.group(0) else "sentence"))
+        pos = m.end()
+    con = dem[pos:]
+    if len(con) > _CAT_PHAY_KHI:
+        cat = engines._comma_cut(con, len(con))
+        if cat > 0:
+            ra.append((con[:cat + 1].strip(), "clause"))
+            con = con[cat + 1:]
+    return ra, con
+
+
+def _doc_luong(cau_q: "_hang.Queue", voice: str, queue: asyncio.Queue,
+               loop: asyncio.AbstractEventLoop, stop: threading.Event,
+               jobs: ConnectionLimiter) -> None:
+    """Worker: đọc lần lượt từng câu lấy từ ``cau_q`` (None = hết chữ)."""
+    try:
+        engines.giu_cho_assist(voice)
+        truoc = ""
+        while not stop.is_set():
+            muc = cau_q.get()
+            if muc is None:
+                break
+            cau, ranh = muc
+            try:
+                for item in engines.noi_cau(engines.stream_synthesize(cau, voice), truoc):
+                    if not _put_from_worker(item, queue, loop, stop):
+                        return
+            except Exception as exc:
+                # Một câu hỏng không bỏ cả câu trả lời: đọc tiếp câu sau.
+                logger.warning("wyoming: TTS cau loi, doc tiep: %s", str(exc)[:160])
+                continue
+            truoc = ranh or "sentence"
+    finally:
+        jobs.release()
+        _put_from_worker(_DONE, queue, loop, stop)
+
+
+class _LuongChu:
+    """Một phiên synthesize-start…stop: gom chữ, đẩy câu xong sang worker."""
+
+    def __init__(self, writer: asyncio.StreamWriter, voice: str) -> None:
+        self.dem = ""
+        self.cau: _hang.Queue = _hang.Queue()
+        self.stop = threading.Event()
+        self.task: asyncio.Task | None = None
+        loop = asyncio.get_running_loop()
+        if not _TTS_JOBS.try_acquire():
+            logger.warning("wyoming: het ngan sach %d TTS job — bo luong chu", _TTS_JOBS.maximum)
+            self.task = asyncio.ensure_future(_ghi_rong(writer))
+            self.cau = None
+            return
+        queue: asyncio.Queue = asyncio.Queue(maxsize=_QUEUE_MAX)
+        try:
+            producer = loop.run_in_executor(
+                None, _doc_luong, self.cau, voice, queue, loop, self.stop, _TTS_JOBS)
+        except Exception:
+            _TTS_JOBS.release()
+            raise
+        self.task = asyncio.ensure_future(_ghi_audio(writer, queue, producer, self.stop))
+
+    def them(self, chu: str) -> None:
+        if self.cau is None:
+            return
+        self.dem += chu
+        xong, self.dem = _tach_cau_xong(self.dem)
+        for c in xong:
+            self.cau.put(c)
+
+    async def ket_thuc(self) -> None:
+        if self.cau is not None:
+            con = self.dem.strip()
+            if con:
+                self.cau.put((con, ""))
+            self.cau.put(None)
+        if self.task is not None:
+            await self.task
+
+    def huy(self) -> None:
+        """Kết nối đứt giữa chừng: thả worker, không ghi gì nữa."""
+        self.stop.set()
+        if self.cau is not None:
+            self.cau.put(None)
+        if self.task is not None:
+            self.task.cancel()
+
+
+async def _ghi_rong(writer: asyncio.StreamWriter) -> None:
+    try:
+        await _write_event(writer, "audio-start", {"rate": 48000, "width": 2, "channels": 1})
+        await _write_event(writer, "audio-stop")
+        await _write_event(writer, "synthesize-stopped")
+    except Exception:
+        pass
+
+
+def _giong_su_kien(ev: dict, server_lang: str, asr: dict) -> str:
+    """Giọng cho synthesize / synthesize-start: tên HA chọn, gợi ý tiếng."""
+    v = ev["data"].get("voice") or {}
+    raw = str(v.get("name") or "") if isinstance(v, dict) else ""
+    vlang = str(v.get("language") or "") if isinstance(v, dict) else ""
+    lang_hint = (
+        vlang
+        or str(ev["data"].get("language") or "")
+        or str(asr.get("ha_lang") or "")
+        or str(asr.get("lang") or "")
+    )
+    return _resolve_tts_voice(server_lang, raw, lang_hint=lang_hint)
 
 
 # ── Kết nối ──────────────────────────────────────────────────────────────────
@@ -892,6 +1030,7 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
         "reserved": 0,  # byte PCM đang giữ trong ngân sách toàn tiến trình
     }
     loop = asyncio.get_running_loop()
+    luong: _LuongChu | None = None
     try:
         while True:
             ev = await _read_event(reader)
@@ -903,23 +1042,26 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
             elif t == "select-program":
                 asr["program"] = str(ev["data"].get("name") or "").strip()
                 logger.info("wyoming: select-program %s", asr["program"])
+            elif t == "synthesize-start":
+                if luong is not None:
+                    luong.huy()
+                vname = _giong_su_kien(ev, server_lang, asr)
+                logger.info("wyoming: synthesize-start (luong chu), voice=%s", vname or "(mặc định)")
+                luong = _LuongChu(writer, vname)
+            elif t == "synthesize-chunk":
+                if luong is not None:
+                    luong.them(str(ev["data"].get("text") or ""))
             elif t == "synthesize":
-                v = ev["data"].get("voice") or {}
-                raw = str(v.get("name") or "") if isinstance(v, dict) else ""
-                vlang = ""
-                if isinstance(v, dict):
-                    vlang = str(v.get("language") or "")
-                lang_hint = (
-                    vlang
-                    or str(ev["data"].get("language") or "")
-                    or str(asr.get("ha_lang") or "")
-                    or str(asr.get("lang") or "")
-                )
-                vname = _resolve_tts_voice(server_lang, raw, lang_hint=lang_hint)
-                await _handle_synthesize(
-                    writer, str(ev["data"].get("text") or ""), vname)
-            elif t in ("synthesize-start", "synthesize-chunk", "synthesize-stop"):
-                pass
+                # Đang theo luồng chữ thì đây là bản toàn văn gửi kèm để tương
+                # thích — đã đọc theo chunk rồi, đọc nữa là nói hai lần.
+                if luong is None:
+                    await _handle_synthesize(
+                        writer, str(ev["data"].get("text") or ""),
+                        _giong_su_kien(ev, server_lang, asr))
+            elif t == "synthesize-stop":
+                if luong is not None:
+                    lc, luong = luong, None
+                    await lc.ket_thuc()
             elif t == "transcribe":
                 ha_lang = str(ev["data"].get("language") or "").lower().replace("_", "-")
                 asr["ha_lang"] = ha_lang
@@ -1001,6 +1143,8 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
     except Exception as exc:
         logger.warning("wyoming: ket noi loi: %s", str(exc)[:160])
     finally:
+        if luong is not None:
+            luong.huy()
         if asr["reserved"]:
             _AUDIO_BUDGET.release(int(asr["reserved"]))
             asr["reserved"] = 0
