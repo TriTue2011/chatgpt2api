@@ -305,17 +305,25 @@ def pcm_8k(am_thanh: bytes) -> bytes:
 
 # ── Lối vào ──────────────────────────────────────────────────────────────────
 
-def phat(ten: str, am_thanh: bytes) -> dict[str, Any]:
-    """Phát ``am_thanh`` ra loa camera ``ten``. Trả ``{"ten", "giay"}``.
-
-    Mỗi camera một lúc chỉ một phiên nói: hai tin cùng tới thì đọc lần lượt.
-    """
+def _lay_cho_phat(ten: str) -> tuple[str, dict[str, Any]]:
+    """Tra camera và kiểm công tắc loa (thẻ Camera → «🔊 Loa»). Tắt thì từ chối."""
     from services import camera_nha
 
     try:
         ten_that, cam = camera_nha._lay(ten)
     except camera_nha.LoiCamera as exc:
         raise LoiLoa(str(exc)) from exc
+    if cam.get("cho_loa") is False:
+        raise LoiLoa(f"Loa của camera «{ten_that}» đang tắt (Cài đặt → Camera nhà).")
+    return ten_that, cam
+
+
+def phat(ten: str, am_thanh: bytes) -> dict[str, Any]:
+    """Phát ``am_thanh`` ra loa camera ``ten``. Trả ``{"ten", "giay"}``.
+
+    Mỗi camera một lúc chỉ một phiên nói: hai tin cùng tới thì đọc lần lượt.
+    """
+    ten_that, cam = _lay_cho_phat(ten)
     ip, user, mk = dia_chi(cam)
     pcm = pcm_8k(am_thanh)
     with _khoa_chung:
@@ -344,12 +352,7 @@ class PhatLuong:
     """
 
     def __init__(self, ten: str, rate: int, width: int = 2, channels: int = 1) -> None:
-        from services import camera_nha
-
-        try:
-            self.ten, cam = camera_nha._lay(ten)
-        except camera_nha.LoiCamera as exc:
-            raise LoiLoa(str(exc)) from exc
+        self.ten, cam = _lay_cho_phat(ten)
         if width != 2:
             raise LoiLoa(f"chưa đọc được âm thanh {width * 8} bit")
         ip, user, mk = dia_chi(cam)

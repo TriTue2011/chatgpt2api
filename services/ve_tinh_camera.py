@@ -19,9 +19,16 @@ Giao thức bám đúng ``homeassistant/components/wyoming/assist_satellite.py``
 gửi ``run-satellite`` → ta bắt đầu; ``ping`` phải trả ``pong`` trong 5 giây, không
 thì HA coi như mất kết nối.
 
-Cấu hình (``config`` khoá ``ve_tinh_camera``)::
+Cấu hình nằm ngay trong bản ghi từng camera (sổ ``cameras``, sửa ở thẻ Camera):
 
-    {"bat": true, "cong": {"Cam cửa": 10801, "Cam phòng khách": 10802}}
+* ``ve_tinh_cong`` — cổng vệ tinh; trống thì camera không làm vệ tinh.
+* ``cho_nghe`` — cho HA nghe mic (Assist). **Mặc định TẮT**: camera hướng ra
+  ngoài (cổng, ban công) mà nghe thì người ngoài ra lệnh được cho nhà (chủ máy
+  24/09/2026: "tránh ở cam cửa hàng xóm điều khiển nhà tôi").
+* ``cho_loa`` — cho phát ra loa (mặc định bật; chặn ở ``loa_camera``).
+
+Đọc lại mỗi lượt: bật/tắt trên web có hiệu lực ngay, không cần khởi động lại;
+thêm/đổi/bỏ cổng thì tự mở/đóng trong vài giây.
 
 Cổng phải được mở ra ngoài container (stack Portainer) thì HA mới nối tới được.
 """
@@ -41,15 +48,37 @@ _TAN_SO = 16000
 #: 64 ms mỗi khúc, cỡ các vệ tinh khác gửi.
 _KHUC = 2048
 
-_luong: dict[int, threading.Thread] = {}
+#: Cứ ngần này giây xem lại cài đặt (cổng mở/đóng, nghe bật/tắt).
+_NHIP = 3.0
+
+_luong: threading.Thread | None = None
 _khoa = threading.Lock()
 
 
-def cau_hinh() -> dict[str, Any]:
-    from services.config import config
+def ds_cong() -> dict[int, str]:
+    """``{cổng: tên camera}`` của các camera đã khai cổng vệ tinh."""
+    from services import camera_nha
 
-    c = config.data.get("ve_tinh_camera")
-    return c if isinstance(c, dict) else {}
+    ra: dict[int, str] = {}
+    for cam in camera_nha.danh_sach(kem_bi_mat=True):
+        try:
+            cong = int(cam.get("ve_tinh_cong") or 0)
+        except (TypeError, ValueError):
+            continue
+        if 0 < cong < 65536:
+            ra[cong] = str(cam["name"])
+    return ra
+
+
+def cho_nghe(ten: str) -> bool:
+    """Camera có được cho HA nghe mic không. Không rõ thì KHÔNG (an toàn trước)."""
+    from services import camera_nha
+
+    try:
+        _t, cam = camera_nha._lay(ten)
+    except camera_nha.LoiCamera:
+        return False
+    return cam.get("cho_nghe") is True
 
 
 def _info(ten: str) -> dict[str, Any]:
@@ -85,6 +114,8 @@ class _VeTinh:
         self._ghi_khoa = asyncio.Lock()
         self._mic: asyncio.Task | None = None
         self._phat = None
+        self._ha_muon_nghe = False       # HA đã gửi run-satellite, chưa pause
+        self._canh: asyncio.Task | None = None
 
     async def ghi(self, loai: str, data: dict | None = None, payload: bytes = b"") -> None:
         from services.voice.wyoming_server import _write_event
@@ -95,6 +126,7 @@ class _VeTinh:
     async def chay(self) -> None:
         from services.voice.wyoming_server import _read_event
 
+        self._canh = asyncio.create_task(self._canh_cai_dat())
         try:
             while True:
                 ev = await _read_event(self.reader)
@@ -102,6 +134,7 @@ class _VeTinh:
                     return
                 await self._xu_ly(ev)
         finally:
+            self._canh.cancel()
             await self._tat_mic()
             if self._phat is not None:
                 await asyncio.to_thread(self._phat.xong, 5.0)
@@ -114,8 +147,10 @@ class _VeTinh:
         elif loai == "ping":
             await self.ghi("pong", {"text": data.get("text")})
         elif loai == "run-satellite":
-            await self._bat_mic()
+            self._ha_muon_nghe = True
+            await self._ap_cai_dat()
         elif loai == "pause-satellite":
+            self._ha_muon_nghe = False
             await self._tat_mic()
         elif loai == "audio-start":
             await self._bat_dau_phat(data)
@@ -156,6 +191,24 @@ class _VeTinh:
         await self.ghi("played")
 
     # ── Tai ─────────────────────────────────────────────────────────────────
+
+    async def _ap_cai_dat(self) -> None:
+        """Mic chạy khi VÀ CHỈ KHI HA muốn nghe và chủ nhà cho nghe camera này."""
+        muon = self._ha_muon_nghe and await asyncio.to_thread(cho_nghe, self.ten)
+        dang = self._mic is not None and not self._mic.done()
+        if muon and not dang:
+            await self._bat_mic()
+        elif dang and not muon:
+            await self._tat_mic()
+            logger.info({"event": "ve_tinh_camera_tat_nghe", "camera": self.ten})
+
+    async def _canh_cai_dat(self) -> None:
+        while True:
+            await asyncio.sleep(_NHIP)
+            try:
+                await self._ap_cai_dat()
+            except Exception as exc:  # noqa: BLE001 — canh hỏng một nhịp thì nhịp sau thử lại
+                logger.warning({"event": "ve_tinh_camera_canh_loi", "loi": str(exc)[:120]})
 
     async def _bat_mic(self) -> None:
         if self._mic is not None and not self._mic.done():
@@ -212,7 +265,7 @@ class _VeTinh:
 
 # ── Máy chủ ─────────────────────────────────────────────────────────────────
 
-async def _phuc_vu(ten: str, cong: int) -> None:
+async def _mo_cong(ten: str, cong: int) -> asyncio.AbstractServer:
     async def _ket_noi(reader, writer):
         from services.voice.wyoming_server import _bat_keepalive
 
@@ -226,38 +279,48 @@ async def _phuc_vu(ten: str, cong: int) -> None:
 
     server = await asyncio.start_server(_ket_noi, "0.0.0.0", cong)
     logger.info({"event": "ve_tinh_camera_nghe", "camera": ten, "cong": cong})
-    async with server:
-        await server.serve_forever()
+    return server
 
 
-def _chay(ten: str, cong: int) -> None:
+async def _quan_ly() -> None:
+    """Giữ các cổng đang mở khớp cài đặt: thêm cổng thì mở, bỏ/đổi thì đóng."""
+    dang: dict[int, tuple[str, asyncio.AbstractServer]] = {}
+    while True:
+        try:
+            muon = await asyncio.to_thread(ds_cong)
+        except Exception as exc:  # noqa: BLE001 — đọc sổ hỏng một nhịp thì giữ nguyên
+            logger.warning({"event": "ve_tinh_camera_doc_so_loi", "loi": str(exc)[:120]})
+            muon = {c: t for c, (t, _s) in dang.items()}
+        for cong, (ten, server) in list(dang.items()):
+            if muon.get(cong) != ten:
+                server.close()
+                del dang[cong]
+                logger.info({"event": "ve_tinh_camera_dong_cong", "camera": ten, "cong": cong})
+        for cong, ten in muon.items():
+            if cong not in dang:
+                try:
+                    dang[cong] = (ten, await _mo_cong(ten, cong))
+                except OSError as exc:
+                    logger.warning({"event": "ve_tinh_camera_khong_mo_duoc", "camera": ten,
+                                    "cong": cong, "loi": str(exc)[:120]})
+        await asyncio.sleep(_NHIP)
+
+
+def _chay() -> None:
     loop = asyncio.new_event_loop()
     try:
-        loop.run_until_complete(_phuc_vu(ten, cong))
+        loop.run_until_complete(_quan_ly())
     except Exception as exc:
-        logger.warning({"event": "ve_tinh_camera_dung", "camera": ten, "cong": cong,
-                        "loi": str(exc)[:160]})
+        logger.warning({"event": "ve_tinh_camera_dung", "loi": str(exc)[:160]})
     finally:
         loop.close()
 
 
-def start() -> list[int]:
-    """Mở cổng cho từng camera đã khai trong ``ve_tinh_camera.cong``. Trả các cổng đã mở."""
-    c = cau_hinh()
-    if not c.get("bat"):
-        return []
-    mo = []
-    for ten, cong in (c.get("cong") or {}).items():
-        try:
-            cong = int(cong)
-        except (TypeError, ValueError):
-            continue
-        with _khoa:
-            if cong in _luong and _luong[cong].is_alive():
-                continue
-            th = threading.Thread(target=_chay, args=(str(ten), cong),
-                                  name=f"ve-tinh-{cong}", daemon=True)
-            _luong[cong] = th
-        th.start()
-        mo.append(cong)
-    return mo
+def start() -> None:
+    """Chạy vòng quản lý vệ tinh (một luồng nền cho mọi camera)."""
+    global _luong
+    with _khoa:
+        if _luong is not None and _luong.is_alive():
+            return
+        _luong = threading.Thread(target=_chay, name="ve-tinh-camera", daemon=True)
+        _luong.start()

@@ -61,6 +61,7 @@ async def _kich_ban():
 
     LoaGia.ds.clear()
     with mock.patch.object(vt._VeTinh, "_nghe", nghe_gia), \
+            mock.patch.object(vt, "cho_nghe", return_value=True), \
             mock.patch.object(loa_camera, "PhatLuong", LoaGia):
         server = await asyncio.start_server(ket_noi, "127.0.0.1", 0)
         cong = server.sockets[0].getsockname()[1]
@@ -102,6 +103,64 @@ def test_lenh_mic_ma_hoa_mat_khau_trong_url():
     assert lenh[-8:] == ["-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "pipe:1"]
 
 
-def test_chua_bat_thi_khong_mo_cong():
-    with mock.patch.object(vt, "cau_hinh", return_value={"cong": {"Cam cửa": 10801}}):
-        assert vt.start() == []
+def test_chi_camera_khai_cong_moi_thanh_ve_tinh():
+    from services import camera_nha
+    with mock.patch.object(camera_nha, "danh_sach", return_value=[
+            {"name": "Cam cửa", "ve_tinh_cong": 10801},
+            {"name": "Cam bếp", "ve_tinh_cong": "10803"},
+            {"name": "Cam sân"}, {"name": "Cam hỏng", "ve_tinh_cong": "abc"}]):
+        assert vt.ds_cong() == {10801: "Cam cửa", 10803: "Cam bếp"}
+
+
+def test_cho_nghe_mac_dinh_tat():
+    """Chủ máy 24/09/2026: tránh người ngoài cửa ra lệnh cho nhà — không khai là KHÔNG nghe."""
+    from services import camera_nha
+    for cam, muon in (({}, False), ({"cho_nghe": False}, False), ({"cho_nghe": "true"}, False),
+                      ({"cho_nghe": True}, True)):
+        with mock.patch.object(camera_nha, "_lay", return_value=("Cam cửa", cam)):
+            assert vt.cho_nghe("Cam cửa") is muon
+
+
+async def _kich_ban_cong_tac():
+    """HA đòi nghe khi công tắc TẮT: không mic; bật lên thì tự nghe."""
+    trang_thai = {"nghe": False}
+
+    async def nghe_gia(self):
+        await self.ghi("audio-chunk", {"rate": 16000, "width": 2, "channels": 1}, b"\x01\x00")
+        await asyncio.sleep(3600)
+
+    async def ket_noi(r, w):
+        await vt._VeTinh("Cam cửa", r, w).chay()
+
+    with mock.patch.object(vt._VeTinh, "_nghe", nghe_gia), \
+            mock.patch.object(vt, "_NHIP", 0.05), \
+            mock.patch.object(vt, "cho_nghe", side_effect=lambda _t: trang_thai["nghe"]):
+        server = await asyncio.start_server(ket_noi, "127.0.0.1", 0)
+        r, w = await asyncio.open_connection("127.0.0.1", server.sockets[0].getsockname()[1])
+        await _gui(w, "run-satellite")
+        try:
+            await asyncio.wait_for(_doc(r), 0.3)
+            im_lang = False
+        except asyncio.TimeoutError:
+            im_lang = True
+        trang_thai["nghe"] = True
+        sau = [(await asyncio.wait_for(_doc(r), 2))[0] for _ in range(2)]
+        w.close()
+        server.close()
+        return im_lang, sau
+
+
+def test_cong_tac_nghe_tat_thi_khong_day_mic_bat_len_thi_nghe():
+    im_lang, sau = asyncio.run(_kich_ban_cong_tac())
+    assert im_lang
+    assert sau == ["run-pipeline", "audio-chunk"]
+
+
+def test_loa_tat_thi_tu_choi_phat():
+    from services import camera_nha
+    import pytest as _pt
+    with mock.patch.object(camera_nha, "_lay", return_value=("Cam cửa", {"cho_loa": False})):
+        with _pt.raises(loa_camera.LoiLoa, match="đang tắt"):
+            loa_camera.phat("Cam cửa", b"")
+        with _pt.raises(loa_camera.LoiLoa, match="đang tắt"):
+            loa_camera.PhatLuong("Cam cửa", 22050)

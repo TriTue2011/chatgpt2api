@@ -30,10 +30,14 @@ type Cam = {
   // Luồng phụ cho AI đọc — không bắt buộc. Không khai thì AI đọc luồng chính.
   src_ai?: string; url_ai?: string;
   username?: string; password?: string; note?: string;
+  // Vệ tinh Assist cho Home Assistant (mic + loa camera Dahua/Imou qua cổng 37777).
+  // Cổng trống = camera không làm vệ tinh. Nghe mặc định TẮT: camera hướng ra
+  // ngoài mà nghe thì người ngoài ra lệnh được cho nhà.
+  ve_tinh_cong?: number | ""; cho_nghe?: boolean; cho_loa?: boolean;
 };
 
 const RONG: Cam = { kind: "go2rtc", base: "", src: "", url: "", src_ai: "", url_ai: "",
-                    username: "", password: "", note: "" };
+                    username: "", password: "", note: "", ve_tinh_cong: "" };
 
 export function CameraCard() {
   const config = useSettingsStore((s) => s.config);
@@ -98,13 +102,23 @@ export function CameraCard() {
     }
     if (!dangSua && cams[t]) { setMsg(`❌ Đã có camera tên "${t}" rồi.`); return; }
 
+    const cong = Number(moi.ve_tinh_cong || 0);
+    if (moi.ve_tinh_cong && !(cong > 0 && cong < 65536)) {
+      setMsg("❌ Cổng vệ tinh phải là số từ 1 tới 65535 (để trống nếu không dùng)."); return;
+    }
+    const trung = Object.entries(cams).find(([k, c]) => k !== dangSua && cong
+                                            && Number(c.ve_tinh_cong || 0) === cong);
+    if (trung) { setMsg(`❌ Cổng ${cong} đang dùng cho camera «${trung[0]}».`); return; }
+    // Công tắc nghe/loa bật tắt ở danh sách — sửa địa chỉ không được làm mất chúng.
+    const veTinh = { ve_tinh_cong: cong ? cong : ("" as const), cho_nghe: cams[dangSua]?.cho_nghe === true,
+                     cho_loa: cams[dangSua]?.cho_loa !== false };
     const ban: Cam = moi.kind === "go2rtc"
       ? { kind: "go2rtc", base: moi.base!.trim().replace(/\/+$/, ""), src: moi.src!.trim(),
           src_ai: moi.src_ai?.trim() || "",
           username: moi.username?.trim() || "", password: moi.password || "",
-          note: moi.note?.trim() || "" }
+          note: moi.note?.trim() || "", ...veTinh }
       : { kind: "rtsp", url: moi.url!.trim(), url_ai: moi.url_ai?.trim() || "",
-          note: moi.note?.trim() || "" };
+          note: moi.note?.trim() || "", ...veTinh };
 
     const tiep = { ...cams };
     // Đổi tên trong lúc sửa: bỏ bản ghi cũ, nếu không thành hai camera.
@@ -122,6 +136,15 @@ export function CameraCard() {
   };
 
   const huy = () => { setDangSua(""); setTen(""); setMoi({ ...RONG }); };
+
+  // Bật/tắt nghe hoặc loa của một camera — lưu ngay, c2a áp trong vài giây.
+  const doi = async (t: string, khoa: "cho_nghe" | "cho_loa") => {
+    const c = cams[t];
+    const bat = khoa === "cho_nghe" ? c.cho_nghe !== true : c.cho_loa === false;
+    const tiep = { ...cams, [t]: { ...c, [khoa]: bat } };
+    setCams(tiep);
+    await luu(tiep);
+  };
 
   const xoa = async (t: string) => {
     if (dangSua === t) huy();
@@ -178,6 +201,24 @@ export function CameraCard() {
                     title="Có luồng phụ riêng cho AI đọc">+ luồng phụ</span>
                 : null}
               {c.note ? <span className="text-xs text-muted-foreground">— {c.note}</span> : null}
+              {c.ve_tinh_cong ? (
+                <span className="flex flex-wrap items-center gap-1">
+                  <span className="text-[11px] rounded bg-muted px-1.5 py-0.5"
+                    title="Cổng vệ tinh Assist — thêm vào HA: Wyoming Protocol → IP máy c2a + cổng này">
+                    🛰️ {c.ve_tinh_cong}
+                  </span>
+                  <Button size="sm" variant={c.cho_nghe === true ? "default" : "outline"}
+                    title="Cho Home Assistant nghe mic camera này (ra lệnh bằng giọng nói)"
+                    onClick={() => void doi(t, "cho_nghe")}>
+                    🎙️ Nghe: {c.cho_nghe === true ? "Bật" : "Tắt"}
+                  </Button>
+                  <Button size="sm" variant={c.cho_loa !== false ? "default" : "outline"}
+                    title="Cho phát ra loa camera (trả lời, thông báo, cảnh báo)"
+                    onClick={() => void doi(t, "cho_loa")}>
+                    🔊 Loa: {c.cho_loa !== false ? "Bật" : "Tắt"}
+                  </Button>
+                </span>
+              ) : null}
               <div className="ml-auto flex flex-wrap gap-1">
                 <Button size="sm" variant="outline" disabled={busy === t} onClick={() => thu(t)}>
                   {busy === t ? "…" : "Chụp thử"}
@@ -291,6 +332,14 @@ export function CameraCard() {
 
           <Input value={moi.note || ""} onChange={(e) => setMoi({ ...moi, note: e.target.value })}
             placeholder="Ghi chú — cũng dùng để nhận tên, vd: cổng ngoài, chỗ để xe" />
+          <div className="flex flex-wrap items-center gap-2">
+            <Input className="w-40" inputMode="numeric" value={String(moi.ve_tinh_cong ?? "")}
+              onChange={(e) => setMoi({ ...moi, ve_tinh_cong: e.target.value.replace(/\D/g, "") as any })}
+              placeholder="Cổng vệ tinh, vd 10801" />
+            <span className="text-xs text-muted-foreground">
+              🛰️ Vệ tinh Assist (camera Dahua/Imou): để trống nếu không dùng.
+            </span>
+          </div>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={luuCam}>
               {dangSua ? "Lưu thay đổi" : "Thêm camera"}
@@ -299,6 +348,28 @@ export function CameraCard() {
               <Button size="sm" variant="outline" onClick={huy}>Huỷ</Button>
             ) : null}
           </div>
+        </div>
+
+        {/* ── Vệ tinh Assist ───────────────────────────────────────────── */}
+        <div className="rounded border border-dashed border-border/70 p-3 space-y-1">
+          <p className="text-sm font-medium">🛰️ Nói chuyện với nhà qua camera (Home Assistant)</p>
+          <p className="text-xs text-muted-foreground">
+            Camera Dahua/Imou có mic và loa thành một <b>vệ tinh Assist</b>: gọi «ok nabu»
+            rồi ra lệnh, trả lời phát ra loa camera; thông báo và cảnh báo của HA cũng phát
+            ra đó. Cách bật: sửa camera → điền <b>Cổng vệ tinh</b> (vd 10801, mỗi camera
+            một cổng, cổng phải được mở ra ngoài container) → trong HA thêm tích hợp{" "}
+            <b>Wyoming Protocol</b> với IP máy c2a và cổng đó → chọn pipeline có từ gọi.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            <b>🎙️ Nghe</b> — cho HA nghe mic (mặc định Tắt). <b>🔊 Loa</b> — cho phát ra
+            loa (trả lời, thông báo, cảnh báo, «đọc ra camera»). Bấm là áp ngay; c2a chặn
+            ở phía mình nên HA đòi cũng không được.
+          </p>
+          <p className="text-xs text-amber-600">
+            ⚠️ <b>Đừng bật Nghe ở camera hướng ra ngoài</b> (cổng, cửa, ban công): ai đứng
+            ngoài nói «ok nabu, …» là ra lệnh được cho nhà bạn — kể cả mở khoá, tắt báo động
+            nếu trợ lý được phép. Camera ngoài chỉ nên bật Loa.
+          </p>
         </div>
 
         {/* ── Ai được xem ──────────────────────────────────────────────── */}
