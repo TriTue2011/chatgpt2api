@@ -995,3 +995,30 @@ def test_vieneu_nano_vao_danh_muc_theo_goi_cai(monkeypatch):
     assert muc == [{"id": "vieneunano:Adam", "language": "vi",
                     "language_label": "VieNeu Nano 24kHz (nhanh) · Adam · Nam · Nam",
                     "downloaded": False, "default": False}]
+
+
+# ── Chữ hiển thị → chữ để đọc cho NghiTTS/Piper (24/09/2026) ────────────────
+
+
+def test_doc_vi_ngay_thang_don_vi_cong_thuc_va_bo_the_en():
+    import pytest
+
+    pytest.importorskip("sea_g2p")
+    doc = engines._doc_vi("Ngày 24/09/2026, giá 100$, gia tốc 9,8 m/s², √16 = 4.")
+    for cum in ("hai mươi bốn tháng chín", "mét trên giây bình phương", "căn bậc hai mười sáu"):
+        assert cum in doc
+    assert "<en>" not in doc and "</en>" not in doc
+
+
+def test_nghi_va_piper_doc_chu_da_chuan_hoa(monkeypatch):
+    monkeypatch.setattr(engines, "_doc_vi", lambda t: "DA CHUAN HOA")
+    nhan: list[str] = []
+
+    class _Tts:
+        def generate(self, text, sid=0, speed=1.0, callback=None):
+            nhan.append(text)
+            return types.SimpleNamespace(samples=[], sample_rate=22050)
+
+    monkeypatch.setattr(engines, "_get_nghi", lambda _v: _Tts())
+    list(engines._nghi_cau("Ngày 2/9", "nghi:ban-mai"))
+    assert nhan == ["DA CHUAN HOA"]

@@ -700,9 +700,11 @@ def _nghi_cau(text: str, voice: str):
 
     tts = _get_nghi(_nghi_voice_id(voice) or nv.DEFAULT_ID)
 
+    doc = _doc_vi(text)
+
     def chay(cb):
         with _nghi_lock:
-            return tts.generate(text, sid=0, speed=1.0, callback=cb)
+            return tts.generate(doc, sid=0, speed=1.0, callback=cb)
 
     yield from _tu_callback(chay)
 
@@ -1011,6 +1013,34 @@ def _zerotts_stream(text: str, voice: str):
 # ── TTS ──────────────────────────────────────────────────────────────────────
 
 
+_chuan_hoa_vi = None
+_chuan_hoa_khoa = threading.Lock()
+
+
+def _doc_vi(text: str) -> str:
+    """Chữ HIỂN THỊ → chữ để ĐỌC, cho engine không tự chuẩn hoá (NghiTTS, Piper).
+
+    Hai engine này phiên âm bằng espeak nên đọc sai "24/09/2026", "TP.HCM",
+    "H2SO4", "m/s²", "√16"… (chủ máy 24/09/2026). Dùng CHUNG bộ chuẩn hoá của
+    `sea_g2p` mà VieNeu và Kokoro Việt đã dùng — một nguồn luật cho ngày tháng,
+    đơn vị, viết tắt, toán, hoá, lý thay vì danh sách tự viết. Chữ hiển thị
+    (tin nhắn, thẻ loa) không đổi; chỉ chuỗi đưa vào model.
+
+    Thẻ ``<en>…</en>`` là cho chế độ song ngữ của VieNeu; engine tiếng Việt
+    thuần bỏ thẻ, giữ chữ bên trong. Gói chưa cài thì đọc nguyên văn như cũ.
+    """
+    global _chuan_hoa_vi
+    with _chuan_hoa_khoa:
+        if _chuan_hoa_vi is None:
+            try:
+                from sea_g2p import Normalizer
+            except ImportError:
+                return text
+            _chuan_hoa_vi = Normalizer("vi")
+        ra = _chuan_hoa_vi.normalize(text)
+    return _re.sub(r"</?en>", "", ra)
+
+
 def _piper_local(text: str, voice: str = "") -> bytes:
     binary = vcfg.piper_binary()
     model = vcfg.voice_model_path(voice)
@@ -1022,7 +1052,7 @@ def _piper_local(text: str, voice: str = "") -> bytes:
         proc = subprocess.run(
             [binary, "--model", str(model), "--output_file", out_path,
              "--length_scale", str(vcfg.tts_length_scale())],
-            input=text.encode("utf-8"), capture_output=True, timeout=180,
+            input=_doc_vi(text).encode("utf-8"), capture_output=True, timeout=180,
         )
         if proc.returncode != 0:
             raise VoiceError(
