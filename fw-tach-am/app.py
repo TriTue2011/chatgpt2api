@@ -479,6 +479,9 @@ ONNX_GRAPH = {
                   "da191277f58633649a9c0d2ae8012e80ef57ea8e2a56e30323c0f7df1ca29087"),
 }
 ONNX_DIR = Path(os.getenv("ONNX_DIR", "/data/onnx"))
+#: Thư viện CUDA 12 + cuDNN 9 riêng cho onnxruntime-gpu (xem Dockerfile) —
+#: image gốc chỉ có CUDA 13 của torch nên thiếu nó ORT âm thầm chạy CPU.
+ONNX_CU12_DIR = os.getenv("ONNX_CU12_DIR", "/opt/cu12/lib")
 ONNX_TOI_DA_CHAY = 32 * 1024 * 1024       # một lần chạy (ảnh dò mặt 640² ≈ 4,9 MB)
 _onnx_phien: dict[str, object] = {}
 _onnx_khoa = threading.Lock()
@@ -521,6 +524,9 @@ def _onnx_nap(ten: str):
         if phien is None:
             import onnxruntime as ort
 
+            if Path(ONNX_CU12_DIR).is_dir():
+                # Nạp lại nhiều lần vô hại: đã nạp thì ctypes dùng lại bản trong bộ nhớ.
+                ort.preload_dlls(directory=ONNX_CU12_DIR)
             phien = ort.InferenceSession(str(_onnx_tai(ten)), providers=["CUDAExecutionProvider"])
             # CUDA hỏng thì ORT âm thầm lùi về CPU — không nhận, để c2a tự chạy.
             if phien.get_providers()[0] != "CUDAExecutionProvider":
