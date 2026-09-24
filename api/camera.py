@@ -5,9 +5,10 @@ lưu cấu hình chung như mọi card khác — ở đây KHÔNG có endpoint C
 Ai được xem camera thì hỏi bộ lọc chức năng của từng kênh (ô tích «📷 Camera
 nhà»), không phải một danh sách riêng của camera.
 
-Chỉ một việc web không tự làm được:
+Hai việc web không tự làm được:
 
 ``POST /api/camera/test``        chụp thử một camera, trả ảnh xem trước
+``POST /api/camera/noi``         đọc một câu ra loa camera (Dahua/Imou, cổng 37777)
 """
 
 from __future__ import annotations
@@ -53,5 +54,19 @@ def create_router() -> APIRouter:
             "bytes": len(jpeg),
             "anh": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii"),
         }
+
+    @router.post("/api/camera/noi")
+    async def noi(body: dict, authorization: str | None = Header(default=None)):
+        """Đọc ``cau`` ra loa camera ``ten`` bằng giọng ``giong`` (rỗng = mặc định)."""
+        require_admin(authorization)
+
+        from services import loa_camera
+
+        try:
+            kq = await asyncio.to_thread(loa_camera.noi, str(body.get("ten") or ""),
+                                         str(body.get("cau") or ""), str(body.get("giong") or ""))
+        except loa_camera.LoiLoa as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, **kq}
 
     return router
