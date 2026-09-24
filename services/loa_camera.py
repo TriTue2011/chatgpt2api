@@ -143,6 +143,7 @@ class KenhNoi:
         self.sub: socket.socket | None = None
         self.phien, self.cid = 0, ""
         self._dung = threading.Event()
+        self._luong: list[threading.Thread] = []
 
     def __enter__(self) -> "KenhNoi":
         try:
@@ -188,8 +189,11 @@ class KenhNoi:
         self._trang_thai(True)
         for s in (self.ctrl, self.sub):
             s.settimeout(None)
-            threading.Thread(target=self._xa, args=(s,), name="loa-cam-doc", daemon=True).start()
-        threading.Thread(target=self._giu, name="loa-cam-giu", daemon=True).start()
+            self._luong.append(threading.Thread(target=self._xa, args=(s,), name="loa-cam-doc",
+                                                daemon=True))
+        self._luong.append(threading.Thread(target=self._giu, name="loa-cam-giu", daemon=True))
+        for t in self._luong:
+            t.start()
 
     def _trang_thai(self, bat: bool) -> None:
         _chu(self.ctrl, ["TransactionID:" + ("7" if bat else "8"), "Method:GetParameterNames",
@@ -235,8 +239,17 @@ class KenhNoi:
             pass
         for s in (self.sub, self.ctrl):
             if s is not None:
+                # shutdown đánh thức luồng đang chặn ở recv(); chỉ close() thì luồng
+                # ấy kẹt tới khi camera tự đóng — mỗi lần phát rò một luồng.
+                try:
+                    s.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
                 s.close()
         self.sub = self.ctrl = None
+        for t in self._luong:
+            if t is not threading.current_thread():
+                t.join(2)
 
 
 # ── Camera trong sổ → địa chỉ nói ─────────────────────────────────────────────
