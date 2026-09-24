@@ -274,3 +274,49 @@ def test_ws_ve_chi_dung_mot_lan(client_ws) -> None:
     with pytest.raises(WebSocketDisconnect):
         with client_ws.websocket_connect(f"/api/camera/bo_dam/cửa/ws?ve={ve}") as ws:
             ws.receive_bytes()
+
+
+# ── Trực tiếp thật, không thu hết rồi mới phát ───────────────────────────────
+#
+# Chủ máy 24/09/2026: "không live à, phải thu rồi phát thì không đúng yêu cầu".
+# Đo trong c2a: ffmpeg đọc ống dẫn KHÔNG có cờ tắt dò định dạng thì 2,5 giây
+# tiếng vào mà 0 byte ra. Test chạy ffmpeg thật và đòi tiếng ra khi đầu vào VẪN MỞ.
+
+def _ra_truoc_khi_dong(lenh: list[str], khuc: bytes, so_khuc: int = 8) -> int:
+    import threading
+    import time
+
+    p = subprocess.Popen(lenh, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.DEVNULL)
+    ra = []
+    threading.Thread(target=lambda: ra.extend(iter(lambda: p.stdout.read1(65536), b"")),
+                     daemon=True).start()
+    try:
+        for _ in range(so_khuc):
+            p.stdin.write(khuc)
+            p.stdin.flush()
+            time.sleep(0.128)
+        time.sleep(0.3)
+        return sum(len(b) for b in ra)          # đo khi stdin CHƯA đóng
+    finally:
+        p.kill()
+        p.wait()
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="cần ffmpeg")
+def test_phat_luong_nha_tieng_ngay_khong_doi_het() -> None:
+    khuc = struct.pack("<2048h", *([3000, -3000] * 1024))   # 128 ms PCM 16 kHz như trình duyệt
+    ra = _ra_truoc_khi_dong(lc.lenh_doi_luong(16000), khuc)
+    # 8 khúc × 128 ms = 1,024 s → 16 KB ở 8 kHz; cho phép thiếu một khúc đang xử lý.
+    assert ra >= 7 * 2048, f"chỉ {ra} byte ra trong lúc đang nói — đang gom rồi mới phát"
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="cần ffmpeg")
+def test_dong_go2rtc_nha_tieng_ngay(client) -> None:
+    nguon = client.get("/api/camera/bo_dam/Cam cửa/go2rtc",
+                       params={"goc": "http://h"}).json()["nguon"]
+    lenh = nguon.removeprefix("exec:").split("#")[0].split()
+    lenh = lenh[: lenh.index("-method")] + ["pipe:1"]    # ghi ra ống thay vì POST
+    khuc = _ma_hoa(struct.pack("<1024h", *([3000, -3000] * 512)))   # 128 ms A-law 8 kHz
+    ra = _ra_truoc_khi_dong(lenh, khuc)
+    assert ra >= 7 * 1024, f"chỉ {ra} byte ra trong lúc đang nói — đang gom rồi mới gửi"

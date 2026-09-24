@@ -110,7 +110,10 @@ def create_router() -> APIRouter:
         url = f"{goc}/api/camera/bo_dam/{quote(ten_that, safe='')}?{ky}"
         # go2rtc tách lệnh exec theo dấu cách và tham số theo dấu #: URL đã mã
         # hoá nên không chứa cả hai.
-        nguon = ("exec:ffmpeg -hide_banner -loglevel error -f alaw -ar 8000 -ac 1 -i - "
+        from services.loa_camera import FFMPEG_TRUC_TIEP
+
+        nguon = ("exec:ffmpeg -hide_banner -loglevel error "
+                 f"{' '.join(FFMPEG_TRUC_TIEP)} -f alaw -ar 8000 -ac 1 -i - "
                  "-c:a copy -f alaw -flush_packets 1 -method POST "
                  f"{url}#backchannel=1#audio=alaw/8000")
         return {"ok": True, "ten": ten_that, "nguon": nguon}

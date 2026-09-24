@@ -52,6 +52,12 @@ _KHOI = 640
 _khoa: dict[str, threading.Lock] = {}
 _khoa_chung = threading.Lock()
 
+#: Cờ bắt buộc cho MỌI ffmpeg đọc tiếng theo luồng từ ống dẫn. Thiếu chúng, ffmpeg
+#: gom tiếng để dò định dạng trước khi nhả byte nào — đo 24/09/2026 trong c2a:
+#: 20 khúc (2,5 giây) vào mà 0 byte ra; có cờ thì mỗi khúc ra sau ~130 ms. Tức
+#: "phát theo luồng" thực chất là thu hết rồi mới phát.
+FFMPEG_TRUC_TIEP = ("-probesize", "32", "-analyzeduration", "0", "-fflags", "nobuffer")
+
 
 class LoiLoa(RuntimeError):
     """Không phát được — thông điệp đã sẵn sàng đọc cho người dùng."""
@@ -344,6 +350,13 @@ def phat(ten: str, am_thanh: bytes) -> dict[str, Any]:
     return {"ten": ten_that, "giay": round(giay, 1)}
 
 
+def lenh_doi_luong(rate: int, channels: int = 1) -> list[str]:
+    """ffmpeg đổi PCM16 ``rate``/``channels`` → PCM16 mono 8 kHz, nhả ngay từng khúc."""
+    return ["ffmpeg", "-hide_banner", "-loglevel", "error", *FFMPEG_TRUC_TIEP,
+            "-f", "s16le", "-ar", str(int(rate)), "-ac", str(int(channels)), "-i", "pipe:0",
+            "-ac", "1", "-ar", str(_TAN_SO), "-f", "s16le", "-flush_packets", "1", "pipe:1"]
+
+
 class PhatLuong:
     """Phát ra loa camera theo luồng: tiếng tới khúc nào phát khúc đó.
 
@@ -369,9 +382,7 @@ class PhatLuong:
                 # lọt ra là đứt luôn kết nối HA / phiên bộ đàm vì camera rớt mạng.
                 raise LoiLoa(f"không nói được với camera ({str(exc)[:100]})") from exc
             self._ff = subprocess.Popen(
-                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "s16le",
-                 "-ar", str(int(rate)), "-ac", str(int(channels)), "-i", "pipe:0",
-                 "-ac", "1", "-ar", str(_TAN_SO), "-f", "s16le", "pipe:1"],
+                lenh_doi_luong(rate, channels),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         except BaseException:
             self._dong()
