@@ -49,7 +49,7 @@ def gpu(monkeypatch):
     monkeypatch.setenv("TACH_AM_URL_GPU", "http://gpu:5004/")
     monkeypatch.setenv("TACH_AM_API_TOKEN", "bi-mat")
     monkeypatch.setattr(onnx_xa, "_nghi_toi", 0.0)
-    monkeypatch.setattr(onnx_xa, "_bao_luc", -1e9)
+    monkeypatch.setattr(onnx_xa, "_dang_hong", False)
     bao: list[str] = []
     import services.notifier as nf
     monkeypatch.setattr(nf, "notify_admin", lambda text, **_k: bao.append(text))
@@ -93,6 +93,17 @@ def test_gpu_hong_thi_chay_cpu_nghi_va_bao_mot_lan(monkeypatch, gpu):
     assert p.run(None, {"vao": x})[0][0, 0] == 2.0
     assert (len(lan_post), cpu.lan, len(gpu)) == (1, 2, 1)   # nghỉ GPU, chỉ báo một lần
     assert "w600k_r50" in gpu[0]
+    # Hết giờ nghỉ, vẫn hỏng: KHÔNG báo lại.
+    monkeypatch.setattr(onnx_xa, "_nghi_toi", 0.0)
+    p.run(None, {"vao": x})
+    assert (len(lan_post), len(gpu)) == (2, 1)
+    # GPU lành rồi hỏng lại: báo lần mới.
+    monkeypatch.setattr(requests, "post", lambda *a, **k: _TraLoi(_npz(o0=x, o1=x)))
+    monkeypatch.setattr(onnx_xa, "_nghi_toi", 0.0)
+    p.run(None, {"vao": x})
+    monkeypatch.setattr(requests, "post", hong)
+    p.run(None, {"vao": x})
+    assert len(gpu) == 2
 
 
 def test_graph_ngoai_danh_muc_hoac_chua_khai_gpu_thi_giu_nguyen_cpu(monkeypatch):

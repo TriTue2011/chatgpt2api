@@ -5,7 +5,9 @@ Chủ máy 24/09/2026 chốt đưa nhận khuôn mặt và TTS lên GPU. Chỉ b
 đầu ra giống hệt chạy CPU (sổ mặt không phải tính lại) và GPU hỏng thì đọc/nhận
 tiếp ngay bằng CPU — không bao giờ câm.
 
-GPU hỏng thì NGHỈ ``NGHI_GIAY`` rồi mới thử lại, và BÁO admin — bài học
+GPU hỏng thì NGHỈ ``NGHI_GIAY`` rồi mới thử lại, và BÁO admin MỘT lần lúc
+chuyển từ chạy được sang hỏng (hỏng kéo dài không nhắc lại; chạy lại được thì
+lần hỏng sau mới báo tiếp) — bài học
 24/09/2026: fw-nghe mất GPU từ 15/09, gateway lặng lẽ lùi về CPU suốt 8 ngày
 mà không ai biết.
 
@@ -24,12 +26,11 @@ from utils.log import logger
 #: Graph máy GPU chạy được (tên = tên tệp bỏ ".onnx").
 TREN_GPU = frozenset({"det_10g", "w600k_r50", "kokoro_vi"})
 NGHI_GIAY = 60.0
-_BAO_CACH_GIAY = 1800.0
 _HET_GIO = {"det_10g": 10.0, "w600k_r50": 5.0, "kokoro_vi": 30.0}
 
 _khoa = threading.Lock()
 _nghi_toi = 0.0
-_bao_luc = 0.0
+_dang_hong = False
 
 
 def _dia_chi() -> tuple[str, str]:
@@ -42,13 +43,10 @@ def _dia_chi() -> tuple[str, str]:
 
 
 def _hong(ten: str, exc: Exception) -> None:
-    global _nghi_toi, _bao_luc
-    bay_gio = time.monotonic()
+    global _nghi_toi, _dang_hong
     with _khoa:
-        _nghi_toi = bay_gio + NGHI_GIAY
-        bao = bay_gio - _bao_luc >= _BAO_CACH_GIAY
-        if bao:
-            _bao_luc = bay_gio
+        _nghi_toi = time.monotonic() + NGHI_GIAY
+        bao, _dang_hong = not _dang_hong, True
     logger.warning({"event": "onnx_gpu_hong", "graph": ten, "loi": str(exc)[:200]})
     if bao:
         try:
@@ -58,6 +56,14 @@ def _hong(ten: str, exc: Exception) -> None:
                          "nhận mặt/TTS đang chạy CPU tại chỗ.", category="system")
         except Exception as loi:  # noqa: BLE001 — báo hỏng không được làm hỏng việc chính
             logger.warning({"event": "onnx_gpu_bao_loi", "loi": str(loi)[:120]})
+
+
+def _da_lanh(ten: str) -> None:
+    global _dang_hong
+    if _dang_hong:
+        with _khoa:
+            _dang_hong = False
+        logger.info({"event": "onnx_gpu_da_lanh", "graph": ten})
 
 
 class PhienLai:
@@ -78,9 +84,12 @@ class PhienLai:
         url, token = _dia_chi()
         if url and time.monotonic() >= _nghi_toi:
             try:
-                return self._chay_gpu(url, token, output_names, feeds)
+                ra = self._chay_gpu(url, token, output_names, feeds)
             except Exception as exc:  # noqa: BLE001 — mọi lỗi mạng/GPU đều lùi về CPU
                 _hong(self.ten, exc)
+            else:
+                _da_lanh(self.ten)
+                return ra
         return self._tai_cho.run(output_names, feeds)
 
     def _chay_gpu(self, url: str, token: str, output_names, feeds) -> list:
