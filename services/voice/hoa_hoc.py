@@ -208,7 +208,10 @@ def _doc_cau(cau: str) -> str:
 
     ra = _UNG_VIEN.sub(thay, cau)
     for ky, loi in _PHAN_UNG.items():
-        ra = ra.replace(ky, f" {loi} ")
+        # Ký hiệu chỉ nhắc lại chữ đã viết ngay trước ("tạo kết tủa BaSO4↓")
+        # thì bỏ, không thì đọc thành "kết tủa … kết tủa".
+        ra = re.sub(re.escape(ky), lambda m, loi=loi: " " if loi in m.string[max(0, m.start() - 40):m.start()]
+                    else f" {loi} ", ra)
     if trong_phan_ung:
         # "+" giữa các chất: ZeroTTS không tự đọc dấu này.
         ra = re.sub(r"\s\+\s", " cộng ", ra)

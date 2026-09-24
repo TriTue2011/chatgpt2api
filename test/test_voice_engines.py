@@ -754,6 +754,7 @@ def _loa(dong_ho_ra):
 def _chay(monkeypatch, rtf, tong_giay, text_len, hoc=None):
     dong_ho = _DongHo()
     monkeypatch.setattr(engines, "_TOC_DO", dict(hoc or {}))
+    monkeypatch.setattr(engines, "_TOC_TEP", Path(tempfile.mkdtemp()) / "toc.json")
     import time as _time
     monkeypatch.setattr(_time, "monotonic", dong_ho)
     ra = [(dong_ho(), r, p) for r, p in engines._dem_dau(
@@ -785,6 +786,8 @@ def test_dem_dau_lan_dau_chua_hoc_van_do_duoc_ngay_trong_luot(monkeypatch):
     hoc = engines._TOC_DO["vieneu"]
     assert abs(hoc["rtf"] - 1.4) < 0.1               # học được cho lượt sau
     assert abs(hoc["giay_moi_chu"] - 30.0 / 400) < 1e-6
+    import json as _json                             # và còn sau khi khởi động lại
+    assert _json.loads(engines._TOC_TEP.read_text())["vieneu"] == hoc
 
 
 def test_dem_dau_nap_model_lau_khong_bi_tinh_la_engine_cham(monkeypatch):
@@ -792,6 +795,7 @@ def test_dem_dau_nap_model_lau_khong_bi_tinh_la_engine_cham(monkeypatch):
     thực (Kokoro Việt). Trước đây r tính cả lúc nạp nên giữ gần hết đoạn."""
     dong_ho = _DongHo()
     monkeypatch.setattr(engines, "_TOC_DO", {})
+    monkeypatch.setattr(engines, "_TOC_TEP", Path(tempfile.mkdtemp()) / "toc.json")
     import time as _time
     monkeypatch.setattr(_time, "monotonic", dong_ho)
 
@@ -1089,3 +1093,39 @@ def test_nghi_va_piper_doc_chu_da_chuan_hoa(monkeypatch):
     monkeypatch.setattr(engines, "_get_nghi", lambda _v: _Tts())
     list(engines._nghi_cau("Ngày 2/9", "nghi:ban-mai"))
     assert nhan == ["DA CHUAN HOA"]
+
+
+# ── Tiếng đầu câu dài, nghỉ đúng ranh giới, đơn vị cho ZeroTTS (24/09/2026) ──
+
+
+def test_cau_dau_dai_tach_ve_dau_de_co_tieng_som():
+    """Đoạn thử của chủ máy: câu đầu ~10 s tiếng, NghiTTS 1,4 s mới có tiếng."""
+    cau = "Hôm nay ngày 24/09/2026, lúc 15h30, Ba cho Ba vào dung dịch loãng trong giờ thực hành."
+    assert engines._tach_ve_dau([(cau, "sentence"), ("Câu sau.", "")]) == [
+        ("Hôm nay ngày 24/09/2026,", "clause"),
+        ("lúc 15h30, Ba cho Ba vào dung dịch loãng trong giờ thực hành.", "sentence"),
+        ("Câu sau.", "")]
+    ngan = [("Dạ, em bật đèn rồi.", "")]
+    assert engines._tach_ve_dau(ngan) == ngan                       # câu ngắn để nguyên
+    khong_phay = [("x" * 80, "")]
+    assert engines._tach_ve_dau(khong_phay) == khong_phay
+
+
+def test_phat_cau_nghi_dung_loai_ranh_gioi(monkeypatch):
+    monkeypatch.setattr(engines, "_silence_plan", lambda: (400, 180, 600, 0))
+    monkeypatch.setattr(engines, "_cat_lang_hai_dau", lambda pcm, rate, *a, **k: pcm)
+    import numpy as np
+    text = ("Hôm nay trời nắng đẹp lắm anh ơi, nhiệt độ ba mươi hai độ, độ ẩm vừa phải và gió nhẹ. "
+            "Câu thứ hai ngắn thôi.\nĐoạn mới bắt đầu.")
+    ra = list(engines._phat_cau(text, 1000, lambda doan: iter([np.ones(10, dtype=np.float32)])))
+    nghi = [len(p) // 2 for _r, p in ra if not p.strip(b"\x00")]
+    assert nghi == [180, 400, 600]              # vế, câu, đoạn — trước đây cả ba là 600
+
+
+def test_zerotts_doc_so_kem_don_vi_bang_sea_g2p(monkeypatch):
+    monkeypatch.setattr(engines, "_doc_vi", lambda s: f"<{s}>")
+    assert engines._doc_don_vi("Uống 5 mg thuốc, gió 3 km/h, 27°C, phòng 20 m².") == \
+        "Uống <5 mg> thuốc, gió <3 km/h>, <27°C>, phòng <20 m²>."
+    for giu in ("lúc 18h09", "PM2.5 ở mức 9", "Bot n8n", "Loa Phicomm_R1_912F", "máy 172.16.10.200",
+                "có 7 thiết bị", "năm 2026–2027", "ngày 9/9/2026", "57%"):
+        assert engines._doc_don_vi(giu) == giu, giu

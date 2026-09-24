@@ -15,6 +15,7 @@ import io
 import json
 import logging
 import queue
+import re as _re
 import socket
 import subprocess
 import sys
@@ -807,25 +808,50 @@ def _nghi_cau(text: str, voice: str):
 
 def _phat_cau(text: str, rate: int, lay_cau, *, chen_nghi: bool = True):
     """Yield (rate, pcm16). ``lay_cau(đoạn)`` yield float32 từng câu của một lần generate."""
-    sent_ms, _clause, para_ms, jitter = _silence_plan() if chen_nghi else (0, 0, 0, 0)
-    khoi = _tach_doan(text) or [(text, "")]
+    sent_ms, clause_ms, para_ms, jitter = _silence_plan() if chen_nghi else (0, 0, 0, 0)
+    khoi = _tach_ve_dau(_tach_doan(text) or [(text, "")])
     da_co = False
-    for piece, _sau in khoi:
-        dau_doan = True
+    truoc = ""                      # ranh giới sau mẩu trước: sentence/clause/paragraph
+    for piece, sau in khoi:
+        dau_manh = True
         for mau in lay_cau(piece):
             if da_co:
-                kind = "paragraph" if dau_doan else "sentence"
-                base = para_ms if kind == "paragraph" else sent_ms
+                # Nghỉ theo ĐÚNG ranh giới trước mẩu này. Trước 24/09/2026 mọi
+                # ranh giới giữa hai mẩu đều nghỉ kiểu hết đoạn (600 ms thay vì
+                # 400 ms hết câu).
+                kind = (truoc or "sentence") if dau_manh else "sentence"
+                base = {"paragraph": para_ms, "clause": clause_ms}.get(kind, sent_ms)
                 gap = _silence_pcm(_jitter_ms(base, jitter), rate) if base > 0 else b""
                 if gap:
                     yield rate, gap
-            dau_doan = False
+            dau_manh = False
             da_co = True
             pcm = _float_to_pcm16(mau)
             if pcm and chen_nghi:
                 pcm = _cat_lang_hai_dau(pcm, rate)
             if pcm:
                 yield rate, pcm
+        truoc = sau
+
+
+#: Câu đầu dài hơn ngần này ký tự thì tách vế đầu ra tạo riêng.
+_VE_DAU_KY_TU = 60
+
+
+def _tach_ve_dau(khoi: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Câu đầu dài: tách vế đầu (tới dấu phẩy đầu tiên) thành một lượt tạo riêng.
+
+    Engine đọc theo câu (NghiTTS) chỉ nhả tiếng khi xong trọn câu. Đoạn thử của
+    chủ máy 24/09/2026 có câu đầu ~10 giây tiếng: 1,3 giây mới có tiếng đầu.
+    Tách vế đầu thì tiếng đầu chỉ chờ vế ấy; phần còn lại đọc như cũ.
+    """
+    if not khoi or len(khoi[0][0]) <= _VE_DAU_KY_TU:
+        return khoi
+    cau, sau = khoi[0]
+    for m in _re.finditer(r",\s+", cau):
+        if 10 <= m.start() <= len(cau) - 15:
+            return [(cau[:m.start() + 1], "clause"), (cau[m.end():], sau)] + khoi[1:]
+    return khoi
 
 
 def _nghi_phat(text: str, voice: str, *, chen_nghi: bool = True):
@@ -1052,11 +1078,32 @@ def _zerotts_doan(text: str) -> list[str]:
     from zerotts.chunking import chunk_text, clean_segment_punctuation, normalize_punctuation
 
     out: list[str] = []
+    text = _doc_don_vi(text)
     for seg in chunk_text(normalize_punctuation(normalize_vi_text(text)), max_chunk_sec=15):
         seg = clean_segment_punctuation(seg)
         if seg.strip():
             out.append(seg)
     return out
+
+
+#: Số liền một đơn vị viết tắt: "5 mg", "3 km/h", "27°C", "20 m²". Không bắt
+#: "18h09" (giờ), "PM2.5", "n8n", "Phicomm_R1_912F" — chữ/số dính hai đầu.
+_SO_DON_VI = _re.compile(r"(?<![\w.,])\d+(?:[.,]\d+)?\s?[°µΩ]?[A-Za-z]+(?:/[A-Za-z]+)?[²³]?(?![\w])")
+
+
+def _doc_don_vi(text: str) -> str:
+    """Đọc "số + đơn vị" bằng bộ chuẩn hoá sea_g2p, phần chữ còn lại để nguyên.
+
+    Bộ chuẩn hoá của ZeroTTS không đổi đơn vị: "5 mg" thành "năm mg", "27°C"
+    thành "hai mươi bảy°xê" (đo 24/09/2026). sea_g2p đọc đúng ("năm mi li gam")
+    nhưng đem cả câu qua nó thì hỏng chỗ khác ZeroTTS đang đúng ("**" thành
+    "sao sao", "anh/chị" thành "anh trên chị", địa chỉ IP đọc từng chữ số) — đo
+    trên 60 câu trả lời thật của bot. Nên chỉ đưa đúng cụm số + đơn vị qua nó,
+    không kê danh sách đơn vị nào.
+    """
+    if not _SO_DON_VI.search(text):
+        return text
+    return _SO_DON_VI.sub(lambda m: _doc_vi(m.group(0)).strip(), text)
 
 
 def _zerotts_tts(text: str, voice: str) -> bytes:
@@ -1355,7 +1402,6 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
 # Wyoming không stream theo khung → cắt câu rồi đọc từng câu.
 
 import random as _random
-import re as _re
 
 # Kết thúc câu, hoặc xuống dòng (đoạn văn). Nhóm 1 có dấu câu; nhóm 2 là
 # xuống dòng trần. Khoảng trắng sau dấu mà chứa xuống dòng vẫn là đoạn văn.
@@ -1810,6 +1856,14 @@ def warmup_tts(voice: str = "") -> dict:
 # chính là thời gian chờ — và loa không bỏ cuộc vì lâu không thấy byte nào.
 
 _TOC_DO: dict[str, dict[str, float]] = {}   # họ engine → {"rtf", "giay_moi_chu"}
+# Số học được ghi ra đĩa: mỗi lần đổi ảnh mà quên thì lượt đầu phải giữ lặng chờ
+# đo lại (NghiTTS đo 24/09/2026: thêm ~1,1 giây lặng trước tiếng đầu).
+_TOC_TEP = Path(vcfg.DATA_DIR) / "tts_toc_do.json"
+try:
+    _TOC_DO.update({str(k): {"rtf": float(v["rtf"]), "giay_moi_chu": float(v["giay_moi_chu"])}
+                    for k, v in json.loads(_TOC_TEP.read_text()).items()})
+except (OSError, ValueError, TypeError, KeyError, AttributeError):
+    pass
 # Tiếng Việt đọc ~13 ký tự/giây. Chỉ dùng tới khi họ ấy đọc xong lượt đầu.
 _GIAY_MOI_CHU_MAC_DINH = 0.075
 _DU_PHONG_DEM = 1.1            # giữ dư 10% cho sai số ước lượng
@@ -1866,6 +1920,11 @@ def _dem_dau(nguon, text: str, ho: str):
         moi = {"rtf": (_time.monotonic() - luc_co_tieng) / (da_tao - dai_dau),
                "giay_moi_chu": da_tao / len(text)}
         _TOC_DO[ho] = moi if not cu else {k: 0.7 * cu[k] + 0.3 * moi[k] for k in moi}
+        if not cu or abs(_TOC_DO[ho]["rtf"] - cu["rtf"]) > 0.1 * cu["rtf"]:
+            try:
+                _TOC_TEP.write_text(json.dumps(_TOC_DO))
+            except OSError as exc:
+                logger.warning("voice: khong ghi duoc so toc do TTS: %s", str(exc)[:120])
 
 
 def noi_cau(nguon, truoc: str = ""):

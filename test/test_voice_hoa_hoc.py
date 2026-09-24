@@ -89,3 +89,9 @@ def test_so_mu_dinh_dau_cau_khong_do_loi():
 ])
 def test_ky_hieu_dung_rieng_theo_ngu_canh(viet, doc):
     assert h.doc(viet) == doc
+
+
+def test_mui_ten_nhac_lai_chu_da_viet_thi_khong_doc_lap():
+    """Chủ máy 24/09/2026: "tạo kết tủa BaSO₄↓" bị đọc "kết tủa … kết tủa"."""
+    assert h.doc("Để tạo kết tủa BaSO₄↓ trong giờ.") == "Để tạo kết tủa bê a ét ô bốn trong giờ."
+    assert h.doc("BaCl2 + Na2SO4 → BaSO4↓ + 2NaCl").count("kết tủa") == 1
