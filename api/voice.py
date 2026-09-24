@@ -254,6 +254,10 @@ def create_router() -> APIRouter:
                 raise HTTPException(
                     404, f"Giọng Kokoro Việt '{vid}' chưa tải "
                          f"(chạy scripts/download_kokoro_vi.py {vid}).")
+        elif vname.startswith(vcfg.VIENEU_NANO_PREFIX):
+            if vcfg.vieneu_nano_dir() is None:
+                raise HTTPException(
+                    404, "Model VieNeu Nano chưa tải (chạy scripts/download_vieneu_nano.py).")
         elif vname.startswith(vcfg.ZEROTTS_PREFIX):
             if vcfg.zerotts_model_dir() is None:
                 raise HTTPException(

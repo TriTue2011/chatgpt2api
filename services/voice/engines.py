@@ -221,14 +221,15 @@ def _ho_dang_gan() -> set[str]:
         giu |= {_ho_engine(str(sp.get("voice"))) for sp in speakers.list_speakers() if sp.get("voice")}
     except Exception as exc:   # không đọc được sổ loa thì thôi nhả lượt này
         logger.warning("voice: khong doc duoc so loa de giu model: %s", str(exc)[:120])
-        return {"vieneu", "zerotts", "kokorovi", "kokoro", "nghi", "dangu"}
+        return {"vieneu", "vieneunano", "zerotts", "kokorovi", "kokoro", "nghi", "dangu"}
     return giu
 
 
 def _bo_model(ho: str) -> bool:
     """Bỏ model của một họ. Đang đọc dở (khoá bận) thì để lượt sau."""
-    global _vieneu, _vieneu_loaded_precision, _kokoro, _kokoro_vi, _zerotts
+    global _vieneu, _vieneu_loaded_precision, _kokoro, _kokoro_vi, _zerotts, _vieneu_nano
     khoa = {"vieneu": _vieneu_lock, "kokoro": _kokoro_lock, "zerotts": _zerotts_lock,
+            "vieneunano": _vieneu_nano_lock,
             "kokorovi": _kokoro_vi_lock, "nghi": _nghi_lock, "dangu": _da_ngu_lock}.get(ho)
     if khoa is None or not khoa.acquire(blocking=False):
         return False
@@ -239,6 +240,8 @@ def _bo_model(ho: str) -> bool:
             _kokoro = None
         elif ho == "zerotts":
             _zerotts = None
+        elif ho == "vieneunano":
+            _vieneu_nano = None
         elif ho == "kokorovi":
             _kokoro_vi = None
             _kokoro_vi_vp.clear()
@@ -806,6 +809,61 @@ def _kokoro_vi_tts(text: str, voice: str) -> bytes:
     return _pcm_to_wav(_float_to_pcm16(audio), kv.SAMPLE_RATE, 2, 1)
 
 
+# ── TTS: VieNeu v3 Nano (11 giọng, 24 kHz, ONNX) ────────────────────────────
+# Họ giọng NHANH cho máy yếu: đo 24/09/2026 trên máy chủ RTF 0,68 ở 16 bước
+# (v3 Turbo ~2). Flow-matching sinh trọn một mẩu mỗi lần — không stream theo
+# khung, nhưng mẩu ngắn (≤140 ký tự) và nhanh hơn thời gian thực. Engine tự
+# chuẩn hoá số, tự cắt mẩu và tự chèn nghỉ giữa mẩu.
+
+_vieneu_nano_lock = threading.Lock()
+_vieneu_nano = None
+
+
+def _get_vieneu_nano():
+    _dung("vieneunano")
+    base = vcfg.vieneu_nano_dir()
+    if base is None:
+        raise VoiceError("Model VieNeu Nano chưa tải (chạy scripts/download_vieneu_nano.py).")
+    global _vieneu_nano
+    with _vieneu_nano_lock:
+        if _vieneu_nano is None:
+            try:
+                from vieneu.v3nano import V3NanoVieNeuTTS
+            except Exception as exc:
+                raise VoiceError("Gói vieneu trong image chưa có v3 Nano.") from exc
+            _vieneu_nano = V3NanoVieNeuTTS(onnx_dir=str(base), threads=vcfg.vieneu_threads())
+        return _vieneu_nano
+
+
+def _vieneu_nano_ten(voice: str) -> str | None:
+    return voice[len(vcfg.VIENEU_NANO_PREFIX):].strip() or None
+
+
+def _vieneu_nano_tts(text: str, voice: str) -> bytes:
+    """Giọng "vieneunano:<Tên>" → WAV 24 kHz."""
+    import numpy as np
+
+    tts = _get_vieneu_nano()
+    with _vieneu_nano_lock:
+        audio = np.asarray(tts.infer(text, voice=_vieneu_nano_ten(voice)), dtype=np.float32).reshape(-1)
+    if not audio.size:
+        raise VoiceError("VieNeu Nano không tạo được âm thanh.")
+    return _pcm_to_wav(_float_to_pcm16(audio), int(tts.sample_rate), 2, 1)
+
+
+def _vieneu_nano_stream(text: str, voice: str):
+    """Yield (24000, pcm16) từng mẩu ngay khi xong (kể cả khoảng nghỉ engine chèn)."""
+    import numpy as np
+
+    tts = _get_vieneu_nano()
+    rate = int(tts.sample_rate)
+    with _vieneu_nano_lock:
+        for mau in tts.infer_stream(text, voice=_vieneu_nano_ten(voice)):
+            pcm = _float_to_pcm16(np.asarray(mau, dtype=np.float32).reshape(-1))
+            if pcm:
+                yield rate, pcm
+
+
 # ── TTS: ZeroTTS (8 giọng tiếng Việt, 48 kHz, ONNX) ─────────────────────────
 # Đo 15/09/2026 trên máy chủ: sai thanh 0/1409 âm tiết trong câu thường (ngang
 # Kokoro Việt). RTF ~1,2 ở 4 luồng nên đoạn dài vẫn chậm hơn thời gian thực,
@@ -814,23 +872,68 @@ def _kokoro_vi_tts(text: str, voice: str) -> bytes:
 
 _zerotts_lock = threading.Lock()
 _zerotts = None
+#: Bản ZeroTTS chế độ auto đã chọn cho tiến trình này ("fp32"/"int8"). Nhớ qua
+#: các lần model tự nhả để không đo lại mỗi lần nạp.
+_zerotts_chon = ""
+_ZEROTTS_CAU_DO = "Xin chào, hôm nay trời nhiều mây, chiều tối có mưa rào nhẹ."
+
+
+def _nap_zerotts(base):
+    from zerotts import ZeroTTS
+
+    # Constructor warmup=True: đẩy một khung giả qua mọi session để lần đọc
+    # thật không gánh allocator. Đo 23/09/2026: nạp + warm ~11s.
+    return ZeroTTS(base, intra_op_num_threads=vcfg.zerotts_threads())
+
+
+def _rtf_zerotts(tts) -> float:
+    """Giây tạo cho mỗi giây tiếng, đo trên câu mẫu (lần đầu chỉ để làm nóng)."""
+    import time as _time
+
+    import numpy as np
+
+    vid = _zerotts_voice_id("")
+    tts.synthesize(_ZEROTTS_CAU_DO, voice=vid)
+    t0 = _time.perf_counter()
+    audio = np.asarray(tts.synthesize(_ZEROTTS_CAU_DO, voice=vid), dtype=np.float32).reshape(-1)
+    return (_time.perf_counter() - t0) / max(audio.size / float(tts.sample_rate), 1e-6)
 
 
 def _get_zerotts():
+    """Nạp ZeroTTS. auto: fp32 kịp thời gian thực thì giữ, không thì int8.
+
+    Đo 24/09/2026 trên máy chủ (Xeon E5-2630L v4, không VNNI), xen kẽ hai bản
+    cùng câu: fp32 RTF 2,39, int8 1,13; tiếng đầu 1,22 → 0,63s; STT nghe lại
+    sai 1/152 chữ ở cả hai. Máy khoẻ đọc fp32 kịp thì không đổi gì.
+    """
+    global _zerotts, _zerotts_chon
     _dung("zerotts")
-    base = vcfg.zerotts_model_dir()
-    if base is None:
+    fp32 = vcfg.zerotts_model_dir()
+    if fp32 is None:
         raise VoiceError("Model ZeroTTS chưa tải (chạy scripts/download_zerotts.py).")
-    global _zerotts
+    int8 = vcfg.zerotts_int8_dir()
+    muon = vcfg.zerotts_precision()
     with _zerotts_lock:
         if _zerotts is None:
             try:
-                from zerotts import ZeroTTS
+                import zerotts  # noqa: F401
             except Exception as exc:
                 raise VoiceError("Chưa cài gói zerotts trong image.") from exc
-            # Constructor warmup=True: đẩy một khung giả qua mọi session để
-            # lần đọc thật không gánh allocator. Đo 23/09/2026: nạp + warm ~11s.
-            _zerotts = ZeroTTS(base, intra_op_num_threads=vcfg.zerotts_threads())
+            if int8 is None or muon == "fp32":
+                _zerotts = _nap_zerotts(fp32)
+            elif muon == "int8" or _zerotts_chon == "int8":
+                _zerotts = _nap_zerotts(int8)
+            elif _zerotts_chon == "fp32":
+                _zerotts = _nap_zerotts(fp32)
+            else:
+                tts = _nap_zerotts(fp32)
+                rtf = _rtf_zerotts(tts)
+                _zerotts_chon = "fp32" if rtf <= 1.0 else "int8"
+                logger.info("voice: ZeroTTS fp32 RTF=%.2f → dùng %s", rtf, _zerotts_chon)
+                if _zerotts_chon == "int8":
+                    del tts
+                    tts = _nap_zerotts(int8)
+                _zerotts = tts
         return _zerotts
 
 
@@ -994,6 +1097,13 @@ def _synthesize_one(text: str, voice: str = "", *, style: str = "") -> bytes:
             errors.append(f"kokorovi: {str(exc)[:120]}")
             logger.warning("voice: TTS kokoro viet that bai: %s", str(exc)[:160])
             v = ""          # fallback: giọng Piper mặc định
+    elif v.startswith(vcfg.VIENEU_NANO_PREFIX):
+        try:
+            return _done(_vieneu_nano_tts(text, v))
+        except Exception as exc:
+            errors.append(f"vieneunano: {str(exc)[:120]}")
+            logger.warning("voice: TTS vieneu nano that bai: %s", str(exc)[:160])
+            v = ""          # fallback: giọng Piper mặc định
     elif v.startswith(vcfg.ZEROTTS_PREFIX):
         try:
             return _done(_zerotts_tts(text, v))
@@ -1053,7 +1163,7 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
             logger.warning("voice: %s mot lan that bai, di duong thuong: %s",
                            voice, str(exc)[:160])
             return _synthesize_one(text, voice, style=style)
-    if (voice or "").startswith((vcfg.VIENEU_PREFIX, vcfg.ZEROTTS_PREFIX)):
+    if (voice or "").startswith((vcfg.VIENEU_PREFIX, vcfg.ZEROTTS_PREFIX, vcfg.VIENEU_NANO_PREFIX)):
         # Hai engine tự cắt câu và tự nghỉ. Cắt thêm từng vế là prefill lại —
         # đoạn thời tiết đo 23/09/2026 khựng tới 3,3 giây.
         return _synthesize_one(text, voice, style=style)
@@ -1716,6 +1826,27 @@ def _stream_tao(text: str, voice: str = "", *, style: str = ""):
                 return
             logger.warning("voice: stream sherpa that bai, fallback cau: %s", str(exc)[:160])
             captured, _captured_bytes = ([] if _limit > 0 else None), 0
+
+    if v.startswith(vcfg.VIENEU_NANO_PREFIX):
+        yielded = False
+        try:
+            for item in _vieneu_nano_stream(text, v):
+                yielded = True
+                _keep(item)
+                yield item
+            if yielded:
+                if captured:
+                    tts_cache.put(ck, captured, size_bytes=_captured_bytes)
+                return
+        except Exception as exc:
+            if yielded:   # đã phát một phần: không đọc lại từ đầu (xem nhánh sherpa)
+                logger.warning("voice: stream vieneu nano hong giua chung, dung: %s",
+                               str(exc)[:160])
+                return
+            logger.warning("voice: stream vieneu nano that bai, fallback cau: %s",
+                           str(exc)[:160])
+        captured, _captured_bytes = ([] if _limit > 0 else None), 0
+        v = ""   # fallback về Piper mặc định theo câu ở dưới
 
     if v.startswith(vcfg.ZEROTTS_PREFIX):
         try:

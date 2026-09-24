@@ -96,6 +96,10 @@ vig2p==0.1.2             # bảng ký hiệu Kokoro Việt (dùng lại sea-g2p 
 # CHƯA có 0.1.5 ra ngày 15/09 — dựng hỏng "no version of zerotts==0.1.5". Hai bản
 # chỉ khác hub.DEFAULT_REVISION; trọng số do scripts/download_zerotts.py tự ghim.
 zerotts==0.1.4           # runtime ONNX của ZeroTTS (numpy/onnxruntime/tokenizers)
+# Lượng tử hoá ZeroTTS sang int8 (scripts/download_zerotts.py --int8):
+# onnxruntime.quantization nhập `onnx`. Đo 24/09/2026 trên Xeon E5-2630L v4:
+# int8 nhanh gấp 2,1 (RTF 2,39 → 1,13), tiếng đầu 1,22 → 0,63s, sai chữ như nhau.
+onnx>=1.17
 
 # ── PostgreSQL storage backend ──
 sqlalchemy>=2.0.0

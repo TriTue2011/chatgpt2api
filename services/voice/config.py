@@ -59,6 +59,8 @@ NGHI_DIR = Path(DATA_DIR) / "nghitts"    # 19 giọng NghiTTS (VITS tiếng Vi�
 KOKORO_VI_DIR = Path(DATA_DIR) / "kokoro-vi"
 #: ZeroTTS (8 giọng tiếng Việt, 48 kHz) — scripts/download_zerotts.py.
 ZEROTTS_DIR = Path(DATA_DIR) / "zerotts"
+#: VieNeu v3 Nano (11 giọng, 24 kHz, ONNX) — scripts/download_vieneu_nano.py.
+VIENEU_NANO_DIR = Path(DATA_DIR) / "vieneu-nano"
 #: Silero VAD — dò giọng nói bằng mạng nơ-ron, dùng chung cho phần nghe
 #: video và tin nhắn thoại. Tải bằng scripts/download_silero_vad.py.
 VAD_DIR = Path(DATA_DIR) / "vad"
@@ -77,6 +79,11 @@ KOKORO_PREFIX = "kokoro:"
 NGHI_PREFIX = "nghi:"        # "nghi:<mã giọng>" → NghiTTS, xem nghitts_voices.py
 KOKORO_VI_PREFIX = "kokorovi:"   # "kokorovi:<mã>" → Kokoro tiếng Việt, xem kokoro_vi.py
 ZEROTTS_PREFIX = "zerotts:"      # "zerotts:<mã>" → ZeroTTS
+#: "vieneunano:<Tên>" → VieNeu v3 Nano. Đo 24/09/2026 trên máy chủ: RTF 0,68
+#: (16 bước) so với ~2 của v3 Turbo, STT nghe lại 0/76 chữ sai — họ giọng NHANH
+#: cho máy yếu; tác giả ghi chất lượng thấp hơn Turbo, nên để người nghe chọn.
+VIENEU_NANO_PREFIX = "vieneunano:"
+VIENEU_NANO_REPO = "pnnbao-ump/VieNeu-TTS-v3-Nano"
 #: 8 giọng dựng sẵn của ZeroTTS (docs/VOICES.md của repo zeroweight-ai/ZeroTTS).
 ZEROTTS_VOICES = (
     ("maichi", "Mai Chi"), ("baotrang", "Bảo Trang"), ("kimoanh", "Kim Oanh"),
@@ -163,6 +170,16 @@ def voice_catalog() -> list[dict[str, Any]]:
             "language": "vi",
             "language_label": f"Kokoro Việt 24kHz · {kvoice.name}",
             "downloaded": kvoice.id in kv_have,
+            "default": False,
+        })
+    # VieNeu v3 Nano — id "vieneunano:<Tên>"; tên giọng lấy từ gói vieneu.
+    vn_ready = vieneu_nano_dir() is not None
+    for ten, mo_ta in vieneu_nano_voices():
+        out.append({
+            "id": f"{VIENEU_NANO_PREFIX}{ten}",
+            "language": "vi",
+            "language_label": f"VieNeu Nano 24kHz (nhanh) · {ten} · {mo_ta}",
+            "downloaded": vn_ready,
             "default": False,
         })
     # ZeroTTS — id "zerotts:<mã>"; cả gói tải một lần.
@@ -254,7 +271,8 @@ def piper_binary() -> str:
 def voice_model_path(name: str = "") -> Path | None:
     """File .onnx của giọng trong data/piper (None nếu chưa tải)."""
     v = (name or tts_voice()).strip()
-    if v.startswith((VIENEU_PREFIX, KOKORO_PREFIX, NGHI_PREFIX, KOKORO_VI_PREFIX, ZEROTTS_PREFIX)):
+    if v.startswith((VIENEU_PREFIX, KOKORO_PREFIX, NGHI_PREFIX, KOKORO_VI_PREFIX, ZEROTTS_PREFIX,
+                     VIENEU_NANO_PREFIX)):
         v = _DEFAULT_VOICE   # giọng namespaced không phải file Piper — fallback
     if not v:
         return None
@@ -892,6 +910,47 @@ def zerotts_model_dir() -> Path | None:
     need = ("config.json", "tokenizer.json", "null_voice_emb.npy", "onnx/text_encoder.onnx",
             "onnx/prefix_step.onnx", "onnx/local_frame_decode.onnx", "voices/index.json")
     return base if all((base / n).is_file() for n in need) else None
+
+
+def vieneu_nano_dir() -> Path | None:
+    """Thư mục VieNeu v3 Nano khi đủ file để đọc giọng dựng sẵn, None nếu chưa."""
+    need = ("config.json", "constants.npz", "text_encoder.onnx", "duration_predictor.onnx",
+            "vector_estimator.onnx", "codec_decoder.onnx")
+    return VIENEU_NANO_DIR if all((VIENEU_NANO_DIR / n).is_file() for n in need) else None
+
+
+def vieneu_nano_voices() -> list[tuple[str, str]]:
+    """[(tên, mô tả)] giọng dựng sẵn của Nano — đọc từ gói vieneu, rỗng nếu chưa cài."""
+    import importlib.util
+
+    spec = importlib.util.find_spec("vieneu")
+    if spec is None or not spec.origin:
+        return []
+    p = Path(spec.origin).parent / "assets" / "voices_v3_nano.json"
+    try:
+        presets = json.loads(p.read_text(encoding="utf-8")).get("presets", {})
+    except (OSError, ValueError):
+        return []
+    return [(ten, str(v.get("description") or "")) for ten, v in presets.items()]
+
+
+def zerotts_int8_dir() -> Path | None:
+    """Bản int8 của ZeroTTS (scripts/download_zerotts.py --int8), None nếu chưa tạo."""
+    base = ZEROTTS_DIR.parent / "zerotts-int8"
+    need = ("config.json", "tokenizer.json", "null_voice_emb.npy", "onnx/text_encoder.onnx",
+            "onnx/prefix_step.onnx", "onnx/local_frame_decode.onnx", "voices/index.json")
+    return base if all((base / n).is_file() for n in need) else None
+
+
+def zerotts_precision() -> str:
+    """auto | fp32 | int8 (``voice.tts.zerotts_precision``, mặc định auto).
+
+    auto: máy đọc fp32 kịp thời gian thực thì GIỮ fp32 (chủ máy 24/09/2026:
+    "với chip khỏe thì giữ nguyên"), không kịp thì dùng int8 — xem
+    `engines._get_zerotts`.
+    """
+    raw = str(_sub("tts").get("zerotts_precision") or "").strip().lower()
+    return raw if raw in ("fp32", "int8") else "auto"
 
 
 def zerotts_threads() -> int:

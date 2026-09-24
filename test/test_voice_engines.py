@@ -907,3 +907,91 @@ def test_model_dang_doc_do_thi_de_luot_sau(monkeypatch):
         assert "vieneu" not in engines.nha_model_nhan_roi(bay_gio=31 * 60)
     assert engines._vieneu is not None
     assert "vieneu" in engines._DUNG_LUC                                # còn chờ lượt sau
+
+
+# ── ZeroTTS: chip khoẻ giữ fp32, không kịp thời gian thực thì int8 (24/09/2026) ──
+
+
+def _zerotts_gia(monkeypatch, *, rtf, int8=True, muon="auto"):
+    from pathlib import Path
+
+    nap: list[str] = []
+    do: list[int] = []
+    fake = types.ModuleType("zerotts")
+    monkeypatch.setitem(sys.modules, "zerotts", fake)
+    monkeypatch.setattr(engines, "_zerotts", None)
+    monkeypatch.setattr(engines, "_zerotts_chon", "")
+    monkeypatch.setattr(engines, "_dung", lambda _ho: None)
+    monkeypatch.setattr(vcfg, "zerotts_model_dir", lambda: Path("/m/fp32"))
+    monkeypatch.setattr(vcfg, "zerotts_int8_dir", lambda: Path("/m/int8") if int8 else None)
+    monkeypatch.setattr(vcfg, "zerotts_precision", lambda: muon)
+    monkeypatch.setattr(engines, "_nap_zerotts", lambda base: nap.append(base.name) or base.name)
+    monkeypatch.setattr(engines, "_rtf_zerotts", lambda _tts: do.append(1) or rtf)
+    return nap, do
+
+
+def test_zerotts_chip_khoe_giu_fp32(monkeypatch):
+    nap, do = _zerotts_gia(monkeypatch, rtf=0.6)
+    assert engines._get_zerotts() == "fp32"
+    assert (nap, len(do), engines._zerotts_chon) == (["fp32"], 1, "fp32")
+
+
+def test_zerotts_khong_kip_thoi_gian_thuc_thi_int8_va_nho_lua_chon(monkeypatch):
+    nap, do = _zerotts_gia(monkeypatch, rtf=1.5)
+    assert engines._get_zerotts() == "int8"
+    engines._bo_model("zerotts")                    # tự nhả sau 30 phút
+    assert engines._get_zerotts() == "int8"
+    assert (nap, len(do)) == (["fp32", "int8", "int8"], 1)   # không đo lại
+
+
+def test_zerotts_ep_fp32_hoac_chua_co_int8_thi_khong_do(monkeypatch):
+    nap, do = _zerotts_gia(monkeypatch, rtf=3.0, muon="fp32")
+    assert engines._get_zerotts() == "fp32" and not do
+    nap, do = _zerotts_gia(monkeypatch, rtf=3.0, int8=False)
+    assert engines._get_zerotts() == "fp32" and not do
+    nap, do = _zerotts_gia(monkeypatch, rtf=0.1, muon="int8")
+    assert engines._get_zerotts() == "int8" and not do
+
+
+# ── VieNeu v3 Nano: họ giọng nhanh, engine tự nghỉ (24/09/2026) ─────────────
+
+
+def test_vieneu_nano_stream_di_duong_rieng_khong_chen_nghi(monkeypatch):
+    monkeypatch.setattr(vcfg, "tts_backend", lambda: "local")
+    monkeypatch.setattr(tts_cache, "get", lambda _k: None)
+    goi: list[tuple[str, str]] = []
+
+    def nano(text, voice):
+        goi.append((text, voice))
+        yield 24000, b"\x10\x27" * 2400
+        yield 24000, b"\x00\x00" * 480          # nghỉ do chính engine chèn
+        yield 24000, b"\x10\x27" * 2400
+
+    monkeypatch.setattr(engines, "_vieneu_nano_stream", nano)
+    monkeypatch.setattr(engines, "_silence_plan", lambda: (400, 180, 600, 0))
+    ra = list(engines._stream_tao("Câu một, vế hai. Câu ba.", "vieneunano:Adam"))
+    assert goi == [("Câu một, vế hai. Câu ba.", "vieneunano:Adam")]   # một lần gọi cả đoạn
+    assert [len(p) for _r, p in ra] == [4800, 960, 4800]                 # không thêm nghỉ cấu hình
+
+
+def test_vieneu_nano_hong_truoc_khi_co_tieng_thi_lui_ve_piper(monkeypatch):
+    monkeypatch.setattr(vcfg, "tts_backend", lambda: "local")
+    monkeypatch.setattr(tts_cache, "get", lambda _k: None)
+
+    def hong(_text, _voice):
+        raise engines.VoiceError("chưa tải")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(engines, "_vieneu_nano_stream", hong)
+    monkeypatch.setattr(engines, "_piper_local", lambda text, v="": engines._pcm_to_wav(b"\x10\x27" * 100, 22050, 2, 1))
+    ra = list(engines._stream_tao("Xin chào.", "vieneunano:Adam"))
+    assert ra and all(r == 22050 for r, _p in ra)
+
+
+def test_vieneu_nano_vao_danh_muc_theo_goi_cai(monkeypatch):
+    monkeypatch.setattr(vcfg, "vieneu_nano_voices", lambda: [("Adam", "Nam · Nam")])
+    monkeypatch.setattr(vcfg, "vieneu_nano_dir", lambda: None)
+    muc = [v for v in vcfg.voice_catalog() if v["id"].startswith(vcfg.VIENEU_NANO_PREFIX)]
+    assert muc == [{"id": "vieneunano:Adam", "language": "vi",
+                    "language_label": "VieNeu Nano 24kHz (nhanh) · Adam · Nam · Nam",
+                    "downloaded": False, "default": False}]
