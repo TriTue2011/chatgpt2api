@@ -10,8 +10,16 @@ Chemical-Converters chỉ đổi giữa các dạng ký hiệu), và bộ chuẩ
 Nhận diện theo NGUYÊN TẮC, không theo danh sách từ: một chuỗi là công thức
 khi tách được HẾT thành ký hiệu trong bảng tuần hoàn (118 nguyên tố — tập đóng
 của khoa học) VÀ có dấu hiệu công thức (chỉ số, điện tích, ngoặc, hoặc chữ hoa
-lẫn chữ thường kiểu NaCl). Nhờ vậy "Co giãn", "CON", "WHO" không bị đụng.
-Trong câu có mũi tên phản ứng thì "CO", "NO" viết hoa cũng là công thức.
+lẫn chữ thường kiểu NaCl).
+
+Ký hiệu ĐỨNG MỘT MÌNH xét theo NGỮ CẢNH (chủ máy 24/09/2026: "Mg và mg khác
+nhau… Ca, Ba, La, Co căn cứ vào ngữ cảnh chứ không phải do từ"):
+* không thể là âm tiết tiếng Việt (Mg, Zn, Fe, Hg, Cl… — xét bằng luật cấu tạo
+  âm tiết, không bằng từ điển) → luôn là nguyên tố; "mg" viết thường không phải
+  ký hiệu nên vẫn là mi-li-gam;
+* có dáng âm tiết (Ca, Ba, La, Co, Na…) → là nguyên tố khi CÂU có ngữ cảnh hoá
+  học: một công thức, một ký hiệu phản ứng, hoặc một ký hiệu chắc chắn như Mg.
+  "Ba mẹ đi làm" giữ nguyên; "Cho Ba vào H2SO4" đọc "bê a".
 
 Cách đọc như lớp học: ký hiệu đánh vần bằng tên chữ cái ("ép e", "nờ a") —
 cùng tên chữ cái mà sea_g2p dùng, nên giọng đọc thống nhất —, chỉ số đọc thành
@@ -42,9 +50,21 @@ _SO = ["không", "một", "hai", "ba", "bốn", "năm", "sáu", "bảy", "tám",
 #: Chữ số mũ KHÔNG liền mạch trong Unicode (¹²³ ở khối Latin-1, ⁰⁴…⁹ ở U+207x)
 #: — khoảng "⁰-⁹" bỏ sót ²³, nên liệt kê đủ.
 _MU = "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻"
-# Ứng viên: bắt đầu bằng hệ số/chữ hoa/ngoặc, không dính chữ phía trước.
-_UNG_VIEN = re.compile(r"(?<![\w])\d*[A-Z(][A-Za-z0-9₀-₉()·." + _MU + r"^+\-]*")
+# Ứng viên: bắt đầu bằng hệ số/chữ hoa/ngoặc, không dính chữ phía trước LẪN
+# phía sau — thiếu đuôi (?!\w) thì "Nước" tách ra "N" + "ước" rồi thành "nờước".
+_UNG_VIEN = re.compile(r"(?<![\w])\d*[A-Z(][A-Za-z0-9₀-₉()·." + _MU + r"^+\-]*(?!\w)")
 _NGUYEN_TO_RE = re.compile(r"[A-Z][a-z]?")
+#: Cấu tạo âm tiết tiếng Việt viết không dấu: phụ âm đầu? + nguyên âm + âm cuối?
+_AM_TIET = re.compile(r"(ngh|ng|nh|ch|gh|gi|kh|ph|qu|th|tr|[bcdghklmnprstvx])?"
+                      r"[aeiouy]+(ng|nh|ch|[cmnptiyou])?")
+#: Hết câu = dấu câu rồi khoảng trắng/hết chữ, hoặc xuống dòng — "CuSO4.5H2O",
+#: "TP.HCM", "9.8" không phải chỗ hết câu.
+_CAU = re.compile(r".+?(?:[.!?](?=\s|$)|\n|$)\s*", re.S)
+
+
+def _dang_am_tiet(tu: str) -> bool:
+    """Có thể là một âm tiết tiếng Việt không (không cần dấu) — "Ca" có, "Mg" không."""
+    return bool(_AM_TIET.fullmatch(tu.lower()))
 
 
 def _la_so(c: str) -> bool:
@@ -108,14 +128,14 @@ def _doc_phan(s: str) -> tuple[list[str], int] | None:
     return (ra, dem) if ra else None
 
 
-def doc_cong_thuc(token: str, *, trong_phan_ung: bool = False) -> str | None:
+def doc_cong_thuc(token: str, *, ngu_canh: bool = False, viet: bool = True) -> str | None:
     """Lời đọc của MỘT công thức, hoặc None nếu chuỗi không phải công thức."""
     goc = token
     dien_tich = ""
     # Điện tích: số mũ ("²⁻"), dạng "^2-", hoặc viết thường "Fe3+" (MỘT chữ số
     # dính dấu). Không gộp chỉ số thường vào: "SO4²⁻" là "bốn" rồi "hai trừ".
     m = (re.search(r"([⁰¹²³⁴⁵⁶⁷⁸⁹]*[⁺⁻])$", token) or re.search(r"(\^\d*[+\-])$", token)
-         or re.search(r"(?<=[A-Za-z)])(\d[+\-])$", token))
+         or re.search(r"(?<=[A-Za-z)])(\d?[+\-])$", token))
     if m:
         so = m.group(1).translate(_TREN).lstrip("^")
         dien_tich = (doc_so(int(so[:-1])) + " " if so[:-1] else "") + ("cộng" if so[-1] == "+" else "trừ")
@@ -136,31 +156,57 @@ def doc_cong_thuc(token: str, *, trong_phan_ung: bool = False) -> str | None:
         tong += d[1]
     co_dau_hieu = (bool(dien_tich) or any(_la_so(c) for c in goc.translate(_DUOI))
                    or "(" in goc or (tong >= 2 and any(c.islower() for c in goc)))
-    if not (co_dau_hieu or (trong_phan_ung and tong >= 2)):
-        return None
+    if not co_dau_hieu:
+        # Đứng một mình, không chỉ số: chắc chắn là nguyên tố khi không thể là
+        # âm tiết tiếng Việt; có dáng âm tiết (Ca, Ba, CO) thì cần ngữ cảnh.
+        # Luật âm tiết chỉ có nghĩa trong câu tiếng Việt ("As you know" là tiếng Anh).
+        if not (ngu_canh or (viet and tong == 1 and not _dang_am_tiet(token))):
+            return None
     return " ".join(loi + ([dien_tich] if dien_tich else []))
+
+
+_CO_DAU = re.compile("[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]",
+                     re.IGNORECASE)
+
+
+def _co_ngu_canh(cau: str, viet: bool) -> bool:
+    """Câu có dấu hiệu hoá học chắc chắn: ký hiệu phản ứng hoặc một công thức /
+    ký hiệu nhận ra được mà KHÔNG cần ngữ cảnh."""
+    if any(k in cau for k in _PHAN_UNG):
+        return True
+    for m in _UNG_VIEN.finditer(cau):
+        s = m.group(0).rstrip(".,;:!?")
+        if s and doc_cong_thuc(s, viet=viet) is not None:
+            return True
+    return False
 
 
 def doc(text: str) -> str:
     """Thay mọi công thức và ký hiệu phản ứng trong ``text`` bằng lời đọc."""
     if not text or not re.search(r"[A-Z(]", text):
         return text
-    trong_phan_ung = any(k in text for k in _PHAN_UNG)
+    return "".join(_doc_cau(m.group(0)) for m in _CAU.finditer(text)) or text
+
+
+def _doc_cau(cau: str) -> str:
+    viet = bool(_CO_DAU.search(cau))
+    ngu_canh = _co_ngu_canh(cau, viet)
+    trong_phan_ung = any(k in cau for k in _PHAN_UNG)
 
     def thay(m: re.Match) -> str:
         s = m.group(0)
         # Dấu câu dính cuối ("… H2SO4.") không thuộc công thức.
         duoi = ""
         while s and s[-1] in ".,;:!?-+":
-            loi = doc_cong_thuc(s, trong_phan_ung=trong_phan_ung)
+            loi = doc_cong_thuc(s, ngu_canh=ngu_canh, viet=viet)
             if loi is not None:
                 return loi + duoi
             duoi = s[-1] + duoi
             s = s[:-1]
-        loi = doc_cong_thuc(s, trong_phan_ung=trong_phan_ung) if s else None
+        loi = doc_cong_thuc(s, ngu_canh=ngu_canh, viet=viet) if s else None
         return (loi if loi is not None else s) + duoi
 
-    ra = _UNG_VIEN.sub(thay, text)
+    ra = _UNG_VIEN.sub(thay, cau)
     for ky, loi in _PHAN_UNG.items():
         ra = ra.replace(ky, f" {loi} ")
     if trong_phan_ung:

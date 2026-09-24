@@ -35,7 +35,10 @@ def test_phuong_trinh_mui_ten_dau_cong_va_he_so():
 
 
 @pytest.mark.parametrize("cau", [
-    "Co giãn tốt.", "CON mèo.", "WHO họp.", "Mg trong máu.", "iPhone 15.",
+    "Co giãn tốt.", "CON mèo.", "WHO họp.", "5 mg thuốc.", "iPhone 15.",
+    "Ba mẹ đi làm. Ca sĩ hát hay. La hét.",
+    "Nước sạch. Hôm nay Ông Bà Cô Chú về.",   # chữ hoa đầu từ có dấu không bị tách
+    "As you know, In my opinion.",            # câu tiếng Anh: không áp luật âm tiết
     "Chương III.", "Covid-19.", "x² + 2x = 0, 10³", "Giá 100$.", "A4, MP3, G7.",
 ])
 def test_khong_dung_chu_khong_phai_cong_thuc(cau):
@@ -74,3 +77,15 @@ def test_engine_doi_chu_sau_khoa_cache_va_bo_qua_kokoro_anh(monkeypatch):
 
 def test_so_mu_dinh_dau_cau_khong_do_loi():
     assert h.doc("ion Fe³⁺, SO4²⁻.") == "ion ép e ba cộng, ét ô bốn hai trừ."
+
+
+@pytest.mark.parametrize("viet, doc", [
+    ("Mg trong máu cao.", "mờ gờ trong máu cao."),          # Mg ≠ mg
+    ("Ca và Mg là kim loại.", "xê a và mờ gờ là kim loại."),
+    ("Cho Ba vào dung dịch H2SO4.", "Cho bê a vào dung dịch hát hai ét ô bốn."),
+    ("Ion Cl- và Na+ trong NaCl.", "Ion xê lờ trừ và nờ a cộng trong nờ a xê lờ."),
+    ("Ba mẹ đi làm. Cho Ba vào H2O.", "Ba mẹ đi làm. Cho bê a vào hát hai ô."),
+    ("Water is H2O.", "Water is hát hai ô."),                  # công thức chắc chắn thì vẫn đổi
+])
+def test_ky_hieu_dung_rieng_theo_ngu_canh(viet, doc):
+    assert h.doc(viet) == doc
