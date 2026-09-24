@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useSettingsStore } from "../store";
 import { request } from "@/lib/request";
+import { BoDamCamera } from "./bo-dam-camera";
 
 type Cam = {
   kind: "go2rtc" | "rtsp";
@@ -59,6 +60,8 @@ export function CameraCard() {
   const [xemTruoc, setXemTruoc] = useState("");
   const [models, setModels] = useState<Record<string, string[]>>({});
   const [modelAnh, setModelAnh] = useState("");
+  const [boDam, setBoDam] = useState("");        // camera đang mở bộ đàm
+  const [dongHa, setDongHa] = useState<{ ten: string; nguon: string } | null>(null);
 
   useEffect(() => {
     const c = ((config as any)?.cameras as Record<string, Cam>) || {};
@@ -178,6 +181,21 @@ export function CameraCard() {
     } finally { setBusy(""); }
   };
 
+  // Dòng go2rtc cho thẻ WebRTC Camera của HA nói ra loa camera. c2a ký sẵn
+  // đường POST (go2rtc không gửi được header) — địa chỉ lấy theo trang đang mở.
+  const layDongHa = async (t: string) => {
+    setMsg("");
+    try {
+      const r = await request.get(`/api/camera/bo_dam/${encodeURIComponent(t)}/go2rtc`,
+                                  { params: { goc: window.location.origin } });
+      const d = r.data as { ok?: boolean; nguon?: string; error?: string };
+      if (d.ok && d.nguon) setDongHa({ ten: t, nguon: d.nguon });
+      else setMsg(`❌ ${d.error || "Không lấy được"}`);
+    } catch (e) {
+      setMsg(`❌ ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   const ds = Object.entries(cams);
 
   return (
@@ -239,6 +257,20 @@ export function CameraCard() {
                 </span>
               ) : null}
               <div className="ml-auto flex flex-wrap gap-1">
+                {c.ve_tinh_cong ? (
+                  <>
+                    <Button size="sm" variant={boDam === t ? "default" : "outline"}
+                      title="Nghe camera và giữ nút để nói ra loa camera"
+                      onClick={() => setBoDam(boDam === t ? "" : t)}>
+                      📞 Bộ đàm
+                    </Button>
+                    <Button size="sm" variant="outline"
+                      title="Dòng dán vào go2rtc.yaml để thẻ WebRTC Camera của HA nói ra loa camera này"
+                      onClick={() => void layDongHa(t)}>
+                      📋 Dòng go2rtc
+                    </Button>
+                  </>
+                ) : null}
                 <Button size="sm" variant="outline" disabled={busy === t} onClick={() => thu(t)}>
                   {busy === t ? "…" : "Chụp thử"}
                 </Button>
@@ -251,6 +283,35 @@ export function CameraCard() {
             </div>
           ))}
         </div>
+
+        {boDam && cams[boDam] ? (
+          <BoDamCamera key={boDam} ten={boDam} onClose={() => setBoDam("")} />
+        ) : null}
+
+        {dongHa ? (
+          <div className="rounded border border-border/70 p-3 space-y-2">
+            <p className="text-sm font-medium">📋 Bộ đàm trong Home Assistant — «{dongHa.ten}»</p>
+            <p className="text-xs text-muted-foreground">
+              1. Mở <code>go2rtc.yaml</code> của HA, thêm dòng dưới vào <b>cuối danh sách nguồn</b>{" "}
+              của luồng camera này (luồng mà thẻ WebRTC Camera đang xem), rồi khởi động lại go2rtc.
+              Địa chỉ trong dòng phải là địa chỉ máy go2rtc gọi tới được c2a — mở trang này bằng
+              IP nội bộ thì đúng sẵn.
+            </p>
+            <textarea readOnly rows={4} value={`      - "${dongHa.nguon}"`}
+              className="w-full rounded border border-input bg-muted/40 p-2 font-mono text-[11px]"
+              onFocus={(e) => e.currentTarget.select()} />
+            <p className="text-xs text-muted-foreground">
+              2. Trong thẻ <code>custom:webrtc-camera</code> thêm{" "}
+              <code>media: video,audio,microphone</code>, mở HA bằng <b>https</b> (mic trình
+              duyệt chỉ chạy trên https), bấm nút mic trên thẻ rồi nói.
+            </p>
+            <p className="text-xs text-amber-600">
+              ⚠️ Dòng này chứa chữ ký riêng của camera này: ai có nó thì phát được tiếng ra loa
+              camera (không làm được gì khác). Đừng dán ra ngoài go2rtc.yaml.
+            </p>
+            <Button size="sm" variant="outline" onClick={() => setDongHa(null)}>Đóng</Button>
+          </div>
+        ) : null}
 
         {xemTruoc ? (
           // eslint-disable-next-line @next/next/no-img-element

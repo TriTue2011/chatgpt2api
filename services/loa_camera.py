@@ -18,7 +18,6 @@ c2a không giữ thêm một bản mật khẩu nào.
 from __future__ import annotations
 
 import hashlib
-import logging
 import socket
 import struct
 import subprocess
@@ -27,7 +26,9 @@ import time
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-logger = logging.getLogger(__name__)
+# Logger của dự án: ``logging.getLogger(__name__)`` không có handler nào nên mọi
+# dòng bị nuốt (đo 24/09/2026: 6 giờ phát loa, 0 dòng log trong docker logs).
+from utils.log import logger  # noqa: E402
 
 CONG_NOI = 37777
 #: Kênh nói. Camera một mắt chỉ có kênh 0 — PR #2431 ghi số kênh ngoài dải làm
@@ -361,7 +362,12 @@ class PhatLuong:
         self._khoa.acquire()
         self._giu_khoa = True
         try:
-            self._kenh = KenhNoi(ip, user, mk).__enter__()
+            try:
+                self._kenh = KenhNoi(ip, user, mk).__enter__()
+            except OSError as exc:
+                # Như ``phat``: người gọi (vệ tinh, bộ đàm) chỉ bắt LoiLoa — lỗi mạng
+                # lọt ra là đứt luôn kết nối HA / phiên bộ đàm vì camera rớt mạng.
+                raise LoiLoa(f"không nói được với camera ({str(exc)[:100]})") from exc
             self._ff = subprocess.Popen(
                 ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "s16le",
                  "-ar", str(int(rate)), "-ac", str(int(channels)), "-i", "pipe:0",
@@ -490,48 +496,51 @@ def _muc_db(pcm: bytes) -> float:
 
 
 class BoDam:
-    """Một phiên bộ đàm tới camera ``ten``: nhận A-law 8 kHz, mở loa khi có tiếng.
+    """Một phiên bộ đàm tới camera ``ten``: nhận tiếng, mở loa khi có người nói.
 
-    Không thread-safe: một luồng gọi ``them`` rồi ``dong``.
+    ``them`` nhận A-law 8 kHz (go2rtc), ``them_pcm`` nhận PCM16 mono ``tan_so``
+    (trình duyệt). Không thread-safe: một luồng gọi ``them*`` rồi ``dong``.
     """
 
-    def __init__(self, ten: str) -> None:
-        self.ten = ten
+    def __init__(self, ten: str, tan_so: int = _TAN_SO) -> None:
+        self.ten, self.tan_so = ten, int(tan_so)
         self.giay = 0.0                   # tổng số giây đã phát ra loa
         self._phat: PhatLuong | None = None
         self._dem = b""                   # tiếng ngay trước lúc có người nói
         self._im = 0.0                    # số giây im liền từ tiếng cuối
-        self._loi = ""                    # lỗi lần mở loa gần nhất (khỏi ghi log dồn)
+        self.loi = ""                    # lỗi lần mở loa gần nhất ("" = ổn); khỏi ghi log dồn
 
     def them(self, alaw: bytes) -> None:
-        if not alaw:
+        self.them_pcm(alaw_sang_pcm(alaw))
+
+    def them_pcm(self, pcm: bytes) -> None:
+        pcm = pcm[: len(pcm) // 2 * 2]
+        if not pcm:
             return
-        pcm = alaw_sang_pcm(alaw)
-        giay = len(pcm) / (2 * _TAN_SO)
+        giay = len(pcm) / (2 * self.tan_so)
         co_tieng = _muc_db(pcm) > BO_DAM_NGUONG_DB
         self._im = 0.0 if co_tieng else self._im + giay
         if self._phat is None:
             if not co_tieng:
-                self._dem = (self._dem + pcm)[-int(BO_DAM_DEM_GIAY * _TAN_SO) * 2:]
+                self._dem = (self._dem + pcm)[-int(BO_DAM_DEM_GIAY * self.tan_so) * 2:]
                 return
             try:
-                self._phat = PhatLuong(self.ten, _TAN_SO)
+                self._phat = PhatLuong(self.ten, self.tan_so)
             except LoiLoa as exc:
-                if str(exc) != self._loi:
-                    self._loi = str(exc)
+                if str(exc) != self.loi:
+                    self.loi = str(exc)
                     logger.warning({"event": "bo_dam_khong_mo_duoc_loa", "camera": self.ten,
-                                    "loi": self._loi[:160]})
+                                    "loi": self.loi[:160]})
                 return
-            self._loi = ""
+            self.loi = ""
             pcm, self._dem = self._dem + pcm, b""
         self._phat.them(pcm)
         if self._im >= BO_DAM_IM_GIAY:
-            self._dong_loa()
-
-    def _dong_loa(self) -> None:
-        phat, self._phat = self._phat, None
-        if phat is not None:
-            self.giay += phat.xong()
+            self.dong()
 
     def dong(self) -> None:
-        self._dong_loa()
+        """Đóng kênh nói (nếu đang mở) — camera nghe lại được. Nói tiếp thì mở lại."""
+        phat, self._phat = self._phat, None
+        self._dem, self._im = b"", 0.0
+        if phat is not None:
+            self.giay += phat.xong()

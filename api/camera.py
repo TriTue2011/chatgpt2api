@@ -15,6 +15,14 @@ Bộ đàm (mic điện thoại qua thẻ WebRTC Camera của HA → loa camera)
 ``GET  /api/camera/bo_dam/{ten}/go2rtc``  dòng ``exec:`` để dán vào go2rtc.yaml
 ``POST /api/camera/bo_dam/{ten}``         go2rtc đẩy luồng A-law 8 kHz tới đây
 
+Bộ đàm ngay trong web c2a (không cần HA):
+
+``POST /api/camera/bo_dam/{ten}/ve``      vé dùng một lần, sống 60 giây
+``WS   /api/camera/bo_dam/{ten}/ws?ve=``  hai chiều: máy chủ gửi tiếng mic camera
+                                          (PCM16 mono 16 kHz, nhị phân); trình
+                                          duyệt gửi tiếng mic PCM16 16 kHz lúc giữ
+                                          nút, và chữ ``het`` khi thả nút
+
 go2rtc không gửi được header ``Authorization`` từ một lệnh ``exec``, nên đường
 POST dùng chữ ký HMAC (``services/signed_url``) gắn với đúng camera và đúng
 phương thức — chữ ký rò ra chỉ phát được ra loa của camera ấy, không làm gì khác.
@@ -24,13 +32,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import logging
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from api.support import require_admin
-
-logger = logging.getLogger(__name__)
+# Logger của dự án: ``logging.getLogger(__name__)`` không có handler, mọi dòng bị nuốt.
+from utils.log import logger
 
 
 def create_router() -> APIRouter:
@@ -126,7 +133,98 @@ def create_router() -> APIRouter:
             logger.info({"event": "bo_dam_dong", "camera": ten, "giay": round(phien.giay, 1)})
         return {"ok": True, "giay": round(phien.giay, 1)}
 
+    @router.post("/api/camera/bo_dam/{ten}/ve")
+    async def bo_dam_ve(ten: str, request: Request,
+                        authorization: str | None = Header(default=None)):
+        """Xin vé mở bộ đàm web. WebSocket của trình duyệt không gửi được header."""
+        identity = require_admin(authorization)
+        from services.sse_ticket import kho_ve
+
+        ve, ttl = kho_ve.cap({**identity, "bo_dam": ten}, _phien_bam(request))
+        return {"ok": True, "ticket": ve, "expires_in": ttl}
+
+    @router.websocket("/api/camera/bo_dam/{ten}/ws")
+    async def bo_dam_ws(ws: WebSocket, ten: str, ve: str = ""):
+        from services import camera_nha, loa_camera, ve_tinh_camera
+        from services.sse_ticket import kho_ve
+
+        danh_tinh = kho_ve.dung(ve, _phien_bam(ws))
+        # Vé cấp cho camera này mới mở được camera này.
+        if not danh_tinh or danh_tinh.get("bo_dam") != ten:
+            await ws.close(code=4401)
+            return
+        try:
+            ten_that, cam = await asyncio.to_thread(camera_nha._lay, ten)
+        except camera_nha.LoiCamera as exc:
+            await ws.accept()
+            await ws.send_json({"loi": str(exc)})
+            await ws.close()
+            return
+        await ws.accept()
+        phien = loa_camera.BoDam(ten_that, _TAN_SO_WEB)
+        logger.info({"event": "bo_dam_web_mo", "camera": ten_that})
+
+        async def nghe() -> None:
+            """Tiếng mic camera → trình duyệt; ffmpeg chết (camera rớt mạng) thì mở lại."""
+            while True:
+                proc = await asyncio.create_subprocess_exec(
+                    *ve_tinh_camera._lenh_mic(cam), stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL, stdin=asyncio.subprocess.DEVNULL)
+                try:
+                    while True:
+                        await ws.send_bytes(await proc.stdout.readexactly(_KHUC_NGHE))
+                except asyncio.IncompleteReadError:
+                    pass
+                finally:
+                    if proc.returncode is None:
+                        proc.kill()
+                        await proc.wait()
+                await asyncio.sleep(2)
+
+        tai = asyncio.create_task(nghe())
+        da_bao = ""
+        try:
+            while True:
+                tin = await ws.receive()
+                if tin["type"] == "websocket.disconnect":
+                    break
+                if tin.get("bytes"):
+                    await asyncio.to_thread(phien.them_pcm, tin["bytes"])
+                    if phien.loi != da_bao:
+                        da_bao = phien.loi
+                        await ws.send_json({"loi": da_bao})
+                elif tin.get("text") == "het":
+                    await asyncio.to_thread(phien.dong)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            tai.cancel()
+            await asyncio.gather(tai, return_exceptions=True)
+            await asyncio.to_thread(phien.dong)
+            logger.info({"event": "bo_dam_web_dong", "camera": ten_that,
+                         "giay": round(phien.giay, 1)})
+
     return router
+
+
+def _phien_bam(conn) -> str:
+    """Hash session-id trong cookie ("" nếu đi bằng Bearer) — khuôn ``api/register``.
+
+    Vé RÀNG vào phiên đã xin nó: đọc được vé trong 60 giây cũng không mở được
+    bộ đàm từ máy khác.
+    """
+    try:
+        from services.browser_session import COOKIE_NAME, _bam
+        sid = conn.cookies.get(COOKIE_NAME, "")
+        return _bam(sid) if sid else ""
+    except Exception:
+        return ""
+
+
+#: Trình duyệt thu và phát ở 16 kHz — đủ cho tiếng nói, nhẹ đường truyền.
+_TAN_SO_WEB = 16000
+#: 64 ms mỗi khúc gửi trình duyệt.
+_KHUC_NGHE = 2048
 
 
 _PHAM_VI_BO_DAM = "bo_dam"

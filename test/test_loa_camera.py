@@ -141,3 +141,14 @@ def test_doi_am_thanh_ve_pcm_8k():
 def test_noi_cau_rong_bao_loi():
     with pytest.raises(lc.LoiLoa, match="Chưa có câu"):
         lc.noi("Cam cửa", "   ")
+
+
+def test_phat_luong_camera_rot_mang_bao_loi_loa() -> None:
+    """Người gọi (vệ tinh, bộ đàm) chỉ bắt LoiLoa: lỗi mạng phải đổi thành LoiLoa."""
+    with mock.patch.object(lc, "_lay_cho_phat", lambda ten: (ten, {})), \
+            mock.patch.object(lc, "dia_chi", lambda cam: ("127.0.0.1", "u", "p")), \
+            mock.patch.object(lc.KenhNoi, "_mo", side_effect=ConnectionRefusedError("từ chối")):
+        with pytest.raises(lc.LoiLoa, match="không nói được"):
+            lc.PhatLuong("cửa", 8000)
+    # Khoá camera được nhả: lần sau không kẹt.
+    assert not lc._khoa["127.0.0.1"].locked()

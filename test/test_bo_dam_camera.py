@@ -49,8 +49,7 @@ class PhatGia:
     mo: list["PhatGia"] = []
 
     def __init__(self, ten: str, rate: int, *a) -> None:
-        assert rate == 8000
-        self.ten, self.pcm, self.dong = ten, b"", False
+        self.ten, self.rate, self.pcm, self.dong = ten, rate, b"", False
         PhatGia.mo.append(self)
 
     def them(self, pcm: bytes) -> None:
@@ -59,7 +58,7 @@ class PhatGia:
 
     def xong(self, *a) -> float:
         self.dong = True
-        return len(self.pcm) / 16000
+        return len(self.pcm) / (2 * self.rate)
 
 
 @pytest.fixture
@@ -197,6 +196,7 @@ def test_post_dung_chu_ky_thi_phat(client, phat_gia) -> None:
     assert r.status_code == 200, r.text
     assert r.json()["giay"] > 0.9
     assert len(phat_gia) == 1 and phat_gia[0].ten == "Cam cửa" and phat_gia[0].dong
+    assert phat_gia[0].rate == 8000           # go2rtc gửi A-law 8 kHz
 
 
 def test_post_sai_chu_ky_hay_sai_camera_bi_chan(client, phat_gia) -> None:
@@ -211,3 +211,66 @@ def test_post_sai_chu_ky_hay_sai_camera_bi_chan(client, phat_gia) -> None:
     assert khac != duong
     assert client.post(khac, content=tieng).status_code == 403
     assert phat_gia == []
+
+
+# ── Bộ đàm trong web c2a (WebSocket) ─────────────────────────────────────────
+
+@pytest.fixture
+def client_ws(phat_gia):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from api import camera as api_camera
+
+    app = FastAPI()
+    app.include_router(api_camera.create_router())
+    # Mic camera giả: một lệnh in ra đúng 4096 byte rồi đứng chờ.
+    mic = ["sh", "-c", "head -c 4096 /dev/zero | tr '\\0' 'A'; sleep 30"]
+    with mock.patch("api.camera.require_admin", lambda *a, **k: {"id": "admin"}), \
+            mock.patch("services.camera_nha._lay", lambda ten: (ten, {})), \
+            mock.patch("services.ve_tinh_camera._lenh_mic", lambda cam: mic):
+        yield TestClient(app)
+
+
+def _ve(c, ten: str) -> str:
+    return c.post(f"/api/camera/bo_dam/{ten}/ve").json()["ticket"]
+
+
+def test_ws_nghe_camera_va_noi_ra_loa(client_ws, phat_gia) -> None:
+    with client_ws.websocket_connect(f"/api/camera/bo_dam/cửa/ws?ve={_ve(client_ws, 'cửa')}") as ws:
+        nghe = ws.receive_bytes()
+        assert nghe == b"A" * 2048            # tiếng mic camera tới trình duyệt
+        ws.send_bytes(struct.pack("<8000h", *[8000] * 8000))   # 0,5 s tiếng to (16 kHz)
+        ws.send_text("het")                   # thả nút: đóng kênh nói ngay
+        # Máy chủ xử lý bất đồng bộ: chờ tới khi kênh nói đóng (không cần im 1,5 s).
+        import time
+        het_han = time.monotonic() + 5
+        while not (phat_gia and phat_gia[0].dong) and time.monotonic() < het_han:
+            time.sleep(0.02)
+    assert len(phat_gia) == 1 and phat_gia[0].dong
+    assert len(phat_gia[0].pcm) == 16000
+    assert phat_gia[0].rate == 16000          # trình duyệt gửi PCM 16 kHz
+
+
+def test_ws_ve_sai_hay_ve_camera_khac_bi_tu_choi(client_ws) -> None:
+    from starlette.websockets import WebSocketDisconnect
+
+    with pytest.raises(WebSocketDisconnect) as e:
+        with client_ws.websocket_connect("/api/camera/bo_dam/cửa/ws?ve=bay") as ws:
+            ws.receive_bytes()
+    assert e.value.code == 4401
+    ve_bep = _ve(client_ws, "bếp")
+    with pytest.raises(WebSocketDisconnect):
+        with client_ws.websocket_connect(f"/api/camera/bo_dam/cửa/ws?ve={ve_bep}") as ws:
+            ws.receive_bytes()
+
+
+def test_ws_ve_chi_dung_mot_lan(client_ws) -> None:
+    from starlette.websockets import WebSocketDisconnect
+
+    ve = _ve(client_ws, "cửa")
+    with client_ws.websocket_connect(f"/api/camera/bo_dam/cửa/ws?ve={ve}") as ws:
+        ws.receive_bytes()
+    with pytest.raises(WebSocketDisconnect):
+        with client_ws.websocket_connect(f"/api/camera/bo_dam/cửa/ws?ve={ve}") as ws:
+            ws.receive_bytes()
