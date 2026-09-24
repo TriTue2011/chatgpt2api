@@ -47,6 +47,10 @@ class BoMat:
     tep_vector: str
     sha_vector: str
     mo_ta: str
+    #: Độ lớn vector GỐC (trước chuẩn hoá) dưới ngần này thì không phải mặt nhận
+    #: được. 0 = chưa đo cho bộ này, không lọc. Độ lớn phụ thuộc model nên mỗi bộ
+    #: một số (ý của MagFace/AdaFace: độ lớn đặc trưng đi theo độ dễ nhận).
+    chuan_toi_thieu: float = 0.0
 
     @property
     def zip(self) -> str:
@@ -64,7 +68,11 @@ BO: tuple[BoMat, ...] = (
     BoMat("buffalo_l", 288.6,
           "det_10g.onnx", "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91",
           "w600k_r50.onnx", "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
-          "chính xác hơn với mặt nhỏ/xa, chậm gấp khoảng mười lần"),
+          "chính xác hơn với mặt nhỏ/xa, chậm gấp khoảng mười lần",
+          # Đo 24/09/2026 trên 573 lượt camera thật: 65 lượt dưới 16 không lượt
+          # nào từng được nhận «quen» (ảnh: tường, khung cửa, gáy, đầu cúi);
+          # 16–19 là 0–31% đạt ngưỡng; từ 20 trở lên 77%.
+          chuan_toi_thieu=16.0),
 )
 MAC_DINH = "buffalo_s"
 
@@ -97,6 +105,7 @@ class Mat:
     diem: float
     moc: object                    # ndarray (5, 2) float32
     vector: object = None          # ndarray (512,) float32, đã chuẩn hoá độ dài 1
+    chuan: float = 0.0             # độ lớn vector gốc — thước đo mặt có nhận được không
 
     @property
     def rong(self) -> float:
@@ -301,7 +310,8 @@ class BoNhanMat:
                                       (_VEC_TRUNG_BINH,) * 3, swapRB=True)
         with self._khoa:
             v = self._vec.run(None, {self._vec.get_inputs()[0].name: blob})[0].ravel()
-        mat.vector = (v / np.linalg.norm(v)).astype(np.float32)
+        mat.chuan = float(np.linalg.norm(v))
+        mat.vector = (v / mat.chuan).astype(np.float32)
         return mat.vector
 
     def phan_tich(self, anh, nguong: float = _NGUONG_DO) -> list[Mat]:

@@ -641,6 +641,30 @@ class SoMatTests(unittest.TestCase):
             self.assertEqual((rows[x["id"]]["bo"], rows[x["id"]]["vector"]), ("buffalo_s#hong", None))
 
 
+    def test_mat_khong_nhan_duoc_theo_do_lon_vector_bi_loc(self):
+        """buffalo_l: độ lớn vector gốc dưới 16 là tường/gáy (đo 24/09/2026)."""
+        self.assertEqual(km.get("buffalo_l").chuan_toi_thieu, 16.0)
+        self.assertEqual(km.get("buffalo_s").chuan_toi_thieu, 0.0)     # chưa đo: không lọc
+        goc = self.may.vector
+
+        def vector_mo(anh, mat):
+            goc(anh, mat)
+            mat.chuan = 9.0
+            return mat.vector
+
+        import dataclasses
+
+        self.may.vector = vector_mo
+        bo = self.may.bo
+        self.may.bo = dataclasses.replace(bo, chuan_toi_thieu=16.0)
+        with self.assertRaises(self.sm.LoiSoMat):
+            self.sm.day("Việt", _anh(10))
+        self.assertTrue(self.sm.nhan_dien(_anh(10))["mat"][0]["mo"])
+        self.assertIsNone(self.sm._vector_luot(self.may, yn.doc_anh(_anh(10))))
+        self.may.bo = bo
+        self.assertFalse(self.sm.nhan_dien(_anh(10))["mat"][0]["mo"])
+
+
 class AnhSuKienTests(unittest.TestCase):
     """Đọc ảnh lượt gặp từ kho ảnh CHUNG — khác kho khuôn mặt, nên chặn riêng."""
 

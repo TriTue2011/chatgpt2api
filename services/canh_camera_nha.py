@@ -472,11 +472,41 @@ def _chon_dai_dien(ung_vien: list[tuple[float, dict[str, Any], Any]],
     for khoa, ds in theo_ai.items():
         ds.sort(key=lambda z: -z[0])
         _d, m, anh = ds[0]
-        if khoa.startswith("nguoi:") and m.get("loai") == "quen" and len(ds) < dong_thuan:
+        if len(ds) >= 2:
+            m = _gop_khung(khoa, m, ds)
+        if m.get("nguoi_id") and m.get("loai") == "quen" and len(ds) < dong_thuan:
             m = {**m, "loai": "co_the"}
             _stats["ha_vi_thieu_dong_thuan"] += 1
         ra.append((m, anh))
     return ra
+
+
+def _gop_khung(khoa: str, m: dict[str, Any],
+               ds: list[tuple[float, dict[str, Any], Any]]) -> dict[str, Any]:
+    """Trung bình vector mọi khung của MỘT danh tính (trọng số = điểm chất lượng)
+    rồi khớp lại với sổ.
+
+    Đo 24/09/2026 trên dữ liệu thật (18 nhóm lượt «quen» cùng người, cùng
+    camera, cách nhau <10 phút): điểm đúng người trung bình 42,7 → 48,2; tỉ lệ
+    đạt ngưỡng «có thể» 62% → 89%; khớp nhầm người khác 3% → 0%. Mặt lạ mà
+    trung bình khớp được người nhà thì thành người ấy. Nhóm đã có tên mà trung
+    bình lại chỉ người khác thì giữ kết quả khung tốt nhất — không đoán.
+    """
+    import numpy as np
+
+    from services import so_mat_nha
+
+    w = np.asarray([max(float(d), 1e-3) for d, _m, _a in ds])
+    v = (np.vstack([np.asarray(x["vector"], np.float32) for _d, x, _a in ds]) * w[:, None]).sum(axis=0)
+    v = (v / np.linalg.norm(v)).astype(np.float32)
+    kq = so_mat_nha.khop(v)
+    if khoa.startswith("nguoi:"):
+        if kq["nguoi_id"] != m.get("nguoi_id"):
+            return m
+    elif kq["loai"] == "la":
+        return {**m, "vector": v}
+    _stats["gop_khung"] = _stats.get("gop_khung", 0) + 1
+    return {**m, **kq, "vector": v}
 
 
 def xu_ly(camera: str, nguon: str) -> dict[str, Any]:
@@ -531,7 +561,7 @@ def xu_ly(camera: str, nguon: str) -> dict[str, Any]:
         if anh is None:
             anh, k = anh_i, k_i
         for m in k_i.mat:
-            if m["nho"] or m["diem_do"] < DIEM_DO_TOI_THIEU:
+            if m["nho"] or m.get("mo") or m["diem_do"] < DIEM_DO_TOI_THIEU:
                 continue
             # Tường và cạnh cửa vẫn có điểm dò cao. Năm mốc không thành mặt thì bỏ.
             if not moc_la_mat(m["hop"], m.get("moc")):

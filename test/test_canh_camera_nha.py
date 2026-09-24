@@ -349,6 +349,30 @@ class NguonTests(_Nen):
         ds = [(0.5, self._m("la", _vec(2)), a), (0.6, self._m("la", _vec(9)), a)]
         self.assertEqual(len(cc._chon_dai_dien(ds, dong_thuan=2)), 2)
 
+    def test_GOP_KHUNG_mat_la_trung_binh_khop_nguoi_nha_thi_thanh_nguoi_ay(self):
+        """Từng khung dưới ngưỡng, trung bình vượt ngưỡng (đo thật: 62% → 89%)."""
+        from services import so_mat_nha
+
+        a = np.zeros((10, 10, 3), np.uint8)
+        ds = [(0.5, self._m("la", _vec(5)), a), (0.6, self._m("la", _vec(5)), a)]
+        kq = {"nguoi_id": "n1", "ten": "Việt", "do_giong": 41.0, "loai": "co_the"}
+        with mock.patch.object(so_mat_nha, "khop", return_value=kq) as khop:
+            ra = cc._chon_dai_dien(ds, dong_thuan=2)
+        self.assertEqual(khop.call_count, 1)
+        self.assertEqual((ra[0][0]["nguoi_id"], ra[0][0]["loai"], ra[0][0]["do_giong"]),
+                         ("n1", "co_the", 41.0))
+
+    def test_GOP_KHUNG_nhom_co_ten_ma_trung_binh_chi_nguoi_khac_thi_giu_nguyen(self):
+        from services import so_mat_nha
+
+        a = np.zeros((10, 10, 3), np.uint8)
+        m1 = self._m("quen", _vec(1), ten="Việt", nguoi_id="n1", do_giong=70)
+        m2 = self._m("quen", _vec(1), ten="Việt", nguoi_id="n1", do_giong=60)
+        kq = {"nguoi_id": "n2", "ten": "Lan", "do_giong": 50.0, "loai": "co_the"}
+        with mock.patch.object(so_mat_nha, "khop", return_value=kq):
+            ra = cc._chon_dai_dien([(0.9, m1, a), (0.4, m2, a)], dong_thuan=2)
+        self.assertEqual((ra[0][0]["nguoi_id"], ra[0][0]["do_giong"]), ("n1", 70))
+
     def test_khong_tich_nhan_nao_thi_chi_tim_NGUOI(self):
         """Mặc định phải là «person» — nhãn khác là thứ người dùng chủ động thêm."""
         self.assertEqual(cc._nhan_canh({}), {"person"})
