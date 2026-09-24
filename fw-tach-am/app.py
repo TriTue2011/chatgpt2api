@@ -42,9 +42,9 @@ MAX_UPLOAD_BYTES = max(1 << 20, int(os.getenv(
     "SEPARATOR_MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024))))
 API_TOKEN = os.getenv("SEPARATOR_API_TOKEN", "").strip()
 #: VRAM trống tối thiểu trước khi mở tiến trình tách: thiếu thì từ chối (gateway
-#: tách bằng CPU) thay vì CUDA OOM. Nhận mặt + TTS của c2a nằm thường trực trên
-#: cùng card từ 24/09/2026. Đo lại khi máy tách chạy được.
-CAN_VRAM_MB = float(os.getenv("TACH_AM_CAN_VRAM_MB", "1500"))
+#: tách bằng CPU) thay vì CUDA OOM. Đo 24/09/2026, tách 60 giây trên GPU: đỉnh
+#: thêm ~2,4 GB (3020 → 5442 MiB); nhận mặt + TTS của c2a nằm thường trực.
+CAN_VRAM_MB = float(os.getenv("TACH_AM_CAN_VRAM_MB", "2600"))
 
 _lock = threading.Lock()
 _admission = threading.Lock()
@@ -129,9 +129,27 @@ async def _chi_nhan_mot_soundtrack(request: Request, call_next):
         _admission.release()
 
 
+#: Bọc audio-separator: nạp cublas/cudart CUDA 12 (Dockerfile, /opt/cu12) TRƯỚC
+#: khi onnxruntime tạo phiên MDX. Không có bước này ORT không nạp được CUDA
+#: (image chỉ có CUDA 13 của torch) và LẶNG LẼ chạy CPU — audio-separator chỉ
+#: xem get_available_providers() nên vẫn log "enabling acceleration". cuDNN để
+#: nguyên bản CUDA 13 của torch (cudnn=False): thử 24/09/2026 cả hai cách, torch
+#: vẫn chạy STFT/conv trên GPU; không đè cuDNN là an toàn hơn.
+#: Đo cùng ngày, 60 giây tiếng: CPU 130,1 s → GPU 20,1 s; bản ra trùng khớp
+#: (tương quan 1,0).
+_KHOI_DONG_TACH = (
+    "import sys, onnxruntime as ort\n"
+    "ort.preload_dlls(cuda=True, cudnn=False, directory=sys.argv.pop(1))\n"
+    "from audio_separator.utils.cli import main\n"
+    "sys.argv[0] = 'audio-separator'\n"
+    "sys.exit(main())\n")
+
+
 def _lenh_tach(input_path: str, output_dir: str) -> list[str]:
+    dau = (["python3", "-c", _KHOI_DONG_TACH, ONNX_CU12_DIR]
+           if Path(ONNX_CU12_DIR).is_dir() else ["audio-separator"])
     return [
-        "audio-separator", input_path,
+        *dau, input_path,
         "--model_filename", MODEL,
         "--model_file_dir", "/data/models",
         "--output_dir", output_dir,

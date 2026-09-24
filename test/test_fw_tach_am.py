@@ -223,3 +223,17 @@ def test_onnx_tu_choi_graph_la_pickle_va_sai_token(monkeypatch):
     with pytest.raises(HTTPException) as loi:
         asyncio.run(app.onnx_chay("det_10g", _request_than(b"", api_token="sai")))
     assert loi.value.status_code == 401
+
+
+@pytest.mark.pure
+def test_lenh_tach_nap_cuda12_truoc_khi_co_thu_muc(monkeypatch, tmp_path):
+    """Có /opt/cu12 thì chạy qua đoạn khởi động nạp CUDA 12 — không thì ORT chạy CPU."""
+    app = _load()
+    monkeypatch.setattr(app, "ONNX_CU12_DIR", str(tmp_path))
+    cmd = app._lenh_tach("/tmp/vao.flac", "/tmp/ra")
+    assert cmd[:2] == ["python3", "-c"]
+    assert "preload_dlls(cuda=True, cudnn=False" in cmd[2]
+    assert cmd[3] == str(tmp_path) and cmd[4] == "/tmp/vao.flac"
+    assert cmd[cmd.index("--single_stem") + 1] == "Instrumental"
+    monkeypatch.setattr(app, "ONNX_CU12_DIR", str(tmp_path / "khong-co"))
+    assert app._lenh_tach("/tmp/vao.flac", "/tmp/ra")[0] == "audio-separator"
