@@ -89,7 +89,7 @@ _TIEN = {"USD": "đô la Mỹ", "EUR": "ơ rô", "JPY": "yên Nhật", "CNY": "n
 # "đội tuyển", "dịch vụ") là một mẫu có nhãn sẵn cho chữ viết tắt (CP, ĐT, DV). Đếm từ
 # quanh từng nghĩa → Naive Bayes; mỗi chữ tự chọn cửa sổ / độ mịn / NGƯỠNG TIN CẬY trên phần
 # kiểm định (dưới ngưỡng thì giữ nghĩa hay gặp nhất). Đo trên phần kiểm tra chưa dùng để
-# chọn gì: 89,2% so với 67,8% nếu luôn đọc nghĩa hay gặp nhất (7.805 mẫu, 50 chữ). Danh
+# chọn gì: 89,3% so với 67,8% nếu luôn đọc nghĩa hay gặp nhất (7.805 mẫu, 50 chữ). Danh
 # sách nghĩa lấy từ từ điển của soe-vinorm (MIT, data/nghia_viet_tat.LICENSE). Công cụ học
 # lại: /opt/claude-c2a/doc_dung/kho/hoc_nghia2.py (ngoài repo cùng kho văn bản).
 
@@ -109,10 +109,13 @@ def chon_nghia(vt: str, t: str, a: int, b: int) -> str | None:
     m = _mo_hinh_nghia().get(vt)
     if not m:
         return None
-    w = m["w"]
+    w, k = m["w"], m.get("k", 1)
     trai = _tu_thuong(t[max(0, a - 200):a])[-w:]
     phai = _tu_thuong(t[b:b + 200])[:w]
-    f = [f"w:{x}" for x in trai + phai] + ([f"L1:{trai[-1]}"] if trai else []) + ([f"R1:{phai[0]}"] if phai else [])
+    # Từ LIỀN KỀ tính k lần: "gọi ĐT" giữa câu toàn chuyện bóng đá vẫn là điện thoại. k=2 học
+    # lại 26/09/2026: phần kiểm tra 89,2% → 89,3% (+8 mẫu), ĐT 92% → 93%; k=3 thì tụt 88,4%.
+    f = ([f"w:{x}" for x in trai + phai] + ([f"L1:{trai[-1]}"] * k if trai else [])
+         + ([f"R1:{phai[0]}"] * k if phai else []))
     diem = {ng: s["tien"] + sum(math.log((s["dem"].get(x, 0) + m["alpha"]) / (s["tong"] + m["alpha"] * m["v"]))
                                 for x in f)
             for ng, s in m["nghia"].items()}

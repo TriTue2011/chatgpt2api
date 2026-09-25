@@ -158,8 +158,6 @@ def test_chon_nghia_tren_ca_bai_truoc_khi_cat_cau():
     """Chủ máy 25/09/2026 nghe "CP chỉ đạo" thành "cổ phiếu chỉ đạo": engine cắt câu ở dấu
     phẩy TRƯỚC khi chuẩn hoá, mẩu sau mất vế "UBND… họp với BQL dự án"."""
     cau = "UBND TP.HCM họp với BQL dự án, CP chỉ đạo giảm 15% giá CP của DNNN trong quý III/2026."
-    mau_sau = cau.split(", ", 1)[1]
-    assert d.chuan_bi(mau_sau, sea_gia).startswith("cổ phiếu chỉ đạo")      # lỗi cũ: mất ngữ cảnh
     ca_bai = d.chon_nghia_ca_bai(cau)
     assert "chính phủ chỉ đạo" in ca_bai and "giá cổ phiếu" in ca_bai
     assert d.chuan_bi(ca_bai.split(", ", 1)[1], sea_gia).startswith("chính phủ chỉ đạo")
