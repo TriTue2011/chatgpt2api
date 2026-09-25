@@ -982,6 +982,29 @@ def _h_web_search(args: dict, ctx: dict) -> dict:
         for r in results)[:18000]}
 
 
+def _h_ban_tin(args: dict, ctx: dict) -> dict:
+    """Bản tin CHIA MỤC từ nhiều báo (MCP vn_news ``get_news_sections``).
+
+    Đúng công cụ đường tắt tin tức của orchestrator đang gọi, nhưng đường tắt chỉ
+    bắt câu NGẮN (< 40 ký tự). Lời dặn của lịch "bản tin sáng" dài ~330 ký tự nên
+    rơi xuống model — mà model chỉ có web_search: đo 14–25/09/2026, bản tin sáng
+    mỗi ngày 6–13 mục "Chưa tìm thấy" vì một lượt tra chung không đủ tin cho 8 mục.
+    Đưa công cụ vào tay model thì câu dài hay ngắn đều lấy được bản tin đủ mục.
+    """
+    from services.mcp_client import call_mcp_tool
+    from services.agent.orchestrator import _dang_bay_tin, _pham_vi
+
+    dang = _dang_bay_tin(_pham_vi(str((ctx or {}).get("user_id") or "")))
+    tin = call_mcp_tool("get_news_sections", {
+        "per_section": 3, "kem_tom_tat": dang["tom_tat"], "in_dam": dang["in_dam"],
+        "dung_emoji": dang["emoji"], "chi_tieng_viet": dang["chi_viet"],
+        "chu_de": str(args.get("chu_de") or "").strip()})
+    tin = str(tin or "").strip()
+    if not tin:
+        return {"text": "Các báo chưa trả tin lúc này (nguồn RSS lỗi) — dùng web_search để tra."}
+    return {"text": tin}
+
+
 def _h_thoi_tiet(args: dict, ctx: dict) -> dict:
     """Thời tiết theo địa danh (hoặc địa danh mặc định) và đặt/đổi địa danh mặc định."""
     from services.agent import thoi_tiet as tt
@@ -6362,8 +6385,8 @@ CAPABILITIES: dict[str, Capability] = {
             "nơi…): query = ĐÚNG chủ đề đó ('tin tức bão mới nhất'), trả 5–8 tin "
             "LIÊN QUAN chủ đề, gạch đầu dòng ngắn, KHÔNG chia 8 mục, KHÔNG chèn "
             "tin lạc đề.\n"
-            "• Hỏi tin CHUNG ('tin tức hôm nay', 'bản tin'): query gọn ('tin tức "
-            "nổi bật Việt Nam hôm nay'), tóm tắt theo 8 đầu mục ở Bảng chỉ đường."
+            "• Hỏi tin CHUNG ('tin tức hôm nay', 'bản tin'): gọi ban_tin, KHÔNG dùng "
+            "web_search — một lượt tra chung không đủ tin cho 8 mục."
         )),
     "read_webpage": Capability(
         name="read_webpage", risk=READ, handler=_h_read_webpage,
@@ -6417,6 +6440,20 @@ CAPABILITIES: dict[str, Capability] = {
         workflow=("Xoá là việc không lấy lại được: lần gọi đầu LUÔN để xac_nhan "
                   "trống để người dùng thấy 'bao nhiêu tệp, bao nhiêu MB, từ "
                   "ngày nào', chờ họ gật rồi mới gọi lại với xac_nhan=true.")),
+    "ban_tin": Capability(
+        name="ban_tin", risk=READ, handler=_h_ban_tin,
+        emoji="🗞️", label="Bản tin chia mục (nhiều báo)",
+        description=("Bản tin MỚI NHẤT chia sẵn 8 mục (thể thao, kinh tế, xã hội, CNTT, "
+                     "giáo dục, y tế, giải trí, thế giới) + thời tiết–thiên tai, mỗi mục "
+                     "3 tin, lấy từ VnExpress/Tuổi Trẻ/Thanh Niên/Dân Trí. Dùng cho tin "
+                     "CHUNG: 'tin tức hôm nay', 'bản tin sáng', 'điểm tin'. Đã đúng định "
+                     "dạng người dùng dặn — chuyển nguyên, KHÔNG viết lại, KHÔNG bịa thêm "
+                     "tin. Tin về MỘT chủ đề cụ thể hay tin NGÀY khác → web_search."),
+        parameters={"type": "object", "properties": {
+            "chu_de": {"type": "string",
+                       "description": "Bỏ trống cho bản tin chung; chỉ điền khi hỏi đúng một chủ đề"}}},
+        workflow=("Tin chung gọi ban_tin MỘT lần, không cần web_search thêm cho từng mục. "
+                  "Bản tin kèm thời tiết thì gọi thêm thoi_tiet.")),
     "thoi_tiet": Capability(
         name="thoi_tiet", risk=READ, handler=_h_thoi_tiet,
         emoji="🌦️", label="Thời tiết (AccuWeather)",
@@ -7874,6 +7911,8 @@ _CAP_GROUP: dict[str, str] = {
     # Thời tiết lấy từ AccuWeather trên mạng — cùng quyền với tra cứu, KHÔNG
     # thuộc homeassistant (chủ máy chốt 15/09/2026: thời tiết tách khỏi HA).
     "thoi_tiet": "web",
+    # Bản tin chia mục đọc RSS báo trên mạng — cùng quyền với tra cứu.
+    "ban_tin": "web",
     "generate_music": "music",
     "generate_video": "video",
     "web_search": "web", "read_webpage": "web", "youtube_transcript": "web",

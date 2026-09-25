@@ -1502,17 +1502,17 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
     ("video", _KW_VIDEO, "- Tạo video → generate_video."),
     ("code", _KW_CODE, "- Viết/sửa code → write_code."),
     ("web", _KW_WEB,
-     "- Tra cứu tin tức/giá cả → web_search. HAI KIỂU tin, xử lý KHÁC nhau:\n"
+     "- Tra cứu tin tức/giá cả. HAI KIỂU tin, xử lý KHÁC nhau:\n"
      # Tên 8 mục phải khớp `MUC_BAN_TIN` của vn-mcp-hub — đó là bản tin
      # người dùng THẬT SỰ nhận. Bản cũ kể tám mục khác hẳn (Thời sự Việt
      # Nam, Pháp luật & Xã hội…), nên khi phải nói về chính bản tin vừa
      # gửi thì model đối chiếu với một bố cục không tồn tại.
      "  • Tin CHUNG (không nêu chủ đề): 'tin tức hôm nay', 'bản tin', 'điểm "
-     "tin', 'có gì mới' → chia ĐẦY ĐỦ 8 đầu mục (⚽ Thể thao, 💼 Kinh tế, "
+     "tin', 'có gì mới' → ban_tin: trả sẵn 8 đầu mục (⚽ Thể thao, 💼 Kinh tế, "
      "🏙️ Xã hội, 💻 Công nghệ thông tin, 🎓 Giáo dục, 🩺 Y tế, 🎬 Giải trí, "
-     "🌍 Thế giới), mỗi mục đúng 3 tiêu đề mới nhất kèm tóm tắt ngắn.\n"
+     "🌍 Thế giới), mỗi mục 3 tin — chuyển nguyên, không viết lại.\n"
      "  • Tin về MỘT CHỦ ĐỀ cụ thể: 'tin bão', 'tin về <sự kiện/người/nơi>', "
-     "'giá vàng', 'kết quả trận …', 'tình hình <chủ đề>' → search ĐÚNG chủ đề "
+     "'giá vàng', 'kết quả trận …', 'tình hình <chủ đề>' → web_search ĐÚNG chủ đề "
      "đó, CHỈ trả tin LIÊN QUAN chủ đề (5–8 tin mới nhất, gạch đầu dòng ngắn). "
      "TUYỆT ĐỐI KHÔNG chia 8 mục, KHÔNG chèn tin lạc đề, KHÔNG thay chủ đề "
      "người dùng hỏi bằng bản tin tổng hợp chung.\n"
