@@ -95,3 +95,44 @@ def test_mui_ten_nhac_lai_chu_da_viet_thi_khong_doc_lap():
     """Chủ máy 24/09/2026: "tạo kết tủa BaSO₄↓" bị đọc "kết tủa … kết tủa"."""
     assert h.doc("Để tạo kết tủa BaSO₄↓ trong giờ.") == "Để tạo kết tủa bê a ét ô bốn trong giờ."
     assert h.doc("BaCl2 + Na2SO4 → BaSO4↓ + 2NaCl").count("kết tủa") == 1
+
+
+# Chủ máy 25/09/2026: "giảm lỗi giữa tên người và ký hiệu hoá học". Đo trên 2.000
+# câu trả lời thật: lỗi nặng nhất là câu THƯỜNG bị tưởng là câu hoá học — chữ "C"
+# trong "°C" bị coi là Cacbon, rồi "Thứ Ba" của bản tin sáng đọc thành "Thứ bê a".
+@pytest.mark.parametrize("cau", [
+    "Chào buổi sáng Thứ Ba nhé ạ, nhiệt độ khoảng 28.7°C.",       # bản tin thật
+    "Ngoài trời đang có mưa, 27°C. Ra ngoài nhớ mang ô.",
+    "Ra ngoài nhớ mang ô, trời 27°C.",
+    "- Am – F – C – G (buồn, sâu lắng)",                            # hợp âm
+    "Khu đô thị Tây Na → Phường Hai Bà Trưng",                      # chỉ đường
+    "Hà Nội → Hải Phòng mất 2 tiếng.",
+    "Nguyên tử khối của C là 12.",   # chữ cái đơn: để nguyên, bộ chuẩn hoá sau tự đọc tên chữ
+    # URL thật của bot: "%C3%A0" từng thành "%xê…"
+    "Mở https://www.google.com/maps/dir/?api=1&origin=t%C3%B2a+nh%C3%A0+CT4Bx2 nhé.",
+])
+def test_cau_thuong_khong_bi_tuong_la_hoa_hoc(cau):
+    assert h.doc(cau) == cau
+
+
+@pytest.mark.parametrize("viet, doc", [
+    # Tên người sau từ xưng hô
+    ("Cô Na cho Ba vào dung dịch H2SO4.", "Cô Na cho bê a vào dung dịch hát hai ét ô bốn."),
+    ("Bạn Na và bạn Hà làm thí nghiệm với NaCl.", "Bạn Na và bạn Hà làm thí nghiệm với nờ a xê lờ."),
+    ("Anh Ba nhỏ HCl vào ống nghiệm.", "Anh Ba nhỏ hát xê lờ vào ống nghiệm."),
+    ("Chị La mua 2 kg Ca(OH)2.", "Chị La mua 2 kg xê a ô hát hai lần."),
+    ("Em Ti đã hiểu bài Mg tác dụng với HCl.", "Em Ti đã hiểu bài mờ gờ tác dụng với hát xê lờ."),
+    # Chữ hoa nối tiếp chữ hoa giữa câu: một tên riêng
+    ("Thầy Lê Văn Co giảng Fe + CuSO4 → FeSO4 + Cu.",
+     "Thầy Lê Văn Co giảng ép e cộng xê u ét ô bốn tạo thành ép e ét ô bốn cộng xê u."),
+    ("Nguyen Van Ba gui H2O.", "Nguyen Van Ba gui hát hai ô."),
+    # Danh sách ký hiệu: chữ hoa đứng trước là KÝ HIỆU chứ không phải tên → vẫn là nguyên tố
+    ("Các kim loại K Na Ca tác dụng với H2O.",
+     "Các kim loại ca nờ a xê a tác dụng với hát hai ô."),
+    ("Đun H2SO4 ở 100°C.", "Đun hát hai ét ô bốn ở 100°C."),   # °C là đơn vị
+    # Dấu phẩy ngắt: "Mg," đứng trước không làm "Na" thành tên (câu thật của bot)
+    ("Các lần xuất hiện của Ba, K, Mg, Na, Fe đứng riêng:",
+     "Các lần xuất hiện của bê a, ca, mờ gờ, nờ a, ép e đứng riêng:"),
+])
+def test_ten_nguoi_khong_bi_doc_thanh_nguyen_to(viet, doc):
+    assert h.doc(viet) == doc

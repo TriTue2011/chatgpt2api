@@ -18,8 +18,14 @@ nhau… Ca, Ba, La, Co căn cứ vào ngữ cảnh chứ không phải do từ")
   âm tiết, không bằng từ điển) → luôn là nguyên tố; "mg" viết thường không phải
   ký hiệu nên vẫn là mi-li-gam;
 * có dáng âm tiết (Ca, Ba, La, Co, Na…) → là nguyên tố khi CÂU có ngữ cảnh hoá
-  học: một công thức, một ký hiệu phản ứng, hoặc một ký hiệu chắc chắn như Mg.
-  "Ba mẹ đi làm" giữ nguyên; "Cho Ba vào H2SO4" đọc "bê a".
+  học: một công thức, hoặc một ký hiệu chắc chắn như Mg. "Ba mẹ đi làm" giữ
+  nguyên; "Cho Ba vào H2SO4" đọc "bê a"; nhưng tên người thì không — "cô Na",
+  "Thứ Ba", "Lê Văn Co" (xem ``_la_ten_nguoi``).
+
+Không tự tạo ngữ cảnh (đo 25/09/2026 trên 2.000 câu trả lời thật, chủ máy hỏi
+"giảm lỗi giữa tên người và ký hiệu hoá học"): chữ cái đơn (°C, hợp âm C–G–Am,
+"bảng C"), mũi tên (chỉ đường "Hà Nội → Hải Phòng"), và chữ trong URL. Bản cũ
+lấy "C" của "28.7°C" làm Cacbon nên bản tin sáng đọc "Thứ bê a".
 
 Cách đọc như lớp học: ký hiệu đánh vần bằng tên chữ cái ("ép e", "nờ a") —
 cùng tên chữ cái mà sea_g2p dùng, nên giọng đọc thống nhất —, chỉ số đọc thành
@@ -52,7 +58,8 @@ _SO = ["không", "một", "hai", "ba", "bốn", "năm", "sáu", "bảy", "tám",
 _MU = "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻"
 # Ứng viên: bắt đầu bằng hệ số/chữ hoa/ngoặc, không dính chữ phía trước LẪN
 # phía sau — thiếu đuôi (?!\w) thì "Nước" tách ra "N" + "ước" rồi thành "nờước".
-_UNG_VIEN = re.compile(r"(?<![\w])\d*[A-Z(][A-Za-z0-9₀-₉()·." + _MU + r"^+\-]*(?!\w)")
+# Chữ dính sau "°" là đơn vị nhiệt độ (°C, °F), không bao giờ là công thức.
+_UNG_VIEN = re.compile(r"(?<![\w°])\d*[A-Z(][A-Za-z0-9₀-₉()·." + _MU + r"^+\-]*(?!\w)")
 _NGUYEN_TO_RE = re.compile(r"[A-Z][a-z]?")
 #: Cấu tạo âm tiết tiếng Việt viết không dấu: phụ âm đầu? + nguyên âm + âm cuối?
 _AM_TIET = re.compile(r"(ngh|ng|nh|ch|gh|gi|kh|ph|qu|th|tr|[bcdghklmnprstvx])?"
@@ -160,7 +167,12 @@ def doc_cong_thuc(token: str, *, ngu_canh: bool = False, viet: bool = True) -> s
         # Đứng một mình, không chỉ số: chắc chắn là nguyên tố khi không thể là
         # âm tiết tiếng Việt; có dáng âm tiết (Ca, Ba, CO) thì cần ngữ cảnh.
         # Luật âm tiết chỉ có nghĩa trong câu tiếng Việt ("As you know" là tiếng Anh).
-        if not (ngu_canh or (viet and tong == 1 and not _dang_am_tiet(token))):
+        # CHỮ CÁI ĐƠN (C, K, V, F…) thì không: nó trùng đơn vị, hợp âm, chữ viết
+        # tắt — đo 25/09/2026, "C" trong "28.7°C" từng biến bản tin sáng thành câu
+        # hoá học. Nó chỉ là nguyên tố khi câu đã có ngữ cảnh; để nguyên thì bộ
+        # chuẩn hoá phía sau vẫn đọc đúng tên chữ.
+        if not (ngu_canh or (viet and tong == 1 and len(token) >= 2
+                             and not _dang_am_tiet(token))):
             return None
     return " ".join(loi + ([dien_tich] if dien_tich else []))
 
@@ -169,16 +181,60 @@ _CO_DAU = re.compile("[àáạảãâầấậẩẫăằắặẳẵèéẹẻ�
                      re.IGNORECASE)
 
 
+#: URL: chữ trong đó ("%C3%A0", "CT4BX2") không bao giờ là công thức.
+_URL = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+
+
+def _xoa_url(cau: str) -> str:
+    """Thay URL bằng khoảng trắng CÙNG độ dài — vị trí các chữ khác giữ nguyên."""
+    return _URL.sub(lambda m: " " * len(m.group(0)), cau)
+
+
 def _co_ngu_canh(cau: str, viet: bool) -> bool:
-    """Câu có dấu hiệu hoá học chắc chắn: ký hiệu phản ứng hoặc một công thức /
-    ký hiệu nhận ra được mà KHÔNG cần ngữ cảnh."""
-    if any(k in cau for k in _PHAN_UNG):
-        return True
-    for m in _UNG_VIEN.finditer(cau):
+    """Câu có dấu hiệu hoá học chắc chắn: một công thức / ký hiệu nhận ra được mà
+    KHÔNG cần ngữ cảnh.
+
+    Mũi tên KHÔNG tự tạo ngữ cảnh: "Tây Na → Phường…", "Hà Nội → Hải Phòng" là
+    chỉ đường. Phương trình thật luôn có công thức hai bên nên vẫn nhận ra."""
+    for m in _UNG_VIEN.finditer(_xoa_url(cau)):
         s = m.group(0).rstrip(".,;:!?")
         if s and doc_cong_thuc(s, viet=viet) is not None:
             return True
     return False
+
+
+#: Từ xưng hô đứng trước tên người ("cô Na", "anh Ba"). Đây là chỗ DUY NHẤT phải
+#: dựa vào từ: "bạn Na" và "kim loại Na" giống hệt nhau về mặt chữ, chỉ nghĩa từ
+#: đứng trước mới phân biệt. Xưng hô tiếng Việt là lớp từ đóng của ngữ pháp —
+#: như bảng tuần hoàn là tập đóng — nên không phải danh sách phải vá dần.
+_XUNG_HO = frozenset("""
+anh chị em cô chú bác dì cậu mợ thím dượng ông bà cụ thầy bạn bé con cháu
+mẹ bố cha má u chồng vợ""".split())
+_TU_TRUOC = re.compile(r"(\S+)[ \t]+$")
+
+
+def _la_ten_nguoi(cau: str, vi_tri: int, viet: bool) -> bool:
+    """Ký hiệu dáng âm tiết ở ``vi_tri`` là (một phần) tên người/tên riêng không.
+
+    Hai dấu hiệu, xét từ ngay trước nó (chỉ cách bằng khoảng trắng):
+    * một từ xưng hô: "Cô Na", "bạn Na", "Anh Ba";
+    * một từ VIẾT HOA không đứng đầu câu và không phải ký hiệu/công thức: "Thứ
+      Ba", "Lê Văn Co", "Nguyen Van Ba", "Tây Na". Đầu câu thì mọi từ viết hoa
+      ("Cho Ba vào…"); danh sách "K Na Ca" thì từ trước là ký hiệu.
+    """
+    m = _TU_TRUOC.search(cau, 0, vi_tri)
+    if not m:
+        return False
+    truoc = m.group(1)
+    if not truoc[-1].isalnum():
+        return False  # "Mg, Na": dấu câu ngắt, không phải tên nối tiếp
+    if truoc.lower() in _XUNG_HO:
+        return True
+    if not truoc[0].isupper():
+        return False
+    if not cau[:m.start()].strip(" \t\n-–•*>\"'([{"):
+        return False  # từ trước là từ đầu câu
+    return doc_cong_thuc(truoc, ngu_canh=True, viet=viet) is None
 
 
 def doc(text: str) -> str:
@@ -193,8 +249,16 @@ def _doc_cau(cau: str) -> str:
     ngu_canh = _co_ngu_canh(cau, viet)
     trong_phan_ung = any(k in cau for k in _PHAN_UNG)
 
+    trong_url = [u.span() for u in _URL.finditer(cau)]
+
     def thay(m: re.Match) -> str:
         s = m.group(0)
+        if any(a <= m.start() < b for a, b in trong_url):
+            return s
+        tron = s.rstrip(".,;:!?-+")
+        if (_NGUYEN_TO_RE.fullmatch(tron) and _dang_am_tiet(tron)
+                and _la_ten_nguoi(cau, m.start(), viet)):
+            return s
         # Dấu câu dính cuối ("… H2SO4.") không thuộc công thức.
         duoi = ""
         while s and s[-1] in ".,;:!?-+":
@@ -207,12 +271,14 @@ def _doc_cau(cau: str) -> str:
         return (loi if loi is not None else s) + duoi
 
     ra = _UNG_VIEN.sub(thay, cau)
-    for ky, loi in _PHAN_UNG.items():
+    # Mũi tên/dấu cộng chỉ là phản ứng trong câu có công thức; "Hà Nội → Hải
+    # Phòng" giữ nguyên mũi tên.
+    for ky, loi in (_PHAN_UNG.items() if ngu_canh else ()):
         # Ký hiệu chỉ nhắc lại chữ đã viết ngay trước ("tạo kết tủa BaSO4↓")
         # thì bỏ, không thì đọc thành "kết tủa … kết tủa".
         ra = re.sub(re.escape(ky), lambda m, loi=loi: " " if loi in m.string[max(0, m.start() - 40):m.start()]
                     else f" {loi} ", ra)
-    if trong_phan_ung:
+    if trong_phan_ung and ngu_canh:
         # "+" giữa các chất: ZeroTTS không tự đọc dấu này.
         ra = re.sub(r"\s\+\s", " cộng ", ra)
     return re.sub(r"[ \t]{2,}", " ", ra)
