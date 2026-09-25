@@ -55,6 +55,19 @@ _DON_VI_RE = re.compile(r"(?<![\w.,])(\d+(?:[.,]\d+)?)\s?("
                         + "|".join(sorted(_DON_VI, key=len, reverse=True)) + r")(?![\w/])")
 
 
+#: Mã tiền đứng NGAY SAU số là đơn vị tiền, không phải chữ viết tắt: "10 BTC" là mười
+#: bitcoin (chủ máy 25/09/2026 nghe "mười BAN TỔ CHỨC"), "52 USD". Tập đóng: mã ISO 4217
+#: thông dụng + vài đồng tiền số lớn. Không đứng sau số thì để nguyên ("BTC giải chạy").
+#: Cách đọc ghi sẵn bằng âm tiết Việt — không trông vào bước phiên âm chạy sau (bước đó
+#: bỏ qua câu ngắn ít dấu, "BTC trao giải 10 BTC" từng ra "bitcoin" để nguyên).
+_TIEN = {"USD": "đô la Mỹ", "EUR": "ơ rô", "JPY": "yên Nhật", "CNY": "nhân dân tệ",
+         "GBP": "bảng Anh", "KRW": "uôn Hàn Quốc", "SGD": "đô la Xin ga po", "THB": "bạt Thái",
+         "AUD": "đô la Úc", "CAD": "đô la Ca na đa", "HKD": "đô la Hồng Kông", "TWD": "đài tệ",
+         "CHF": "phrăng Thụy Sĩ", "INR": "ru pi Ấn Độ", "RUB": "rúp Nga", "MYR": "rinh gít Ma lai xi a",
+         "IDR": "ru pi a In đô nê xi a", "VND": "đồng", "BTC": "bít côi", "ETH": "ê thơ ri um",
+         "USDT": "u ét đê tê"}
+
+
 def danh_van(chu: str) -> str:
     return " ".join(TEN_CHU.get(c.upper(), c) for c in chu if c.isalpha())
 
@@ -153,6 +166,8 @@ def chuan_bi(t: str, sea: Callable[[str], str]) -> str:
     # "ASEAN") thì đọc từ; còn lại đánh vần kiểu Việt ("API" → "a phê i").
     def _vt(m):
         tu = m.group(0)
+        if tu in _TIEN and re.search(r"\d\s?$", t[max(0, m.start() - 3):m.start()]):
+            return _TIEN[tu]
         if sea_biet.biet(tu):
             return tu
         if re.search(r"\d\s?$", t[max(0, m.start() - 3):m.start()]) and sea_biet.biet("1 " + tu):

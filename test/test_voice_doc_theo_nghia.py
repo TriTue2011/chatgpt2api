@@ -19,7 +19,7 @@ def sea_gia(t: str) -> str:
 @pytest.mark.parametrize("vao, ra", [
     ("- 60% cỏ đen làm nền.\n- 25% đá lát.", "60% cỏ đen làm nền.\n25% đá lát."),   # gạch đầu dòng ≠ dấu âm
     ("Gió nhẹ khoảng 7.3 km/h.", "Gió nhẹ khoảng 7,3 km/h."),                        # chấm thập phân kiểu Anh
-    ("Giá 3.399 USD", "Giá 3.399 u ét đê"),                                            # chấm phân nghìn giữ nguyên
+    ("Giá 3.399 USD", "Giá 3.399 đô la Mỹ"),                                           # chấm phân nghìn giữ nguyên
     ("Không mưa trong 120 ph.", "Không mưa trong 120 phút."),
     ("Thiết bị 12V, 800W, pin 10Ah, mô-men 235 Nm, 650 kcal.",
      "Thiết bị 12 vôn, 800 oát, pin 10 am pe giờ, mô-men 235 niu tơn mét, 650 ki lô ca lo."),
@@ -84,7 +84,7 @@ def test_doc_vi_goi_buoc_chuan_bi_va_loi_thi_doc_nhu_cu(monkeypatch):
 @pytest.mark.parametrize("vao, co", [
     ("- 60% cỏ đen làm nền.", "sáu mươi phần trăm cỏ"),
     ("Gió nhẹ khoảng 7.3 km/h.", "bảy phẩy ba ki lô mét trên giờ"),
-    ("Giá RAM tăng từ 52 USD lên 239 USD.", "năm mươi hai u ét đê"),
+    ("Giá RAM tăng từ 52 USD lên 239 USD.", "năm mươi hai đô la mỹ"),
     ("Không có mưa trong ít nhất 120 ph.", "một trăm hai mươi phút"),
     ("Dầu DO 0,05S-II: 28.540đ/lít.", "không phẩy không năm ét hai"),
     ("RAM DDR5 16 GB", "mười sáu gigabyte"),
@@ -123,3 +123,11 @@ def test_phien_am_khong_dung_cho_khong_phai_tu_anh(cau):
 
 def test_chuan_bi_co_phien_am():
     assert "yu túp" in d.chuan_bi("Mở YouTube trên tivi.", sea_gia)
+
+
+def test_ma_tien_sau_so_la_don_vi_tien():
+    """Chủ máy 25/09/2026: "10 BTC" nghe thành "mười ban tổ chức"."""
+    def sea_btc(t):
+        return t.replace("BTC", "ban tổ chức")
+    assert d.chuan_bi("BTC trao giải 10 BTC", sea_btc) == "BTC trao giải 10 bít côi"
+    assert d.chuan_bi("thưởng 0,1 BTC và 52 USD", sea_btc) == "thưởng 0,1 bít côi và 52 đô la Mỹ"
