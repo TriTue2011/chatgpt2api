@@ -19,7 +19,11 @@ lxml>=5.3.0
 markitdown[pdf,docx,xlsx,xls,pptx]>=0.0.1
 pytesseract>=0.3.0
 pdf2image>=1.17.0
-vnstock>=4.0.0
+# vnstock ĐÃ BỎ (25/09/2026): tác giả gỡ khỏi PyPI cả vnstock lẫn vnai (gói nó
+# bắt buộc) — pypi.org/pypi/{vnstock,vnai}/json trả 404, Actions dựng hỏng "no
+# versions of vnstock" ở 2b53539. Chỉ vn-mcp-hub/src/vn/stock.py dùng, nạp trong
+# try nên thiếu thì công cụ giá cổ phiếu trả "không lấy được", không sập. Chủ máy
+# chọn bỏ; tìm được kênh phát hành chính thức mới thì thêm lại.
 # ddddocr ĐÃ BỎ (24/08/2026): không một dòng `import ddddocr` nào trong repo,
 # nhưng gói này chiếm 85 MB và còn kéo theo opencv-python bản GUI. Captcha ảnh
 # đang được giải bằng playwright-recaptcha (âm thanh) và CloakBrowser, không
