@@ -301,8 +301,9 @@ def _doc_cau(cau: str) -> str:
     trong_phan_ung = any(k in cau for k in _PHAN_UNG)
 
     trong_url = [u.span() for u in _URL.finditer(cau)]
-    # Phương trình: có mũi tên phản ứng hoặc "+" giữa các chất.
-    phuong_trinh = trong_phan_ung or bool(re.search(r"[\w)]\s\+\s[\dA-Z(]", cau))
+    # Phương trình: mũi tên phản ứng hoặc "+" giữa các chất. "↑" "↓" chỉ ghi trạng thái (khí,
+    # kết tủa), có cả trong câu văn ("tạo khí H2↑") — không làm câu thành phương trình.
+    phuong_trinh = any(k in cau for k in "→⟶⇌") or bool(re.search(r"[\w)]\s\+\s[\dA-Z(]", cau))
 
     def thay(m: re.Match) -> str:
         s = m.group(0)

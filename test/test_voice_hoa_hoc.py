@@ -153,6 +153,9 @@ def test_ky_hieu_dung_rieng_doc_ten_nguyen_to():
     ra = h.doc("Nồng độ K trong máu là 4,2 mmol/L, còn nhiệt độ đạt 0 K.")
     assert "ka li trong máu" in ra and "0 K." in ra
     assert h.doc("Cho Na vào nước tạo NaOH.") == "Cho na tri vào nước tạo nờ a ô hát."
+    # "↑" chỉ là trạng thái khí, câu vẫn là câu văn (câu thử của chủ máy 25/09/2026)
+    assert h.doc("Chị Ba cho Na vào nước, Na phản ứng tạo NaOH và khí H2↑.").startswith(
+        "Chị Ba cho na tri vào nước, na tri phản ứng")
     assert h.doc("Fe + CuSO4 → FeSO4 + Cu") .startswith("ép e cộng")   # phương trình: đọc kiểu công thức
 
 
