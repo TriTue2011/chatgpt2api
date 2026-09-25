@@ -129,5 +129,26 @@ def test_ma_tien_sau_so_la_don_vi_tien():
     """Chủ máy 25/09/2026: "10 BTC" nghe thành "mười ban tổ chức"."""
     def sea_btc(t):
         return t.replace("BTC", "ban tổ chức")
-    assert d.chuan_bi("BTC trao giải 10 BTC", sea_btc) == "BTC trao giải 10 bít côi"
+    assert d.chuan_bi("BTC trao giải 10 BTC", sea_btc).endswith("trao giải 10 bít côi")
     assert d.chuan_bi("thưởng 0,1 BTC và 52 USD", sea_btc) == "thưởng 0,1 bít côi và 52 đô la Mỹ"
+
+
+# Chọn nghĩa tự học (cách 1): chữ viết tắt NHIỀU NGHĨA theo từ xung quanh.
+@pytest.mark.parametrize("vao, co", [
+    ("BTC trao giải thưởng cho công ty CP và DV brecus 10 BTC", "công ty cổ phần và dịch vụ"),
+    ("ĐT Việt Nam vừa thắng, anh nhớ gọi ĐT cho em nhé.", "đội tuyển Việt Nam"),
+    ("ĐT Việt Nam vừa thắng, anh nhớ gọi ĐT cho em nhé.", "gọi điện thoại cho em"),
+    ("CP vừa ban hành nghị định.", "chính phủ vừa ban hành"),
+])
+def test_chon_nghia_viet_tat_theo_ngu_canh(vao, co):
+    assert co in d.chuan_bi(vao, sea_gia)
+
+
+def test_chon_nghia_khong_hoc_thi_bo_qua():
+    assert d.chon_nghia("XYZ", "câu có XYZ", 7, 10) is None
+
+
+def test_viet_tat_truoc_so_la_ma_khong_doan_nghia():
+    """"ĐT 767" là ĐƯỜNG TỈNH — nghĩa không có trong từ điển; đứng trước số thì không đoán."""
+    ra = d.chuan_bi("Chiều nay, đường ĐT 767 bị ngập.", lambda t: t)
+    assert not any(ng in ra for ng in ("điện thoại", "đào tạo", "đội tuyển"))

@@ -30,7 +30,10 @@ from __future__ import annotations
 
 import csv
 import functools
+import json
+import math
 import re
+import unicodedata
 from pathlib import Path
 from typing import Callable
 
@@ -66,6 +69,43 @@ _TIEN = {"USD": "đô la Mỹ", "EUR": "ơ rô", "JPY": "yên Nhật", "CNY": "n
          "CHF": "phrăng Thụy Sĩ", "INR": "ru pi Ấn Độ", "RUB": "rúp Nga", "MYR": "rinh gít Ma lai xi a",
          "IDR": "ru pi a In đô nê xi a", "VND": "đồng", "BTC": "bít côi", "ETH": "ê thơ ri um",
          "USDT": "u ét đê tê"}
+
+
+# ── Chọn nghĩa chữ viết tắt NHIỀU NGHĨA theo ngữ cảnh (25/09/2026, chủ máy chọn "cách 1") ──
+# Tự học, KHÔNG gắn nhãn tay: trong 2.155 bài tin tức, mỗi chỗ viết ĐẦY ĐỦ ("Chính phủ",
+# "đội tuyển", "dịch vụ") là một mẫu có nhãn sẵn cho chữ viết tắt (CP, ĐT, DV). Đếm từ
+# quanh từng nghĩa → Naive Bayes; mỗi chữ tự chọn cửa sổ / độ mịn / NGƯỠNG TIN CẬY trên phần
+# kiểm định (dưới ngưỡng thì giữ nghĩa hay gặp nhất). Đo trên phần kiểm tra chưa dùng để
+# chọn gì: 89,2% so với 67,8% nếu luôn đọc nghĩa hay gặp nhất (7.805 mẫu, 50 chữ). Danh
+# sách nghĩa lấy từ từ điển của soe-vinorm (MIT, data/nghia_viet_tat.LICENSE). Công cụ học
+# lại: /opt/claude-c2a/doc_dung/kho/hoc_nghia2.py (ngoài repo cùng kho văn bản).
+
+
+@functools.lru_cache(maxsize=1)
+def _mo_hinh_nghia() -> dict:
+    with open(Path(__file__).with_name("data") / "nghia_viet_tat.json", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _tu_thuong(s: str) -> list[str]:
+    return re.findall(r"\w+", unicodedata.normalize("NFC", s.lower()).replace("uỷ", "ủy"))
+
+
+def chon_nghia(vt: str, t: str, a: int, b: int) -> str | None:
+    """Nghĩa của chữ viết tắt ``vt`` (đứng ở t[a:b]) theo các từ quanh nó; None nếu không học."""
+    m = _mo_hinh_nghia().get(vt)
+    if not m:
+        return None
+    w = m["w"]
+    trai = _tu_thuong(t[max(0, a - 200):a])[-w:]
+    phai = _tu_thuong(t[b:b + 200])[:w]
+    f = [f"w:{x}" for x in trai + phai] + ([f"L1:{trai[-1]}"] if trai else []) + ([f"R1:{phai[0]}"] if phai else [])
+    diem = {ng: s["tien"] + sum(math.log((s["dem"].get(x, 0) + m["alpha"]) / (s["tong"] + m["alpha"] * m["v"]))
+                                for x in f)
+            for ng, s in m["nghia"].items()}
+    hay = max(m["nghia"], key=lambda ng: m["nghia"][ng]["so_mau"])
+    tot = max(diem, key=diem.get)
+    return tot if tot == hay or diem[tot] - diem[hay] >= m["nguong"] else hay
 
 
 def danh_van(chu: str) -> str:
@@ -168,6 +208,11 @@ def chuan_bi(t: str, sea: Callable[[str], str]) -> str:
         tu = m.group(0)
         if tu in _TIEN and re.search(r"\d\s?$", t[max(0, m.start() - 3):m.start()]):
             return _TIEN[tu]
+        # Đứng ngay trước số là TÊN GỌI / MÃ ("ĐT 767" đường tỉnh, "BT.2020") — nghĩa có thể
+        # nằm ngoài từ điển, đừng đoán.
+        if not re.match(r"\s?[.\-]?\d", t[m.end():m.end() + 3]) and \
+                (nghia := chon_nghia(tu, t, m.start(), m.end())) is not None:
+            return nghia
         if sea_biet.biet(tu):
             return tu
         if re.search(r"\d\s?$", t[max(0, m.start() - 3):m.start()]) and sea_biet.biet("1 " + tu):
