@@ -1157,6 +1157,26 @@ def send_file(thread_id: str, file_url: str, caption: str = "",
     }, timeout=90.0)
 
 
+def send_voice(thread_id: str, voice_url: str, thread_type: int = 0,
+               account: str = "") -> dict:
+    """Gửi TIN THOẠI (bong bóng bấm nghe ngay), không phải tệp đính kèm.
+
+    ``voice_url`` là tệp âm thanh bất kỳ (WAV của TTS, URL nội bộ 127.0.0.1…):
+    zalo-server đổi sang đúng định dạng tin thoại Zalo (AAC-LC 16 kHz mono) và tải
+    lên máy chủ Zalo trước khi gửi — xem ``sendVoiceByAccount``.
+    """
+    acc = _account_for_send(account)
+    if not acc:
+        return {"ok": False, "error": "Chưa có tài khoản Zalo nào đăng nhập"}
+    body: dict = {"options": {"voiceUrl": voice_url}, "threadId": str(thread_id),
+                  "accountSelection": acc,
+                  "type": "group" if int(thread_type) == 1 else "user"}
+    ttl = ttl_luot_nay()
+    if ttl:
+        body["options"]["ttl"] = ttl
+    return _request("POST", "/api/sendVoiceByAccount", body, timeout=90.0)
+
+
 def _public_base() -> str:
     c = _cfg()
     return (str(c.get("base_url") or "").strip()
@@ -4150,10 +4170,11 @@ def _process_ai(ev: dict) -> None:
 
 def _maybe_voice_reply(thread_id: str, thread_type: int, account: str,
                        user_id: str, reply: str) -> bool:
-    """Gửi file âm thanh nếu thread (hoặc riêng user này) bật `tts_reply`.
+    """Gửi giọng đọc nếu thread (hoặc riêng user này) bật `tts_reply`.
 
-    Lưu WAV vào ``/images/voice/`` rồi ``sendFile`` qua URL nội bộ
-    ``http://127.0.0.1/images/voice/…`` (zalo-server trong cùng container).
+    Lưu WAV vào ``/images/voice/`` rồi gửi thành **tin thoại** (``send_voice`` —
+    bong bóng bấm nghe, như tin ghi âm của chính Zalo); hỏng thì lùi về
+    ``sendFile`` (tệp đính kèm) qua URL nội bộ ``http://127.0.0.1/images/voice/…``.
     Trả True nếu ĐÃ gửi voice → caller BỎ gửi chữ («Trả lời bằng giọng nói» =
     chỉ âm thanh). False (chưa bật / TTS chưa sẵn / lỗi) → caller gửi chữ.
     """
@@ -4180,9 +4201,13 @@ def _maybe_voice_reply(thread_id: str, thread_type: int, account: str,
         out_dir.mkdir(parents=True, exist_ok=True)
         fn = f"tts_{uuid.uuid4().hex[:10]}.wav"
         (out_dir / fn).write_bytes(wav)
-        # Ưu tiên URL local — đã test sendFile nhóm/1-1 thành công
+        # Ưu tiên URL local — zalo-server cùng container tải được.
         local = f"http://127.0.0.1/images/voice/{fn}"
-        sent = _send_file_robust(thread_id, local, "", thread_type, account=account)
+        r = send_voice(thread_id, local, thread_type, account=account)
+        sent = bool(r.get("ok"))
+        if not sent:
+            logger.warning("zalop tin thoai hong, lui ve gui tep: %s", str(r.get("error") or r)[:160])
+            sent = _send_file_robust(thread_id, local, "", thread_type, account=account)
         if not sent:
             # fallback public / media_url cũ
             try:
