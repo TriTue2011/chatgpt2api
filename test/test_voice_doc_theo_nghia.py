@@ -24,7 +24,7 @@ def sea_gia(t: str) -> str:
     ("Thiết bị 12V, 800W, pin 10Ah, mô-men 235 Nm, 650 kcal.",
      "Thiết bị 12 vôn, 800 oát, pin 10 am pe giờ, mô-men 235 niu tơn mét, 650 ki lô ca lo."),
     ("Lúc 24h qua", "Lúc 24 giờ qua"),
-    ("Bản hybrid (350h)", "Bản hybrid (350h)"),                                        # tên mẫu, không phải giờ
+    ("Bản hybrid (350h)", "Bản hai brít (350h)"),                                       # tên mẫu, không phải giờ
     ("Xăng RON 92-II, RON 95-III, quý IV", "Xăng ron 92 2, ron 95 3, quý 4"),
     ("1g. Giải trí 1h. Thế giới", "1 gờ. Giải trí 1 hát. Thế giới"),                   # chuỗi nhãn mục
     ("Hẹn đến 1h. Nhé", "Hẹn đến 1 giờ. Nhé"),                                         # một mình: là giờ
@@ -43,7 +43,7 @@ def test_ma_chu_so_danh_van_kieu_viet():
 def test_viet_tat_la_danh_van_doc_duoc_thi_doc_tu():
     assert d.chuan_bi("Có API mới", sea_gia) == "Có a phê i mới"
     assert d.chuan_bi("Giá RAM tăng", sea_gia) == "Giá ram tăng"
-    assert d.chuan_bi("vô địch ASEAN Cup", sea_gia) == "vô địch asean Cup"
+    assert d.chuan_bi("vô địch ASEAN Cup", sea_gia) == "vô địch a xê an Cup"
 
 
 def test_viet_tat_sea_biet_thi_de_sea():
@@ -55,7 +55,7 @@ def test_viet_tat_sea_biet_thi_de_sea():
 def test_tieu_de_in_hoa_doc_nhu_chu_thuong():
     assert d.chuan_bi("TIN CẢNH BÁO LŨ QUÉT", sea_gia) == "tin cảnh báo lũ quét"
     assert d.chuan_bi("Ở ĐẢO LỚN có mưa", sea_gia) == "ở đảo lớn có mưa"   # chữ HOA có dấu (Ở, Ả…)
-    assert d.chuan_bi("một CAMERA GIÁM SÁT trong nhà", sea_gia) == "một camera giám sát trong nhà"
+    assert d.chuan_bi("một CAMERA GIÁM SÁT trong nhà", sea_gia) == "một ca mê ra giám sát trong nhà"
     # Chữ thường có dấu KHÔNG bị coi là in hoa ("Bộ", "Mở")
     assert d.chuan_bi("Mở HA lên", sea_gia) == "Mở hát a lên"
 
@@ -98,3 +98,28 @@ def test_voi_sea_g2p_that(vao, co):
     def sea(t):
         return re.sub(r"</?en>", "", n.normalize(t))
     assert co in d.don_cuoi(sea(d.chuan_bi(vao, sea)))
+
+
+# Phiên âm từ tiếng Anh (25/09/2026): để nguyên thì STT chỉ nhận ra ~18% từ giọng Nghị
+# đọc ("google" → "graham le"); phiên âm theo từ điển → ~36%.
+@pytest.mark.parametrize("vao, ra", [
+    ("Bật Bluetooth rồi mở YouTube.", "Bật blu tút rồi mở yu túp."),
+    ("Home Assistant cập nhật firmware cho camera.", "hôm a xi xtần cập nhật phơm ue cho ca mê ra."),
+    ("Anh gửi link qua Zalo nhé.", "Anh gửi linh qua za lô nhé."),
+])
+def test_phien_am_tu_tieng_anh_trong_cau_viet(vao, ra):
+    assert d.phien_am_anh(vao) == ra
+
+
+@pytest.mark.parametrize("cau", [
+    "Nghe nhạc trên xe, pin còn 50%.",                          # âm tiết Việt không dấu: giữ
+    "It rests for another 30 hours before fertilization.",     # đoạn thuần tiếng Anh: giữ
+    "Mở trang google.com hoặc gửi về a@gmail.com nhé.",        # tên miền / email: giữ
+    "Đường 5 km, nặng 3 kg.",                                   # ký hiệu đo: giữ
+])
+def test_phien_am_khong_dung_cho_khong_phai_tu_anh(cau):
+    assert d.phien_am_anh(cau) == cau
+
+
+def test_chuan_bi_co_phien_am():
+    assert "yu túp" in d.chuan_bi("Mở YouTube trên tivi.", sea_gia)

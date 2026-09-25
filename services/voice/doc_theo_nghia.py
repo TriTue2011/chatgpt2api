@@ -28,7 +28,10 @@ vị đo (SI + thông dụng) và tên chữ cái tiếng Việt.
 """
 from __future__ import annotations
 
+import csv
+import functools
 import re
+from pathlib import Path
 from typing import Callable
 
 TEN_CHU = {"A": "a", "B": "bê", "C": "xê", "D": "đê", "Đ": "đê", "E": "e", "F": "ép", "G": "gờ",
@@ -157,7 +160,58 @@ def chuan_bi(t: str, sea: Callable[[str], str]) -> str:
         if len(tu) >= 3 and (_mot_am_tiet(tu) or (len(tu) >= 4 and _doc_duoc(tu))):
             return tu.lower()
         return danh_van(tu)
-    return re.sub(r"(?<![\w&/-])[A-ZĐ]{2,6}(?:&[A-ZĐ]{2,4})?(?![\w-])", _vt, t)
+    t = re.sub(r"(?<![\w&/-])[A-ZĐ]{2,6}(?:&[A-ZĐ]{2,4})?(?![\w-])", _vt, t)
+    return phien_am_anh(t)
+
+
+# ── Phiên âm từ tiếng Anh (25/09/2026, chủ máy: "có phiên âm các từ tiếng Anh chưa") ──
+# Đo bằng cách cho giọng Nghị đọc "Từ tiếp theo là X." rồi để STT của c2a nghe lại:
+# để nguyên chữ Anh chỉ ~18% từ được nhận ra ("google" → "graham le", "youtube" →
+# "hù chùa") vì espeak-ng chuyển sang âm vị tiếng Anh mà giọng Nghị không được luyện;
+# phiên âm theo từ điển → ~36% (250 từ: 130 từ câu trả lời thật + 120 từ tin tức).
+
+_CO_DAU = "àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ"
+#: Âm tiết tiếng Việt viết KHÔNG dấu ("nghe", "xe", "pin", "bot") là tiếng Việt — không
+#: phiên âm. Bộ nhận biết của chính VietNormalizer coi "nghe" là tiếng nước ngoài (và từ
+#: điển có mục "nghe → nghê") — nên nhận biết bằng cấu tạo âm tiết, chỉ mượn TỪ ĐIỂN.
+_AM_TIET_VIET = re.compile(
+    r"(?:ngh|ng|nh|ch|gh|gi|kh|ph|qu|th|tr|[bcdđghklmnprstvx])?"
+    r"(?:uye|uya|oai|oay|uoi|uou|uay|ieu|yeu|ai|ao|au|ay|eo|eu|ia|ie|iu|oa|oe|oi|ua|ue|ui|uo|uy|ye|[aeiouy])"
+    r"(?:ng|nh|ch|[cmnpt])?")
+_KY_HIEU_DO = {"km", "kg", "cm", "mm", "ml", "ph", "kw", "kwh", "mb", "gb", "ms", "hz"}
+
+
+@functools.lru_cache(maxsize=1)
+def _tu_dien_anh() -> dict[str, str]:
+    """17.718 từ nước ngoài → cách đọc tiếng Việt, của VietNormalizer (MIT, xem
+    data/phien_am_anh.LICENSE). Nạp một lần, lúc cần."""
+    ra: dict[str, str] = {}
+    with open(Path(__file__).with_name("data") / "phien_am_anh.csv", encoding="utf-8") as f:
+        for dong in csv.DictReader(f):
+            ra[dong["original"].strip().lower()] = dong["transliteration"].strip().replace("-", " ")
+    return ra
+
+
+def phien_am_anh(t: str) -> str:
+    """Từ tiếng Anh LẪN trong câu tiếng Việt → cách đọc tiếng Việt ("YouTube" → "yu túp").
+
+    Không đụng: âm tiết Việt không dấu, chữ IN HOA (viết tắt — việc của chuan_bi), ký
+    hiệu đo, đoạn thuần tiếng Anh (phiên âm từng chữ vô nghĩa), chữ trong tên miền /
+    đường dẫn / email ("google.com"). Từ không có trong từ điển: để nguyên như cũ.
+    """
+    tu_dien = _tu_dien_anh()
+
+    def _thay(m):
+        w = m.group(0)
+        if len(w) < 2 or w.isupper() or _AM_TIET_VIET.fullmatch(w.lower()) or w.lower() in _KY_HIEU_DO:
+            return w
+        # Đoạn thuần tiếng Anh: tỉ lệ TỪ có dấu Việt quanh đó < 25% (câu Việt lẫn nhiều thuật
+        # ngữ như "Home Assistant cập nhật firmware cho camera" vẫn 3/7; tiếng Anh là 0).
+        quanh = re.findall(r"\w+", t[max(0, m.start() - 80):m.end() + 80].lower())
+        if sum(any(c in _CO_DAU for c in x) for x in quanh) < 0.25 * len(quanh):
+            return w
+        return tu_dien.get(w.lower(), w)
+    return re.sub(r"(?<![\w./@-])[A-Za-z][a-z]*(?:[A-Z][a-z]+)*(?![\w/@-]|\.\w)", _thay, t)
 
 
 def don_cuoi(t: str) -> str:
