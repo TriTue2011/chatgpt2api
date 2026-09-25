@@ -1197,8 +1197,20 @@ def _doc_vi(text: str) -> str:
             except ImportError:
                 return text
             _chuan_hoa_vi = Normalizer("vi")
-        ra = _chuan_hoa_vi.normalize(text)
-    return _re.sub(r"</?en>", "", ra)
+        # Bước chuẩn bị sửa các lớp lỗi sea_g2p mắc với viết tắt / đơn vị / mã
+        # (xem doc_theo_nghia.py). Gọi thẳng normalize trong CÙNG khoá — khoá này
+        # không vào lại được, gọi _doc_vi lồng nhau là tự khoá chết.
+        from services.voice import doc_theo_nghia
+
+        def _sea(t: str) -> str:
+            return _re.sub(r"</?en>", "", _chuan_hoa_vi.normalize(t))
+
+        try:
+            ra = doc_theo_nghia.don_cuoi(_sea(doc_theo_nghia.chuan_bi(text, _sea)))
+        except Exception as exc:  # noqa: BLE001 — chữ tuỳ ý: lỗi bước chuẩn bị không được làm câm TTS
+            logger.warning("voice: doc theo nghia loi, doc qua sea nhu cu: %s", str(exc)[:160])
+            ra = _sea(text)
+    return ra
 
 
 def _piper_local(text: str, voice: str = "") -> bytes:
