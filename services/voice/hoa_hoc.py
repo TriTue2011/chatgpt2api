@@ -137,6 +137,11 @@ def _doc_phan(s: str) -> tuple[list[str], int] | None:
 
 def doc_cong_thuc(token: str, *, ngu_canh: bool = False, viet: bool = True) -> str | None:
     """Lời đọc của MỘT công thức, hoặc None nếu chuỗi không phải công thức."""
+    # Chỉ gồm I/V/X, không chữ số: SỐ LA MÃ ("RON 95-III", "quý IV"), không phải công
+    # thức — công thức ghi số lượng bằng chữ số (I2, V2O5). Đo 25/09/2026: "Galaxy S27"
+    # tạo ngữ cảnh hoá học rồi "III" thành ba nguyên tố iốt, đọc "i i i".
+    if re.fullmatch(r"[IVX]+[+\-]?", token.rstrip(".,;:!?")):
+        return None
     goc = token
     dien_tich = ""
     # Điện tích: số mũ ("²⁻"), dạng "^2-", hoặc viết thường "Fe3+" (MỘT chữ số

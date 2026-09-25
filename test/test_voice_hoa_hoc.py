@@ -136,3 +136,12 @@ def test_cau_thuong_khong_bi_tuong_la_hoa_hoc(cau):
 ])
 def test_ten_nguoi_khong_bi_doc_thanh_nguyen_to(viet, doc):
     assert h.doc(viet) == doc
+
+
+@pytest.mark.parametrize("cau", [
+    "Galaxy S27 Ultra, xăng RON 95-III và quý IV.",   # S27 tạo ngữ cảnh, III/IV vẫn là số La Mã
+    "Thế kỷ XXI, Chương II, lớp VII.",
+])
+def test_so_la_ma_khong_phai_cong_thuc(cau):
+    assert "i i" not in h.doc(cau) and "vê" not in h.doc(cau)
+    assert all(r in h.doc(cau) for r in ("III", "IV")) if "III" in cau else True
