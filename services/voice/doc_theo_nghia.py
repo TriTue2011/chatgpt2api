@@ -18,7 +18,12 @@ mà sửa từng LỚP lỗi có quy luật mà sea_g2p mắc:
 * tiêu đề IN HOA đánh vần từng chữ: "CAMERA GIÁM SÁT" → "xê a mờ e rờ a…";
 * tên viết tắt "L.T.M.P" đọc cả chữ "chấm".
 
-Sau khi sửa: 98,0% trên bộ ca cũ, 94,1% trên bộ ca MỚI (tin tức 25/09, gắn đáp án
+Lớp thêm tối 25/09/2026 (14 câu khó chủ máy thử): nghĩa chọn trên TOÀN VĂN trước khi
+engine cắt câu; tiêu đề in hoa nuốt mất "GĐ BV"; viết tắt một nghĩa sea không biết
+("BQL", "DNNN"); "NĐ-CP"; số La Mã tới 39 ("XXX"); "2-3 ngày" thành ngày tháng; "kết quả
+3-1" thành phép trừ; "0 K" kelvin; đường dẫn web.
+
+Sau khi sửa: 98,2% trên bộ ca cũ, 95,0% trên bộ ca MỚI (tin tức 25/09, gắn đáp án
 trước khi chạy). Phần còn sai cần HIỂU NGHĨA (HCV = huy chương vàng, "UV" là tia
 cực tím hay ủy viên, BTC là ban tổ chức hay bitcoin) — việc của mô hình ngôn ngữ,
 không phải của quy tắc.
@@ -46,16 +51,24 @@ _PHU_AM = set("bcdfghjklmnpqrstvwxz")
 #: Âm tiết đọc được (không cần dấu): phụ âm đầu? + nguyên âm + âm cuối?
 _AM = r"(?:ch|gh|gi|kh|ng|nh|ph|qu|th|tr|[bcdfghjklmnpqrstvwxz])?[aeiouy]+(?:ng|nh|ch|[cmnpt])?"
 
-_LA_MA = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10}
+_LA_MA = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8, "IX": 9}
+
+
+def _so_la_ma(s: str) -> int | None:
+    """Giá trị số La Mã chỉ gồm I/V/X viết đúng luật (1–39); None nếu không phải."""
+    m = re.fullmatch(r"(X{0,3})(IX|IV|VIII|VII|VI|V|III|II|I)?", s)
+    if not m or not s:
+        return None
+    return 10 * len(m.group(1)) + _LA_MA.get(m.group(2) or "", 0)
 
 #: Đơn vị đo đứng NGAY sau số — tập đóng. Chỉ những đơn vị sea_g2p đọc sai (đo
 #: 25/09/2026); các đơn vị nó đọc đúng (km, kg, °C, %) để nó lo.
 _DON_VI = {"ph": "phút", "V": "vôn", "W": "oát", "kW": "ki lô oát", "kWh": "ki lô oát giờ",
            "Ah": "am pe giờ", "mAh": "mi li am pe giờ", "h": "giờ", "S": "ét", "m": "mét",
            "Gbps": "gi ga bít trên giây", "Mbps": "mê ga bít trên giây",
-           "Nm": "niu tơn mét", "kcal": "ki lô ca lo", "cal": "ca lo"}
+           "Nm": "niu tơn mét", "kcal": "ki lô ca lo", "cal": "ca lo", "K": "ken vin"}
 _DON_VI_RE = re.compile(r"(?<![\w.,])(\d+(?:[.,]\d+)?)\s?("
-                        + "|".join(sorted(_DON_VI, key=len, reverse=True)) + r")(?![\w/])")
+                        + "|".join(sorted(_DON_VI, key=len, reverse=True)) + r")(?![\w/-])")
 
 
 #: Mã tiền đứng NGAY SAU số là đơn vị tiền, không phải chữ viết tắt: "10 BTC" là mười
@@ -108,6 +121,79 @@ def chon_nghia(vt: str, t: str, a: int, b: int) -> str | None:
     return tot if tot == hay or diem[tot] - diem[hay] >= m["nguong"] else hay
 
 
+# ── Chữ viết tắt MỘT nghĩa mà sea_g2p không biết ("BQL", "DNNN", "GĐ", "NĐ", "HCV") ──
+# Từ điển soe-vinorm (MIT, data/nghia_viet_tat.LICENSE), chỉ mục IN HOA một nghĩa. Dùng SAU
+# sea_g2p và sau "đọc được thành từ" ("SARS" vẫn là "sars"), TRƯỚC đánh vần. Chữ 2 ký tự quá
+# nhập nhằng ("PC" = phiếu chuyển?, "HD", "SK" = sân khấu?) — đo 25/09/2026: dùng cả chữ 2 ký
+# tự làm bộ ca cũ tụt 98,1% → 97,6%; chỉ ≥3 ký tự thì bộ tin tức mới lên 94,0% → 95,5%. Riêng
+# chữ có "Đ" thì 2 ký tự vẫn dùng: viết tắt tiếng Anh không bao giờ có Đ, nên đó chắc chắn là
+# lối viết tắt tiếng Việt, đọc bằng nghĩa ("GĐ" giám đốc, "NĐ" nghị định).
+
+
+@functools.lru_cache(maxsize=1)
+def _mot_nghia() -> dict[str, str]:
+    with open(Path(__file__).with_name("data") / "viet_tat_mot_nghia.json", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _nghia_tu_dien(tu: str) -> str | None:
+    return _mot_nghia().get(tu) if len(tu) >= 3 or "Đ" in tu else None
+
+
+#: Chữ viết tắt IN HOA đứng riêng ("CP", "ĐT", "UBND", "R&D"), kể cả sau "/" trong số hiệu
+#: văn bản ("100/2019/NĐ-CP").
+_VT_RE = re.compile(r"(?<![\w&-])[A-ZĐ]{2,6}(?:&[A-ZĐ]{2,4})?(?![\w-])")
+
+
+def _nghia_tai(tu: str, t: str, a: int, b: int) -> str | None:
+    """Nghĩa theo ngữ cảnh của chữ viết tắt ở t[a:b]; None = không đoán ở đây."""
+    if tu in _TIEN and re.search(r"\d\s?$", t[max(0, a - 3):a]):
+        return None                         # "10 BTC" là đơn vị tiền — chuan_bi lo
+    # Đứng ngay trước số là TÊN GỌI / MÃ ("ĐT 767" đường tỉnh, "BT.2020") — nghĩa có thể
+    # nằm ngoài từ điển, đừng đoán.
+    if re.match(r"\s?[.\-]?\d", t[b:b + 3]):
+        return None
+    return chon_nghia(tu, t, a, b)
+
+
+def chon_nghia_ca_bai(t: str) -> str:
+    """Chọn nghĩa chữ viết tắt NHIỀU NGHĨA trên CẢ BÀI, trước khi bài bị cắt thành câu/vế.
+
+    Engine đọc theo câu (NghiTTS, Piper, Kokoro) cắt chữ ở dấu câu rồi mới chuẩn hoá
+    từng mẩu — mẩu "CP chỉ đạo giảm 15% giá CP…" mất vế trước "UBND… họp với BQL dự án"
+    nên chọn "cổ phiếu" (chủ máy nghe 25/09/2026; cả câu một lượt thì ra "Chính phủ").
+    Mọi quyết định cần ngữ cảnh phải làm ở đây, một lần, trên toàn văn.
+    """
+    return _VT_RE.sub(lambda m: _nghia_tai(m.group(0), t, m.start(), m.end()) or m.group(0), t)
+
+
+#: Đơn vị thời gian và đơn vị đo thường gặp sau một khoảng số — tập đóng.
+_KHOANG_RE = re.compile(
+    r"(?<![\w/.,:-])(\d{1,4})-(\d{1,4})(?![\w/.,:-]|\.\d)(?=\s?(?:"
+    r"giây|phút|giờ|tiếng|ngày|tuần|tháng|năm|tuổi|lần|người|km/h|km|m|cm|mm|kg|g|mg|l|lít|ml"
+    r"|ha|độ|°C|%|triệu|tỷ|nghìn)(?![\wÀ-ỹ]))")
+
+_URL_RE = re.compile(r"(?:https?://|www\.)[^\s<>\"'()]+[^\s<>\"'().,;:!?]", re.IGNORECASE)
+
+
+def _nhan_mien(p: str) -> str:
+    """Một nhãn tên miền: từ tiếng Anh có trong từ điển thì phiên âm ("google"), đọc được
+    thành từ thì để ("com", "net"), ngắn mà không đọc được thì đánh vần ("vn")."""
+    k = p.lower()
+    if k in _tu_dien_anh():
+        return _tu_dien_anh()[k]
+    return danh_van(p) if len(p) <= 3 and p.isalpha() and not _doc_duoc(p) else p
+
+
+def _doc_url(m: re.Match) -> str:
+    u = re.sub(r"^(?:https?://)?(?:www\.)?", "", m.group(0), flags=re.IGNORECASE)
+    u = re.split(r"[?#]", u, maxsplit=1)[0].rstrip("/")
+    may, _, duong = u.partition("/")
+    phan = [" chấm ".join(_nhan_mien(p) for p in may.split(".") if p)]
+    phan += [re.sub(r"[-_.]+", " ", p) for p in duong.split("/") if p]
+    return " gạch chéo ".join(phan)
+
+
 def danh_van(chu: str) -> str:
     return " ".join(TEN_CHU.get(c.upper(), c) for c in chu if c.isalpha())
 
@@ -143,12 +229,24 @@ class _SeaBiet:
         return self._nho[cum]
 
 
+def _bo_dau(tu: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", tu.lower().replace("đ", "d"))
+                   if not unicodedata.combining(c))
+
+
+def _la_tu_doc_duoc(tu: str) -> bool:
+    """Một âm tiết Việt ("CẢNH", "NGHỆ") hay một từ ghép được âm tiết ("CAMERA"). Chữ viết
+    tắt ("GĐ", "BV", "UBND") thì không — nó không phải một phần của tiêu đề in hoa."""
+    k = _bo_dau(tu)
+    return bool(_AM_TIET_VIET.fullmatch(k)) or (len(k) >= 4 and _doc_duoc(k))
+
+
 def _ha_tieu_de(t: str) -> str:
     tu = list(re.finditer(r"\w+", t))
     ra, cuoi, j = [], 0, 0
     while j < len(tu):
         k = j
-        while (k < len(tu) and tu[k].group().isupper()
+        while (k < len(tu) and tu[k].group().isupper() and _la_tu_doc_duoc(tu[k].group())
                and (k == j or re.fullmatch(r"[ \t]+", t[tu[k - 1].end():tu[k].start()]))):
             k += 1
         if k - j >= 2 and any(not w.group().isascii() for w in tu[j:k]):
@@ -171,10 +269,12 @@ def chuan_bi(t: str, sea: Callable[[str], str]) -> str:
     # ký tự: "à-ỹ" của Unicode xen kẽ cả chữ HOA có dấu (Ả, Ạ…), từng làm cụm bị cắt.
     t = _ha_tieu_de(t)
 
-    # Số La Mã: hậu tố sau số/mã ("92-II", "0,05S-II", "95-V") và đứng riêng ≥2 chữ ("quý IV").
-    t = re.sub(r"(?<=[\dA-Za-z])-(VIII|VII|VI|IV|IX|III|II|I|V|X)(?![\w])",
-               lambda m: f" {_LA_MA[m.group(1)]}", t)
-    t = re.sub(r"(?<![\w-])(VIII|VII|VI|IV|IX|III|II)(?![\w-])", lambda m: str(_LA_MA[m.group(1)]), t)
+    # Số La Mã: hậu tố sau số/mã ("92-II", "0,05S-II", "95-V") và đứng riêng ≥2 chữ ("quý IV",
+    # "lần thứ XXX", "thế kỷ XXI"). Chỉ nhận số viết ĐÚNG luật (tới 39) — "VIX" không phải số.
+    t = re.sub(r"(?<=[\dA-Za-z])-([IVX]+)(?![\w])",
+               lambda m: f" {n}" if (n := _so_la_ma(m.group(1))) else m.group(0), t)
+    t = re.sub(r"(?<![\w-])([IVX]{2,})(?![\w-])",
+               lambda m: str(n) if (n := _so_la_ma(m.group(1))) else m.group(0), t)
 
     # Nhãn mục "1a. … 1g. … 1h." — chỉ khi có CHUỖI nhãn; "đến 1h." đứng một mình là giờ.
     if len(re.findall(r"(?<![\w.,])\d{1,2}[a-z](?=\.\s)", t)) >= 2:
@@ -185,17 +285,60 @@ def chuan_bi(t: str, sea: Callable[[str], str]) -> str:
     t = re.sub(r"(?<![\w.])(?:[A-ZĐ]\.){1,}[A-ZĐ](?![\w])\.?",
                lambda m: " ".join(TEN_CHU[c] for c in m.group(0) if c.isalpha()), t)
 
+    # Đường dẫn web: bỏ "https://", "www."; tên miền đọc "chấm", đường dẫn "gạch chéo", bỏ phần
+    # "?id=5" (sea đọc cả thành tiếng Anh: "colon slash slash … question mark … equals").
+    t = _URL_RE.sub(_doc_url, t)
+
+    # Khoảng ngày "10-21/11/2025" → "10 đến ngày 21/11/2025" (sea đọc "ngày mười ngày hai mươi mốt").
+    t = re.sub(r"(?<![\w/.,-])(\d{1,2})-(\d{1,2})(?=/\d{1,2}(?:/\d{2,4})?(?![\w/]))",
+               lambda m: f"{m.group(1)} đến ngày {m.group(2)}" if int(m.group(1)) < int(m.group(2))
+               else m.group(0), t)
+    # Khoảng số TĂNG DẦN ngay trước đơn vị thời gian / đơn vị đo: "2-3 ngày", "8-10 giờ",
+    # "0-100 km/h". sea đọc nhầm thành ngày tháng ("ngày hai tháng ba ngày") hoặc mất "đến".
+    # Chỉ khi tăng dần — "3-1", "2-0" là tỉ số; và chỉ trước đơn vị (tập đóng), vì sau cặp số
+    # còn là tỉ số ("thua 1-3 trước Leeds").
+    t = _KHOANG_RE.sub(lambda m: f"{m.group(1)} đến {m.group(2)}"
+                       if int(m.group(1)) < int(m.group(2)) else m.group(0), t)
+    # Cặp số KHÔNG tăng ("3-1", "2-2") không bao giờ là khoảng, cũng không phải phép trừ trong
+    # văn xuôi: sea đọc "kết quả 3-1" thành "ba TRỪ một", "trận 2-2" thành "hai ĐẾN hai". Là
+    # ngày ("ngày 25-9", "sáng 3-1") thì sea tự nhận ra (đọc có "tháng") — hỏi chính sea với
+    # từ đứng trước; không phải ngày thì là tỉ số: "ba một".
+    def _cap_giam(m):
+        a, b = int(m.group(2)), int(m.group(3))
+        if a < b or "tháng" in sea(m.group(0)):
+            return m.group(0)
+        return f"{m.group(1)}{m.group(2)} {m.group(3)}"
+    t = re.sub(r"((?:\S+\s+){0,2})(?<![\w/.,:-])(\d{1,3})-(\d{1,3})(?![\w/.,:-]|\.\d)", _cap_giam, t)
+
+    # Viết tắt ghép bằng gạch nối ("NĐ-CP", "QĐ-UBND", "TT-BTC"): mỗi phần đều có nghĩa thì
+    # đọc từng phần — để nguyên thì sea đánh vần cả cụm ("nờ đê xê phê").
+    t = re.sub(r"(?<![\w-])[A-ZĐ]{2,6}(?:-[A-ZĐ]{2,6})+(?![\w-])",
+               lambda m: m.group(0).replace("-", " ") if all(
+                   _nghia_tu_dien(p) or p in _mo_hinh_nghia() or sea_biet.biet(p)
+                   for p in m.group(0).split("-")) else m.group(0), t)
+
     # Đơn vị ngay sau số. "h" chỉ là giờ khi ≤ 24 — "350h" là tên mẫu (Lexus ES 350h).
     def _don_vi(m):
         if m.group(2) == "h" and float(m.group(1).replace(",", ".")) > 24:
+            return m.group(0)
+        # "0 K" là kelvin; "4K" (viết liền) là độ phân giải — để sea đọc "bốn ca".
+        if m.group(2) == "K" and " " not in m.group(0):
             return m.group(0)
         return f"{m.group(1)} {_DON_VI[m.group(2)]}"
     t = _DON_VI_RE.sub(_don_vi, t)
 
     # Mã chữ-số ("CT4BX2", "GPT-5", "3WL", "DDR5-6400", "n8n", "ct4b-x2"): chữ đánh vần
     # kiểu Việt, số giữ cho sea đọc; gạch nối thành dấu phẩy để "5-6400" không dính số.
+    def _chu_trong_ma(chu: str) -> str:
+        # Phần chữ đọc thành từ được thì đọc từ, như viết tắt đứng riêng: "COP30" → "cop ba
+        # mươi", "COVID-19" → "cô vít mười chín" (từ điển phiên âm); "GPT-5", "CT4B" đánh vần.
+        k = chu.lower()
+        if len(k) >= 3 and (_mot_am_tiet(k) or (len(k) >= 4 and _doc_duoc(k))):
+            return k
+        return _tu_dien_anh().get(k) if len(k) >= 4 and k in _tu_dien_anh() else danh_van(chu)
+
     def _ma(m):
-        return re.sub(r"[A-Za-z]+", lambda k: f" {danh_van(k.group(0))} ", m.group(0)).replace("-", ", ")
+        return re.sub(r"[A-Za-z]+", lambda k: f" {_chu_trong_ma(k.group(0))} ", m.group(0)).replace("-", ", ")
     t = re.sub(r"(?<![\w.-])(?=[\w-]*\d)(?=[\w-]*[A-Z]{2})[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*(?![\w-])", _ma, t)
     t = re.sub(r"(?<![\w.-])(?=[a-z0-9]*\d)[a-z]+\d+[a-z]+[a-z0-9]*(?:-[a-z0-9]+)*(?![\w-])", _ma, t)
 
@@ -208,10 +351,7 @@ def chuan_bi(t: str, sea: Callable[[str], str]) -> str:
         tu = m.group(0)
         if tu in _TIEN and re.search(r"\d\s?$", t[max(0, m.start() - 3):m.start()]):
             return _TIEN[tu]
-        # Đứng ngay trước số là TÊN GỌI / MÃ ("ĐT 767" đường tỉnh, "BT.2020") — nghĩa có thể
-        # nằm ngoài từ điển, đừng đoán.
-        if not re.match(r"\s?[.\-]?\d", t[m.end():m.end() + 3]) and \
-                (nghia := chon_nghia(tu, t, m.start(), m.end())) is not None:
+        if (nghia := _nghia_tai(tu, t, m.start(), m.end())) is not None:
             return nghia
         if sea_biet.biet(tu):
             return tu
@@ -219,8 +359,10 @@ def chuan_bi(t: str, sea: Callable[[str], str]) -> str:
             return tu                       # đơn vị sau số mà sea biết: "16 GB"
         if len(tu) >= 3 and (_mot_am_tiet(tu) or (len(tu) >= 4 and _doc_duoc(tu))):
             return tu.lower()
+        if nghia := _nghia_tu_dien(tu):
+            return nghia
         return danh_van(tu)
-    t = re.sub(r"(?<![\w&/-])[A-ZĐ]{2,6}(?:&[A-ZĐ]{2,4})?(?![\w-])", _vt, t)
+    t = _VT_RE.sub(_vt, t)
     return phien_am_anh(t)
 
 

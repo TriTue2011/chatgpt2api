@@ -42,6 +42,30 @@ La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi
 Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds
 Rg Cn Nh Fl Mc Lv Ts Og""".split())
 
+#: Tên nguyên tố — tập đóng như chính bảng tuần hoàn. Ký hiệu đứng MỘT MÌNH trong câu là
+#: nói về nguyên tố, đọc bằng tên ("nồng độ K trong máu" là kali — chủ máy 25/09/2026:
+#: "không ai gọi là K"); trong công thức thì vẫn đánh vần như lớp học ("NaOH" → "nờ a ô
+#: hát"). Ghi sẵn CÁCH ĐỌC bằng âm tiết Việt có dấu: viết kiểu sách ("magie", "iot",
+#: "brom") thì bước phiên âm tiếng Anh chạy sau đọc thành "ma ghi", "ai ô ti", "brum".
+TEN_NGUYEN_TO = dict(x.split(":") for x in """
+H:hi_đrô He:hê_li Li:li_ti Be:bê_ri B:bo C:các_bon N:ni_tơ O:ô_xi F:phờ_lo Ne:nê_ông
+Na:na_tri Mg:ma_giê Al:nhôm Si:si_líc P:phốt_pho S:lưu_huỳnh Cl:cờ_lo Ar:a_gông K:ka_li
+Ca:can_xi Sc:xcan_đi Ti:ti_tan V:va_na_đi Cr:crôm Mn:man_gan Fe:sắt Co:cô_ban Ni:ni_ken
+Cu:đồng Zn:kẽm Ga:ga_li Ge:giéc_ma_ni As:a_xen Se:xê_len Br:brôm Kr:kríp_tôn Rb:ru_bi_đi
+Sr:xtrôn_ti Y:y_tri Zr:di_cô_ni Nb:ni_ô_bi Mo:mô_líp_đen Tc:tếch_nê_ti Ru:ru_tê_ni Rh:rô_đi
+Pd:pa_la_đi Ag:bạc Cd:ca_đi_mi In:in_đi Sn:thiếc Sb:an_ti_moan Te:tê_lu I:i_ốt Xe:xê_nông
+Cs:xê_si Ba:ba_ri La:lan_tan Ce:xê_ri Pr:pra_xê_ô_đim Nd:nê_ô_đim Pm:prô_mê_ti Sm:sa_ma_ri
+Eu:ơ_rô_pi Gd:ga_đô_li_ni Tb:téc_bi Dy:đi_xprô_xi Ho:hôn_mi Er:éc_bi Tm:tu_li Yb:y_téc_bi
+Lu:lu_tê_xi Hf:háp_ni Ta:tan_tan W:vôn_fram Re:rê_ni Os:ô_xmi Ir:i_ri_đi Pt:pla_tin
+Au:vàng Hg:thủy_ngân Tl:ta_li Pb:chì Bi:bít_mút Po:pô_lô_ni At:a_xta_tin Rn:ra_đông
+Fr:phran_xi Ra:ra_đi Ac:ác_ti_ni Th:thô_ri Pa:prô_tác_ti_ni U:u_ra_ni Np:nép_tu_ni
+Pu:plu_tô_ni Am:a_mê_ri_xi Cm:cu_ri Bk:béc_kê_li Cf:ca_li_phoóc_ni Es:anh_xtai_ni
+Fm:phéc_mi Md:men_đê_lê_vi No:nô_bê_li Lr:lô_ren_xi Rf:rơ_dơ_phoóc_đi Db:đúp_ni
+Sg:xi_bo_gi Bh:bô_ri Hs:ha_xi Mt:mai_nơ_ri Ds:đam_xta_đi Rg:rơn_ghen Cn:cô_péc_ni_xi
+Nh:ni_hô_ni Fl:phlê_rô_vi Mc:mát_cô_vi Lv:li_vơ_mo_ri Ts:ten_nê_xin Og:ô_ga_nét_xôn""".split())
+TEN_NGUYEN_TO = {k: v.replace("_", " ") for k, v in TEN_NGUYEN_TO.items()}
+assert set(TEN_NGUYEN_TO) == NGUYEN_TO
+
 #: Tên chữ cái — lấy đúng cách sea_g2p đọc từng chữ (đo 24/09/2026).
 _CHU = {"A": "a", "B": "bê", "C": "xê", "D": "đê", "E": "e", "F": "ép", "G": "gờ",
         "H": "hát", "I": "i", "J": "giây", "K": "ca", "L": "lờ", "M": "mờ", "N": "nờ",
@@ -135,12 +159,20 @@ def _doc_phan(s: str) -> tuple[list[str], int] | None:
     return (ra, dem) if ra else None
 
 
-def doc_cong_thuc(token: str, *, ngu_canh: bool = False, viet: bool = True) -> str | None:
-    """Lời đọc của MỘT công thức, hoặc None nếu chuỗi không phải công thức."""
+def doc_cong_thuc(token: str, *, ngu_canh: bool = False, viet: bool = True,
+                  ten_nguyen_to: bool = True) -> str | None:
+    """Lời đọc của MỘT công thức, hoặc None nếu chuỗi không phải công thức.
+
+    ``ten_nguyen_to``: ký hiệu đứng một mình đọc bằng TÊN ("kali"); tắt trong phương trình
+    phản ứng, nơi mọi chất đọc kiểu công thức ("ép e cộng xê u ét ô bốn…")."""
     # Chỉ gồm I/V/X, không chữ số: SỐ LA MÃ ("RON 95-III", "quý IV"), không phải công
     # thức — công thức ghi số lượng bằng chữ số (I2, V2O5). Đo 25/09/2026: "Galaxy S27"
     # tạo ngữ cảnh hoá học rồi "III" thành ba nguyên tố iốt, đọc "i i i".
     if re.fullmatch(r"[IVX]+[+\-]?", token.rstrip(".,;:!?")):
+        return None
+    # Số dính MỘT chữ cái đơn ("4K", "8K", "2G"): độ phân giải, thế hệ mạng… — cùng lý do
+    # chữ cái đơn không tự tạo ngữ cảnh (đo 25/09/2026: "màn hình 4K" làm "Xe" thành xenon).
+    if not ngu_canh and re.fullmatch(r"\d+[A-Z]", token.rstrip(".,;:!?")):
         return None
     goc = token
     dien_tich = ""
@@ -166,6 +198,11 @@ def doc_cong_thuc(token: str, *, ngu_canh: bool = False, viet: bool = True) -> s
             loi.append("chấm")
         loi += ([doc_so(int(he_so))] if he_so else []) + d[0]
         tong += d[1]
+    # Chỉ số hoá học nhỏ (C6H12O6 lớn nhất 12). Không có ngữ cảnh hoá học mà chỉ số ≥ 20 là
+    # TÊN MẪU / MÃ ("COP30", "S27", "U23"), không phải công thức (đo 25/09/2026: "COP30" →
+    # "xê ô phê ba mươi").
+    if not ngu_canh and any(int(x) >= 20 for x in re.findall(r"\d+", token)):
+        return None
     co_dau_hieu = (bool(dien_tich) or any(_la_so(c) for c in goc.translate(_DUOI))
                    or "(" in goc or (tong >= 2 and any(c.islower() for c in goc)))
     if not co_dau_hieu:
@@ -179,6 +216,8 @@ def doc_cong_thuc(token: str, *, ngu_canh: bool = False, viet: bool = True) -> s
         if not (ngu_canh or (viet and tong == 1 and len(token) >= 2
                              and not _dang_am_tiet(token))):
             return None
+        if ten_nguyen_to and token in TEN_NGUYEN_TO:
+            return TEN_NGUYEN_TO[token]
     return " ".join(loi + ([dien_tich] if dien_tich else []))
 
 
@@ -195,12 +234,19 @@ def _xoa_url(cau: str) -> str:
     return _URL.sub(lambda m: " " * len(m.group(0)), cau)
 
 
+#: Đơn vị LƯỢNG CHẤT của SI (mol và bội ước) chỉ dùng trong hoá học / xét nghiệm:
+#: "Nồng độ K trong máu là 4,2 mmol/L" — K ở đây là kali.
+_DON_VI_MOL = re.compile(r"(?<![\w])[mµnk]?mol(?![a-zà-ỹ])", re.IGNORECASE)
+
+
 def _co_ngu_canh(cau: str, viet: bool) -> bool:
     """Câu có dấu hiệu hoá học chắc chắn: một công thức / ký hiệu nhận ra được mà
-    KHÔNG cần ngữ cảnh.
+    KHÔNG cần ngữ cảnh, hoặc đơn vị lượng chất (mol, mmol/L).
 
     Mũi tên KHÔNG tự tạo ngữ cảnh: "Tây Na → Phường…", "Hà Nội → Hải Phòng" là
     chỉ đường. Phương trình thật luôn có công thức hai bên nên vẫn nhận ra."""
+    if _DON_VI_MOL.search(_xoa_url(cau)):
+        return True
     for m in _UNG_VIEN.finditer(_xoa_url(cau)):
         s = m.group(0).rstrip(".,;:!?")
         if s and doc_cong_thuc(s, viet=viet) is not None:
@@ -255,6 +301,8 @@ def _doc_cau(cau: str) -> str:
     trong_phan_ung = any(k in cau for k in _PHAN_UNG)
 
     trong_url = [u.span() for u in _URL.finditer(cau)]
+    # Phương trình: có mũi tên phản ứng hoặc "+" giữa các chất.
+    phuong_trinh = trong_phan_ung or bool(re.search(r"[\w)]\s\+\s[\dA-Z(]", cau))
 
     def thay(m: re.Match) -> str:
         s = m.group(0)
@@ -264,15 +312,19 @@ def _doc_cau(cau: str) -> str:
         if (_NGUYEN_TO_RE.fullmatch(tron) and _dang_am_tiet(tron)
                 and _la_ten_nguoi(cau, m.start(), viet)):
             return s
+        # Ngay sau "số + khoảng trắng" là ĐƠN VỊ, không phải nguyên tố: "0 K" (kelvin),
+        # "12 V", "5 N". Hệ số của công thức viết liền ("2Na").
+        if _NGUYEN_TO_RE.fullmatch(tron) and re.search(r"\d[ \t]+$", cau[:m.start()]):
+            return s
         # Dấu câu dính cuối ("… H2SO4.") không thuộc công thức.
         duoi = ""
         while s and s[-1] in ".,;:!?-+":
-            loi = doc_cong_thuc(s, ngu_canh=ngu_canh, viet=viet)
+            loi = doc_cong_thuc(s, ngu_canh=ngu_canh, viet=viet, ten_nguyen_to=not phuong_trinh)
             if loi is not None:
                 return loi + duoi
             duoi = s[-1] + duoi
             s = s[:-1]
-        loi = doc_cong_thuc(s, ngu_canh=ngu_canh, viet=viet) if s else None
+        loi = doc_cong_thuc(s, ngu_canh=ngu_canh, viet=viet, ten_nguyen_to=not phuong_trinh) if s else None
         return (loi if loi is not None else s) + duoi
 
     ra = _UNG_VIEN.sub(thay, cau)

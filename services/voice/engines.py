@@ -1157,19 +1157,25 @@ def _zerotts_stream(text: str, voice: str):
 
 
 def _doc_cong_thuc(text: str, voice: str) -> str:
-    """Công thức hoá học → lời đọc (xem services/voice/hoa_hoc.py) cho mọi giọng
-    tiếng Việt; Kokoro tiếng Anh và giọng đa ngữ giữ nguyên. Chạy nhiều lần vô
-    hại: lần sau không còn công thức nào để đổi."""
+    """Việc cần NGỮ CẢNH CẢ BÀI, làm một lần trước khi engine cắt câu, cho mọi giọng
+    tiếng Việt: công thức hoá học → lời đọc (services/voice/hoa_hoc.py) và nghĩa chữ
+    viết tắt nhiều nghĩa (doc_theo_nghia.chon_nghia_ca_bai). Kokoro tiếng Anh và giọng
+    đa ngữ giữ nguyên. Chạy nhiều lần vô hại: lần sau không còn gì để đổi."""
     v = (voice or vcfg.tts_voice()).strip()
     if v.startswith("dangu:") or (v.startswith(vcfg.KOKORO_PREFIX)
                                   and not v.startswith(vcfg.KOKORO_VI_PREFIX)):
         return text
-    from services.voice import hoa_hoc
+    from services.voice import doc_theo_nghia, hoa_hoc
 
     try:
-        return hoa_hoc.doc(text)
+        text = hoa_hoc.doc(text)
     except Exception as exc:  # noqa: BLE001 — chữ người dùng tuỳ ý: lỗi đọc công thức không được làm câm TTS
         logger.warning("voice: doc cong thuc loi, doc nguyen van: %s", str(exc)[:160])
+    # Nghĩa chữ viết tắt chọn trên TOÀN VĂN, trước khi engine cắt câu (xem chon_nghia_ca_bai).
+    try:
+        return doc_theo_nghia.chon_nghia_ca_bai(text)
+    except Exception as exc:  # noqa: BLE001 — như trên
+        logger.warning("voice: chon nghia viet tat loi, doc nguyen van: %s", str(exc)[:160])
         return text
 
 

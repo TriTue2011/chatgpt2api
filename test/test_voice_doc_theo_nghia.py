@@ -152,3 +152,66 @@ def test_viet_tat_truoc_so_la_ma_khong_doan_nghia():
     """"ĐT 767" là ĐƯỜNG TỈNH — nghĩa không có trong từ điển; đứng trước số thì không đoán."""
     ra = d.chuan_bi("Chiều nay, đường ĐT 767 bị ngập.", lambda t: t)
     assert not any(ng in ra for ng in ("điện thoại", "đào tạo", "đội tuyển"))
+
+
+def test_chon_nghia_tren_ca_bai_truoc_khi_cat_cau():
+    """Chủ máy 25/09/2026 nghe "CP chỉ đạo" thành "cổ phiếu chỉ đạo": engine cắt câu ở dấu
+    phẩy TRƯỚC khi chuẩn hoá, mẩu sau mất vế "UBND… họp với BQL dự án"."""
+    cau = "UBND TP.HCM họp với BQL dự án, CP chỉ đạo giảm 15% giá CP của DNNN trong quý III/2026."
+    mau_sau = cau.split(", ", 1)[1]
+    assert d.chuan_bi(mau_sau, sea_gia).startswith("cổ phiếu chỉ đạo")      # lỗi cũ: mất ngữ cảnh
+    ca_bai = d.chon_nghia_ca_bai(cau)
+    assert "chính phủ chỉ đạo" in ca_bai and "giá cổ phiếu" in ca_bai
+    assert d.chuan_bi(ca_bai.split(", ", 1)[1], sea_gia).startswith("chính phủ chỉ đạo")
+
+
+def test_chon_nghia_ca_bai_giu_ma_tien_va_ma_so():
+    assert d.chon_nghia_ca_bai("Giá 10 BTC, đường ĐT 767") == "Giá 10 BTC, đường ĐT 767"
+
+
+def test_doc_cong_thuc_chon_nghia_tren_toan_van():
+    from services.voice import engines
+    ra = engines._doc_cong_thuc("UBND họp với BQL dự án, CP chỉ đạo giảm giá CP.", "nghi:ban-mai")
+    assert "chính phủ chỉ đạo" in ra
+
+
+# 14 câu khó chủ máy thử 25/09/2026 — mỗi dòng một LỚP lỗi, đo với sea_g2p thật.
+@pytest.mark.parametrize("vao, co", [
+    # tiêu đề in hoa không được nuốt chữ viết tắt ("GĐ BV" từng thành "gđ bv", không đọc)
+    ("PGS.TS Nguyễn Văn A, GĐ BV Bạch Mai, cho biết", "giám đốc bệnh viện bạch mai"),
+    # viết tắt MỘT nghĩa sea không biết: từ điển (≥3 ký tự, hoặc có Đ)
+    ("UBND họp với BQL dự án về DNNN", "ban quản lý dự án về doanh nghiệp nhà nước"),
+    ("chẩn đoán ĐTĐ type 2", "đái tháo đường"),
+    # viết tắt ghép gạch nối, cả sau "/" của số hiệu văn bản
+    ("thay thế NĐ 100/2019/NĐ-CP", "nghị định chính phủ"),
+    # số La Mã viết đúng luật tới 39 — "XXX" từng đọc "ích ích ích"
+    ("Hội nghị lần thứ XXX, thế kỷ XXI", "lần thứ ba mươi, thế kỷ hai mươi mốt"),
+    # mã có phần chữ đọc được thành từ
+    ("Hội nghị COP30 bàn về COVID-19", "cop ba mươi"),
+    ("Hội nghị COP30 bàn về COVID-19", "cô vít"),
+    # khoảng số trước đơn vị: sea đọc thành NGÀY THÁNG hoặc mất "đến"
+    ("mất 2-3 ngày, khoảng 8-10 giờ", "hai đến ba ngày, khoảng tám đến mười giờ"),
+    ("Xe chạy 0-100 km/h", "không đến một trăm ki lô mét trên giờ"),
+    ("diễn ra ngày 10-21/11/2025", "ngày mười đến ngày hai mươi mốt tháng mười một"),
+    # cặp số không tăng là tỉ số, không phải phép trừ; là ngày thì sea tự đọc
+    ("báo kết quả 3-1 trước Thái Lan", "kết quả ba một trước"),
+    ("ngày 25-9 tại Hà Nội", "ngày hai mươi lăm tháng chín"),
+    # "0 K" là kelvin; "4K" là độ phân giải
+    ("đạt 0 K, màn hình 4K", "không ken vin, màn hình bốn ca"),
+    # đường dẫn web
+    ("website https://c2a.vn/huong-dan?id=5.", "xê hai a chấm vê nờ gạch chéo huong dan"),
+])
+def test_cau_kho_voi_sea_that(vao, co):
+    pytest.importorskip("sea_g2p")
+    from sea_g2p import Normalizer
+
+    n = Normalizer("vi")
+
+    def sea(t):
+        return re.sub(r"</?en>", "", n.normalize(t))
+    assert co in d.don_cuoi(sea(d.chuan_bi(d.chon_nghia_ca_bai(vao), sea)))
+
+
+def test_so_la_ma_chi_nhan_so_dung_luat():
+    assert [d._so_la_ma(x) for x in ("IV", "XXX", "XXXIX", "XIX", "VIX", "IIII", "")] == \
+        [4, 30, 39, 19, None, None, None]

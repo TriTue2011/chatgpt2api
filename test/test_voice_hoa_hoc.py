@@ -80,11 +80,11 @@ def test_so_mu_dinh_dau_cau_khong_do_loi():
 
 
 @pytest.mark.parametrize("viet, doc", [
-    ("Mg trong máu cao.", "mờ gờ trong máu cao."),          # Mg ≠ mg
-    ("Ca và Mg là kim loại.", "xê a và mờ gờ là kim loại."),
-    ("Cho Ba vào dung dịch H2SO4.", "Cho bê a vào dung dịch hát hai ét ô bốn."),
+    ("Mg trong máu cao.", "ma giê trong máu cao."),        # Mg ≠ mg; đứng riêng đọc TÊN
+    ("Ca và Mg là kim loại.", "can xi và ma giê là kim loại."),
+    ("Cho Ba vào dung dịch H2SO4.", "Cho ba ri vào dung dịch hát hai ét ô bốn."),
     ("Ion Cl- và Na+ trong NaCl.", "Ion xê lờ trừ và nờ a cộng trong nờ a xê lờ."),
-    ("Ba mẹ đi làm. Cho Ba vào H2O.", "Ba mẹ đi làm. Cho bê a vào hát hai ô."),
+    ("Ba mẹ đi làm. Cho Ba vào H2O.", "Ba mẹ đi làm. Cho ba ri vào hát hai ô."),
     ("Water is H2O.", "Water is hát hai ô."),                  # công thức chắc chắn thì vẫn đổi
 ])
 def test_ky_hieu_dung_rieng_theo_ngu_canh(viet, doc):
@@ -117,22 +117,22 @@ def test_cau_thuong_khong_bi_tuong_la_hoa_hoc(cau):
 
 @pytest.mark.parametrize("viet, doc", [
     # Tên người sau từ xưng hô
-    ("Cô Na cho Ba vào dung dịch H2SO4.", "Cô Na cho bê a vào dung dịch hát hai ét ô bốn."),
+    ("Cô Na cho Ba vào dung dịch H2SO4.", "Cô Na cho ba ri vào dung dịch hát hai ét ô bốn."),
     ("Bạn Na và bạn Hà làm thí nghiệm với NaCl.", "Bạn Na và bạn Hà làm thí nghiệm với nờ a xê lờ."),
     ("Anh Ba nhỏ HCl vào ống nghiệm.", "Anh Ba nhỏ hát xê lờ vào ống nghiệm."),
     ("Chị La mua 2 kg Ca(OH)2.", "Chị La mua 2 kg xê a ô hát hai lần."),
-    ("Em Ti đã hiểu bài Mg tác dụng với HCl.", "Em Ti đã hiểu bài mờ gờ tác dụng với hát xê lờ."),
+    ("Em Ti đã hiểu bài Mg tác dụng với HCl.", "Em Ti đã hiểu bài ma giê tác dụng với hát xê lờ."),
     # Chữ hoa nối tiếp chữ hoa giữa câu: một tên riêng
     ("Thầy Lê Văn Co giảng Fe + CuSO4 → FeSO4 + Cu.",
      "Thầy Lê Văn Co giảng ép e cộng xê u ét ô bốn tạo thành ép e ét ô bốn cộng xê u."),
     ("Nguyen Van Ba gui H2O.", "Nguyen Van Ba gui hát hai ô."),
     # Danh sách ký hiệu: chữ hoa đứng trước là KÝ HIỆU chứ không phải tên → vẫn là nguyên tố
     ("Các kim loại K Na Ca tác dụng với H2O.",
-     "Các kim loại ca nờ a xê a tác dụng với hát hai ô."),
+     "Các kim loại ka li na tri can xi tác dụng với hát hai ô."),
     ("Đun H2SO4 ở 100°C.", "Đun hát hai ét ô bốn ở 100°C."),   # °C là đơn vị
     # Dấu phẩy ngắt: "Mg," đứng trước không làm "Na" thành tên (câu thật của bot)
     ("Các lần xuất hiện của Ba, K, Mg, Na, Fe đứng riêng:",
-     "Các lần xuất hiện của bê a, ca, mờ gờ, nờ a, ép e đứng riêng:"),
+     "Các lần xuất hiện của ba ri, ka li, ma giê, na tri, sắt đứng riêng:"),
 ])
 def test_ten_nguoi_khong_bi_doc_thanh_nguyen_to(viet, doc):
     assert h.doc(viet) == doc
@@ -145,3 +145,17 @@ def test_ten_nguoi_khong_bi_doc_thanh_nguyen_to(viet, doc):
 def test_so_la_ma_khong_phai_cong_thuc(cau):
     assert "i i" not in h.doc(cau) and "vê" not in h.doc(cau)
     assert all(r in h.doc(cau) for r in ("III", "IV")) if "III" in cau else True
+
+
+def test_ky_hieu_dung_rieng_doc_ten_nguyen_to():
+    """Chủ máy 25/09/2026: "nồng độ K trong máu" — không ai gọi là K, đó là kali; còn
+    "0 K" là kelvin (đơn vị ngay sau số)."""
+    ra = h.doc("Nồng độ K trong máu là 4,2 mmol/L, còn nhiệt độ đạt 0 K.")
+    assert "ka li trong máu" in ra and "0 K." in ra
+    assert h.doc("Cho Na vào nước tạo NaOH.") == "Cho na tri vào nước tạo nờ a ô hát."
+    assert h.doc("Fe + CuSO4 → FeSO4 + Cu") .startswith("ép e cộng")   # phương trình: đọc kiểu công thức
+
+
+def test_ma_so_khong_phai_cong_thuc():
+    assert h.doc("Hội nghị COP30 và màn hình 4K, Xe điện") == "Hội nghị COP30 và màn hình 4K, Xe điện"
+    assert h.doc("Khí CO2 và SO2") == "Khí xê ô hai và ét ô hai"
