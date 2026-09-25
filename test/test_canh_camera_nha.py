@@ -329,6 +329,42 @@ class NguonTests(_Nen):
         self.assertEqual(ra[0][0]["do_giong"], 90)
         self.assertEqual(ra[0][0]["loai"], "quen")      # đủ 2 lần nhìn → giữ «quen»
 
+    def test_TOC_DO_tinh_bang_be_rong_mat_moi_giay(self):
+        """Mặt rộng 100 px dời 100 px trong 0,5 s = 2 bề rộng mặt/giây."""
+        a = np.zeros((10, 10, 3), np.uint8)
+        m1 = {**self._m("la", _vec(3)), "hop": [0, 0, 100, 100], "_t": 10.0}
+        m2 = {**self._m("la", _vec(3)), "hop": [100, 0, 200, 100], "_t": 10.5}
+        self.assertEqual(cc._toc_do([(0.5, m1, a), (0.5, m2, a)]), [2.0, 2.0])
+        # Không có mốc thời gian (dữ liệu cũ, test cũ) → không đo được, không đoán.
+        self.assertEqual(cc._toc_do([(0.5, self._m("la", _vec(3)), a)]), [None])
+
+    def test_chon_khung_NGUOI_DUNG_YEN_hon_khung_MAT_TO_dang_di(self):
+        """Chủ máy 25/09/2026: vợ sát camera (mặt 167 px) mà mờ, hàng xóm đứng yên cách
+        5 m (89 px) lại nét — "có liên quan đến chuyển động không nhỉ", "tốc độ di
+        chuyển". Trong một lượt: khung mặt to hơn nhưng đang đi nhanh phải thua khung
+        mặt nhỏ hơn chút mà đứng yên."""
+        a = np.zeros((10, 10, 3), np.uint8)
+        la = lambda hop, t, ten: {**self._m("la", _vec(4)), "hop": hop, "_t": t,
+                                  "_net": 500.0, "ten_khung": ten}
+        # Đang đi: tâm dời 150 px mỗi 0,5 s, mặt to 160 px → điểm cơ bản cao hơn.
+        di1 = la([0, 0, 160, 160], 0.0, "di1")
+        di2 = la([150, 0, 310, 160], 0.5, "di2")
+        # Dừng lại: mặt 120 px, gần như không dời.
+        yen1 = la([400, 0, 520, 120], 1.0, "yen1")
+        yen2 = la([402, 0, 522, 120], 1.5, "yen2")
+        ds = [(0.9, di1, a), (0.9, di2, a), (0.75, yen1, a), (0.75, yen2, a)]
+        ra = cc._chon_dai_dien(ds, dong_thuan=2)
+        self.assertEqual(len(ra), 1)
+        self.assertIn(ra[0][0]["ten_khung"], ("yen1", "yen2"))
+
+    def test_chon_khung_cung_dung_yen_thi_lay_khung_NET_hon_trong_nhom(self):
+        a = np.zeros((10, 10, 3), np.uint8)
+        la = lambda net, t, ten: {**self._m("la", _vec(6)), "hop": [0, 0, 100, 100],
+                                  "_t": t, "_net": net, "ten_khung": ten}
+        ra = cc._chon_dai_dien([(0.8, la(100.0, 0.0, "mo"), a), (0.8, la(900.0, 0.5, "net"), a)],
+                               dong_thuan=2)
+        self.assertEqual(ra[0][0]["ten_khung"], "net")
+
     def test_THIEU_DONG_THUAN_thi_ha_tu_QUEN_xuong_CO_THE(self):
         """Một khung ăn may vượt ngưỡng không đủ để khẳng định tên ai."""
         a = np.zeros((10, 10, 3), np.uint8)

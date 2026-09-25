@@ -419,16 +419,83 @@ def _diem_chat_luong(anh, m: dict[str, Any]) -> float:
         return round(diem_do, 4)
     # 40 px là sàn cho phép dạy (`MAT_NHO_NHAT`); từ 160 px trở lên coi như đủ to.
     co = min(1.0, max(0.0, (canh - 40) / 120.0))
-    net = 0.0
+    # Độ nét KHÔNG chấm tuyệt đối ở đây. Bản cũ lấy phương sai Laplace / 200 rồi chặn
+    # trần 1,0 — mà mặt thật đo 15…5000+ (đo 25/09/2026, 844 lượt): gần như mọi mặt
+    # được 1,0, phần "nét" chẳng phân biệt gì. Và con số tuyệt đối không so được giữa
+    # camera (trung vị Cam cửa 598, Cam bếp 1800) hay với cảm nhận của người (ảnh mờ
+    # nhiễu hạt 149 ≈ ảnh nét 152). Nét và CHUYỂN ĐỘNG được so TRONG NHÓM khung của
+    # cùng một người — xem `_xep_theo_chuyen_dong`.
+    return round(0.6 * diem_do + 0.4 * co, 4)
+
+
+def _do_net(anh, hop) -> float:
+    """Phương sai Laplace của vùng mặt — chỉ để so giữa các khung CÙNG lượt, cùng người."""
+    import cv2
+
     try:
+        x1, y1, x2, y2 = (int(v) for v in hop)
         o = anh[max(0, y1):max(0, y2), max(0, x1):max(0, x2)]
         if getattr(o, "size", 0):
-            xam = cv2.cvtColor(o, cv2.COLOR_BGR2GRAY)
-            # Phương sai Laplace: ảnh mờ thì cạnh ít biến thiên.
-            net = min(1.0, float(cv2.Laplacian(xam, cv2.CV_64F).var()) / 200.0)
-    except Exception:  # noqa: BLE001 — chấm điểm hỏng KHÔNG được làm hỏng cả lượt
-        net = 0.0
-    return round(0.5 * diem_do + 0.3 * co + 0.2 * net, 4)
+            return float(cv2.Laplacian(cv2.cvtColor(o, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var())
+    except Exception:  # noqa: BLE001 — đo hỏng KHÔNG được làm hỏng cả lượt
+        pass
+    return 0.0
+
+
+def _toc_do(ds: list[tuple[float, dict[str, Any], Any]]) -> list[float | None]:
+    """Tốc độ mặt ở từng khung, tính bằng BỀ RỘNG MẶT MỖI GIÂY (so được người xa/gần).
+
+    Ảnh mờ ở camera nhà chủ yếu do người đang đi: chủ máy nhận xét 25/09/2026 — ảnh
+    vợ sát camera (mặt 167 px) mờ, ảnh hàng xóm đứng yên cách 5 m (89 px) lại nét.
+    Mỗi lượt chụp nhiều khung cách nhau ~0,5 s, nên độ dời tâm mặt giữa hai khung
+    liền nhau chính là tốc độ. ``None`` = không có khung bên cạnh để so.
+    """
+    import math
+
+    thu_tu = sorted(range(len(ds)), key=lambda i: ds[i][1].get("_t", 0.0))
+    ra: list[float | None] = [None] * len(ds)
+    for vi, i in enumerate(thu_tu):
+        m = ds[i][1]
+        if "_t" not in m or not m.get("hop"):
+            continue
+        x1, y1, x2, y2 = (float(v) for v in m["hop"])
+        rong = max(1.0, x2 - x1)
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        do = []
+        for vj in (vi - 1, vi + 1):
+            if 0 <= vj < len(thu_tu):
+                n = ds[thu_tu[vj]][1]
+                dt = abs(float(n.get("_t", 0.0)) - float(m["_t"]))
+                if dt > 0 and n.get("hop"):
+                    a1, b1, a2, b2 = (float(v) for v in n["hop"])
+                    do.append(math.hypot((a1 + a2) / 2 - cx, (b1 + b2) / 2 - cy) / dt / rong)
+        if do:
+            ra[i] = sum(do) / len(do)
+    return ra
+
+
+def _xep_theo_chuyen_dong(ds: list[tuple[float, dict[str, Any], Any]]
+                          ) -> list[tuple[float, dict[str, Any], Any]]:
+    """Xếp lại các khung của MỘT người: đứng yên và nét (so trong nhóm) lên trước.
+
+    Điểm = 0,5·điểm cơ bản (dò chắc, mặt to) + 0,3·độ yên + 0,2·độ nét tương đối.
+    Độ yên = 1/(1 + tốc độ); khung không đo được tốc độ lấy 0,5 (không biết). Độ nét
+    tương đối = nét / nét lớn nhất nhóm — cùng camera, cùng người, cách nhau nửa giây
+    nên nhiễu và mức nén như nhau, chỉ khác độ nhoè.
+    """
+    toc = _toc_do(ds)
+    net_max = max((float(m.get("_net") or 0.0) for _d, m, _a in ds), default=0.0)
+    ra = []
+    for (d, m, anh), v in zip(ds, toc):
+        yen = 0.5 if v is None else 1.0 / (1.0 + v)
+        net_tuong_doi = float(m.get("_net") or 0.0) / net_max if net_max > 0 else 1.0
+        ra.append((0.5 * d + 0.3 * yen + 0.2 * net_tuong_doi, m, anh, v))
+    ra.sort(key=lambda z: -z[0])
+    if len(ra) >= 2:
+        logger.info({"event": "canh_camera_chon_khung", "so_khung": len(ra),
+                     "toc_do": [None if z[3] is None else round(z[3], 2) for z in ra],
+                     "chon_toc_do": None if ra[0][3] is None else round(ra[0][3], 2)})
+    return [(z[0], z[1], z[2]) for z in ra]
 
 
 def _chon_dai_dien(ung_vien: list[tuple[float, dict[str, Any], Any]],
@@ -470,7 +537,7 @@ def _chon_dai_dien(ung_vien: list[tuple[float, dict[str, Any], Any]],
         theo_ai.setdefault(khoa, []).append((d, m, anh))
     ra = []
     for khoa, ds in theo_ai.items():
-        ds.sort(key=lambda z: -z[0])
+        ds = _xep_theo_chuyen_dong(ds)
         _d, m, anh = ds[0]
         if len(ds) >= 2:
             m = _gop_khung(khoa, m, ds)
@@ -542,6 +609,7 @@ def xu_ly(camera: str, nguon: str) -> dict[str, Any]:
             break
         try:
             _, tho = camera_nha.chup_tho(camera, timeout=15)
+            t_khung = time.monotonic()
             anh_i = yolo_nha.doc_anh(tho)
         except Exception as exc:
             # Một khung hỏng KHÔNG được làm hỏng cả lượt: go2rtc thỉnh thoảng
@@ -566,6 +634,7 @@ def xu_ly(camera: str, nguon: str) -> dict[str, Any]:
             # Tường và cạnh cửa vẫn có điểm dò cao. Năm mốc không thành mặt thì bỏ.
             if not moc_la_mat(m["hop"], m.get("moc")):
                 continue
+            m = {**m, "_t": t_khung, "_net": _do_net(anh_i, m.get("hop"))}
             ung_vien.append((_diem_chat_luong(anh_i, m), m, anh_i))
     if anh is None:
         return {"bo_qua": "không lấy được khung nào"}
