@@ -56,7 +56,11 @@ _MAC_DINH: dict[str, Any] = {
     "camera": [],          # rỗng = KHÔNG canh camera nào
     "camera_ve": [],       # camera tính là «về nhà» — rỗng = không báo người quen về
     "nhan": ["person"],    # nhãn YOLO cần tìm; nhãn KHÁC người chỉ để báo tin
-    "so_khung_luot": 5,    # nhìn mấy khung trong MỘT lượt rồi mới quyết
+    "so_khung_luot": 5,    # nhìn mấy khung trong MỘT lượt rồi mới quyết (khi KHÔNG xem video)
+    # Nhận diện theo VIDEO: có người thì mở luồng chính, xem liên tục tới khi người
+    # đi khỏi (tối đa ngần này giây), nối mặt thành vết qua các khung.
+    "theo_video": True,
+    "video_toi_da_giay": 8.0,
     "khoang_khung_giay": 0.5,   # cách nhau bao lâu giữa hai khung trong lượt
     "dong_thuan": 2,       # phải ngần này lần nhìn cùng chỉ một người mới dám gọi tên
     "hoi_ten_sau": 3,      # mặt lạ gặp ngần này lượt thì hỏi tên
@@ -498,6 +502,132 @@ def _xep_theo_chuyen_dong(ds: list[tuple[float, dict[str, Any], Any]]
     return [(z[0], z[1], z[2]) for z in ra]
 
 
+#: Hai khung liền nhau: tâm mặt dời tối đa (4·Δt + 0,75) bề rộng mặt vẫn coi là một
+#: người — đi nhanh ~6 bề rộng/giây, khung cách ~0,3 s. Cỡ mặt đổi tối đa 2 lần (đi
+#: từ xa lại gần). Vector giống ≥ 0,15 để hai người đi ngang nhau không nối nhầm.
+_VET_DOI_MOI_GIAY = 4.0
+_VET_DOI_SAN = 0.75
+_VET_CO_TOI_DA = 2.0
+_VET_GIONG_TOI_THIEU = 0.15
+#: Vết không thấy lại trong ngần này giây thì khép.
+_VET_MAT_DAU = 1.5
+
+
+def _gan_vet(ung_vien: list[tuple[float, dict[str, Any], Any]]) -> int:
+    """Nối các mặt qua khung video thành VẾT (``m["_vet"]``). Trả số vết.
+
+    Chủ máy 25/09/2026: vợ đi từ xa (mặt 58 px, mờ) lại sát camera (167 px) bị tách
+    thành "người lạ" + "có thể là vợ" — hai mặt ấy là MỘT người trong vài giây liền.
+    Bám vết theo vị trí, cỡ và vector mặt thì cả quãng đi là một vết; nhận diện gộp
+    trên cả vết thay vì từng ảnh rời.
+    """
+    import math
+
+    import numpy as np
+
+    theo_luc: dict[float, list[dict[str, Any]]] = {}
+    for _d, m, _a in ung_vien:
+        theo_luc.setdefault(float(m.get("_t", 0.0)), []).append(m)
+    vet: list[dict[str, Any]] = []            # {"id", "hop", "t", "v"}
+    for t in sorted(theo_luc):
+        dung: set[int] = set()
+        mats = sorted(theo_luc[t], key=lambda m: -(m["hop"][2] - m["hop"][0]))
+        for m in mats:
+            x1, y1, x2, y2 = (float(v) for v in m["hop"])
+            rong = max(1.0, x2 - x1)
+            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+            v = np.asarray(m["vector"], np.float32) if m.get("vector") is not None else None
+            tot, tot_diem = None, None
+            for i, vt in enumerate(vet):
+                dt = t - vt["t"]
+                if i in dung or dt <= 0 or dt > _VET_MAT_DAU:
+                    continue
+                a1, b1, a2, b2 = vt["hop"]
+                r0 = max(1.0, a2 - a1)
+                if max(rong, r0) / min(rong, r0) > _VET_CO_TOI_DA:
+                    continue
+                doi = math.hypot((a1 + a2) / 2 - cx, (b1 + b2) / 2 - cy) / max(rong, r0)
+                if doi > _VET_DOI_MOI_GIAY * dt + _VET_DOI_SAN:
+                    continue
+                if v is not None and vt["v"] is not None and float(np.dot(v, vt["v"])) < _VET_GIONG_TOI_THIEU:
+                    continue
+                if tot_diem is None or doi < tot_diem:
+                    tot, tot_diem = i, doi
+            if tot is None:
+                vet.append({"id": len(vet), "hop": (x1, y1, x2, y2), "t": t, "v": v})
+                tot = len(vet) - 1
+            else:
+                vet[tot].update(hop=(x1, y1, x2, y2), t=t, v=v if v is not None else vet[tot]["v"])
+            dung.add(tot)
+            m["_vet"] = vet[tot]["id"]
+    return len(vet)
+
+
+def _xem_video(nguon, camera: str, goi_y=None, *, toi_da_giay: float = 8.0,
+               im_giay: float = 2.0, it_nhat_giay: float = 2.0):
+    """Nhận diện trên các khung VIDEO từ ``nguon`` (lặp ra ``(t, ảnh BGR)``).
+
+    Dùng chung cho luồng camera trực tiếp và tệp clip (để đo trên clip Frigate thật
+    trước khi tin). Dừng khi quá ``toi_da_giay``, hoặc đã xem ít nhất
+    ``it_nhat_giay`` mà ``im_giay`` liền không còn mặt nào. Trả
+    ``(ung_vien, khung đầu, phân tích khung đầu, số khung)``.
+    """
+    from services import nhin_nha
+    from services.khuon_mat_nha import moc_la_mat
+
+    ung_vien: list[tuple[float, dict[str, Any], Any]] = []
+    anh0 = k0 = None
+    t0 = t_mat = None
+    so = 0
+    for t, anh_i in nguon:
+        if _stop.is_set():
+            break
+        if t0 is None:
+            t0 = t_mat = t
+        hop_nguoi = None
+        if goi_y is not None:
+            hop_nguoi = _hop_tu_frigate(goi_y, anh_i.shape[1], anh_i.shape[0], 0.9) or None
+            goi_y = None
+        k_i = nhin_nha.phan_tich_khung(anh_i, hop_nguoi=hop_nguoi)
+        so += 1
+        _stats["khung_trong_luot"] += 1
+        if anh0 is None:
+            anh0, k0 = anh_i, k_i
+        co_mat = False
+        for m in k_i.mat:
+            if m["nho"] or m.get("mo") or m["diem_do"] < DIEM_DO_TOI_THIEU:
+                continue
+            if not moc_la_mat(m["hop"], m.get("moc")):
+                continue
+            co_mat = True
+            m = {**m, "_t": float(t), "_net": _do_net(anh_i, m.get("hop"))}
+            ung_vien.append((_diem_chat_luong(anh_i, m), m, anh_i))
+        if co_mat or any(v.nhan == "person" for v in k_i.vat_the):
+            t_mat = t
+        if t - t0 >= toi_da_giay or (t - t0 >= it_nhat_giay and t - t_mat >= im_giay):
+            break
+    _gan_vet(ung_vien)
+    return ung_vien, anh0, k0, so
+
+
+def _video_truc_tiep(camera: str, toi_da_giay: float):
+    """Khung từ luồng CHÍNH của camera, khung mới nhất sau khung vừa xử lý."""
+    from services import camera_nha
+
+    d = camera_nha.mo_video(camera)
+    try:
+        sau = 0.0
+        het = time.time() + toi_da_giay + 5.0       # chờ mở luồng + xem
+        while time.time() < het:
+            kq = d.khung_moi(sau, cho=4.0)
+            if kq is None:
+                return
+            sau, anh = kq
+            yield sau, anh
+    finally:
+        d.dong()
+
+
 def _chon_dai_dien(ung_vien: list[tuple[float, dict[str, Any], Any]],
                    dong_thuan: int) -> list[tuple[dict[str, Any], Any]]:
     """Nhiều lần nhìn trong một lượt → mỗi danh tính một khuôn mặt đại diện.
@@ -515,6 +645,22 @@ def _chon_dai_dien(ung_vien: list[tuple[float, dict[str, Any], Any]],
     from services import so_mat_nha
 
     co_the, _chac = so_mat_nha.nguong_hieu_luc()
+    if any("_vet" in m for _d, m, _a in ung_vien):
+        # VIDEO: trước hết gộp từng VẾT (một người liền mạch qua các khung) — danh
+        # tính quyết trên vector trung bình cả vết, khung đại diện là khung đứng yên
+        # và nét nhất. Rồi mới gom các vết theo danh tính như dưới (một người đi
+        # khuất rồi quay lại = hai vết, cùng một người).
+        theo_vet: dict[int, list[tuple[float, dict[str, Any], Any]]] = {}
+        for z in ung_vien:
+            theo_vet.setdefault(int(z[1].get("_vet", -1)), []).append(z)
+        gop = []
+        for vid, ds in theo_vet.items():
+            ds = _xep_theo_chuyen_dong(ds)
+            d, m, anh = ds[0]
+            if len(ds) >= 2:
+                m = _gop_khung(f"vet:{vid}", m, ds)
+            gop.append((d, {**m, "_so_khung": len(ds)}, anh))
+        ung_vien = gop
     # Người đã biết (kể cả «có thể là») gom theo danh tính. Mặt LẠ chưa có danh
     # tính nên gom theo ĐỘ GIỐNG giữa chính các vector — cùng luật mà
     # `so_mat_nha.gom_mat_la` dùng. Gom chung hết thành một là gộp nhầm hai khách
@@ -541,7 +687,8 @@ def _chon_dai_dien(ung_vien: list[tuple[float, dict[str, Any], Any]],
         _d, m, anh = ds[0]
         if len(ds) >= 2:
             m = _gop_khung(khoa, m, ds)
-        if m.get("nguoi_id") and m.get("loai") == "quen" and len(ds) < dong_thuan:
+        so_lan_nhin = sum(int(x[1].get("_so_khung", 1)) for x in ds)
+        if m.get("nguoi_id") and m.get("loai") == "quen" and so_lan_nhin < dong_thuan:
             m = {**m, "loai": "co_the"}
             _stats["ha_vi_thieu_dong_thuan"] += 1
         ra.append((m, anh))
@@ -571,7 +718,11 @@ def _gop_khung(khoa: str, m: dict[str, Any],
         if kq["nguoi_id"] != m.get("nguoi_id"):
             return m
     elif kq["loai"] == "la":
-        return {**m, "vector": v}
+        # Vết video: trung bình cả vết là lạ thì là lạ, kể cả khi một khung lẻ
+        # ăn may khớp ai đó — nhất quán nhiều khung mới đáng tin.
+        return {**m, "loai": "la", "nguoi_id": None, "ten": None,
+                "do_giong": kq.get("do_giong", m.get("do_giong")), "vector": v} \
+            if khoa.startswith("vet:") else {**m, "vector": v}
     _stats["gop_khung"] = _stats.get("gop_khung", 0) + 1
     return {**m, **kq, "vector": v}
 
@@ -602,6 +753,23 @@ def xu_ly(camera: str, nguon: str) -> dict[str, Any]:
         cu = _goi_y.pop(camera, None)
     if cu and time.time() - cu[0] <= 5.0:
         goi_y = cu[1]
+    if c.get("theo_video", True):
+        toi_da = _so(c.get("video_toi_da_giay"), 8.0, 1.0, 30.0)
+        t_bat = time.time()
+        try:
+            ung_vien, anh, k, so_khung_xem = _xem_video(
+                _video_truc_tiep(camera, toi_da), camera, goi_y, toi_da_giay=toi_da)
+            logger.info({"event": "canh_camera_video", "camera": camera,
+                         "so_khung": so_khung_xem, "so_mat": len(ung_vien),
+                         "so_vet": len({m.get("_vet") for _d, m, _a in ung_vien}),
+                         "giay": round(time.time() - t_bat, 1)})
+        except Exception as exc:  # noqa: BLE001 — video hỏng thì lùi về chụp ảnh, không mất lượt
+            logger.info({"event": "canh_camera_video_hong", "camera": camera,
+                         "loi": str(exc)[:160]})
+            ung_vien, anh, k = [], None, None
+        if anh is not None:
+            so_khung = 0                    # đã xem video — bỏ vòng chụp ảnh
+            goi_y = None                    # hộp Frigate đã dùng cho khung đầu video
     for i in range(so_khung):
         if i and cach:
             _stop.wait(cach)

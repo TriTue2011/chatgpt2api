@@ -365,6 +365,69 @@ class NguonTests(_Nen):
                                dong_thuan=2)
         self.assertEqual(ra[0][0]["ten_khung"], "net")
 
+    def _mv(self, hop, t, vec, loai="la", **kw):
+        return {**self._m(loai, vec, **kw), "hop": hop, "_t": t, "_net": 500.0}
+
+    def test_VET_nguoi_di_tu_XA_lai_GAN_la_MOT_vet(self):
+        """Chủ máy 25/09/2026: vợ đi từ xa (58 px) lại sát camera (167 px) bị tách thành
+        "người lạ" + "có thể là vợ". Qua video, cả quãng đi phải là MỘT vết."""
+        a = np.zeros((10, 10, 3), np.uint8)
+        v = _vec(7)
+        ds = []
+        for i, (x, w) in enumerate([(300, 60), (330, 75), (370, 95), (420, 120), (480, 150), (550, 170)]):
+            ds.append((0.5, self._mv([x, 100, x + w, 100 + w], i * 0.3, v), a))
+        self.assertEqual(cc._gan_vet(ds), 1)
+        self.assertEqual({m["_vet"] for _d, m, _a in ds}, {0})
+
+    def test_VET_hai_nguoi_cung_luc_la_HAI_vet(self):
+        a = np.zeros((10, 10, 3), np.uint8)
+        ds = []
+        for i in range(4):
+            ds.append((0.5, self._mv([100 + 5 * i, 100, 200 + 5 * i, 200], i * 0.3, _vec(2)), a))
+            ds.append((0.5, self._mv([900 - 5 * i, 100, 1000 - 5 * i, 200], i * 0.3, _vec(9)), a))
+        self.assertEqual(cc._gan_vet(ds), 2)
+
+    def test_VET_hai_nguoi_di_ngang_khong_noi_nham_nho_vector(self):
+        """Hai người lướt sát nhau: vị trí gần mà vector khác hẳn thì không nối."""
+        a = np.zeros((10, 10, 3), np.uint8)
+        ds = [(0.5, self._mv([100, 100, 200, 200], 0.0, _vec(3)), a),
+              (0.5, self._mv([110, 100, 210, 200], 0.3, _vec(8)), a)]
+        self.assertEqual(cc._gan_vet(ds), 2)
+
+    def test_VET_mat_dau_qua_lau_thi_la_vet_moi(self):
+        a = np.zeros((10, 10, 3), np.uint8)
+        ds = [(0.5, self._mv([100, 100, 200, 200], 0.0, _vec(3)), a),
+              (0.5, self._mv([100, 100, 200, 200], 5.0, _vec(3)), a)]
+        self.assertEqual(cc._gan_vet(ds), 2)
+
+    def test_VIDEO_mot_vet_KHONG_tach_thanh_nguoi_la(self):
+        """Khung lẻ mặt nhỏ (lạ) và khung mặt to (có thể là vợ) trong CÙNG một vết:
+        danh tính quyết trên trung bình cả vết — ra MỘT người, không đẻ "người lạ"."""
+        from services import so_mat_nha
+
+        a = np.zeros((10, 10, 3), np.uint8)
+        v = _vec(4)
+        ds = [(0.4, self._mv([300, 100, 360, 160], 0.0, v, loai="la"), a),
+              (0.8, self._mv([340, 100, 440, 200], 0.3, v, loai="co_the", nguoi_id="vo",
+                             ten="vợ tôi", do_giong=45.0), a)]
+        cc._gan_vet(ds)
+        kq = {"nguoi_id": "vo", "ten": "vợ tôi", "do_giong": 48.0, "loai": "co_the"}
+        with mock.patch.object(so_mat_nha, "khop", return_value=kq):
+            ra = cc._chon_dai_dien(ds, dong_thuan=2)
+        self.assertEqual(len(ra), 1)
+        self.assertEqual((ra[0][0]["loai"], ra[0][0]["nguoi_id"]), ("co_the", "vo"))
+
+    def test_VIDEO_xem_dung_khi_nguoi_di_khoi(self):
+        """Xem tới khi hết người (im ``im_giay``), không xem mãi."""
+        a = np.zeros((10, 10, 3), np.uint8)
+        khung = [(i * 0.25, a) for i in range(200)]          # 50 giây nếu xem hết
+        rong = self.nn.KhungDaXem(10, 10, [], [])
+        with mock.patch.object(self.nn, "phan_tich_khung", lambda anh, **kw: rong):
+            uv, anh0, _k, so = cc._xem_video(iter(khung), "Cam cửa", toi_da_giay=8.0,
+                                             im_giay=2.0, it_nhat_giay=2.0)
+        self.assertLessEqual(so, 10)          # dừng sau ~2 giây không có ai
+        self.assertIsNotNone(anh0)
+
     def test_THIEU_DONG_THUAN_thi_ha_tu_QUEN_xuong_CO_THE(self):
         """Một khung ăn may vượt ngưỡng không đủ để khẳng định tên ai."""
         a = np.zeros((10, 10, 3), np.uint8)

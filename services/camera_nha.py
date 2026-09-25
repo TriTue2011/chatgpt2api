@@ -30,7 +30,7 @@ import subprocess
 import threading
 import time
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
 
@@ -471,12 +471,55 @@ class _DocBenBi:
                 return None
             return self._khung
 
+    def khung_moi(self, sau: float, cho: float = 3.0) -> tuple[float, Any] | None:
+        """Khung đọc được SAU mốc ``sau`` (giây, đồng hồ thực), chờ tối đa ``cho``.
+
+        Dùng khi xem video một lượt: người gọi xử lý xong khung này thì lấy khung
+        mới nhất tiếp theo — nhịp tự khớp với tốc độ máy, không dồn khung cũ.
+        """
+        het = time.time() + cho
+        while not self._dung.is_set():
+            with self._khoa:
+                if self._khung is not None and self._luc > sau:
+                    return self._luc, self._khung
+            if time.time() >= het:
+                return None
+            self._dung.wait(0.02)
+        return None
+
     def dong(self) -> None:
         self._dung.set()
         self._luong.join(timeout=3.0)
         if self._cap is not None:
             self._cap.release()
             self._cap = None
+
+
+def url_luong_chinh(ten: str) -> str:
+    """URL RTSP luồng CHÍNH của camera (go2rtc phát lại theo tên luồng, hoặc URL RTSP
+    khai thẳng). Ném ``LoiCamera`` khi camera không có luồng video đọc được."""
+    ten_that, cam = _lay(ten)
+    if cam.get("kind") == "go2rtc":
+        src = str(cam.get("src") or "").strip()
+        if src.lower().startswith("rtsp://"):
+            return src
+        u = urlsplit(str(cam.get("base") or ""))
+        if not src or src.lower().startswith(("http://", "https://")) or not u.hostname:
+            raise LoiCamera(f"camera «{ten_that}» không có luồng go2rtc đọc video được")
+        tk = ""
+        if cam.get("username"):
+            # Mật khẩu có ký tự như "@" phải mã hoá mới nằm được trong URL.
+            tk = f"{quote(str(cam['username']), safe='')}:{quote(str(cam.get('password') or ''), safe='')}@"
+        return f"rtsp://{tk}{u.hostname}:{CONG_RTSP_GO2RTC}/{src}"
+    url = str(cam.get("url") or "").strip()
+    if not url.lower().startswith("rtsp://"):
+        raise LoiCamera(f"camera «{ten_that}» không có URL RTSP")
+    return url
+
+
+def mo_video(ten: str) -> "_DocBenBi":
+    """Mở luồng CHÍNH để xem video trong một lượt nhận mặt. Người gọi phải ``dong()``."""
+    return _DocBenBi(url_luong_chinh(ten), f"v-{ten}")
 
 
 def _ten_luong_phu(cam: dict[str, Any]) -> str:
