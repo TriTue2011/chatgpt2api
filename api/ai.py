@@ -27,6 +27,28 @@ from services.protocol import (
 )
 
 
+_THU = ("Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật")
+
+
+def _chen_gio_vn(messages: list, now=None) -> list:
+    """Chèn giờ Việt Nam thật ngay TRƯỚC tin người dùng cuối (yêu cầu từ HA).
+
+    HA 2026.9 không đưa giờ vào lời dặn nữa — model phải tự gọi `llm__GetDateTime`; model
+    không gọi công cụ thì ĐOÁN. Đo 26/09/2026 22:54: nghe "Không" (nhận giọng bịa từ tiếng
+    ting) sau câu "22 giờ 54", model xin lỗi rồi đổi thành "23 giờ 54 (UTC+8)". Đặt cuối chứ
+    không đầu: dòng đổi mỗi phút, đặt đầu là phá bộ nhớ đệm tiền tố lời dặn của model."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    d = now or datetime.now(ZoneInfo("Asia/Ho_Chi_Minh"))
+    dong = {"role": "system",
+            "content": f"Giờ Việt Nam lúc này (UTC+7): {d:%H:%M}, {_THU[d.weekday()]} ngày {d:%d/%m/%Y}. "
+                       "Hỏi giờ, ngày, thứ thì dùng đúng giá trị này — không tự tính múi giờ khác."}
+    cuoi = max((i for i, m in enumerate(messages) if isinstance(m, dict) and m.get("role") == "user"),
+               default=len(messages))
+    return [*messages[:cuoi], dong, *messages[cuoi:]]
+
+
 def _client_host(request: Request) -> str:
     try:
         return str(getattr(request.client, "host", "") or "")
@@ -337,6 +359,7 @@ def create_router() -> APIRouter:
                 if _pb:
                     payload["messages"] = [{"role": "system", "content": _pb},
                                            *payload["messages"]]
+                payload["messages"] = _chen_gio_vn(payload["messages"])
         except Exception:
             pass
         model = str(payload.get("model") or "auto")
