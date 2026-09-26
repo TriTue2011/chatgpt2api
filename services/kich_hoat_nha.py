@@ -86,6 +86,21 @@ LOI_TOI_THIEU = 2.0
 P_HOI = 0.75
 KIEM_TOI_THIEU = 5
 KIEM_TY_LE = 0.60
+#: Cân nhắc THEO GIỜ (chủ máy 26/09/2026: "khi đi ngủ, kéo rèm đóng cửa thì vẫn có người,
+#: lúc này có bật không" — "thì 1 là hỏi tôi"). Luật cây chỉ biết "từ 15:52", không biết
+#: giờ ngủ vì dữ liệu giờ muộn ít; đo 30 ngày đèn phòng ngủ: lúc 23h luật sẽ bật 5/5 lần
+#: có người vào, người bật 0/5. Nên xét thêm: những lần luật nói "bật" QUANH giờ này
+#: (± QUANH_GIO), người thật sự bật bao nhiêu —
+#: ≥ TIN_QUANH thì được tự làm; < IM_QUANH (rõ là KHÔNG — đo: 23h 2/9) thì im, không
+#: nhắn Zalo đánh thức người ngủ; lưng chừng (22h: 7/15) hoặc chưa đủ MAU_QUANH lần thì HỎI.
+QUANH_GIO = 1
+MAU_QUANH = 5
+TIN_QUANH = 0.9
+IM_QUANH = 0.25
+#: Khung giờ chủ máy đặt (26/09/2026: "tôi đặt khung giờ rồi bot đánh giá xem có cần bật
+#: không, kiểu đọc sách. Hoặc quá giờ chưa muốn tắt"): trong khung, một hướng là
+#: "hoi" (luôn hỏi — không tự làm, cũng không im) hoặc "khong" (không bao giờ làm).
+CACH_KHUNG = ("hoi", "khong")
 #: Báo ảo: nhìn lại ngần này giây tìm dấu hiệu người.
 AO_NHIN_LAI = 6 * 3600
 HOC_LAI = 6 * 3600
@@ -165,7 +180,9 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
     for x in ngoai_le or []:
         if x.get("hanh_dong") not in HANH_DONG or not all(
                 re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(x.get(k) or "")) for k in ("tu", "den")):
-            raise ValueError("Ngoại lệ phải có hanh_dong on/off và giờ dạng HH:MM.")
+            raise ValueError("Khung giờ phải có hanh_dong on/off và giờ dạng HH:MM.")
+        if x.get("cach", "khong") not in CACH_KHUNG or len(str(x.get("ten") or "")) > 40:
+            raise ValueError("Khung giờ: cách là «hoi» hoặc «khong», tên tối đa 40 chữ.")
     with _khoa:
         d = _nap()
         cu = d["thiet_bi"].setdefault(tb, {"bat": False, "bo_nguon": [], "ngoai_le": []})
@@ -177,7 +194,9 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
         if tu_lam is not None:
             cu["tu_lam"] = bool(tu_lam)
         if ngoai_le is not None:
-            cu["ngoai_le"] = [{k: str(x[k]) for k in ("hanh_dong", "tu", "den")} for x in ngoai_le]
+            cu["ngoai_le"] = [{"hanh_dong": str(x["hanh_dong"]), "tu": str(x["tu"]), "den": str(x["den"]),
+                               "cach": str(x.get("cach") or "khong"), "ten": str(x.get("ten") or "").strip()}
+                              for x in ngoai_le]
         _luu()
         return dict(cu)
 
@@ -388,14 +407,19 @@ def hoc(tb: str) -> dict[str, Any]:
         thu = [(x, y) for x, y, t in mau if t >= moc_thu]
         cay = (dung_cay(hoc_) if sum(y for _, y in hoc_) >= NGUON_TOI_THIEU
                else {"p": 0.0, "n": len(hoc_), "k": sum(y for _, y in hoc_)})
+        theo_gio = [[0, 0] for _ in range(24)]
+        for x, y in hoc_:
+            if doan_cay(cay, x) >= P_HOI:
+                theo_gio[int(x["giờ"])][0] += y
+                theo_gio[int(x["giờ"])][1] += 1
         doan = trung = 0
         for x, y in thu:
-            if doan_cay(cay, x) >= P_HOI:
+            if doan_cay(cay, x) >= P_HOI and quanh_gio(theo_gio, x["giờ"])[2] != "im":
                 doan += 1
                 trung += y
         ra[hd] = {
             "nguon": ds_nguon,
-            "dem_nguon": {n: truoc[n] for n in ds_nguon}, "cay": cay,
+            "dem_nguon": {n: truoc[n] for n in ds_nguon}, "cay": cay, "theo_gio": theo_gio,
             "luat": sorted(luat(cay, ten), key=lambda r: -r["p"]),
             "ten": {n: _ten_nguon(n, ten) for n in ds_nguon},
             "so_lan": sum(1 for t in dich if t < moc_thu),
@@ -408,6 +432,18 @@ def hoc(tb: str) -> dict[str, Any]:
     logger.info({"event": "kich_hoat_hoc", "thiet_bi": tb,
                  "kiem": {hd: ra[hd]["kiem"] for hd in HANH_DONG}})
     return ra
+
+
+def quanh_gio(theo_gio: list[list[int]], gio: float) -> tuple[int, int, str]:
+    """(k, n, cách) những lần luật nói "làm" quanh giờ này: "tu_lam" / "hoi" / "im"."""
+    h = int(gio)
+    k = sum(theo_gio[(h + d) % 24][0] for d in range(-QUANH_GIO, QUANH_GIO + 1))
+    n = sum(theo_gio[(h + d) % 24][1] for d in range(-QUANH_GIO, QUANH_GIO + 1))
+    if n >= MAU_QUANH and k >= TIN_QUANH * n:
+        return k, n, "tu_lam"
+    if n >= MAU_QUANH and k < IM_QUANH * n:
+        return k, n, "im"
+    return k, n, "hoi"
 
 
 def _hoc_nen(tb: str) -> None:
@@ -537,20 +573,29 @@ def xet(tb: str, hd: str, nguon: str, luc: float) -> dict[str, Any]:
         return {"lam": "im", "ly_do": "luật chưa qua kiểm tiến dần"}
     if _nguoi_vua_cham(tb, luc):
         return {"lam": "im", "ly_do": "người vừa tự bật/tắt"}
-    for x in (_nap()["thiet_bi"].get(tb) or {}).get("ngoai_le") or []:
-        if x.get("hanh_dong") == hd and _trong_khoang(luc, x["tu"], x["den"]):
-            return {"lam": "im", "ly_do": f"ngoại lệ chủ máy đặt {x['tu']}–{x['den']}"}
+    khung = next((x for x in (_nap()["thiet_bi"].get(tb) or {}).get("ngoai_le") or []
+                  if x.get("hanh_dong") == hd and _trong_khoang(luc, x["tu"], x["den"])), None)
+    ten_khung = f"khung «{khung.get('ten') or ''}» {khung['tu']}–{khung['den']}" if khung else ""
+    if khung and khung.get("cach", "khong") == "khong":
+        return {"lam": "im", "ly_do": f"{ten_khung}: anh đặt không làm"}
     lux = {str(s["entity_id"]): ([luc - 1.0], [str(s.get("state"))]) for s in _trang_thai_ha()
            if (s.get("attributes") or {}).get("device_class") == "illuminance"}
     x = _dac_trung(luc, nguon, list(mh["nguon"]), lux)
     p = doan_cay(mh["cay"], x)
     if p < P_HOI:
         return {"lam": "im", "ly_do": f"chỉ chắc {p:.0%}", "p": p}
+    k, n, cach = quanh_gio(mh.get("theo_gio") or [[0, 0]] * 24, x["giờ"])
+    if cach == "im" and not khung:
+        return {"lam": "im", "p": p, "ly_do": f"quanh giờ này anh ít khi {_TEN_HD[hd].lower()} ({k}/{n})"}
     ma_nguon = nguon.split(" ")[0]
     if (hd == "on" and nguon.endswith(" có người vào") and ma_nguon in _lop(_LOP_HIEN_DIEN)
             and not nha_co_nguoi({ma_nguon}, luc)):
         return {"lam": "im", "p": p,
                 "ly_do": "nghi báo ảo: 6 giờ qua không ai bấm công tắc hay mở cửa"}
+    if khung:
+        return {"lam": "hoi", "p": p, "x": x, "ly_do": f"{ten_khung}: anh đặt luôn hỏi"}
+    if cach == "hoi":
+        return {"lam": "hoi", "p": p, "x": x, "ly_do": f"quanh giờ này mới đúng {k}/{n} — hỏi anh"}
     return {"lam": "tu_lam" if _duoc_tu_lam(tb, hd) else "hoi", "p": p, "x": x}
 
 
@@ -603,7 +648,7 @@ def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
                           f"lại trong 10 phút, em tự ghi là em sai.")
         elif not thong_bao.gui("nha.goi_y",
                              f"💡 #{id_} {_TEN_HD[hd]} {_ten_tb(tb)} không ạ? (vì {vi}, em chắc "
-                             f"{q['p']:.0%}) — anh trả lời «có» hoặc «không»."):
+                             f"{q['p']:.0%}{'; ' + q['ly_do'] if q.get('ly_do') else ''}) — anh trả lời «có» hoặc «không»."):
             dd.xoa(id_)             # chấm cái chủ máy chưa thấy là hỏng thành tích
     except Exception as exc:  # noqa: BLE001 — một lượt hỏng không được làm chết luồng HA
         logger.warning({"event": "kich_hoat_loi", "thiet_bi": tb, "error": str(exc)[:200]})
@@ -768,6 +813,9 @@ def tong_quan() -> list[dict[str, Any]]:
                 "nguon": [{"ma": n, "ten": (m.get("ten") or {}).get(n, n),
                            "so_lan": (m.get("dem_nguon") or {}).get(n, 0)} for n in m.get("nguon") or []],
                 "luat": m.get("luat") or [], "kiem": m.get("kiem") or {}, "so_lan": m.get("so_lan", 0),
+                "theo_gio": [{"gio": h, "k": kk, "n": nn, "cach": quanh_gio(m["theo_gio"], h)[2]}
+                             for h, (kk, nn) in enumerate(m.get("theo_gio") or []) if nn]
+                            if m.get("theo_gio") else [],
                 "cap": 2 if _duoc_tu_lam(tb, hd) else 1, "diem": round(dd.diem(ten), 3), "so_luot": dd.so_luot(ten),
                 "sai_gan_day": dd.sai_gan_day(ten),
             }

@@ -131,7 +131,7 @@ def test_nguoi_vua_tu_cham_va_ngoai_le(kh):
     _sk(DEN, "off", luc - 60)
     assert "vừa tự" in kh.xet(DEN, "on", f"{NGU} có người vào", luc)["ly_do"]
     kh.dat_thiet_bi(DEN, ngoai_le=[{"hanh_dong": "on", "tu": "18:30", "den": "20:00"}])
-    assert "ngoại lệ" in kh.xet(DEN, "on", f"{NGU} có người vào", luc + 600)["ly_do"]
+    assert "không làm" in kh.xet(DEN, "on", f"{NGU} có người vào", luc + 600)["ly_do"]
     with pytest.raises(ValueError):
         kh.dat_thiet_bi(DEN, ngoai_le=[{"hanh_dong": "on", "tu": "25:00", "den": "20:00"}])
     with pytest.raises(ValueError):
@@ -244,3 +244,39 @@ def test_bot_vua_tu_lam_thi_khong_doi_chieu_ngay(kh):
     assert not kh._vua_lam("switch.khac", "off")
     dd.ghi_nhan("switch.khac#on", "on", 0.9, {}, "hoi")
     assert not kh._vua_lam("switch.khac", "off"), "chỉ HỎI thì chưa đổi gì — hướng kia vẫn được"
+
+
+def test_quanh_gio_tu_lam_hoi_im():
+    from services import kich_hoat_nha as kh
+    g = [[0, 0] for _ in range(24)]
+    g[19] = [20, 20]
+    g[22] = [3, 5]
+    g[23] = [0, 5]
+    assert kh.quanh_gio(g, 19.5)[2] == "tu_lam"
+    assert kh.quanh_gio(g, 21.5)[2] == "hoi"       # 20–22h: 3/5 — lưng chừng
+    assert kh.quanh_gio(g, 0.5)[2] == "im"         # 23h–1h: 0/5
+    assert kh.quanh_gio(g, 10)[2] == "hoi"         # chưa đủ lần nào: hỏi, không tự làm
+
+
+def test_gio_ngu_im_khung_doc_sach_thi_hoi(kh):
+    """Đo 30 ngày: lúc 23h luật nói bật 5/5 lần có người vào, người bật 0/5 — đang ngủ
+    trở mình. Bot im (không nhắn đánh thức). Chủ máy đặt khung «Đọc sách» luôn hỏi thì hỏi."""
+    _hoc_xong(kh)
+    kh.dat_thiet_bi(DEN, tu_lam=True)
+    mh = kh._nap()["mo_hinh"][DEN]["on"]
+    mh["theo_gio"][23] = [0, 5]
+    mh["theo_gio"][22] = [0, 3]
+    luc = _luc(0, 23, 10)
+    _sk("switch.phong_hoc_l1", "on", luc - 3600)
+    nguon = f"{NGU} có người vào"
+    x = kh._dac_trung(luc, nguon, mh["nguon"], {LUX: ([luc - 1], ["5"])})
+    if kh.doan_cay(mh["cay"], x) < kh.P_HOI:
+        mh["cay"] = {"p": 0.9, "n": 20, "k": 18}      # giả như luật chỉ biết "từ 15:52"
+    q = kh.xet(DEN, "on", nguon, luc)
+    assert q["lam"] == "im" and "ít khi" in q["ly_do"], q
+    kh.dat_thiet_bi(DEN, ngoai_le=[{"hanh_dong": "on", "tu": "21:00", "den": "23:30",
+                                    "cach": "hoi", "ten": "Đọc sách"}])
+    q = kh.xet(DEN, "on", nguon, luc)
+    assert q["lam"] == "hoi" and "Đọc sách" in q["ly_do"], q
+    with pytest.raises(ValueError):
+        kh.dat_thiet_bi(DEN, ngoai_le=[{"hanh_dong": "on", "tu": "21:00", "den": "23:30", "cach": "bat"}])
