@@ -104,8 +104,9 @@ def _tu_thuong(s: str) -> list[str]:
     return re.findall(r"\w+", unicodedata.normalize("NFC", s.lower()).replace("uỷ", "ủy"))
 
 
-def chon_nghia(vt: str, t: str, a: int, b: int) -> str | None:
-    """Nghĩa của chữ viết tắt ``vt`` (đứng ở t[a:b]) theo các từ quanh nó; None nếu không học."""
+def chon_nghia(vt: str, t: str, a: int, b: int, *, can_bang_chung: bool = False) -> str | None:
+    """Nghĩa của chữ viết tắt ``vt`` (đứng ở t[a:b]) theo các từ quanh nó; None nếu không học.
+    ``can_bang_chung``: không có từ nào quanh nó từng gặp thì None thay vì nghĩa hay gặp."""
     m = _mo_hinh_nghia().get(vt)
     if not m:
         return None
@@ -116,6 +117,12 @@ def chon_nghia(vt: str, t: str, a: int, b: int) -> str | None:
     # lại 26/09/2026: phần kiểm tra 89,2% → 89,3% (+8 mẫu), ĐT 92% → 93%; k=3 thì tụt 88,4%.
     f = ([f"w:{x}" for x in trai + phai] + ([f"L1:{trai[-1]}"] * k if trai else [])
          + ([f"R1:{phai[0]}"] * k if phai else []))
+    # Chỉ từ ĐÃ GẶP ở ít nhất một nghĩa mới là bằng chứng. Từ chưa gặp mà vẫn tính thì
+    # làm mượt kéo về nghĩa ÍT mẫu (mẫu số nhỏ hơn): "ThS.BS" ra "biển số" (13 mẫu) thay
+    # vì "bác sĩ" (356 mẫu) chỉ vì chưa từng thấy "ths" (đo 26/09/2026).
+    f = [x for x in f if any(x in sn["dem"] for sn in m["nghia"].values())]
+    if can_bang_chung and not f:
+        return None
     diem = {ng: s["tien"] + sum(math.log((s["dem"].get(x, 0) + m["alpha"]) / (s["tong"] + m["alpha"] * m["v"]))
                                 for x in f)
             for ng, s in m["nghia"].items()}
@@ -146,6 +153,10 @@ def _nghia_tu_dien(tu: str) -> str | None:
 #: Chữ viết tắt IN HOA đứng riêng ("CP", "ĐT", "UBND", "R&D"), kể cả sau "/" trong số hiệu
 #: văn bản ("100/2019/NĐ-CP").
 _VT_RE = re.compile(r"(?<![\w&-])[A-ZĐ]{2,6}(?:&[A-ZĐ]{2,4})?(?![\w-])")
+#: Như `_VT_RE`, trừ phần của chuỗi nối bằng dấu chấm ("PGS.TS", "ThS.BS"): nghĩa của nó
+#: theo các phần đứng cạnh (`chuan_bi._cum_viet_tat`), không theo cả bài. Chuỗi mà
+#: `_cum_viet_tat` không nhận (tên miền "VOV.VN") thì từng phần vẫn qua `_VT_RE` như cũ.
+_VT_CA_BAI_RE = re.compile(r"(?<![\w&-])(?<![A-Za-zĐđ]\.)[A-ZĐ]{2,6}(?:&[A-ZĐ]{2,4})?(?![\w-])(?!\.[A-ZĐ])")
 
 
 def _nghia_tai(tu: str, t: str, a: int, b: int) -> str | None:
@@ -167,7 +178,7 @@ def chon_nghia_ca_bai(t: str) -> str:
     nên chọn "cổ phiếu" (chủ máy nghe 25/09/2026; cả câu một lượt thì ra "Chính phủ").
     Mọi quyết định cần ngữ cảnh phải làm ở đây, một lần, trên toàn văn.
     """
-    return _VT_RE.sub(lambda m: _nghia_tai(m.group(0), t, m.start(), m.end()) or m.group(0), t)
+    return _VT_CA_BAI_RE.sub(lambda m: _nghia_tai(m.group(0), t, m.start(), m.end()) or m.group(0), t)
 
 
 #: Đơn vị thời gian và đơn vị đo thường gặp sau một khoảng số — tập đóng.
@@ -313,12 +324,27 @@ def chuan_bi(t: str, sea: Callable[[str], str]) -> str:
         return f"{m.group(1)}{m.group(2)} {m.group(3)}"
     t = re.sub(r"((?:\S+\s+){0,2})(?<![\w/.,:-])(\d{1,3})-(\d{1,3})(?![\w/.,:-]|\.\d)", _cap_giam, t)
 
-    # Viết tắt ghép bằng gạch nối ("NĐ-CP", "QĐ-UBND", "TT-BTC"): mỗi phần đều có nghĩa thì
-    # đọc từng phần — để nguyên thì sea đánh vần cả cụm ("nờ đê xê phê").
-    t = re.sub(r"(?<![\w-])[A-ZĐ]{2,6}(?:-[A-ZĐ]{2,6})+(?![\w-])",
-               lambda m: m.group(0).replace("-", " ") if all(
-                   _nghia_tu_dien(p) or p in _mo_hinh_nghia() or sea_biet.biet(p)
-                   for p in m.group(0).split("-")) else m.group(0), t)
+    # Chuỗi viết tắt nối bằng gạch nối ("NĐ-CP", "QĐ-UBND") hoặc dấu chấm ("PGS.TS",
+    # "ThS.BS"): đọc CẢ CHUỖI, mỗi phần chọn nghĩa theo các phần đứng cạnh nó — không theo
+    # cả câu. Theo cả câu thì "Nghị định 100/2019/NĐ-CP có hiệu lực" ra "nghị định CỔ PHIẾU"
+    # (chủ máy nghe 26/09/2026), và "PGS.TS" còn trơ dấu chấm thành chỗ ngắt hơi.
+    def _cum_viet_tat(m):
+        phan = re.split(r"[-.]", m.group(0))
+        if "." in m.group(0) and any(sum(c.isupper() for c in p) < 2 for p in phan):
+            return m.group(0)           # "Google.Com" không phải chuỗi viết tắt
+        cum = " ".join(phan)
+        ra, vt = [], 0
+        for p in phan:
+            doc = (chon_nghia(p, cum, vt, vt + len(p), can_bang_chung=True)
+                   or _nghia_tu_dien(p) or (sea(p) if sea_biet.biet(p) else None)
+                   or (p if p in _mo_hinh_nghia() else None))
+            if doc is None:
+                return m.group(0)       # có phần lạ: để nguyên cho sea đọc cả chuỗi
+            ra.append(doc)
+            vt += len(p) + 1
+        return " ".join(ra)
+    t = re.sub(r"(?<![\w-])[A-ZĐ]{2,6}(?:-[A-ZĐ]{2,6})+(?![\w-])", _cum_viet_tat, t)
+    t = re.sub(r"(?<![\w.])[A-ZĐ][A-Za-zĐđ]{1,5}(?:\.[A-ZĐ][A-Za-zĐđ]{1,5})+(?![\w])", _cum_viet_tat, t)
 
     # Đơn vị ngay sau số. "h" chỉ là giờ khi ≤ 24 — "350h" là tên mẫu (Lexus ES 350h).
     def _don_vi(m):
@@ -341,7 +367,10 @@ def chuan_bi(t: str, sea: Callable[[str], str]) -> str:
         return _tu_dien_anh().get(k) if len(k) >= 4 and k in _tu_dien_anh() else danh_van(chu)
 
     def _ma(m):
-        return re.sub(r"[A-Za-z]+", lambda k: f" {_chu_trong_ma(k.group(0))} ", m.group(0)).replace("-", ", ")
+        # Gạch nối giữa HAI SỐ thành dấu phẩy ("DDR5-6400": để "5-6400" không dính số); giữa
+        # chữ và số chỉ là khoảng trắng — "COVID-19" đọc liền, không ngắt hơi "cô vít, mười chín".
+        ra = re.sub(r"[A-Za-z]+", lambda k: f" {_chu_trong_ma(k.group(0))} ", m.group(0))
+        return re.sub(r"(?<=\d)-(?=\d)", ", ", ra).replace("-", " ")
     t = re.sub(r"(?<![\w.-])(?=[\w-]*\d)(?=[\w-]*[A-Z]{2})[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*(?![\w-])", _ma, t)
     t = re.sub(r"(?<![\w.-])(?=[a-z0-9]*\d)[a-z]+\d+[a-z]+[a-z0-9]*(?:-[a-z0-9]+)*(?![\w-])", _ma, t)
 

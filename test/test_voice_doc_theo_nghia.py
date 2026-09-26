@@ -213,3 +213,29 @@ def test_cau_kho_voi_sea_that(vao, co):
 def test_so_la_ma_chi_nhan_so_dung_luat():
     assert [d._so_la_ma(x) for x in ("IV", "XXX", "XXXIX", "XIX", "VIX", "IIII", "")] == \
         [4, 30, 39, 19, None, None, None]
+
+
+# ── Chuỗi viết tắt nối bằng "-" / "." đọc CẢ CHUỖI (chủ máy nghe 26/09/2026) ──
+@pytest.mark.parametrize("vao, co, khong", [
+    # Cả câu nói về luật/hiệu lực từng kéo "CP" thành "cổ phiếu"; trong chuỗi, ngữ cảnh là "NĐ".
+    ("Luật số 15/2023/QH15 có hiệu lực từ 01/7/2024, thay thế NĐ 100/2019/NĐ-CP.",
+     "nghị định chính phủ", "cổ phiếu"),
+    ("Nghị định 100/2019/NĐ-CP có hiệu lực.", "nghị định chính phủ", "cổ phiếu"),
+    # Dấu chấm giữa chuỗi chức danh không còn thành chỗ ngắt hơi.
+    ("PGS.TS Nguyễn Văn A phát biểu.", "phó giáo sư tiến sĩ", "sư."),
+    ("ThS.BS Lê B khám.", "thạc sĩ bác sĩ", "biển số"),
+    # Gạch nối giữa chữ và số không ngắt hơi; giữa hai số vẫn tách.
+    ("chẩn đoán COVID-19 nặng", "cô vít mười chín", "vít,"),
+    ("RAM DDR5-6400", "năm, sáu nghìn", None),
+])
+def test_chuoi_viet_tat_doc_ca_chuoi(vao, co, khong):
+    from services.voice import engines
+    ra = engines._doc_vi(engines._doc_cong_thuc(vao, "nghi:x"))
+    assert co in ra, ra
+    assert khong is None or khong not in ra, ra
+
+
+def test_tu_chua_gap_khong_keo_ve_nghia_hiem():
+    """"BS" 356 mẫu bác sĩ / 13 mẫu biển số: đứng cạnh từ chưa từng gặp không được ra biển số."""
+    assert d.chon_nghia("BS", "ThS BS", 4, 6) == "bác sĩ"
+    assert d.chon_nghia("BS", "ThS BS", 4, 6, can_bang_chung=True) is None

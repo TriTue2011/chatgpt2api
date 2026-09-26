@@ -1174,7 +1174,7 @@ def _doc_cong_thuc(text: str, voice: str) -> str:
     except Exception as exc:  # noqa: BLE001 — như dưới
         logger.warning("voice: so cach doc loi, bo qua: %s", str(exc)[:160])
     try:
-        text = hoa_hoc.doc(text)
+        text = hoa_hoc.doc(text, chu_viet_tat=_la_chu_viet_tat)
     except Exception as exc:  # noqa: BLE001 — chữ người dùng tuỳ ý: lỗi đọc công thức không được làm câm TTS
         logger.warning("voice: doc cong thuc loi, doc nguyen van: %s", str(exc)[:160])
     # Nghĩa chữ viết tắt chọn trên TOÀN VĂN, trước khi engine cắt câu (xem chon_nghia_ca_bai).
@@ -1187,6 +1187,23 @@ def _doc_cong_thuc(text: str, voice: str) -> str:
 
 _chuan_hoa_vi = None
 _chuan_hoa_khoa = threading.Lock()
+
+
+def _la_chu_viet_tat(tu: str) -> bool:
+    """Từ điển của sea_g2p đọc ``tu`` thành từ ("ThS" → "thạc sĩ") chứ không đánh vần —
+    cho `hoa_hoc` phân biệt chữ viết tắt với công thức (xem `hoa_hoc.doc_cong_thuc`).
+    Dùng CHÍNH bộ chuẩn hoá của `_doc_vi`, không nạp thêm một bộ từ điển vào RAM."""
+    global _chuan_hoa_vi
+    with _chuan_hoa_khoa:
+        if _chuan_hoa_vi is None:
+            try:
+                from sea_g2p import Normalizer
+            except ImportError:
+                return False
+            _chuan_hoa_vi = Normalizer("vi")
+        from services.voice import doc_theo_nghia
+        return doc_theo_nghia._SeaBiet(
+            lambda t: _re.sub(r"</?en>", "", _chuan_hoa_vi.normalize(t))).biet(tu)
 
 
 def _doc_vi(text: str) -> str:

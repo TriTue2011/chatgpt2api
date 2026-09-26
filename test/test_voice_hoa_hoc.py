@@ -162,3 +162,13 @@ def test_ky_hieu_dung_rieng_doc_ten_nguyen_to():
 def test_ma_so_khong_phai_cong_thuc():
     assert h.doc("Hội nghị COP30 và màn hình 4K, Xe điện") == "Hội nghị COP30 và màn hình 4K, Xe điện"
     assert h.doc("Khí CO2 và SO2") == "Khí xê ô hai và ét ô hai"
+
+
+def test_chu_viet_tat_tu_dien_doc_duoc_khong_phai_cong_thuc():
+    """"ThS" (thạc sĩ) có dáng Th + S; từ điển đọc được thành từ thì là chữ viết tắt. Đo
+    26/09/2026: 43 công thức không chỉ số từ điển đều đánh vần — chúng vẫn là công thức."""
+    biet = {"ThS", "ThS.BS"}.__contains__
+    assert h.doc("ThS Lê B khám", chu_viet_tat=biet) == "ThS Lê B khám"
+    assert "nờ a xê lờ" in h.doc("Cho NaCl vào", chu_viet_tat=biet)
+    assert h.doc_cong_thuc("Mg", chu_viet_tat=lambda t: True) == "ma giê", "ký hiệu đơn không hỏi từ điển"
+    assert h.doc("ThS Lê B khám") != "ThS Lê B khám", "không truyền từ điển thì như cũ"

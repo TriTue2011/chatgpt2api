@@ -34,6 +34,7 @@ số, "(OH)2" đọc "ô hát hai lần", điện tích "²⁻" đọc "hai tr�
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 NGUYEN_TO = frozenset("""
 H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu
@@ -160,11 +161,14 @@ def _doc_phan(s: str) -> tuple[list[str], int] | None:
 
 
 def doc_cong_thuc(token: str, *, ngu_canh: bool = False, viet: bool = True,
-                  ten_nguyen_to: bool = True) -> str | None:
+                  ten_nguyen_to: bool = True,
+                  chu_viet_tat: Callable[[str], bool] | None = None) -> str | None:
     """Lời đọc của MỘT công thức, hoặc None nếu chuỗi không phải công thức.
 
     ``ten_nguyen_to``: ký hiệu đứng một mình đọc bằng TÊN ("kali"); tắt trong phương trình
-    phản ứng, nơi mọi chất đọc kiểu công thức ("ép e cộng xê u ét ô bốn…")."""
+    phản ứng, nơi mọi chất đọc kiểu công thức ("ép e cộng xê u ét ô bốn…").
+    ``chu_viet_tat``: hỏi TỪ ĐIỂN của bộ chuẩn hoá chung (sea_g2p) chuỗi này có phải một
+    chữ viết tắt nó đọc được thành từ không — xem chỗ dùng bên dưới."""
     # Chỉ gồm I/V/X, không chữ số: SỐ LA MÃ ("RON 95-III", "quý IV"), không phải công
     # thức — công thức ghi số lượng bằng chữ số (I2, V2O5). Đo 25/09/2026: "Galaxy S27"
     # tạo ngữ cảnh hoá học rồi "III" thành ba nguyên tố iốt, đọc "i i i".
@@ -203,7 +207,15 @@ def doc_cong_thuc(token: str, *, ngu_canh: bool = False, viet: bool = True,
     # "xê ô phê ba mươi").
     if not ngu_canh and any(int(x) >= 20 for x in re.findall(r"\d+", token)):
         return None
-    co_dau_hieu = (bool(dien_tich) or any(_la_so(c) for c in goc.translate(_DUOI))
+    co_so = any(_la_so(c) for c in goc.translate(_DUOI))
+    # Dấu hiệu công thức DUY NHẤT là chữ hoa lẫn thường ("ThS", "ThS.BS") mà từ điển đọc được
+    # thành từ ("thạc sĩ") → chữ viết tắt, không phải thori sunfua. Đo 26/09/2026 trên 43 công
+    # thức không chỉ số (HCl, NaCl, CuO, NaOH, AgBr…): từ điển đánh vần cả 43, chỉ "ThS" ra
+    # chữ. Chỉ xét chuỗi ≥ 2 nguyên tố: ký hiệu đơn "Mg" từ điển đọc "mi li gam" mà vẫn là magie.
+    if (tong >= 2 and not dien_tich and not co_so and "(" not in goc and chu_viet_tat is not None
+            and chu_viet_tat(goc)):
+        return None
+    co_dau_hieu = (bool(dien_tich) or co_so
                    or "(" in goc or (tong >= 2 and any(c.islower() for c in goc)))
     if not co_dau_hieu:
         # Đứng một mình, không chỉ số: chắc chắn là nguyên tố khi không thể là
@@ -239,7 +251,7 @@ def _xoa_url(cau: str) -> str:
 _DON_VI_MOL = re.compile(r"(?<![\w])[mµnk]?mol(?![a-zà-ỹ])", re.IGNORECASE)
 
 
-def _co_ngu_canh(cau: str, viet: bool) -> bool:
+def _co_ngu_canh(cau: str, viet: bool, chu_viet_tat: Callable[[str], bool] | None = None) -> bool:
     """Câu có dấu hiệu hoá học chắc chắn: một công thức / ký hiệu nhận ra được mà
     KHÔNG cần ngữ cảnh, hoặc đơn vị lượng chất (mol, mmol/L).
 
@@ -249,7 +261,7 @@ def _co_ngu_canh(cau: str, viet: bool) -> bool:
         return True
     for m in _UNG_VIEN.finditer(_xoa_url(cau)):
         s = m.group(0).rstrip(".,;:!?")
-        if s and doc_cong_thuc(s, viet=viet) is not None:
+        if s and doc_cong_thuc(s, viet=viet, chu_viet_tat=chu_viet_tat) is not None:
             return True
     return False
 
@@ -264,7 +276,8 @@ mẹ bố cha má u chồng vợ""".split())
 _TU_TRUOC = re.compile(r"(\S+)[ \t]+$")
 
 
-def _la_ten_nguoi(cau: str, vi_tri: int, viet: bool) -> bool:
+def _la_ten_nguoi(cau: str, vi_tri: int, viet: bool,
+                  chu_viet_tat: Callable[[str], bool] | None = None) -> bool:
     """Ký hiệu dáng âm tiết ở ``vi_tri`` là (một phần) tên người/tên riêng không.
 
     Hai dấu hiệu, xét từ ngay trước nó (chỉ cách bằng khoảng trắng):
@@ -285,19 +298,20 @@ def _la_ten_nguoi(cau: str, vi_tri: int, viet: bool) -> bool:
         return False
     if not cau[:m.start()].strip(" \t\n-–•*>\"'([{"):
         return False  # từ trước là từ đầu câu
-    return doc_cong_thuc(truoc, ngu_canh=True, viet=viet) is None
+    return doc_cong_thuc(truoc, ngu_canh=True, viet=viet, chu_viet_tat=chu_viet_tat) is None
 
 
-def doc(text: str) -> str:
-    """Thay mọi công thức và ký hiệu phản ứng trong ``text`` bằng lời đọc."""
+def doc(text: str, *, chu_viet_tat: Callable[[str], bool] | None = None) -> str:
+    """Thay mọi công thức và ký hiệu phản ứng trong ``text`` bằng lời đọc.
+    ``chu_viet_tat``: xem `doc_cong_thuc`."""
     if not text or not re.search(r"[A-Z(]", text):
         return text
-    return "".join(_doc_cau(m.group(0)) for m in _CAU.finditer(text)) or text
+    return "".join(_doc_cau(m.group(0), chu_viet_tat) for m in _CAU.finditer(text)) or text
 
 
-def _doc_cau(cau: str) -> str:
+def _doc_cau(cau: str, chu_viet_tat: Callable[[str], bool] | None = None) -> str:
     viet = bool(_CO_DAU.search(cau))
-    ngu_canh = _co_ngu_canh(cau, viet)
+    ngu_canh = _co_ngu_canh(cau, viet, chu_viet_tat)
     trong_phan_ung = any(k in cau for k in _PHAN_UNG)
 
     trong_url = [u.span() for u in _URL.finditer(cau)]
@@ -311,7 +325,7 @@ def _doc_cau(cau: str) -> str:
             return s
         tron = s.rstrip(".,;:!?-+")
         if (_NGUYEN_TO_RE.fullmatch(tron) and _dang_am_tiet(tron)
-                and _la_ten_nguoi(cau, m.start(), viet)):
+                and _la_ten_nguoi(cau, m.start(), viet, chu_viet_tat)):
             return s
         # Ngay sau "số + khoảng trắng" là ĐƠN VỊ, không phải nguyên tố: "0 K" (kelvin),
         # "12 V", "5 N". Hệ số của công thức viết liền ("2Na").
@@ -320,12 +334,14 @@ def _doc_cau(cau: str) -> str:
         # Dấu câu dính cuối ("… H2SO4.") không thuộc công thức.
         duoi = ""
         while s and s[-1] in ".,;:!?-+":
-            loi = doc_cong_thuc(s, ngu_canh=ngu_canh, viet=viet, ten_nguyen_to=not phuong_trinh)
+            loi = doc_cong_thuc(s, ngu_canh=ngu_canh, viet=viet, ten_nguyen_to=not phuong_trinh,
+                                chu_viet_tat=chu_viet_tat)
             if loi is not None:
                 return loi + duoi
             duoi = s[-1] + duoi
             s = s[:-1]
-        loi = doc_cong_thuc(s, ngu_canh=ngu_canh, viet=viet, ten_nguyen_to=not phuong_trinh) if s else None
+        loi = (doc_cong_thuc(s, ngu_canh=ngu_canh, viet=viet, ten_nguyen_to=not phuong_trinh,
+                             chu_viet_tat=chu_viet_tat) if s else None)
         return (loi if loi is not None else s) + duoi
 
     ra = _UNG_VIEN.sub(thay, cau)
