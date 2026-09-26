@@ -476,6 +476,7 @@ def _vieneu_tts(text: str, voice: str, style: str = "") -> bytes:
     """Giọng "vieneu:<Tên>" → WAV 48 kHz. Tên rỗng = giọng mặc định của model."""
     eng = _get_vieneu()
     kwargs = _vieneu_kwargs(voice, style)
+    text = _chuan_bi_vi(text)
     # Khoá tuần tự: 2 câu cùng lúc trên CPU chỉ giành cache/nhân của nhau.
     with _vieneu_lock:
         audio = eng.infer(text, **kwargs)     # np.float32 mono @ 48 kHz
@@ -914,7 +915,7 @@ def _kokoro_vi_tts(text: str, voice: str) -> bytes:
     sess, vocab, ctx_len, voicepack = _get_kokoro_vi(vid)
     parts = []
     # Kokoro nhận tối đa ~510 âm vị một lượt; mẩu 160 ký tự còn cách xa trần.
-    for seg in _split_sentences(text, max_chars=160):
+    for seg in _split_sentences(_chuan_bi_vi(text), max_chars=160):
         ps = kv.phien_am(seg)
         if not ps:
             continue
@@ -972,7 +973,8 @@ def _vieneu_nano_tts(text: str, voice: str) -> bytes:
 
     tts = _get_vieneu_nano()
     with _vieneu_nano_lock:
-        audio = np.asarray(tts.infer(text, voice=_vieneu_nano_ten(voice)), dtype=np.float32).reshape(-1)
+        audio = np.asarray(tts.infer(_chuan_bi_vi(text), voice=_vieneu_nano_ten(voice)),
+                           dtype=np.float32).reshape(-1)
     if not audio.size:
         raise VoiceError("VieNeu Nano không tạo được âm thanh.")
     return _pcm_to_wav(_float_to_pcm16(audio), int(tts.sample_rate), 2, 1)
@@ -985,7 +987,7 @@ def _vieneu_nano_stream(text: str, voice: str):
     tts = _get_vieneu_nano()
     rate = int(tts.sample_rate)
     with _vieneu_nano_lock:
-        for mau in tts.infer_stream(text, voice=_vieneu_nano_ten(voice)):
+        for mau in tts.infer_stream(_chuan_bi_vi(text), voice=_vieneu_nano_ten(voice)):
             pcm = _float_to_pcm16(np.asarray(mau, dtype=np.float32).reshape(-1))
             if pcm:
                 yield rate, pcm
@@ -1218,6 +1220,20 @@ def _doc_vi(text: str) -> str:
     Thẻ ``<en>…</en>`` là cho chế độ song ngữ của VieNeu; engine tiếng Việt
     thuần bỏ thẻ, giữ chữ bên trong. Gói chưa cài thì đọc nguyên văn như cũ.
     """
+    return _qua_sea(text, chi_chuan_bi=False)
+
+
+def _chuan_bi_vi(text: str) -> str:
+    """Chỉ bước CHUẨN BỊ của `doc_theo_nghia` — cho engine TỰ chuẩn hoá bằng sea_g2p (VieNeu).
+
+    VieNeu đưa chữ qua `sea_g2p` của chính nó (giữ thẻ ``<en>`` để đọc tiếng Anh) nên trước
+    đây KHÔNG qua bước chuẩn bị: đo 26/09/2026 trên giọng Zalo "vieneu:Trúc Ly", STT nghe
+    lại "Luật số 15/2023/QH15" thành "mười lăm TRÊN hai nghìn…", "0-100 km/h" mất "từ",
+    "BQL" thành "b qr" — dù chữ `_doc_vi` in ra đã đúng. Chuẩn bị xong để VieNeu làm nốt."""
+    return _qua_sea(text, chi_chuan_bi=True)
+
+
+def _qua_sea(text: str, *, chi_chuan_bi: bool) -> str:
     global _chuan_hoa_vi
     with _chuan_hoa_khoa:
         if _chuan_hoa_vi is None:
@@ -1235,10 +1251,11 @@ def _doc_vi(text: str) -> str:
             return _re.sub(r"</?en>", "", _chuan_hoa_vi.normalize(t))
 
         try:
-            ra = doc_theo_nghia.don_cuoi(_sea(doc_theo_nghia.chuan_bi(text, _sea)))
+            cb = doc_theo_nghia.chuan_bi(text, _sea)
+            ra = cb if chi_chuan_bi else doc_theo_nghia.don_cuoi(_sea(cb))
         except Exception as exc:  # noqa: BLE001 — chữ tuỳ ý: lỗi bước chuẩn bị không được làm câm TTS
             logger.warning("voice: doc theo nghia loi, doc qua sea nhu cu: %s", str(exc)[:160])
-            ra = _sea(text)
+            ra = text if chi_chuan_bi else _sea(text)
     return ra
 
 
@@ -1714,6 +1731,7 @@ def _vieneu_stream(text: str, voice: str, style: str = ""):
     """
     eng = _get_vieneu()
     kwargs = _vieneu_kwargs(voice, style)
+    text = _chuan_bi_vi(text)
     # Giữ khoá suốt stream: session ONNX tuần tự; tránh 2 request giành graph.
     with _vieneu_lock:
         _dat_so_khung_dau_vieneu(_VIENEU_KHUNG)

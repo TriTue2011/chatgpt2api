@@ -405,6 +405,30 @@ class StreamSynthesizeTests(unittest.TestCase):
         self.assertEqual(mod._STREAM_LEADIN_FRAMES, 4)
         self.assertEqual(len(out), 2)
 
+    def test_vieneu_qua_buoc_chuan_bi_truoc_khi_tu_chuan_hoa(self) -> None:
+        """VieNeu tự chuẩn hoá bằng sea_g2p nhưng trước đây KHÔNG qua bước chuẩn bị của
+        doc_theo_nghia — đo 26/09/2026 giọng Zalo "vieneu:Trúc Ly": "0-100 km/h" mất "từ",
+        "15/2023/QH15" đọc "trên". Cả đường đọc trọn lẫn đường luồng đều phải qua."""
+        import numpy as np
+
+        nhan: list[str] = []
+
+        class Eng:
+            def infer(self, text: str, **kwargs):
+                nhan.append(text)
+                return np.ones(4, dtype=np.float32)
+
+            def infer_stream(self, text: str, **kwargs):
+                nhan.append(text)
+                yield np.ones(4, dtype=np.float32)
+
+        with mock.patch.object(engines, "_get_vieneu", return_value=Eng()), \
+                mock.patch.object(engines, "_vieneu_kwargs", return_value={}), \
+                mock.patch.object(engines, "_chuan_bi_vi", side_effect=lambda t: "[cb]" + t):
+            engines._vieneu_tts("xe 0-100 km/h", "vieneu:Trúc Ly")
+            list(engines._vieneu_stream("xe 0-100 km/h", "vieneu:Trúc Ly"))
+        self.assertEqual(nhan, ["[cb]xe 0-100 km/h", "[cb]xe 0-100 km/h"])
+
     def test_zerotts_giu_sau_khung_deu(self) -> None:
         import numpy as np
 
