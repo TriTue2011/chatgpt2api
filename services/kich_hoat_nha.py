@@ -143,6 +143,7 @@ _hen_vang: dict[str, threading.Timer] = {}
 #: Sống: hẹn giờ "tắt khi vắng" theo từng thiết bị.
 _hen_tat: dict[str, threading.Timer] = {}
 _cham_luc = 0.0
+_da_khoi_phuc = False
 
 
 # ── Kho (cài đặt chủ máy + mô hình đã học) ─────────────────────────────────
@@ -922,6 +923,8 @@ def _nguon_cua(ma: str, gt: str, luc: float) -> list[str]:
             cu.cancel()
         if gt == "on":
             t0 = _lan_off.pop(ma, None)
+            if t0 is None:
+                t0 = _lan_off_kho(ma, luc)
             return [f"{ma} có người vào"] if t0 is not None and luc - t0 >= VANG else []
         if gt == "off":
             _lan_off[ma] = luc
@@ -932,6 +935,43 @@ def _nguon_cua(ma: str, gt: str, luc: float) -> list[str]:
         else:
             _lan_off.pop(ma, None)
     return []
+
+
+def _lan_off_kho(ma: str, luc: float) -> float | None:
+    """Mốc cảm biến tắt lần cuối khi RAM không có (tiến trình vừa khởi động lại): trạng thái
+    ghi ngay TRƯỚC lần bật này là 'off' thì lấy mốc đó. Đo 26/09/2026 20:36 và 20:47: hai lần
+    triển khai liền nhau, chủ máy vào phòng ngủ ngay sau mỗi lần — bot không bật vì RAM chưa
+    có mốc tắt (cảm biến đã tắt từ trước khi khởi động)."""
+    from services import lich_su_nha
+    ro = sqlite3.connect(f"file:{lich_su_nha._DB_PATH}?mode=ro", uri=True, timeout=10.0)
+    try:
+        r = ro.execute("SELECT ts, gia_tri FROM su_kien WHERE thiet_bi=? AND truong='state' AND ts<?"
+                       " ORDER BY ts DESC LIMIT 1", (ma, luc - 0.5)).fetchone()
+    finally:
+        ro.close()
+    return float(r[0]) if r and str(r[1]).lower() == "off" else None
+
+
+def _khoi_phuc(ds: dict[str, dict[str, Any]]) -> None:
+    """Sau khởi động lại: hẹn «tắt khi vắng» cũ nằm trong RAM đã mất — thiết bị đang bật trong
+    phòng đã trống thì hẹn lại phần thời gian còn lại, tính từ lần cảm biến tắt cuối trong kho."""
+    from services import ha_client
+    luc = time.time()
+    for tb, cd in ds.items():
+        tv = cd.get("tat_khi_vang") or {}
+        cb = list(tv.get("cam_bien") or [])
+        try:
+            if not tv.get("bat") or tb in _hen_tat or not _deu_vang(cb):
+                continue
+            if str((ha_client.get_state(tb) or {}).get("state") or "").lower() != "on":
+                continue
+            tat = [_lan_off_kho(m, luc) for m in cb]
+            if any(t is None for t in tat):
+                continue
+            con = float(tv.get("phut") or MAC_DINH_VANG_PHUT) * 60 - (luc - max(tat))  # type: ignore[type-var]
+            _hen_tat_luc(tb, max(HEN_LAI, con))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning({"event": "kich_hoat_khoi_phuc_loi", "thiet_bi": tb, "error": str(exc)[:160]})
 
 
 def _bao_vang(ma: str) -> None:
@@ -1113,17 +1153,17 @@ def _troi_truoc_bat(tb: str, cb: str) -> float | None:
     trong tiến trình; khởi động lại thì tra kho lịch sử."""
     if tb in _troi_luc_bat:
         return _troi_luc_bat[tb]
-    from services import lich_su_nha
+    from services import lich_su_nha, thoi_quen_nha as tq
     ro = sqlite3.connect(f"file:{lich_su_nha._DB_PATH}?mode=ro", uri=True, timeout=10.0)
     try:
         r = ro.execute("SELECT ts FROM su_kien WHERE thiet_bi=? AND truong='state' AND gia_tri='on'"
                        " ORDER BY ts DESC LIMIT 1", (tb,)).fetchone()
-        v = r and ro.execute("SELECT gia_tri FROM su_kien WHERE thiet_bi=? AND truong='state' AND ts<?"
-                             " ORDER BY ts DESC LIMIT 1", (cb, r[0])).fetchone()
+        # Số đo độ sáng nằm ở `su_kien` HOẶC `so_do` (ô 5 phút, từ 11/09) — tra gộp như lúc học.
+        ts, gt = tq._tuyen(ro, cb, "state", float(r[0]) - 3600, float(r[0])) if r else ([], [])
     finally:
         ro.close()
     try:
-        _troi_luc_bat[tb] = float(v[0])
+        _troi_luc_bat[tb] = float(tq._truoc(ts, gt, float(r[0])))  # type: ignore[arg-type,index]
     except (TypeError, ValueError, IndexError):
         return None
     return _troi_luc_bat[tb]
@@ -1219,11 +1259,14 @@ def _hoi_sang(tb: str) -> None:
 
 def su_kien(ma: str, gia_tri: Any, *, do_ai: bool = False) -> None:
     """Gọi từ `ha_live` với MỌI thay đổi trạng thái. Không bao giờ raise, không chặn."""
-    global _cham_luc
+    global _cham_luc, _da_khoi_phuc
     try:
         ds = ds_thiet_bi()
         if not ds:
             return
+        if not _da_khoi_phuc:
+            _da_khoi_phuc = True
+            threading.Thread(target=_khoi_phuc, args=(ds,), name="kich-hoat-khoi-phuc", daemon=True).start()
         gt = str(gia_tri).lower()
         luc = time.time()
         mh = _nap()["mo_hinh"]
@@ -1419,10 +1462,11 @@ def _nguong_cay(nut: dict[str, Any], key: str) -> float | None:
 
 
 def _reset_for_tests(duong: Path) -> None:
-    global _PATH, _du_lieu, _cham_luc
+    global _PATH, _du_lieu, _cham_luc, _da_khoi_phuc
     _PATH = duong
     _du_lieu = None
     _cham_luc = 0.0
+    _da_khoi_phuc = True
     _lan_off.clear()
     for t in [*_hen_vang.values(), *_hen_tat.values(), *_hen_sang.values()]:
         t.cancel()

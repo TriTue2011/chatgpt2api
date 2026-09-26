@@ -623,3 +623,39 @@ def test_tat_khi_du_sang_kieu_quan_gia(kh, monkeypatch):
     assert "nâng ngưỡng" in kh.tra_loi(f"sai {id_}")
     assert kh._nap()["thiet_bi"][DEN]["tat_khi_sang"]["lux"] == 102      # ceil(85 × 1,2)
     assert kh.tong_quan()[0]["tat_khi_sang"]["giay"] == 30
+
+
+def test_khoi_dong_lai_khong_mat_lan_vao(kh):
+    """Đo 26/09/2026 20:36 và 20:47: container vừa khởi động lại, mốc "cảm biến tắt" chỉ nằm
+    trong RAM → lần vào phòng đầu tiên không thành "có người vào". Tra kho lịch sử."""
+    luc = time.time()
+    _sk(NGU, "off", luc - 600)              # tắt từ trước khi tiến trình khởi động
+    kh._lan_off.clear()
+    assert kh._nguon_cua(NGU, "on", luc) == [f"{NGU} có người vào"]
+    _sk(NGU, "on", luc + 10)
+    assert kh._nguon_cua(NGU, "on", luc + 60) == [], "ngay trước là 'on' thì không phải vào"
+
+
+def test_khoi_dong_lai_hen_lai_tat_khi_vang(kh, monkeypatch):
+    tt = {x["entity_id"]: dict(x) for x in TT}
+    tt[DEN]["state"] = "on"
+    monkeypatch.setattr(kh, "_trang_thai_ha", lambda: list(tt.values()))
+    from services import ha_client
+    monkeypatch.setattr(ha_client, "get_state", lambda e: tt.get(e))
+    hen: list = []
+
+    class HenGia:
+        def __init__(self, giay, ham, args=()):
+            self.giay = giay
+            hen.append(self)
+
+        def start(self):
+            pass
+
+        def cancel(self):
+            pass
+    monkeypatch.setattr(kh.threading, "Timer", HenGia)
+    kh.dat_thiet_bi(DEN, bat=True, tat_khi_vang={"bat": True, "cam_bien": [NGU], "phut": 3})
+    _sk(NGU, "off", time.time() - 100)      # phòng trống từ 100 giây trước
+    kh._khoi_phuc(kh.ds_thiet_bi())
+    assert len(hen) == 1 and 60 <= hen[0].giay <= 81, "còn ~80 giây trong 3 phút"
