@@ -434,7 +434,7 @@ def hoc(tb: str) -> dict[str, Any]:
     ts_sk = [t for t, _ in sk]
     ten = _ten_ha()
     ra: dict[str, Any] = {"luc": den, "co_so": "so_do" if nhi_phan else "tu_do", "dac_trung_so": ma_lux,
-                          "goi_y_them": _goi_y_them(sk_toan_nha, bat, nhi_phan, moc_thu)}
+                          "goi_y_them": _goi_y_them(sk_toan_nha, bat, ts_tb, gt_tb, nhi_phan)}
     for hd, dich in (("on", bat), ("off", tat)):
         truoc: Counter = Counter()
         for t in dich:
@@ -519,20 +519,36 @@ def quanh_gio(theo_gio: list[list[int]], gio: float) -> tuple[int, int, str]:
     return k, n, "hoi"
 
 
-def _goi_y_them(sk: list[tuple[float, str]], bat: list[float], nhi_phan: set[str],
-                moc_thu: float) -> list[dict[str, Any]]:
-    """Cảm biến NGOÀI sơ đồ hay đứng ngay trước lần người bật — gợi ý chủ máy thêm vào sơ đồ
-    (bot không tự thêm). Đo 26/09/2026: sơ đồ đèn trần phòng khách thiếu cảm biến cửa chính,
-    nguồn mạnh nhất của nó (22/22 lần "cửa mở, 15:27–18:38 thì bật") — học theo sơ đồ thì
-    0 lần đoán."""
-    ts = [t for t, _ in sk]
-    dem: Counter = Counter()
-    for t in bat:
-        if t >= moc_thu:
+#: Gợi ý thêm vào sơ đồ khi: sau lúc cảm biến báo có người vào (thiết bị đang tắt), người bật
+#: trong CHO giây ở ít nhất ngần này phần số lần. Đo 26/09/2026: đèn trần — cửa chính 59/106 =
+#: 56%, các cảm biến khác 2–18%; đèn phòng ngủ — phòng ngủ 29%, ban công/bếp/cửa 5–9% (người đi
+#: ngang qua, chủ máy đã hỏi "nó để tránh ảo hay để điều khiển").
+GOI_Y_TY_LE = 0.25
+
+
+def _goi_y_them(sk: list[tuple[float, str]], bat: list[float], ts_tb: list[float], gt_tb: list[str],
+                nhi_phan: set[str]) -> list[dict[str, Any]]:
+    """Cảm biến NGOÀI sơ đồ mà báo có người vào rồi người hay bật thiết bị — gợi ý chủ máy thêm
+    vào sơ đồ (bot không tự thêm). Đo 26/09/2026: sơ đồ đèn trần phòng khách thiếu cảm biến cửa
+    chính, nguồn mạnh nhất của nó — học theo sơ đồ thì 0 lần đoán."""
+    from services import thoi_quen_nha as tq
+
+    tong: Counter = Counter()
+    trung: Counter = Counter()
+    for t, n in sk:
+        ma = n.split(" ")[0]
+        if not n.endswith(" có người vào") or ma in nhi_phan:
             continue
-        i, j = bisect.bisect_left(ts, t - TRUOC), bisect.bisect_left(ts, t)
-        dem.update({n.split(" ")[0] for _, n in sk[i:j]} - nhi_phan)
-    return [{"ma": m, "so_lan": k} for m, k in dem.most_common(5) if k >= NGUON_TOI_THIEU]
+        g = tq._truoc(ts_tb, gt_tb, t)
+        if g is None or g.strip().lower() in ("on", *_KHONG_RO):
+            continue
+        tong[ma] += 1
+        i = bisect.bisect_right(bat, t)
+        if i < len(bat) and bat[i] - t <= CHO:
+            trung[ma] += 1
+    ra = [{"ma": m, "so_lan": trung[m], "ty_le": round(trung[m] / tong[m], 2)} for m in tong
+          if trung[m] >= NGUON_TOI_THIEU and trung[m] >= GOI_Y_TY_LE * tong[m]]
+    return sorted(ra, key=lambda x: -x["ty_le"])[:5]
 
 
 def _hoc_nen(tb: str) -> None:

@@ -25,7 +25,7 @@ type Nut = {
   dieu_kien: Muc[];
   da_bo?: { dk: string[]; nv: { khoa: string; ten: string }[] };
   bot_dieu_khien?: boolean;
-  goi_y_them?: { ma: string; ten: string; so_lan: number }[];
+  goi_y_them?: { ma: string; ten: string; so_lan: number; ty_le?: number }[];
 };
 type ThucThe = { ma: string; ten: string; lop: string };
 /** {mã thiết bị: {khoá điều kiện: số đo}} — về SAU sơ đồ, xem `/so-do/do`. */
@@ -225,10 +225,10 @@ export function SoDo() {
                 <div className="flex flex-wrap items-center gap-1">
                   <span className="w-16 shrink-0 text-muted-foreground">Gợi ý:</span>
                   {n.goi_y_them!.map((g) => (
-                    <button key={g.ma} type="button" title="Hay đứng ngay trước lần anh bật — thêm vào ngoại vi"
+                    <button key={g.ma} type="button" title="Báo có người vào rồi anh hay bật thiết bị này — thêm vào ngoại vi"
                       className="inline-flex items-center gap-1 rounded border border-dashed px-1.5 py-0.5 text-[11px]"
                       onClick={() => void sua(n.khoa, "nv", "them", { ma: g.ma, ten: g.ten })}>
-                      <Plus className="size-3" /> {g.ten} ({g.so_lan} lần đứng trước lúc bật)
+                      <Plus className="size-3" /> {g.ten} (báo rồi anh bật {g.so_lan} lần{g.ty_le != null ? ` — ${Math.round(g.ty_le * 100)}%` : ""})
                     </button>
                   ))}
                 </div>

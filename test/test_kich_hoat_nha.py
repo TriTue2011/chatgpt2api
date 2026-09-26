@@ -390,3 +390,20 @@ def test_goi_y_them_cam_bien_ngoai_so_do(kh, monkeypatch):
     assert [x["ma"] for x in ra["goi_y_them"]] == [CUA]
     assert all(n.startswith(NGU) for n in ra["on"]["nguon"]), "gợi ý không tự vào nguồn"
     assert kh.tong_quan()[0]["goi_y_them"][0]["ten"] == "Cửa chính"
+
+
+def test_goi_y_bo_cam_bien_nguoi_di_ngang(kh, monkeypatch):
+    """Ban công báo có người hàng trăm lần mà hiếm khi kèm lần bật đèn phòng ngủ (đo: 6%) —
+    không gợi ý, dù nó hay "đứng trước" lúc bật (chủ máy đã hỏi nó để làm gì)."""
+    for n in range(29, 0, -1):
+        t = _luc(n, 19, n % 20)
+        _sk(CUA, "off", t - 700)
+        _sk(CUA, "on", t - 60)                         # đi ngang TRƯỚC lúc bật…
+        for h in range(8, 18):                         # …và đi ngang cả ngày, không ai bật
+            s = _luc(n, h, 30)
+            _sk(CUA, "off", s - 600)
+            _sk(CUA, "on", s)
+    _nep_30_ngay()
+    monkeypatch.setattr(kh, "_so_do", lambda tb: ({NGU}, {LUX}))
+    kh.dat_thiet_bi(DEN, bat=True)
+    assert kh.hoc(DEN)["goi_y_them"] == []
