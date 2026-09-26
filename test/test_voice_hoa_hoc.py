@@ -81,10 +81,10 @@ def test_so_mu_dinh_dau_cau_khong_do_loi():
 
 @pytest.mark.parametrize("viet, doc", [
     ("Mg trong máu cao.", "ma giê trong máu cao."),        # Mg ≠ mg; đứng riêng đọc TÊN
-    ("Ca và Mg là kim loại.", "ca và ma giê là kim loại."),
-    ("Cho Ba vào dung dịch H2SO4.", "Cho ba vào dung dịch hát hai ét ô bốn."),
+    ("Ca và Mg là kim loại.", "can xi và ma giê là kim loại."),
+    ("Cho Ba vào dung dịch H2SO4.", "Cho ba ri vào dung dịch hát hai ét ô bốn."),
     ("Ion Cl- và Na+ trong NaCl.", "Ion xê lờ trừ và nờ a cộng trong nờ a xê lờ."),
-    ("Ba mẹ đi làm. Cho Ba vào H2O.", "Ba mẹ đi làm. Cho ba vào hát hai ô."),
+    ("Ba mẹ đi làm. Cho Ba vào H2O.", "Ba mẹ đi làm. Cho ba ri vào hát hai ô."),
     ("Water is H2O.", "Water is hát hai ô."),                  # công thức chắc chắn thì vẫn đổi
 ])
 def test_ky_hieu_dung_rieng_theo_ngu_canh(viet, doc):
@@ -117,7 +117,7 @@ def test_cau_thuong_khong_bi_tuong_la_hoa_hoc(cau):
 
 @pytest.mark.parametrize("viet, doc", [
     # Tên người sau từ xưng hô
-    ("Cô Na cho Ba vào dung dịch H2SO4.", "Cô Na cho ba vào dung dịch hát hai ét ô bốn."),
+    ("Cô Na cho Ba vào dung dịch H2SO4.", "Cô Na cho ba ri vào dung dịch hát hai ét ô bốn."),
     ("Bạn Na và bạn Hà làm thí nghiệm với NaCl.", "Bạn Na và bạn Hà làm thí nghiệm với nờ a xê lờ."),
     ("Anh Ba nhỏ HCl vào ống nghiệm.", "Anh Ba nhỏ hát xê lờ vào ống nghiệm."),
     ("Chị La mua 2 kg Ca(OH)2.", "Chị La mua 2 kg xê a ô hát hai lần."),
@@ -128,11 +128,11 @@ def test_cau_thuong_khong_bi_tuong_la_hoa_hoc(cau):
     ("Nguyen Van Ba gui H2O.", "Nguyen Van Ba gui hát hai ô."),
     # Danh sách ký hiệu: chữ hoa đứng trước là KÝ HIỆU chứ không phải tên → vẫn là nguyên tố
     ("Các kim loại K Na Ca tác dụng với H2O.",
-     "Các kim loại ka li na ca tác dụng với hát hai ô."),
+     "Các kim loại ka li na tri can xi tác dụng với hát hai ô."),
     ("Đun H2SO4 ở 100°C.", "Đun hát hai ét ô bốn ở 100°C."),   # °C là đơn vị
     # Dấu phẩy ngắt: "Mg," đứng trước không làm "Na" thành tên (câu thật của bot)
     ("Các lần xuất hiện của Ba, K, Mg, Na, Fe đứng riêng:",
-     "Các lần xuất hiện của ba, ka li, ma giê, na, sắt đứng riêng:"),
+     "Các lần xuất hiện của ba ri, ka li, ma giê, na tri, sắt đứng riêng:"),
 ])
 def test_ten_nguoi_khong_bi_doc_thanh_nguyen_to(viet, doc):
     assert h.doc(viet) == doc
@@ -152,11 +152,10 @@ def test_ky_hieu_dung_rieng_doc_ten_nguyen_to():
     "0 K" là kelvin (đơn vị ngay sau số)."""
     ra = h.doc("Nồng độ K trong máu là 4,2 mmol/L, còn nhiệt độ đạt 0 K.")
     assert "ka li trong máu" in ra and "0 K." in ra
-    # "Na" đọc được thành tiếng → đọc như viết (chủ máy 26/09/2026: "không phải natri").
-    assert h.doc("Cho Na vào nước tạo NaOH.") == "Cho na vào nước tạo nờ a ô hát."
+    assert h.doc("Cho Na vào nước tạo NaOH.") == "Cho na tri vào nước tạo nờ a ô hát."
     # "↑" chỉ là trạng thái khí, câu vẫn là câu văn (câu thử của chủ máy 25/09/2026)
     assert h.doc("Chị Ba cho Na vào nước, Na phản ứng tạo NaOH và khí H2↑.").startswith(
-        "Chị Ba cho na vào nước, na phản ứng")
+        "Chị Ba cho na tri vào nước, na tri phản ứng")
     assert h.doc("Fe + CuSO4 → FeSO4 + Cu") .startswith("ép e cộng")   # phương trình: đọc kiểu công thức
 
 

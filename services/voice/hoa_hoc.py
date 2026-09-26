@@ -42,10 +42,10 @@ La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi
 Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds
 Rg Cn Nh Fl Mc Lv Ts Og""".split())
 
-#: Tên nguyên tố — tập đóng như chính bảng tuần hoàn. Ký hiệu đứng MỘT MÌNH mà không đọc
-#: thành tiếng được thì đọc bằng tên ("nồng độ K trong máu" là kali — chủ máy 25/09/2026:
-#: "không ai gọi là K"); ký hiệu đọc được thành một âm tiết ("Na", "Ca") thì đọc như viết
-#: (chủ máy 26/09/2026); trong công thức vẫn đánh vần như lớp học ("NaOH" → "nờ a ô hát"). Ghi sẵn CÁCH ĐỌC bằng âm tiết Việt có dấu: viết kiểu sách ("magie", "iot",
+#: Tên nguyên tố — tập đóng như chính bảng tuần hoàn. Ký hiệu đứng MỘT MÌNH trong câu là
+#: nói về nguyên tố, đọc bằng tên ("nồng độ K trong máu" là kali — chủ máy 25/09/2026:
+#: "không ai gọi là K"); trong công thức thì vẫn đánh vần như lớp học ("NaOH" → "nờ a ô
+#: hát"). Ghi sẵn CÁCH ĐỌC bằng âm tiết Việt có dấu: viết kiểu sách ("magie", "iot",
 #: "brom") thì bước phiên âm tiếng Anh chạy sau đọc thành "ma ghi", "ai ô ti", "brum".
 TEN_NGUYEN_TO = dict(x.split(":") for x in """
 H:hi_đrô He:hê_li Li:li_ti Be:bê_ri B:bo C:các_bon N:ni_tơ O:ô_xi F:phờ_lo Ne:nê_ông
@@ -217,11 +217,7 @@ def doc_cong_thuc(token: str, *, ngu_canh: bool = False, viet: bool = True,
                              and not _dang_am_tiet(token))):
             return None
         if ten_nguyen_to and token in TEN_NGUYEN_TO:
-            # Ký hiệu đọc được thành một âm tiết ("Na", "Ca", "Ba") thì đọc đúng như viết
-            # — chủ máy 26/09/2026: "cho Na vào nước đọc là cho na vào nước, không phải
-            # natri". Ký hiệu không đọc thành tiếng được ("K", "Mg", "Fe") mới đọc tên
-            # nguyên tố ("nồng độ K trong máu" là kali — chủ máy 25/09/2026).
-            return token.lower() if _dang_am_tiet(token) else TEN_NGUYEN_TO[token]
+            return TEN_NGUYEN_TO[token]
     return " ".join(loi + ([dien_tich] if dien_tich else []))
 
 
