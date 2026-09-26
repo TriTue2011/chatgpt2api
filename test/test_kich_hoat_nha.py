@@ -41,6 +41,7 @@ def kh(tmp_path, monkeypatch):
     monkeypatch.setattr(dd, "_DB_PATH", tmp_path / "dd.sqlite")
     kich_hoat_nha._reset_for_tests(tmp_path / "kh.json")
     monkeypatch.setattr(kich_hoat_nha, "_trang_thai_ha", lambda: TT)
+    monkeypatch.setattr(kich_hoat_nha, "_so_do", lambda tb: (set(), set()))   # sơ đồ rỗng → tự dò
     goi: list[tuple] = []
     monkeypatch.setattr(ha_client, "call_service", lambda d, s, data=None: goi.append((d, s, data)) or True)
     monkeypatch.setattr(ha_client, "get_state", lambda e: next((x for x in TT if x["entity_id"] == e), None))
@@ -299,3 +300,93 @@ def test_tach_dieu_khien_va_kiem_bao_ao(kh):
     chan = kh.tong_quan()[0]["kiem_ao"]["chan_gan_day"]
     assert len(chan) == 1 and "Hiện diện phòng ngủ" in chan[0]["nguon"]
     assert kh.goi == [], "báo ảo thì không bật"
+
+
+
+def test_hoc_theo_so_do_chi_nguon_trong_so_do(kh, monkeypatch):
+    """Chủ máy 26/09/2026: bật/tắt thiết bị "cơ sở là lấy theo sơ đồ kích hoạt". Cảm biến
+    ngoài sơ đồ (radar bếp báo trước lúc bật) không được thành nguồn."""
+    for n in range(29, 0, -1):
+        t = _luc(n, 19, n % 20)
+        _sk(BEP, "off", t - 700)
+        _sk(BEP, "on", t - 60)
+    _nep_30_ngay()
+    kh.dat_thiet_bi(DEN, bat=True)
+    assert f"{BEP} có người vào" in kh.hoc(DEN)["on"]["nguon"], "tự dò thì bếp lọt vào"
+    monkeypatch.setattr(kh, "_so_do", lambda tb: ({NGU}, {LUX}))
+    ra = kh.hoc(DEN)
+    assert ra["co_so"] == "so_do" and ra["dac_trung_so"] == [LUX]
+    assert all(n.startswith(NGU) for n in ra["on"]["nguon"]), ra["on"]["nguon"]
+
+
+def test_kiem_bao_ao_theo_cau_hinh_chu_may(kh):
+    """"Check thiết bị gì trong bao lâu (có thể chỉnh sửa)": chỉ bằng chứng đã chọn, đúng số giờ."""
+    luc = _luc(0, 19, 5)
+    _sk("switch.phong_hoc_l1", "on", luc - 3600)
+    assert kh.nha_co_nguoi({NGU}, luc, DEN), "mặc định: công tắc bấm tay là bằng chứng"
+    kh.dat_thiet_bi(DEN, kiem_ao={"gio": 2, "bang_chung": [CUA]})
+    assert not kh.nha_co_nguoi({NGU}, luc, DEN), "bỏ công tắc khỏi bằng chứng thì không tính"
+    _sk(CUA, "on", luc - 3 * 3600)
+    assert not kh.nha_co_nguoi({NGU}, luc, DEN), "mở cửa 3 giờ trước, nhìn lại 2 giờ"
+    _sk(CUA, "on", luc - 1800)
+    assert kh.nha_co_nguoi({NGU}, luc, DEN)
+    for sai in ({"gio": 0, "bang_chung": [CUA]}, {"gio": 3, "bang_chung": []},
+                {"gio": 3, "bang_chung": ["khong_phai_ma"]}):
+        with pytest.raises(ValueError):
+            kh.dat_thiet_bi(DEN, kiem_ao=sai)
+
+
+def test_tat_khi_vang(kh, monkeypatch):
+    """Cảm biến chọn cùng báo vắng liền N phút mà đèn còn bật thì tắt; có người lại thì huỷ;
+    người vừa tự bật thì chưa tắt."""
+    tt = {x["entity_id"]: dict(x) for x in TT}
+    tt[DEN]["state"] = "on"
+    monkeypatch.setattr(kh, "_trang_thai_ha", lambda: list(tt.values()))
+    from services import ha_client
+    monkeypatch.setattr(ha_client, "get_state", lambda e: tt.get(e))
+    hen: list = []
+
+    class HenGia:
+        def __init__(self, giay, ham, args=()):
+            self.giay, self.ham, self.args, self.huy = giay, ham, args, False
+            hen.append(self)
+
+        def start(self):
+            pass
+
+        def cancel(self):
+            self.huy = True
+    monkeypatch.setattr(kh.threading, "Timer", HenGia)
+    with pytest.raises(ValueError):
+        kh.dat_thiet_bi(DEN, bat=True, tat_khi_vang={"bat": True, "cam_bien": [], "phut": 10})
+    kh.dat_thiet_bi(DEN, bat=True, tat_khi_vang={"bat": True, "cam_bien": [NGU], "phut": 10})
+    tt[NGU]["state"] = "off"
+    kh._theo_vang(NGU, "off", kh.ds_thiet_bi())
+    assert len(hen) == 1 and hen[0].giay == 600
+    kh._theo_vang(NGU, "on", kh.ds_thiet_bi())
+    assert hen[0].huy, "có người lại thì huỷ hẹn"
+    kh._theo_vang(NGU, "off", kh.ds_thiet_bi())
+    _sk(DEN, "on", time.time() - 60)                           # người vừa tự bật
+    hen[-1].ham(*hen[-1].args)
+    assert kh.goi == [], "người vừa chạm thì chưa tắt"
+    from services import lich_su_nha as ls
+    with ls._khoa_db:
+        ls._db().execute("DELETE FROM su_kien WHERE thiet_bi=?", (DEN,)); ls._db().commit()
+    hen[-1].ham(*hen[-1].args)
+    assert kh.goi == [("switch", "turn_off", {"entity_id": DEN})]
+    assert kh.tong_quan()[0]["tat_khi_vang"]["cam_bien"][0]["ma"] == NGU
+
+
+def test_goi_y_them_cam_bien_ngoai_so_do(kh, monkeypatch):
+    """Sơ đồ thiếu nguồn mạnh (đèn trần thiếu cửa chính) thì GỢI Ý, không tự thêm."""
+    for n in range(29, 0, -1):
+        t = _luc(n, 19, n % 20)
+        _sk(CUA, "off", t - 700)
+        _sk(CUA, "on", t - 60)
+    _nep_30_ngay()
+    monkeypatch.setattr(kh, "_so_do", lambda tb: ({NGU}, {LUX}))
+    kh.dat_thiet_bi(DEN, bat=True)
+    ra = kh.hoc(DEN)
+    assert [x["ma"] for x in ra["goi_y_them"]] == [CUA]
+    assert all(n.startswith(NGU) for n in ra["on"]["nguon"]), "gợi ý không tự vào nguồn"
+    assert kh.tong_quan()[0]["goi_y_them"][0]["ten"] == "Cửa chính"

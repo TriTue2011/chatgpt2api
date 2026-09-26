@@ -46,6 +46,7 @@ class HieuThietBiNhaTest(unittest.TestCase):
         mqtt["bai_hoc"] = {}
         huong = Path(self._tmp.name) / "hoc_hoi" / "hieu_thiet_bi.md"
         for p in (mock.patch.object(self.ht, "_duong_huong_dan", return_value=huong),
+                  mock.patch.object(self.ht, "_SUA_PATH", Path(self._tmp.name) / "so_do_sua.json"),
                   mock.patch.object(ha_client, "get_service_catalog",
                                     return_value=_SO_DICH_VU),
                   # HA thật trả MỌI thực thể đang có; mã HA vắng ở đây thì
@@ -675,10 +676,13 @@ class HieuThietBiNhaTest(unittest.TestCase):
         self._luu(self._nhom_bep())
         self._thoi_quen_bep()
         nut = {n["khoa"]: n for n in self.ht.so_do_kich_hoat(kem_so_do=False)}["switch.bep_left"]
+        # Mỗi khung giờ một ô (chủ máy 26/09/2026: bỏ được từng điều kiện).
         self.assertEqual([(d["khoa"], d["ten"]) for d in nut["dieu_kien"]], [
-            ("gio", "trong 18:00–22:00 hoặc 06:00–08:00"),
-            ("binary_sensor.hien_dien_bep", "Hiện diện bếp là on")])
-        self.assertEqual([n["ten"] for n in nut["ngoai_vi"]], ["Hiện diện bếp"])
+            ("gio:18:00-22:00", "trong 18:00–22:00"),
+            ("binary_sensor.hien_dien_bep", "Hiện diện bếp là on"),
+            ("gio:06:00-08:00", "trong 06:00–08:00")])
+        self.assertEqual([(n["khoa"], n["ten"]) for n in nut["ngoai_vi"]],
+                         [("binary_sensor.hien_dien_bep", "Hiện diện bếp")])
 
     def test_SO_DO_KHONG_KEM_SO_DO_thi_KHONG_DO_GI(self) -> None:
         """Đường web `/api/hoc-hoi/so-do` phải trả NGAY; phần đo đọc lịch sử 30
@@ -703,8 +707,37 @@ class HieuThietBiNhaTest(unittest.TestCase):
         with mock.patch.object(du_doan_nha, "hoc", return_value=bang):
             nut = self.ht.so_do_kich_hoat(kem_so_do=True)[0]
         do = {d["khoa"]: d["do"] for d in nut["dieu_kien"]}
-        self.assertEqual(do["gio"], {"nhan_hay_gap": "khớp", "mau": 10, "ty_le": 0.8})
+        # Số đo khung giờ là CHUNG cho mọi khung (bảng đếm tầng xác suất đếm "gio").
+        self.assertEqual(do["gio:18:00-22:00"], {"nhan_hay_gap": "khớp", "mau": 10, "ty_le": 0.8})
+        self.assertEqual(do["gio:06:00-08:00"], do["gio:18:00-22:00"])
         self.assertEqual(do["binary_sensor.hien_dien_bep"]["mau"], 0, "chưa đo được thì nói 0 mẫu")
+
+    def test_CHU_MAY_SUA_SO_DO_THEM_BO_LAY_LAI(self) -> None:
+        """Chủ máy 26/09/2026: sơ đồ "có thể thêm hoặc xoá điều kiện". Phần sửa áp ngay ở
+        `thoi_quen_hoc` / `ngoai_vi_hoc` — mọi tầng đọc sơ đồ thấy cùng một bản."""
+        self._luu(self._nhom_bep())
+        self._thoi_quen_bep()
+        tb = "switch.bep_left"
+        self.ht.sua_so_do(tb, "dk", "bo", {"ma": "gio", "tu": "06:00", "den": "08:00"})
+        self.ht.sua_so_do(tb, "dk", "them", {"ma": "sensor.lux_bep", "duoi": 50})
+        self.ht.sua_so_do(tb, "nv", "them", {"ma": "sensor.lux_bep", "ten": "Độ sáng bếp"})
+        self.ht.sua_so_do(tb, "nv", "bo", {"ma": "binary_sensor.hien_dien_bep"})
+        bat = [self.ht.khoa_dieu_kien(x) for x in self.ht.thoi_quen_hoc()[tb]["bat"]]
+        self.assertEqual(bat, ["gio:18:00-22:00", "binary_sensor.hien_dien_bep", "sensor.lux_bep"])
+        self.assertEqual([x["ma"] for x in self.ht.ngoai_vi_hoc()[tb]["ngoai_vi"]], ["sensor.lux_bep"])
+        nut = self.ht.so_do_kich_hoat(kem_so_do=False)[0]
+        self.assertEqual(nut["da_bo"]["dk"], ["gio:06:00-08:00"])
+        self.assertTrue(next(d for d in nut["dieu_kien"] if d["khoa"] == "sensor.lux_bep")["cua_chu_may"])
+        # Lấy lại mục đã bỏ; bỏ mục chính chủ máy thêm thì xoá hẳn (không vào danh sách bỏ).
+        self.ht.sua_so_do(tb, "dk", "bo_lai", {"ma": "gio", "tu": "06:00", "den": "08:00"})
+        self.ht.sua_so_do(tb, "dk", "bo", {"ma": "sensor.lux_bep", "duoi": 50})
+        bat = [self.ht.khoa_dieu_kien(x) for x in self.ht.thoi_quen_hoc()[tb]["bat"]]
+        self.assertEqual(bat, ["gio:18:00-22:00", "binary_sensor.hien_dien_bep", "gio:06:00-08:00"])
+        self.assertEqual(self.ht.so_do_kich_hoat(kem_so_do=False)[0]["da_bo"]["dk"], [])
+        with self.assertRaises(ValueError):
+            self.ht.sua_so_do(tb, "dk", "them", {"ma": "gio", "tu": "25:00", "den": "08:00"})
+        with self.assertRaises(ValueError):
+            self.ht.sua_so_do(tb, "nv", "them", {"ma": "khong_phai_ma"})
 
     def test_SO_DO_BO_QUA_THIET_BI_CHAM_SAI(self) -> None:
         moi = self._luu(self._nhom_bep())["moi"]

@@ -43,11 +43,11 @@ function HocHoiContent() {
           <SettingsSection title="Bot hiểu thiết bị" tuKhoa="ket luan du kien huong dan lich su giai">
             <HieuThietBi />
           </SettingsSection>
-          <SettingsSection title="Bật/tắt theo cảm biến (hỏi rồi tự làm)" tuKhoa="kich hoat cam bien nguon luat ngoai le tu lam">
-            <KichHoat />
-          </SettingsSection>
-          <SettingsSection title="Sơ đồ kích hoạt" tuKhoa="nhan to chinh ngoai vi dieu kien">
+          <SettingsSection title="Sơ đồ kích hoạt" tuKhoa="nhan to chinh ngoai vi dieu kien tich bot dieu khien">
             <SoDo />
+          </SettingsSection>
+          <SettingsSection title="Bật/tắt thiết bị" tuKhoa="bat tat thiet bi kich hoat luat ngoai le tu lam bao ao vang">
+            <KichHoat />
           </SettingsSection>
           <SettingsSection title="Gợi ý theo nếp nhà" tuKhoa="du doan goi y cham dung sai">
             <GoiY />

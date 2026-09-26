@@ -63,24 +63,65 @@ type ThietBi = {
   hoc_luc?: number;
   huong: Record<"on" | "off", Huong>;
   nguong: { so_luot: number; ty_le: number };
-  kiem_ao?: { ap_cho: string[]; nhin_lai_gio: number; cua: string[]; chan_gan_day: { luc: number; nguon: string }[] };
+  kiem_ao?: {
+    ap_cho: string[]; nhin_lai_gio: number; cua: string[]; chan_gan_day: { luc: number; nguon: string }[];
+    bang_chung?: { ma: string; ten: string }[];
+  };
+  tat_khi_vang?: { bat: boolean; phut: number; cam_bien: { ma: string; ten: string }[]; goi_y: { ma: string; ten: string }[] };
+  co_so?: "so_do" | "tu_do";
 };
+type ThucThe = { ma: string; ten: string; lop: string };
+const CONG_TAC = "cong_tac";
 
-/** Kiểm báo ảo — TÁCH khỏi điều khiển: dựa vào việc chỉ người trong nhà làm ra, không vào cảm biến. */
-function KiemAo({ k }: { k: NonNullable<ThietBi["kiem_ao"]> }) {
+/** Kiểm báo ảo — TÁCH khỏi điều khiển. Chủ máy chọn bằng chứng "có người" và số giờ nhìn lại. */
+function KiemAo({ k, luu, doiMa }: {
+  k: NonNullable<ThietBi["kiem_ao"]>;
+  luu: (v: { gio: number; bang_chung: string[] }) => Promise<void>;
+  doiMa: (chu: string) => string;
+}) {
+  const bc = k.bang_chung ?? [];
+  const [gio, setGio] = useState(String(k.nhin_lai_gio));
+  const [moi, setMoi] = useState("");
+  const ma = bc.map((x) => x.ma);
   return (
     <div className="space-y-1 border-t pt-2 text-xs">
-      <div className="font-medium">Kiểm báo ảo</div>
+      <div className="font-medium">Kiểm báo ảo (trước khi bật)</div>
       {k.ap_cho.length ? (
-        <p>
-          Khi bật theo <b>{k.ap_cho.join(", ")}</b>, bot chỉ tin là có người thật nếu {k.nhin_lai_gio} giờ
-          qua có người <b>bấm công tắc</b> (không tính nhiều công tắc đổi cùng một giây)
-          {k.cua.length ? <> hoặc <b>mở {k.cua.join(", ")}</b></> : null}. Không có thì coi là báo ảo, không bật,
-          không hỏi. Cảm biến hiện diện khác không được tính — nhà vắng chúng vẫn báo.
+        <p className="text-muted-foreground">
+          Khi bật theo <b>{k.ap_cho.join(", ")}</b>: nếu trong số giờ dưới đây không có bằng chứng nào có người
+          thì coi là báo ảo — không bật, không hỏi. Cảm biến hiện diện khác không nên làm bằng chứng — nhà vắng
+          chúng vẫn báo.
         </p>
       ) : (
-        <p className="text-muted-foreground">Không nguồn điều khiển nào là cảm biến hiện diện — không cần kiểm.</p>
+        <p className="text-muted-foreground">Chưa có nguồn điều khiển nào là cảm biến hiện diện — chưa cần kiểm.</p>
       )}
+      <div className="flex flex-wrap items-center gap-1">
+        Nhìn lại
+        <Input type="number" min={1} max={48} className="h-7 w-16" value={gio} onChange={(e) => setGio(e.target.value)}
+          onBlur={() => void luu({ gio: Number(gio) || 6, bang_chung: ma })} />
+        giờ, bằng chứng:
+        {bc.map((x) => (
+          <span key={x.ma} className="inline-flex items-center gap-1 rounded border bg-muted/50 px-1.5 py-0.5 text-[11px]">
+            {x.ten}
+            <button type="button" title="Bỏ" disabled={bc.length <= 1}
+              onClick={() => void luu({ gio: Number(gio) || 6, bang_chung: ma.filter((m) => m !== x.ma) })}>
+              <X className="size-3 text-destructive" />
+            </button>
+          </span>
+        ))}
+        <Input className="h-7 w-48" list="kich-hoat-thuc-the" placeholder="thêm (vd cửa, khoá)" value={moi}
+          onChange={(e) => setMoi(e.target.value)} />
+        <Button variant="outline" size="sm" className="h-7" disabled={!moi.trim()}
+          onClick={() => { void luu({ gio: Number(gio) || 6, bang_chung: [...ma, doiMa(moi.trim())] }); setMoi(""); }}>
+          <Plus className="size-3.5" />
+        </Button>
+        {!ma.includes(CONG_TAC) ? (
+          <Button variant="outline" size="sm" className="h-7"
+            onClick={() => void luu({ gio: Number(gio) || 6, bang_chung: [...ma, CONG_TAC] })}>
+            + công tắc bấm tay
+          </Button>
+        ) : null}
+      </div>
       {k.chan_gan_day.length > 0 && (
         <ul className="text-muted-foreground">
           {k.chan_gan_day.map((x, i) => (
@@ -88,6 +129,59 @@ function KiemAo({ k }: { k: NonNullable<ThietBi["kiem_ao"]> }) {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+/** Tắt khi vắng — chủ máy chọn cảm biến và số phút; mặc định tắt. */
+function TatKhiVang({ t, luu, doiMa }: {
+  t: NonNullable<ThietBi["tat_khi_vang"]>;
+  luu: (v: { bat: boolean; cam_bien: string[]; phut: number }) => Promise<void>;
+  doiMa: (chu: string) => string;
+}) {
+  const [phut, setPhut] = useState(String(t.phut));
+  const [moi, setMoi] = useState("");
+  const ma = t.cam_bien.map((x) => x.ma);
+  const ghi = (v: Partial<{ bat: boolean; cam_bien: string[]; phut: number }>) =>
+    void luu({ bat: t.bat, cam_bien: ma, phut: Number(phut) || 15, ...v });
+  return (
+    <div className="space-y-1 border-t pt-2 text-xs">
+      <label className="flex items-center gap-2 font-medium">
+        <input type="checkbox" checked={t.bat} disabled={!ma.length && !t.goi_y.length}
+          onChange={(e) => ghi({ bat: e.target.checked, cam_bien: ma.length ? ma : t.goi_y.map((x) => x.ma) })} />
+        Tắt khi vắng
+      </label>
+      <p className="text-muted-foreground">
+        Mọi cảm biến dưới đây cùng báo vắng liền số phút này mà thiết bị còn bật thì bot tắt (người vừa tự bật
+        trong 5 phút thì chưa tắt). Radar hay mất người khi nằm yên — đặt dư phút.
+      </p>
+      <div className="flex flex-wrap items-center gap-1">
+        {t.cam_bien.map((x) => (
+          <span key={x.ma} className="inline-flex items-center gap-1 rounded border bg-muted/50 px-1.5 py-0.5 text-[11px]">
+            {x.ten}
+            <button type="button" title="Bỏ" onClick={() => ghi({ cam_bien: ma.filter((m) => m !== x.ma),
+              bat: t.bat && ma.length > 1 })}>
+              <X className="size-3 text-destructive" />
+            </button>
+          </span>
+        ))}
+        {t.goi_y.filter((g) => !ma.includes(g.ma)).map((g) => (
+          <button key={g.ma} type="button" className="inline-flex items-center gap-1 rounded border border-dashed px-1.5 py-0.5 text-[11px]"
+            onClick={() => ghi({ cam_bien: [...ma, g.ma] })}>
+            <Plus className="size-3" /> {g.ten}
+          </button>
+        ))}
+        <Input className="h-7 w-48" list="kich-hoat-thuc-the" placeholder="thêm cảm biến" value={moi}
+          onChange={(e) => setMoi(e.target.value)} />
+        <Button variant="outline" size="sm" className="h-7" disabled={!moi.trim()}
+          onClick={() => { ghi({ cam_bien: [...ma, doiMa(moi.trim())] }); setMoi(""); }}>
+          <Plus className="size-3.5" />
+        </Button>
+        vắng
+        <Input type="number" min={1} max={240} className="h-7 w-16" value={phut} onChange={(e) => setPhut(e.target.value)}
+          onBlur={() => ghi({ phut: Number(phut) || 15 })} />
+        phút
+      </div>
     </div>
   );
 }
@@ -116,7 +210,7 @@ function CapDo({ h, nguong }: { h: Huong; nguong: ThietBi["nguong"] }) {
   );
 }
 
-function MotThietBi({ tb, taiLai }: { tb: ThietBi; taiLai: () => Promise<void> }) {
+function MotThietBi({ tb, taiLai, doiMa }: { tb: ThietBi; taiLai: () => Promise<void>; doiMa: (c: string) => string }) {
   const [dangHoc, setDangHoc] = useState(false);
   const [nl, setNl] = useState<NgoaiLe>({ hanh_dong: "on", tu: "21:00", den: "23:30", cach: "hoi", ten: "" });
 
@@ -137,17 +231,15 @@ function MotThietBi({ tb, taiLai }: { tb: ThietBi; taiLai: () => Promise<void> }
   return (
     <div className="space-y-2 rounded-md border p-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-2 font-medium">
-          <input type="checkbox" checked={tb.bat} onChange={(e) => void dat({ bat: e.target.checked })} />
+        <label className="flex items-center gap-2 font-medium"
+          title="Bỏ tích = bot thôi điều khiển thiết bị này (như bỏ tích ở Sơ đồ kích hoạt)">
+          <input type="checkbox" checked={tb.bat} onChange={(e) => void dat({ bat: e.target.checked, tu_lam: e.target.checked })} />
           {tb.ten}
         </label>
         <span className="font-mono text-xs text-muted-foreground">{tb.thiet_bi}</span>
-        <label className="flex items-center gap-1 text-xs"
-          title="Không chờ đủ lượt chấm. Vẫn chỉ làm khi luật đủ chắc; anh làm ngược lại 2 lần trong 10 lượt gần nhất là bot quay về hỏi.">
-          <input type="checkbox" checked={tb.tu_lam} disabled={!tb.bat}
-            onChange={(e) => void dat({ tu_lam: e.target.checked })} />
-          Cho bot tự làm ngay
-        </label>
+        <span className="text-xs text-muted-foreground">
+          học theo {tb.co_so === "so_do" ? "sơ đồ kích hoạt" : "tự dò cả nhà (sơ đồ chưa có cảm biến)"}
+        </span>
         <span className="ml-auto text-xs text-muted-foreground">
           {tb.hoc_luc ? `học lúc ${new Date(tb.hoc_luc * 1000).toLocaleString("vi-VN")}` : "chưa học"}
         </span>
@@ -197,7 +289,8 @@ function MotThietBi({ tb, taiLai }: { tb: ThietBi; taiLai: () => Promise<void> }
         );
       })}
 
-      {tb.kiem_ao ? <KiemAo k={tb.kiem_ao} /> : null}
+      {tb.kiem_ao ? <KiemAo k={tb.kiem_ao} doiMa={doiMa} luu={(v) => dat({ kiem_ao: v })} /> : null}
+      {tb.tat_khi_vang ? <TatKhiVang t={tb.tat_khi_vang} doiMa={doiMa} luu={(v) => dat({ tat_khi_vang: v })} /> : null}
 
       <div className="space-y-1 border-t pt-2 text-xs">
         <div className="font-medium">Khung giờ của anh</div>
@@ -254,7 +347,7 @@ function MotThietBi({ tb, taiLai }: { tb: ThietBi; taiLai: () => Promise<void> }
 
 export function KichHoat() {
   const [ds, setDs] = useState<ThietBi[]>([]);
-  const [ma, setMa] = useState("");
+  const [thucThe, setThucThe] = useState<ThucThe[]>([]);
 
   const tai = useCallback(async () => {
     const r = await layGet<{ danh_sach?: ThietBi[] }>("/api/hoc-hoi/kich-hoat");
@@ -263,36 +356,27 @@ export function KichHoat() {
 
   useEffect(() => {
     void tai();
+    void layGet<{ danh_sach?: ThucThe[] }>("/api/hoc-hoi/thuc-the").then((r) => setThucThe(r.danh_sach || []));
   }, [tai]);
 
-  const them = async () => {
-    const tb = ma.trim();
-    if (!tb) return;
-    if (await goiPost("/api/hoc-hoi/kich-hoat/dat", { thiet_bi: tb, bat: true })) {
-      setMa("");
-      await goiPost("/api/hoc-hoi/kich-hoat/hoc", { thiet_bi: tb });
-      await tai();
-    }
-  };
+  const doiMa = (chu: string) => thucThe.find((t) => t.ma === chu || t.ten === chu)?.ma ?? chu;
+  const dangDieuKhien = ds.filter((tb) => tb.bat);
 
   return (
     <div className="space-y-3">
+      <datalist id="kich-hoat-thuc-the">
+        {thucThe.map((t) => <option key={t.ma} value={t.ma}>{t.ten}</option>)}
+      </datalist>
       <p className="text-xs text-muted-foreground">
-        Bot tự tìm <b>cảm biến</b> hay đứng ngay trước lần anh bật/tắt, rồi học luật theo giờ và độ
-        sáng. Luật nào thử trên 7 ngày cuối đủ đúng thì bot <b>hỏi</b> trong nhóm học hỏi — anh
-        trả lời «có» hoặc «không». Đủ lượt đúng thì bot <b>tự làm</b>, không cần anh trả lời; anh
-        làm ngược lại trong 10 phút là bot ghi sai và tụt về hỏi. Cảm biến báo có người mà 6 giờ
-        qua không ai bấm công tắc hay mở cửa thì bot coi là báo ảo và im.
+        Thiết bị anh <b>tích ở Sơ đồ kích hoạt</b>. Bot học luật bật/tắt từ điều kiện và ngoại vi trong sơ đồ
+        (giờ, cảm biến, độ sáng…), thử trên 7 ngày cuối; giờ nào bot đã đúng ≥ 90% thì tự làm, lưng chừng thì
+        hỏi anh trong nhóm học hỏi («có»/«không»), rõ là không thì im. Anh làm ngược lại trong 10 phút là bot ghi
+        sai. Dưới mỗi thiết bị: kiểm báo ảo trước khi bật, tắt khi vắng, khung giờ của anh — đều sửa được.
       </p>
-      {ds.map((tb) => <MotThietBi key={tb.thiet_bi} tb={tb} taiLai={tai} />)}
-      <div className="flex flex-wrap items-center gap-2">
-        <Input className="w-64" placeholder="switch.phong_ngu_l1" value={ma}
-          onChange={(e) => setMa(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") void them(); }} />
-        <Button variant="outline" size="sm" onClick={() => void them()} disabled={!ma.trim()}>
-          <Plus className="mr-1 size-3.5" /> Thêm thiết bị
-        </Button>
-      </div>
+      {dangDieuKhien.map((tb) => <MotThietBi key={tb.thiet_bi} tb={tb} taiLai={tai} doiMa={doiMa} />)}
+      {!dangDieuKhien.length ? (
+        <p className="text-center text-xs text-muted-foreground">Chưa thiết bị nào — tích ở Sơ đồ kích hoạt để giao cho bot.</p>
+      ) : null}
     </div>
   );
 }

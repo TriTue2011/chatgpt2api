@@ -785,12 +785,107 @@ def ghi_thoi_quen(lan: int, ket_luan: list[dict[str, Any]]) -> dict[str, list[di
     return {"moi": moi, "lap_lai": lap_lai}
 
 
+# ── Chủ máy sửa sơ đồ kích hoạt ─────────────────────────────────────────────
+# Chủ máy 26/09/2026: "Sơ đồ kích hoạt là nơi chứa các điều kiện và ngoại vi … có thể
+# thêm hoặc xoá điều kiện". Phần sửa lưu RIÊNG, áp ngay tại `thoi_quen_hoc` /
+# `ngoai_vi_hoc` — mọi tầng đọc sơ đồ (gợi ý, bật/tắt thiết bị, trang Học hỏi) thấy
+# cùng một bản. Bot đọc lại thói quen thì phần sửa vẫn giữ: điều chủ máy đặt thắng.
+_SUA_PATH = Path(DATA_DIR) / "agent" / "so_do_sua.json"
+_GIO_RE = re.compile(r"([01]\d|2[0-3]):[0-5]\d|24:00")
+
+
+def khoa_dieu_kien(x: dict[str, Any]) -> str:
+    """Khoá so trùng của một điều kiện: mỗi khung giờ một khoá, mỗi cảm biến một khoá."""
+    if x.get("ma") == "gio":
+        return f"gio:{x.get('tu')}-{x.get('den')}"
+    if x.get("ma") in ("ngay", "mua"):
+        return f"{x['ma']}:{x.get('la')}"
+    return str(x.get("ma") or "")
+
+
+def _doc_sua() -> dict[str, dict[str, list]]:
+    try:
+        return json.loads(_SUA_PATH.read_text(encoding="utf-8")) if _SUA_PATH.is_file() else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _kiem_dieu_kien(x: Any) -> dict[str, Any]:
+    """Điều kiện chủ máy thêm — kiểm TẠI BIÊN (đi thẳng vào mọi tầng học)."""
+    if not isinstance(x, dict) or not x.get("ma"):
+        raise ValueError("Điều kiện phải có «ma».")
+    ma = str(x["ma"])
+    if ma == "gio":
+        tu, den = str(x.get("tu") or ""), str(x.get("den") or "")
+        if not (_GIO_RE.fullmatch(tu) and _GIO_RE.fullmatch(den)):
+            raise ValueError("Khung giờ phải dạng HH:MM.")
+        return {"ma": "gio", "tu": tu, "den": den}
+    if ma in ("ngay", "mua"):
+        return {"ma": ma, "la": str(x.get("la") or "")}
+    if "." not in ma:
+        raise ValueError(f"{ma} không phải mã thực thể.")
+    for k in ("duoi", "tren"):
+        if x.get(k) is not None:
+            return {"ma": ma, k: float(x[k])}
+    return {"ma": ma, "la": str(x.get("la") or "on")}
+
+
+def sua_so_do(khoa: str, loai: str, hanh_dong: str, muc: dict[str, Any]) -> dict[str, list]:
+    """Chủ máy thêm / bỏ / lấy lại một điều kiện (``loai="dk"``) hay ngoại vi (``"nv"``)
+    của thiết bị ``khoa``. Bỏ một mục CHÍNH chủ máy thêm thì xoá hẳn; bỏ mục bot đọc được
+    thì ghi vào danh sách bỏ (lấy lại được)."""
+    if loai not in ("dk", "nv") or hanh_dong not in ("them", "bo", "bo_lai"):
+        raise ValueError("loai là dk|nv, hanh_dong là them|bo|bo_lai.")
+    if loai == "dk":
+        muc = _kiem_dieu_kien(muc)
+        k = khoa_dieu_kien(muc)
+    else:
+        if not isinstance(muc, dict) or "." not in str(muc.get("ma") or ""):
+            raise ValueError("Ngoại vi phải có «ma» là mã thực thể.")
+        muc = {"ma": str(muc["ma"]), "ten": str(muc.get("ten") or "")}
+        k = muc["ma"]
+    ma_khoa = khoa_dieu_kien if loai == "dk" else (lambda x: str(x.get("ma")))
+    with _khoa:
+        d = _doc_sua()
+        cu = d.setdefault(str(khoa), {})
+        them = cu.setdefault(f"{loai}_them", [])
+        bo = cu.setdefault(f"{loai}_bo", [])
+        if hanh_dong == "them":
+            if k in bo:
+                bo.remove(k)
+            if all(ma_khoa(x) != k for x in them):
+                them.append(muc)
+        elif hanh_dong == "bo":
+            con = [x for x in them if ma_khoa(x) != k]
+            if len(con) == len(them) and k not in bo:
+                bo.append(k)
+            cu[f"{loai}_them"] = con
+        elif k in bo:
+            bo.remove(k)
+        _SUA_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _SUA_PATH.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(_SUA_PATH)
+        return {kk: list(v) for kk, v in cu.items()}
+
+
 def ngoai_vi_hoc() -> dict[str, dict[str, Any]]:
-    """Ngoại vi bot chọn cho từng mã được học — bỏ kết luận bị chấm sai."""
+    """Ngoại vi bot chọn cho từng mã được học — bỏ kết luận bị chấm sai, áp phần chủ máy
+    sửa (`sua_so_do`)."""
     hoc = set(thiet_bi_hoc())
-    return {d["khoa"]: d["gia_tri"] for d in dang_hieu_luc()
-            if d["loai_cau_hoi"] == "ngoai_vi" and d["ket_qua"] != "sai"
-            and d["khoa"] in hoc}
+    ra = {d["khoa"]: dict(d["gia_tri"]) for d in dang_hieu_luc()
+          if d["loai_cau_hoi"] == "ngoai_vi" and d["ket_qua"] != "sai"
+          and d["khoa"] in hoc}
+    for khoa, cu in _doc_sua().items():
+        if khoa not in hoc:
+            continue
+        g = ra.setdefault(khoa, {"khu_vuc": "", "ngoai_vi": []})
+        bo = set(cu.get("nv_bo") or [])
+        ds = [x for x in g.get("ngoai_vi") or [] if str(x.get("ma")) not in bo]
+        co = {str(x.get("ma")) for x in ds}
+        g["ngoai_vi"] = ds + [{**x, "cua_chu_may": True} for x in cu.get("nv_them") or []
+                              if x["ma"] not in co]
+    return ra
 
 
 def thoi_quen_hoc() -> dict[str, dict[str, Any]]:
@@ -798,11 +893,22 @@ def thoi_quen_hoc() -> dict[str, dict[str, Any]]:
     thói quen không có điều kiện bật nào. Tầng xác suất (`du_doan_nha.hoc`) chỉ
     học theo đây (chủ máy chốt 13/09/2026)."""
     hoc = set(thiet_bi_hoc())
-    return {d["khoa"]: {"bat": list(d["gia_tri"].get("bat") or []),
-                        "ten_ngoai_vi": dict(d["nhom"].get("ten_ngoai_vi") or {})}
-            for d in dang_hieu_luc()
-            if d["loai_cau_hoi"] == "thoi_quen" and d["ket_qua"] != "sai"
-            and d["khoa"] in hoc and d["gia_tri"].get("bat")}
+    ra = {d["khoa"]: {"bat": list(d["gia_tri"].get("bat") or []),
+                      "ten_ngoai_vi": dict(d["nhom"].get("ten_ngoai_vi") or {})}
+          for d in dang_hieu_luc()
+          if d["loai_cau_hoi"] == "thoi_quen" and d["ket_qua"] != "sai"
+          and d["khoa"] in hoc}
+    # Phần chủ máy sửa (`sua_so_do`) thắng phần bot đọc.
+    for khoa, cu in _doc_sua().items():
+        if khoa not in hoc:
+            continue
+        g = ra.setdefault(khoa, {"bat": [], "ten_ngoai_vi": {}})
+        bo = set(cu.get("dk_bo") or [])
+        ds = [x for x in g["bat"] if khoa_dieu_kien(x) not in bo]
+        co = {khoa_dieu_kien(x) for x in ds}
+        g["bat"] = ds + [{**x, "cua_chu_may": True} for x in cu.get("dk_them") or []
+                         if khoa_dieu_kien(x) not in co]
+    return {k: v for k, v in ra.items() if v["bat"]}
 
 
 def dang_hieu_luc() -> list[dict[str, Any]]:
@@ -924,28 +1030,35 @@ def so_do_kich_hoat(*, kem_so_do: bool = True) -> list[dict[str, Any]]:
     ten = _ten_ha()
     tq = thoi_quen_hoc()
     nv = ngoai_vi_hoc()
+    sua_cu = _doc_sua()
     bang = du_doan_nha.hoc() if kem_so_do else {}
     ra: list[dict[str, Any]] = []
     for khoa in thiet_bi_hoc():
         dk_def = (tq.get(khoa) or {}).get("bat") or []
         ten_nv = (tq.get(khoa) or {}).get("ten_ngoai_vi") or {}
         dem = (bang.get(khoa) or {}).get("dk") or {}
-        gio = [f"{x['tu']}–{x['den']}" for x in dk_def if x["ma"] == "gio"]
-        muc = ([("gio", f"trong {' hoặc '.join(gio)}")] if gio else []) + [
-            (str(x["ma"]), _dieu_kien_doc(x, ten_nv, ten)) for x in dk_def if x["ma"] != "gio"]
+        # Mỗi khung giờ một ô riêng (bỏ được từng khung); số đo của khung giờ là chung.
+        muc = [(khoa_dieu_kien(x), "gio" if x["ma"] == "gio" else str(x["ma"]),
+                f"trong {x['tu']}–{x['den']}" if x["ma"] == "gio" else _dieu_kien_doc(x, ten_nv, ten),
+                bool(x.get("cua_chu_may")), x) for x in dk_def]
         dieu_kien: list[dict[str, Any]] = []
-        for k, chu in muc:
+        for k, k_do, chu, cua_chu_may, goc in muc:
             do = None
             if kem_so_do:
-                khop = int((dem.get(f"{k}=khop") or {}).get("bat") or 0)
-                lech = int((dem.get(f"{k}=lech") or {}).get("bat") or 0)
+                khop = int((dem.get(f"{k_do}=khop") or {}).get("bat") or 0)
+                lech = int((dem.get(f"{k_do}=lech") or {}).get("bat") or 0)
                 do = {"nhan_hay_gap": "khớp", "mau": khop + lech,
                       "ty_le": round(khop / (khop + lech), 3) if khop + lech else 0.0}
-            dieu_kien.append({"khoa": k, "ten": chu, "do": do})
-        ngoai_vi = [{"khoa": "", "ten": str(x.get("ten") or _nhan(str(x["ma"]), ten)), "do": None}
+            dieu_kien.append({"khoa": k, "ten": chu, "do": do, "cua_chu_may": cua_chu_may,
+                              "goc": {kk: vv for kk, vv in goc.items() if kk != "cua_chu_may"}})
+        ngoai_vi = [{"khoa": str(x["ma"]), "ten": str(x.get("ten") or _nhan(str(x["ma"]), ten)),
+                     "do": None, "cua_chu_may": bool(x.get("cua_chu_may"))}
                     for x in (nv.get(khoa) or {}).get("ngoai_vi") or []]
+        sua = sua_cu.get(khoa) or {}
         ra.append({"khoa": khoa, "nhan_to_chinh": _nhan(khoa, ten),
-                   "ngoai_vi": ngoai_vi, "dieu_kien": dieu_kien})
+                   "ngoai_vi": ngoai_vi, "dieu_kien": dieu_kien,
+                   "da_bo": {"dk": list(sua.get("dk_bo") or []),
+                             "nv": [{"khoa": m, "ten": _nhan(m, ten)} for m in sua.get("nv_bo") or []]}})
     return ra
 
 

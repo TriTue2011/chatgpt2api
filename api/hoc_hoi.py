@@ -615,9 +615,55 @@ def create_router() -> APIRouter:
             from services import hieu_thiet_bi_nha
             ds = await asyncio.to_thread(hieu_thiet_bi_nha.so_do_kich_hoat,
                                          kem_so_do=False)
+            # Tích ở sơ đồ = giao cho bot tự điều khiển (chủ máy 26/09/2026); kèm gợi ý
+            # cảm biến ngoài sơ đồ hay đứng trước lần bật (`kich_hoat_nha._goi_y_them`).
+            from services import kich_hoat_nha
+            kh = kich_hoat_nha._nap()
+            ten = hieu_thiet_bi_nha._ten_ha()
+            for n in ds:
+                cd = kh["thiet_bi"].get(n["khoa"]) or {}
+                n["bot_dieu_khien"] = bool(cd.get("bat"))
+                n["goi_y_them"] = [{**x, "ten": ten.get(x["ma"], x["ma"])}
+                                   for x in (kh["mo_hinh"].get(n["khoa"]) or {}).get("goi_y_them") or []]
             return {"ok": True, "danh_sach": ds}
         except Exception as exc:
             return _loi(exc, "sơ đồ")
+
+    @router.post("/api/hoc-hoi/so-do/sua")
+    async def so_do_sua(body: dict, authorization: str | None = Header(default=None)):
+        """Chủ máy thêm / bỏ / lấy lại một điều kiện hay ngoại vi của sơ đồ.
+        body: {khoa, loai: "dk"|"nv", hanh_dong: "them"|"bo"|"bo_lai", muc: {...}}."""
+        require_admin(authorization)
+        try:
+            from services import hieu_thiet_bi_nha, kich_hoat_nha
+            khoa = str(body.get("khoa") or "")
+            ra = hieu_thiet_bi_nha.sua_so_do(khoa, str(body.get("loai") or ""),
+                                              str(body.get("hanh_dong") or ""), body.get("muc") or {})
+            if khoa in kich_hoat_nha.ds_thiet_bi():
+                kich_hoat_nha._hoc_nen(khoa)       # sơ đồ đổi là cơ sở học đổi
+            return {"ok": True, "sua": ra}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            return _loi(exc, "sửa sơ đồ")
+
+    @router.get("/api/hoc-hoi/thuc-the")
+    async def thuc_the(authorization: str | None = Header(default=None)):
+        """Thực thể HA để chọn khi thêm điều kiện / ngoại vi / bằng chứng: [{ma, ten, lop}]."""
+        require_admin(authorization)
+        try:
+            from services import ha_client
+            ds = await asyncio.to_thread(ha_client.get_states)
+            mien = ("binary_sensor.", "sensor.", "switch.", "light.", "fan.", "person.",
+                    "device_tracker.", "lock.", "cover.", "media_player.", "climate.")
+            return {"ok": True, "danh_sach": sorted(
+                ({"ma": str(x["entity_id"]),
+                  "ten": str((x.get("attributes") or {}).get("friendly_name") or x["entity_id"]),
+                  "lop": (x.get("attributes") or {}).get("device_class") or ""}
+                 for x in ds or [] if str(x.get("entity_id") or "").startswith(mien)),
+                key=lambda x: x["ma"])}
+        except Exception as exc:
+            return _loi(exc, "thực thể")
 
     @router.get("/api/hoc-hoi/so-do/do")
     async def so_do_do(authorization: str | None = Header(default=None)):
@@ -655,7 +701,8 @@ def create_router() -> APIRouter:
 
     @router.post("/api/hoc-hoi/kich-hoat/dat")
     async def kich_hoat_dat(body: dict, authorization: str | None = Header(default=None)):
-        """Chủ máy sửa sơ đồ một thiết bị. body: {thiet_bi, bat?, tu_lam?, bo_nguon?, ngoai_le?} —
+        """Chủ máy sửa một thiết bị. body: {thiet_bi, bat?, tu_lam?, bo_nguon?, ngoai_le?, kiem_ao?,
+        tat_khi_vang?} —
         khoá nào không gửi thì giữ nguyên."""
         require_admin(authorization)
         try:
@@ -665,7 +712,9 @@ def create_router() -> APIRouter:
                 bat=body.get("bat") if "bat" in body else None,
                 bo_nguon=list(body["bo_nguon"]) if isinstance(body.get("bo_nguon"), list) else None,
                 ngoai_le=list(body["ngoai_le"]) if isinstance(body.get("ngoai_le"), list) else None,
-                tu_lam=bool(body["tu_lam"]) if "tu_lam" in body else None)
+                tu_lam=bool(body["tu_lam"]) if "tu_lam" in body else None,
+                kiem_ao=body["kiem_ao"] if isinstance(body.get("kiem_ao"), dict) else None,
+                tat_khi_vang=body["tat_khi_vang"] if isinstance(body.get("tat_khi_vang"), dict) else None)
             return {"ok": True, "cai_dat": cd}
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
