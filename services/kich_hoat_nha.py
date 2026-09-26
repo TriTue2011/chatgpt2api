@@ -727,7 +727,11 @@ def _lam(tb: str, hd: str, *, tu_lam: bool) -> bool:
     """Gọi HA. ``tu_lam``: bot tự quyết → đánh dấu để thay đổi sắp tới ghi do_ai=1."""
     from services import ha_client, lich_su_nha
     if tu_lam:
-        lich_su_nha.bot_tu_lam(tb)
+        # Đánh dấu cả thực thể GƯƠNG: đo 26/09/2026 19:45 bot bật switch.phong_ngu_l1
+        # (do_ai=1), light.phong_ngu_l1 đổi cùng giây nhưng ghi do_ai=0 → "người vừa bật",
+        # hẹn tắt khi vắng bị chặn, và lượt học sau tưởng người bật.
+        for ma in {tb, ha_client.thuc_the_guong(tb)} - {None}:
+            lich_su_nha.bot_tu_lam(ma)
     return ha_client.call_service(tb.split(".")[0], "turn_on" if hd == "on" else "turn_off",
                                   {"entity_id": tb})
 
@@ -830,14 +834,16 @@ def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
             if q["lam"] == "tu_lam":
                 if not _lam(tb, hd, tu_lam=True):
                     return
-                dd.ghi_nhan(_ten_tt(tb, hd), hd, q["p"], nhan, "tu_lam")
+                id_ = dd.ghi_nhan(_ten_tt(tb, hd), hd, q["p"], nhan, "tu_lam")
             else:
                 id_ = dd.ghi_nhan(_ten_tt(tb, hd), hd, q["p"], nhan, "hoi")
         if q["lam"] == "tu_lam":
+            # Chủ máy 26/09/2026: "Đáng lẽ đưa ra lựa chọn đúng hay sai chứ".
             thong_bao.gui("nha.goi_y",
-                          f"🤖 Em đã {_TEN_HD[hd].lower()} {_ten_tb(tb)} (vì {vi}, em chắc "
-                          f"{q['p']:.0%}). Sai thì anh cứ {'tắt' if hd == 'on' else 'bật'} "
-                          f"lại trong 10 phút, em tự ghi là em sai.")
+                          f"🤖 #{id_} Em đã {_TEN_HD[hd].lower()} {_ten_tb(tb)} (vì {vi}, em chắc "
+                          f"{q['p']:.0%}).\nĐúng hay sai ạ? Anh trả lời «đúng» hoặc «sai» — sai thì em "
+                          f"{_TEN_HD[_NGUOC[hd]].lower()} lại ngay. Không trả lời trong "
+                          f"{CHAM_TU_LAM // 60} phút là em tính đúng.")
         elif not thong_bao.gui("nha.goi_y",
                              f"💡 #{id_} {_TEN_HD[hd]} {_ten_tb(tb)} không ạ? (vì {vi}, em chắc "
                              f"{q['p']:.0%}{'; ' + q['ly_do'] if q.get('ly_do') else ''}) — anh trả lời «có» hoặc «không»."):
@@ -946,12 +952,21 @@ def _theo_vang(ma: str, gt: str, ds: dict[str, dict[str, Any]]) -> None:
             _hen_tat_huy(tb)
         elif (ma in cb and gt == "off") or (ma == tb and gt == "on"):
             if _deu_vang(cb):
-                _hen_tat_huy(tb)
-                t = threading.Timer(float(tv.get("phut") or 15) * 60, _tat_vi_vang, args=(tb,))
-                t.daemon = True
-                with _khoa:
-                    _hen_tat[tb] = t
-                t.start()
+                _hen_tat_luc(tb, float(tv.get("phut") or MAC_DINH_VANG_PHUT) * 60)
+
+
+#: Hẹn tắt bị chặn TẠM (người vừa chạm, bot vừa làm) thì ngần này giây kiểm lại — không bỏ
+#: hẳn. Đo 26/09/2026 19:45: bị chặn một lần là đèn phòng ngủ sáng mãi trong phòng trống.
+HEN_LAI = 60
+
+
+def _hen_tat_luc(tb: str, giay: float) -> None:
+    _hen_tat_huy(tb)
+    t = threading.Timer(giay, _tat_vi_vang, args=(tb,))
+    t.daemon = True
+    with _khoa:
+        _hen_tat[tb] = t
+    t.start()
 
 
 def _tat_vi_vang(tb: str) -> None:
@@ -969,13 +984,14 @@ def _tat_vi_vang(tb: str) -> None:
         if str((ha_client.get_state(tb) or {}).get("state") or "").lower() != "on":
             return
         if _nguoi_vua_cham(tb, luc) or _vua_lam(tb, "off"):
+            _hen_tat_luc(tb, HEN_LAI)       # chặn tạm — vẫn vắng thì lát nữa xét lại
             return
         if any(x.get("hanh_dong") == "off" and x.get("cach", "khong") == "khong"
                and _khung_dang(x, luc) for x in cd.get("ngoai_le") or []):
             return
         if not _lam(tb, "off", tu_lam=True):
             return
-        phut = int(tv.get("phut") or 15)
+        phut = int(tv.get("phut") or MAC_DINH_VANG_PHUT)
         dd.ghi_nhan(_ten_tt(tb, "off"), "off", 1.0, {"nguon": f"vắng {phut} phút"}, "tu_lam")
         thong_bao.gui("nha.goi_y", f"🤖 Em đã tắt {_ten_tb(tb)} (vắng {phut} phút). Sai thì anh "
                                    f"bật lại trong 10 phút, em tự ghi là em sai.")
@@ -1018,6 +1034,11 @@ def su_kien(ma: str, gia_tri: Any, *, do_ai: bool = False) -> None:
 #: So trên chữ CÓ DẤU: bỏ dấu thì "đúng" (có) và "dừng" (không) cùng thành "dung".
 #: Bản không dấu chỉ nhận khi không hai nghĩa ("co", "khong"). "bật"/"tắt" không phải
 #: câu trả lời: hỏi "tắt không?" mà đáp "bật" là ý ngược lại.
+#: Trả lời cho việc bot ĐÃ TỰ LÀM: chỉ đúng hai chữ này. Tập «có/không» rộng hơn (ok, ko…)
+#: thì một câu "không" nhắn cho việc khác trong 10 phút sẽ tắt nhầm đèn.
+_DUNG = {"đúng", "đúng rồi", "đúng rồi em", "chuẩn"}
+_SAI = {"sai", "sai rồi", "sai rồi em"}
+_NGUOC = {"on": "off", "off": "on"}
 _CO = {"có", "co", "ok", "oke", "okay", "ừ", "ừm", "uh", "um", "đồng ý", "dong y", "yes",
        "được", "duoc", "có em", "co em", "có đi", "co di", "làm đi", "lam di", "đúng", "đúng rồi"}
 _KHONG = {"không", "khong", "ko", "k", "kg", "thôi", "thoi", "không cần", "khong can", "no",
@@ -1032,17 +1053,29 @@ def tra_loi(text: str) -> str | None:
     t = " ".join(re.sub(r"[^\w\s]", " ", unicodedata.normalize("NFC", str(text or "")).lower()).split())
     m = re.fullmatch(r"(.*?)\s*(\d+)?", t)
     cau, so = (m.group(1).strip(), m.group(2)) if m else ("", None)
-    if cau not in _CO and cau not in _KHONG:
+    if cau not in _CO | _KHONG | _DUNG | _SAI:
         return None
     with dd._khoa:
         r = dd._db().execute(
-            "SELECT id, ten, hanh_dong FROM du_doan WHERE cach='hoi' AND ket_qua='cho'"
-            " AND ten LIKE '%#%' AND ts>?" + (" AND id=?" if so else "") + " ORDER BY ts DESC LIMIT 1",
-            (time.time() - HAN_HOI, *([int(so)] if so else []))).fetchone()
+            "SELECT id, ten, hanh_dong, cach FROM du_doan WHERE ket_qua='cho' AND ten LIKE '%#%'"
+            " AND ((cach='hoi' AND ts>?) OR (cach='tu_lam' AND ts>?))"
+            + (" AND id=?" if so else "") + " ORDER BY ts DESC LIMIT 1",
+            (time.time() - HAN_HOI, time.time() - CHAM_TU_LAM, *([int(so)] if so else []))).fetchone()
     if not r:
         return None
     tb, hd = str(r["ten"]).rsplit("#", 1)
-    if cau in _KHONG:
+    if r["cach"] == "tu_lam":
+        if cau not in _DUNG | _SAI:
+            return None
+        if cau in _DUNG:
+            dd.ghi_dung(int(r["id"]))
+            return f"Dạ, em ghi là đúng: {_TEN_HD[hd].lower()} {_ten_tb(tb)}."
+        dd.ghi_sai(int(r["id"]))
+        if not _lam(tb, _NGUOC[hd], tu_lam=False):
+            return (f"Em ghi là em sai, nhưng chưa {_TEN_HD[_NGUOC[hd]].lower()} lại được "
+                    f"{_ten_tb(tb)} — Home Assistant không nhận lệnh.")
+        return f"Dạ, em đã {_TEN_HD[_NGUOC[hd]].lower()} lại {_ten_tb(tb)} và ghi là em sai."
+    if cau in _KHONG | _SAI:
         dd.ghi_sai(int(r["id"]))
         return f"Dạ, em không {_TEN_HD[hd].lower()} {_ten_tb(tb)}. Em ghi lại để lần sau đoán đúng hơn."
     if not _lam(tb, hd, tu_lam=False):
@@ -1105,7 +1138,7 @@ def tong_quan() -> list[dict[str, Any]]:
                                         for x in d.get("bao_ao") or [] if x.get("thiet_bi") == tb][-5:],
                    },
                    "tat_khi_vang": {
-                       "bat": bool(tv.get("bat")), "phut": int(tv.get("phut") or 15),
+                       "bat": bool(tv.get("bat")), "phut": int(tv.get("phut") or MAC_DINH_VANG_PHUT),
                        "cam_bien": [{"ma": m, "ten": ten_ha.get(m, m)} for m in tv.get("cam_bien") or []],
                        # Gợi ý: cảm biến hiện diện trong sơ đồ của thiết bị.
                        "goi_y": [{"ma": m, "ten": ten_ha.get(m, m)} for m in sorted(nhi_phan & hien_dien)],

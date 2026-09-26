@@ -371,6 +371,7 @@ def test_tat_khi_vang(kh, monkeypatch):
     _sk(DEN, "on", time.time() - 60)                           # người vừa tự bật
     hen[-1].ham(*hen[-1].args)
     assert kh.goi == [], "người vừa chạm thì chưa tắt"
+    assert hen[-1].giay == kh.HEN_LAI and not hen[-1].huy, "chặn tạm thì hẹn kiểm lại, không bỏ hẳn"
     from services import lich_su_nha as ls
     with ls._khoa_db:
         ls._db().execute("DELETE FROM su_kien WHERE thiet_bi=?", (DEN,)); ls._db().commit()
@@ -508,3 +509,40 @@ def test_lich_la_dac_trung_cua_cay(kh):
     assert kh._dac_trung(_thu(1, 19, 45), "a", ["a"], {})["lịch:an_muon"] == 0.0
     assert kh._dieu_kien_doc("lịch:an_muon", False, 0.5, {}) == "đang giờ Ăn tối muộn"
     assert kh._dieu_kien_doc("lịch:an_muon", True, 0.5, {}) == "ngoài giờ Ăn tối muộn"
+
+
+def test_bot_lam_danh_dau_ca_thuc_the_guong(kh, monkeypatch):
+    """Đo 26/09/2026 19:45: bot bật switch.phong_ngu_l1 (do_ai=1) mà light.phong_ngu_l1 — cùng
+    bóng đèn qua switch_as_x — ghi do_ai=0 → "người vừa bật" chặn tắt khi vắng."""
+    from services import ha_client, lich_su_nha as ls
+    guong = {"switch.phong_ngu_l1": "light.phong_ngu_l1", "light.phong_ngu_l1": "switch.phong_ngu_l1"}
+    monkeypatch.setattr(ha_client, "thuc_the_guong", lambda e: guong.get(e))
+    kh._lam("switch.phong_ngu_l1", "on", tu_lam=True)
+    assert ls.la_bot_tu_lam("light.phong_ngu_l1") and ls.la_bot_tu_lam("switch.phong_ngu_l1")
+    assert not ls.la_bot_tu_lam("switch.phong_ngu_l2"), "kênh khác cùng công tắc không phải gương"
+
+
+def test_so_dang_ky_ra_cap_guong_switch_as_x():
+    from services import ha_client
+    ents = [{"entity_id": "light.phong_ngu_l1", "platform": "switch_as_x", "device_id": "d",
+             "options": {"switch_as_x": {"entity_id": "switch.phong_ngu_l1", "invert": False}}},
+            {"entity_id": "switch.phong_ngu_l1", "platform": "mqtt", "device_id": "d", "options": {}},
+            {"entity_id": "switch.phong_ngu_l2", "platform": "mqtt", "device_id": "d", "options": {}}]
+    g = ha_client._chi_muc_registry([], ents, [{"id": "d", "identifiers": [["mqtt", "x"]]}])["entity_mirror"]
+    assert g == {"light.phong_ngu_l1": "switch.phong_ngu_l1", "switch.phong_ngu_l1": "light.phong_ngu_l1"}
+
+
+def test_tu_lam_tra_loi_dung_sai(kh):
+    """Chủ máy 26/09/2026: tin "em đã bật" phải cho chọn đúng / sai. Sai thì làm ngược lại
+    ngay; với việc ĐÃ tự làm chỉ nhận đúng hai chữ — "không" nhắn cho việc khác không được
+    tắt nhầm đèn."""
+    from services import du_doan_nha as dd
+    id1 = dd.ghi_nhan(f"{DEN}#on", "on", 0.9, {}, "tu_lam")
+    assert kh.tra_loi("không") is None and kh.tra_loi("ok") is None
+    assert "tắt lại" in kh.tra_loi("Sai rồi")
+    assert kh.goi == [("switch", "turn_off", {"entity_id": DEN})]
+    assert dd._db().execute("SELECT ket_qua FROM du_doan WHERE id=?", (id1,)).fetchone()[0] == "sai"
+    id2 = dd.ghi_nhan(f"{DEN}#on", "on", 0.9, {}, "tu_lam")
+    assert "đúng" in kh.tra_loi(f"đúng {id2}")
+    assert dd._db().execute("SELECT ket_qua FROM du_doan WHERE id=?", (id2,)).fetchone()[0] == "dung"
+    assert len(kh.goi) == 1, "đúng thì không làm gì thêm"

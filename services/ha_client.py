@@ -646,10 +646,19 @@ def _chi_muc_registry(areas: list[dict], ents: list[dict], devs: list[dict]) -> 
         for d in devs if d.get("id")
     }
     entity_device_ids: dict[str, list[str]] = {}
+    # Cặp GƯƠNG: thực thể `switch_as_x` (vd light.phong_ngu_l1) và đúng công tắc nó bọc
+    # (switch.phong_ngu_l1) — một bóng đèn, hai thực thể, đổi cùng giây. HA ghi mối nối ở
+    # options["switch_as_x"]["entity_id"] của thực thể bọc. KHÔNG suy theo thiết bị: một
+    # công tắc Zigbee nhiều kênh chung thiết bị (phòng ngủ: l1 = đèn, l2 = điều hoà).
+    entity_mirror: dict[str, str] = {}
     for e in ents:
         eid = e.get("entity_id")
         if not eid:
             continue
+        boc = ((e.get("options") or {}).get("switch_as_x") or {}).get("entity_id")
+        if isinstance(boc, str) and "." in boc:
+            entity_mirror[eid] = boc
+            entity_mirror[boc] = eid
         if e.get("platform"):
             entity_platform[eid] = str(e["platform"])
         if dev_ids.get(e.get("device_id")):
@@ -666,7 +675,7 @@ def _chi_muc_registry(areas: list[dict], ents: list[dict], devs: list[dict]) -> 
                   for a in areas if a.get("name")}
     return {"entity_area": entity_area, "area_names": area_names,
             "entity_aliases": entity_aliases, "entity_platform": entity_platform,
-            "entity_device_ids": entity_device_ids}
+            "entity_device_ids": entity_device_ids, "entity_mirror": entity_mirror}
 
 
 def get_ha_area_index(use_cache: bool = True) -> dict[str, Any]:
@@ -693,6 +702,11 @@ def get_ha_area_index(use_cache: bool = True) -> dict[str, Any]:
     except Exception as exc:
         logger.warning({"event": "ha_area_index_failed", "error": str(exc)[:120]})
         return _area_idx_cache or empty
+
+
+def thuc_the_guong(entity_id: str) -> str | None:
+    """Thực thể còn lại của cặp gương `switch_as_x`, không có thì None."""
+    return (get_ha_area_index().get("entity_mirror") or {}).get(entity_id)
 
 
 def get_state(entity_id: str) -> dict[str, Any] | None:
