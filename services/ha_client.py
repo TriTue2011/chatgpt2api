@@ -37,6 +37,29 @@ _exposed_cache_ts: float = 0.0
 _area_idx_cache: dict[str, Any] | None = None
 _area_idx_cache_ts: float = 0.0
 _EXPOSED_TTL = 600  # exposure config changes rarely → refresh every 10 min
+#: Đang làm mới ở nền (tên bộ đệm) — mỗi bộ đệm một luồng một lúc.
+_dang_lam_moi: set[str] = set()
+_khoa_lam_moi = threading.Lock()
+
+
+def _lam_moi_nen(ten: str, ham: Any) -> None:
+    """Bộ đệm HẾT HẠN mà vẫn còn dữ liệu: trả dữ liệu cũ ngay, làm mới ở nền.
+
+    Đo 26/09/2026 19:27: "Tắt hết đèn" chờ 16 giây — đúng lúc hết hạn 10 phút, cả
+    ``exposed`` lẫn ``area_index`` làm mới NGAY TRONG lượt trả lời và cùng hết giờ 8
+    giây. Danh sách thiết bị phơi ra / khu vực hiếm khi đổi, bản cũ 10 phút vẫn đúng."""
+    with _khoa_lam_moi:
+        if ten in _dang_lam_moi:
+            return
+        _dang_lam_moi.add(ten)
+
+    def chay() -> None:
+        try:
+            ham()
+        finally:
+            with _khoa_lam_moi:
+                _dang_lam_moi.discard(ten)
+    threading.Thread(target=chay, name=f"ha-lam-moi-{ten}", daemon=True).start()
 
 
 def _get_ha_settings() -> dict:
@@ -499,7 +522,9 @@ def get_exposed_entity_ids(use_cache: bool = True) -> set[str]:
     callers can treat 'empty' as 'no filter' (never a regression)."""
     global _exposed_cache, _exposed_cache_ts
     now = time.time()
-    if use_cache and _exposed_cache and (now - _exposed_cache_ts) < _EXPOSED_TTL:
+    if use_cache and _exposed_cache:
+        if now - _exposed_cache_ts >= _EXPOSED_TTL:
+            _lam_moi_nen("exposed", lambda: get_exposed_entity_ids(use_cache=False))
         return _exposed_cache
     cfg = _get_ha_config()
     if not cfg:
@@ -649,7 +674,9 @@ def get_ha_area_index(use_cache: bool = True) -> dict[str, Any]:
     Empty dicts on failure so the canonicalizer simply falls through to the model."""
     global _area_idx_cache, _area_idx_cache_ts
     now = time.time()
-    if use_cache and _area_idx_cache is not None and (now - _area_idx_cache_ts) < _EXPOSED_TTL:
+    if use_cache and _area_idx_cache is not None:
+        if now - _area_idx_cache_ts >= _EXPOSED_TTL:
+            _lam_moi_nen("area_index", lambda: get_ha_area_index(use_cache=False))
         return _area_idx_cache
     cfg = _get_ha_config()
     empty = {"entity_area": {}, "area_names": {}, "entity_aliases": {}}

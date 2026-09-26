@@ -983,6 +983,28 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
 # pure latency (2-8s). We synthesize that confirmation at the gateway and skip
 # the second model call. Queries (response_type=query_answer) and any failure
 # fall through to the model, which still has to phrase the data / apologise.
+def _ten_goc_ha(ten: str) -> str:
+    """Tên công cụ HA bỏ tiền tố tích hợp.
+
+    HA 2026.9 đặt tên MỌI công cụ LLM là ``<domain>__<tên>``: ``intent__HassTurnOff``,
+    ``light__HassLightSet``, ``homeassistant__GetLiveContext``, ``llm__GetDateTime``…
+    (``homeassistant/components/llm``), bản cũ là ``HassTurnOff``. Đo 26/09/2026 19:27:
+    đường tắt gửi ``HassTurnOff`` → HA trả "Tool not found", không đèn nào tắt, bot
+    câm. So theo tên GỐC thì nhận được cả hai đời HA; gửi đi thì dùng tên client đưa
+    (`_ten_client_ha`)."""
+    return ten.split("__", 1)[1] if "__" in ten else ten
+
+
+def _ten_client_ha(tools: Any) -> dict[str, str]:
+    """{tên gốc: tên thật} của công cụ client (HA) gửi kèm yêu cầu."""
+    ra: dict[str, str] = {}
+    for t in tools or []:
+        ten = str(((t or {}).get("function") or {}).get("name") or "") if isinstance(t, dict) else ""
+        if ten:
+            ra.setdefault(_ten_goc_ha(ten), ten)
+    return ra
+
+
 _HASS_ACTION_VERB = {
     "HassTurnOn": "bật",
     "HassTurnOff": "tắt",
@@ -1037,7 +1059,7 @@ def _ha_confirm_text(messages: list[dict[str, Any]]) -> str | None:
         if not isinstance(m, dict) or m.get("role") != "tool":
             continue
         saw_result = True
-        name = call_names.get(m.get("tool_call_id"))
+        name = _ten_goc_ha(call_names.get(m.get("tool_call_id")) or "")
         if not name or name not in _HASS_ACTION_VERB:
             return None  # unknown / non-control tool -> let model handle
         verb = _HASS_ACTION_VERB[name]
@@ -3358,7 +3380,19 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                      "calls": [f'{t["function"]["name"]}:{t["function"]["arguments"]}'
                                for t in _local_tcs]})
                                
-        if not body.get("_is_ha_request"):
+        # Gửi lại cho HA chỉ những công cụ HA ĐÃ CẤP, dưới đúng tên HA đặt. HA
+        # không cấp (agent tắt Assist API, hoặc đổi tên kiểu khác) thì c2a tự làm
+        # rồi trả lời bằng chữ — gửi công cụ lạ là HA báo "not found" và im.
+        _cua_ha = _ten_client_ha(body.get("tools")) if body.get("_is_ha_request") else {}
+        _ha_du = bool(_cua_ha) and all(
+            _ten_goc_ha(t["function"]["name"]) in _cua_ha for t in _local_tcs)
+        if _ha_du:
+            _local_tcs = [{**t, "function": {**t["function"],
+                                             "name": _cua_ha[_ten_goc_ha(t["function"]["name"])]}}
+                          for t in _local_tcs]
+        elif body.get("_is_ha_request"):
+            logger.warning({"event": "ha_fastpath_tool_khong_co", "client_tools": sorted(_cua_ha)[:12]})
+        if not _ha_du:
             try:
                 _exec_local_tool_calls(_local_tcs)
                 final_text = "Đã thực hiện xong lệnh điều khiển thiết bị."
@@ -4460,7 +4494,7 @@ def _execute_mcp_tools_in_response(
 
         # Execute ALL server-side tool calls IN PARALLEL for speed
         is_action_only = len(mcp_calls) > 0 and all(
-            tc.get("function", {}).get("name", "").startswith("Hass") or
+            _ten_goc_ha(tc.get("function", {}).get("name", "")).startswith("Hass") or
             tc.get("function", {}).get("name") == "ha_call_service"
             for tc in mcp_calls
         ) and not native_calls
@@ -4484,7 +4518,7 @@ def _execute_mcp_tools_in_response(
             # Lệnh ĐIỀU KHIỂN không bao giờ được gộp: hai lệnh giống hệt nhau
             # có thể là cố ý ("tăng âm lượng 2 lần"), gộp lại là chạy thiếu.
             # Chỉ gộp tool ĐỌC — đọc hai lần luôn ra cùng một kết quả.
-            if _name.startswith("Hass") or _name == "ha_call_service":
+            if _ten_goc_ha(_name).startswith("Hass") or _name == "ha_call_service":
                 return "act#" + str(_tc.get("id") or id(_tc))
             try:
                 return _name + "|" + json.dumps(_args, sort_keys=True, ensure_ascii=False)
@@ -6920,7 +6954,8 @@ def _inject_mcp_tools(
         tools = list(tools or [])
         existing_names = {t.get("function", {}).get("name", "") for t in tools}
 
-        client_is_ha = any(name.startswith("Hass") or name == "GetLiveContext" for name in existing_names)
+        client_is_ha = any(_ten_goc_ha(name).startswith("Hass") or _ten_goc_ha(name) == "GetLiveContext"
+                           for name in existing_names)
         # HA clients bring their own control tools (HassTurnOn, etc.) but
         # we keep read-only query tools so the LLM can call GetLiveContext
         # to fetch live device state, matching how Gemini pipeline works.
