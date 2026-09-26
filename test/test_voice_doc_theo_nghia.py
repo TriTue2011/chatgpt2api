@@ -229,6 +229,7 @@ def test_so_la_ma_chi_nhan_so_dung_luat():
     ("RAM DDR5-6400", "năm, sáu nghìn", None),
 ])
 def test_chuoi_viet_tat_doc_ca_chuoi(vao, co, khong):
+    pytest.importorskip("sea_g2p")
     from services.voice import engines
     ra = engines._doc_vi(engines._doc_cong_thuc(vao, "nghi:x"))
     assert co in ra, ra
@@ -239,3 +240,12 @@ def test_tu_chua_gap_khong_keo_ve_nghia_hiem():
     """"BS" 356 mẫu bác sĩ / 13 mẫu biển số: đứng cạnh từ chưa từng gặp không được ra biển số."""
     assert d.chon_nghia("BS", "ThS BS", 4, 6) == "bác sĩ"
     assert d.chon_nghia("BS", "ThS BS", 4, 6, can_bang_chung=True) is None
+
+
+def test_chuoi_viet_tat_khong_can_sea_that():
+    """Như trên nhưng với sea giả (CI không cài sea_g2p): nghĩa trong chuỗi lấy từ phần
+    đứng cạnh, gạch nối chữ–số không thành dấu phẩy."""
+    ra = d.chuan_bi("Nghị định 100/2019/NĐ-CP có hiệu lực.", sea_gia)
+    assert "chính phủ" in ra and "cổ phiếu" not in ra, ra
+    assert "," not in d.chuan_bi("chẩn đoán COVID-19 nặng", sea_gia)
+    assert "," in d.chuan_bi("RAM DDR5-6400", sea_gia)
