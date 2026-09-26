@@ -33,6 +33,7 @@ số, "(OH)2" đọc "ô hát hai lần", điện tích "²⁻" đọc "hai tr�
 """
 from __future__ import annotations
 
+import bisect
 import re
 from collections.abc import Callable
 
@@ -301,6 +302,25 @@ def _la_ten_nguoi(cau: str, vi_tri: int, viet: bool,
     return doc_cong_thuc(truoc, ngu_canh=True, viet=viet, chu_viet_tat=chu_viet_tat) is None
 
 
+def _nguoi_lap_lai(cau: str) -> set[int]:
+    """Vị trí những ký hiệu là NGƯỜI vì LẶP LẠI trong cùng một vế câu: lần đầu là người.
+
+    Chủ máy 26/09/2026: "nếu có sự trùng nhau trong 1 câu thì từ đầu thường là người. Chả lẽ
+    natri cho natri vào nước được". "Ba cho Ba vào dung dịch", "K báo rằng nồng độ K trong
+    máu", "Na đang tìm hiểu vai trò của Na", "Fe được giao… giữa Fe và CuSO₄": một chất không
+    tự làm việc với chính nó. Chỉ trong MỘT VẾ (giữa dấu , ; :) — "Na phản ứng mãnh liệt, cần
+    bảo quản Na trong dầu hoả" là hai vế nói cùng một chất. Người gọi bỏ qua câu phương
+    trình: "Na → Na⁺ + e⁻" (đo 26/09/2026 trên 4.250 văn bản thật, 67 vế lặp ký hiệu: đây là
+    ca duy nhất mà cả hai đều là chất)."""
+    ranh = [i for i, c in enumerate(cau) if c in ",;:"]
+    dau: dict[tuple[int, str], list[int]] = {}
+    for m in _UNG_VIEN.finditer(cau):
+        tron = m.group(0).rstrip(".,;:!?-+")
+        if _NGUYEN_TO_RE.fullmatch(tron):
+            dau.setdefault((bisect.bisect_left(ranh, m.start()), tron), []).append(m.start())
+    return {vt[0] for vt in dau.values() if len(vt) >= 2}
+
+
 def doc(text: str, *, chu_viet_tat: Callable[[str], bool] | None = None) -> str:
     """Thay mọi công thức và ký hiệu phản ứng trong ``text`` bằng lời đọc.
     ``chu_viet_tat``: xem `doc_cong_thuc`."""
@@ -318,12 +338,15 @@ def _doc_cau(cau: str, chu_viet_tat: Callable[[str], bool] | None = None) -> str
     # Phương trình: mũi tên phản ứng hoặc "+" giữa các chất. "↑" "↓" chỉ ghi trạng thái (khí,
     # kết tủa), có cả trong câu văn ("tạo khí H2↑") — không làm câu thành phương trình.
     phuong_trinh = any(k in cau for k in "→⟶⇌") or bool(re.search(r"[\w)]\s\+\s[\dA-Z(]", cau))
+    nguoi = set() if phuong_trinh else _nguoi_lap_lai(cau)
 
     def thay(m: re.Match) -> str:
         s = m.group(0)
         if any(a <= m.start() < b for a, b in trong_url):
             return s
         tron = s.rstrip(".,;:!?-+")
+        if m.start() in nguoi:
+            return s
         if (_NGUYEN_TO_RE.fullmatch(tron) and _dang_am_tiet(tron)
                 and _la_ten_nguoi(cau, m.start(), viet, chu_viet_tat)):
             return s

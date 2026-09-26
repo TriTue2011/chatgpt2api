@@ -172,3 +172,18 @@ def test_chu_viet_tat_tu_dien_doc_duoc_khong_phai_cong_thuc():
     assert "nờ a xê lờ" in h.doc("Cho NaCl vào", chu_viet_tat=biet)
     assert h.doc_cong_thuc("Mg", chu_viet_tat=lambda t: True) == "ma giê", "ký hiệu đơn không hỏi từ điển"
     assert h.doc("ThS Lê B khám") != "ThS Lê B khám", "không truyền từ điển thì như cũ"
+
+
+@pytest.mark.parametrize("vao, co, khong", [
+    # Chủ máy 26/09/2026: "chả lẽ natri cho natri vào nước được" — lặp trong một vế, lần đầu là người.
+    ("Trong giờ thực hành hóa học, Na cho Na vào H2O", "Na cho nát tri vào", None),
+    ("Ba cho Ba vào dung dịch H₂SO₄ loãng.", "Ba cho ba_ri", None),
+    ("Na đang tìm hiểu vai trò của Na trong cơ thể, còn H2O thì không.", "Na đang tìm hiểu vai trò của nát tri", None),
+    # Hai vế nói cùng một chất; phương trình — không áp.
+    ("Na phản ứng mãnh liệt với H2O, cần bảo quản Na trong dầu hoả.", "nát tri phản ứng", "Na phản ứng"),
+    ("Na → Na⁺ + e⁻", None, "Na tạo"),
+])
+def test_ky_hieu_lap_trong_mot_ve_lan_dau_la_nguoi(vao, co, khong):
+    ra = h.doc(vao).replace("ba ri", "ba_ri")
+    assert co is None or co in ra, ra
+    assert khong is None or khong not in ra, ra
