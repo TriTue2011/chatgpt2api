@@ -73,6 +73,10 @@ type ThietBi = {
     bat: boolean; phut: number; cam_bien: { ma: string; ten: string }[]; goi_y: { ma: string; ten: string }[];
     quay_lai_moi_ngay?: Record<string, Record<string, number>>;
   };
+  tat_khi_sang?: {
+    bat: boolean; lux: number | null; phut: number; giay: number; cam_bien: { ma: string; ten: string } | null;
+    goi_y: { ma: string; ten: string; den_gop: number; lux: number | null }[]; lux_bay_gio?: number | null;
+  };
   co_so?: "so_do" | "tu_do";
 };
 type ThucThe = { ma: string; ten: string; lop: string };
@@ -200,6 +204,60 @@ function TatKhiVang({ t, luu, doiMa }: {
   );
 }
 
+type CaiSang = { bat: boolean; cam_bien: string; lux: number; phut: number; giay: number };
+
+/** Khi trời đủ sáng — kiểu quản gia: không tắt trước mặt người (hỏi một lần), phòng trống thì tắt nhanh. */
+function TatKhiSang({ t, luu }: { t: NonNullable<ThietBi["tat_khi_sang"]>; luu: (v: CaiSang) => Promise<void> }) {
+  const g0 = t.goi_y.find((g) => g.ma === t.cam_bien?.ma) ?? t.goi_y[0];
+  const [lux, setLux] = useState(String(t.lux ?? g0?.lux ?? ""));
+  const [phut, setPhut] = useState(String(t.phut));
+  const [giay, setGiay] = useState(String(t.giay));
+  const cb = t.cam_bien?.ma ?? g0?.ma ?? "";
+  const gop = t.goi_y.find((g) => g.ma === cb)?.den_gop;
+  const ghi = (v: Partial<CaiSang>) =>
+    void luu({ bat: t.bat, cam_bien: cb, lux: Number(lux) || 0, phut: Number(phut) || 2, giay: Number(giay) || 30, ...v });
+  return (
+    <div className="space-y-1 border-t pt-2 text-xs">
+      <label className="flex items-center gap-2 font-medium">
+        <input type="checkbox" checked={t.bat} disabled={!cb || !Number(lux)}
+          onChange={(e) => ghi({ bat: e.target.checked })} />
+        Khi trời đủ sáng
+      </label>
+      <p className="text-muted-foreground">
+        Kiểu quản gia: trời sáng không tắt đèn trước mặt người. Còn người trong phòng mà trời sáng lên (mở rèm)
+        liền số phút này thì bot hỏi anh một lần — đủ lượt đúng mới tự làm. Phòng trống lúc trời sáng thì tắt sau
+        số giây này thay vì chờ «tắt khi vắng». Ánh sáng trời = số đo trừ phần chính đèn này góp vào (bot tự đo);
+        bật đèn lúc trời đã sáng thì không hỏi. Anh trả lời «sai» khi bot tắt thì bot bật lại và nâng ngưỡng.
+      </p>
+      {!t.goi_y.length ? (
+        <p className="text-muted-foreground">Chưa đo được phần đèn góp vào cảm biến độ sáng nào trong sơ đồ — cần ≥ 5 lần bật/tắt có số đo.</p>
+      ) : (
+        <div className="flex flex-wrap items-center gap-1">
+          <select className="rounded border bg-background px-1 py-0.5" value={cb}
+            onChange={(e) => ghi({ cam_bien: e.target.value })}>
+            {t.goi_y.map((g) => <option key={g.ma} value={g.ma}>{g.ten}</option>)}
+          </select>
+          {gop !== undefined ? <span className="text-muted-foreground">(đèn góp ~{gop} lux)</span> : null}
+          trời ≥
+          <Input type="number" min={1} className="h-7 w-20" value={lux} onChange={(e) => setLux(e.target.value)}
+            onBlur={() => Number(lux) && ghi({ lux: Number(lux) })} />
+          lux · còn người: sáng liền
+          <Input type="number" min={1} max={60} className="h-7 w-16" value={phut} onChange={(e) => setPhut(e.target.value)}
+            onBlur={() => ghi({ phut: Number(phut) || 2 })} />
+          phút thì hỏi · phòng trống: tắt sau
+          <Input type="number" min={5} max={600} className="h-7 w-16" value={giay} onChange={(e) => setGiay(e.target.value)}
+            onBlur={() => ghi({ giay: Number(giay) || 30 })} />
+          giây
+          {t.lux_bay_gio != null ? <span className="ml-2 text-muted-foreground">đo lúc này: {t.lux_bay_gio} lux</span> : null}
+        </div>
+      )}
+      {g0?.lux != null ? (
+        <p className="text-muted-foreground">Gợi ý {g0.lux} lux: luật bật đang dùng «độ sáng ≤ {g0.lux} thì bật».</p>
+      ) : null}
+    </div>
+  );
+}
+
 const TEN_HD = { on: "Bật", off: "Tắt" } as const;
 /** Cùng ngưỡng mở miệng `P_HOI` của backend — luật dưới ngưỡng này bot không hỏi. */
 const P_HOI = 0.75;
@@ -322,6 +380,7 @@ function MotThietBi({ tb, taiLai, doiMa, lich }: {
 
       {tb.kiem_ao ? <KiemAo k={tb.kiem_ao} doiMa={doiMa} luu={(v) => dat({ kiem_ao: v })} /> : null}
       {tb.tat_khi_vang ? <TatKhiVang t={tb.tat_khi_vang} doiMa={doiMa} luu={(v) => dat({ tat_khi_vang: v })} /> : null}
+      {tb.tat_khi_sang ? <TatKhiSang t={tb.tat_khi_sang} luu={(v) => dat({ tat_khi_sang: v })} /> : null}
 
       <div className="space-y-1 border-t pt-2 text-xs">
         <div className="font-medium">Khung giờ của anh</div>

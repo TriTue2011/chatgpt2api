@@ -546,3 +546,80 @@ def test_tu_lam_tra_loi_dung_sai(kh):
     assert "đúng" in kh.tra_loi(f"đúng {id2}")
     assert dd._db().execute("SELECT ket_qua FROM du_doan WHERE id=?", (id2,)).fetchone()[0] == "dung"
     assert len(kh.goi) == 1, "đúng thì không làm gì thêm"
+
+
+def test_den_gop_do_tu_lich_su():
+    """Mỗi lần đèn đổi, số đo độ sáng nhảy một khoảng gần như cố định — đo phòng ngủ: +63/−68."""
+    from services import kich_hoat_nha as kh
+    ts, gt, lux_ts, lux_gt = [], [], [], []
+    for i in range(6):
+        t = 1000.0 + i * 1000
+        lux_ts += [t - 10, t + 20]
+        lux_gt += ["20", "85"]
+        ts.append(t)
+        gt.append("on")
+    assert kh._den_gop_hoc(ts, gt, {LUX: (lux_ts, lux_gt)}) == {LUX: 65.0}
+    assert kh._den_gop_hoc(ts[:3], gt[:3], {LUX: (lux_ts, lux_gt)}) == {}, "ít hơn 5 lần thì chưa tin"
+
+
+def test_tat_khi_du_sang_kieu_quan_gia(kh, monkeypatch):
+    """Chủ máy 26/09/2026 chọn KIỂU QUẢN GIA: trời sáng không tắt trước mặt người — còn người
+    thì HỎI một lần; phòng trống lúc trời sáng thì tắt sau 30 giây thay vì chờ 3 phút.
+    Trời = lux − phần đèn góp; bật lúc trời đã sáng thì không hỏi."""
+    from services import du_doan_nha as dd, ha_client, thong_bao
+    tt = {x["entity_id"]: dict(x) for x in TT}
+    tt[DEN]["state"] = "on"
+    tt[NGU]["state"] = "on"                 # có người trong phòng
+    monkeypatch.setattr(kh, "_trang_thai_ha", lambda: list(tt.values()))
+    monkeypatch.setattr(ha_client, "get_state", lambda e: tt.get(e))
+    tin: list[str] = []
+    monkeypatch.setattr(thong_bao, "gui", lambda khoa, t, *a, **k: tin.append(t) or 1)
+    hen: list = []
+
+    class HenGia:
+        def __init__(self, giay, ham, args=()):
+            self.giay, self.ham, self.args, self.huy = giay, ham, args, False
+            hen.append(self)
+
+        def start(self):
+            pass
+
+        def cancel(self):
+            self.huy = True
+    monkeypatch.setattr(kh.threading, "Timer", HenGia)
+    with pytest.raises(ValueError):
+        kh.dat_thiet_bi(DEN, tat_khi_sang={"bat": True, "cam_bien": "", "lux": 60, "phut": 2})
+    kh.dat_thiet_bi(DEN, bat=True, tat_khi_vang={"bat": True, "cam_bien": [NGU], "phut": 3},
+                    tat_khi_sang={"bat": True, "cam_bien": LUX, "lux": 60, "phut": 2})
+    kh._nap()["mo_hinh"][DEN] = {"den_gop": {LUX: 65.0}, "luc": time.time()}
+    ds = kh.ds_thiet_bi()
+    kh._theo_sang(LUX, "10", ds)            # sáng sớm, rèm đóng
+    kh._theo_sang(DEN, "on", ds)            # bật đèn lúc trời 10 lux
+    kh._theo_sang(LUX, "75", ds)            # đèn góp 65 → trời vẫn 10
+    assert not hen, "số đo tăng vì chính đèn thì không làm gì"
+    kh._theo_sang(LUX, "140", ds)           # mở rèm: trời ~75 ≥ 60, người còn trong phòng
+    assert len(hen) == 1 and hen[0].giay == 120 and hen[0].ham == kh._hoi_sang
+    kh._theo_sang(LUX, "90", ds)            # mây che: trời 25 → huỷ
+    assert hen[0].huy
+    kh._theo_sang(LUX, "150", ds)
+    hen[-1].ham(*hen[-1].args)
+    assert kh.goi == [], "còn người thì không tắt trước mặt"
+    assert "tắt" in tin[-1] and "nhé" in tin[-1]
+    assert "đã tắt" in kh.tra_loi("có") and kh.goi == [("switch", "turn_off", {"entity_id": DEN})]
+    kh._theo_sang(LUX, "160", ds)
+    assert len(tin) == 1, "mỗi lần bật chỉ hỏi một lần"
+    # Phòng trống lúc trời sáng: tắt sau 30 giây, không chờ 3 phút.
+    kh.goi.clear()
+    hen.clear()
+    tt[NGU]["state"] = "off"
+    kh._theo_vang(NGU, "off", kh.ds_thiet_bi())
+    assert hen[-1].giay == 30 and hen[-1].ham == kh._tat_vi_vang
+    # Trời tối thì vẫn 3 phút.
+    kh._theo_sang(LUX, "70", ds)
+    kh._theo_vang(NGU, "off", kh.ds_thiet_bi())
+    assert hen[-1].giay == 180
+    # Tự làm (đủ thang) rồi chủ máy nói «sai» → bật lại, nâng ngưỡng.
+    id_ = dd.ghi_nhan(f"{DEN}#off", "off", 1.0, {"troi": 85}, "tu_lam")
+    assert "nâng ngưỡng" in kh.tra_loi(f"sai {id_}")
+    assert kh._nap()["thiet_bi"][DEN]["tat_khi_sang"]["lux"] == 102      # ceil(85 × 1,2)
+    assert kh.tong_quan()[0]["tat_khi_sang"]["giay"] == 30
