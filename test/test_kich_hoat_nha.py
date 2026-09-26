@@ -407,3 +407,23 @@ def test_goi_y_bo_cam_bien_nguoi_di_ngang(kh, monkeypatch):
     monkeypatch.setattr(kh, "_so_do", lambda tb: ({NGU}, {LUX}))
     kh.dat_thiet_bi(DEN, bat=True)
     assert kh.hoc(DEN)["goi_y_them"] == []
+
+
+def test_tich_thi_mac_dinh_tat_khi_vang_theo_so_do(kh, monkeypatch):
+    """Chủ máy 26/09/2026: phần tắt "chính là ngược với bật" — tích thiết bị là có luôn tắt khi
+    vắng, cảm biến lấy từ sơ đồ; thiết bị không có cảm biến hiện diện thì không bật."""
+    monkeypatch.setattr(kh, "_so_do", lambda tb: ({NGU, CUA}, {LUX}))
+    cd = kh.dat_thiet_bi(DEN, bat=True)
+    assert cd["tat_khi_vang"] == {"bat": True, "cam_bien": [NGU], "phut": kh.MAC_DINH_VANG_PHUT}
+    kh.dat_thiet_bi(DEN, tat_khi_vang={"bat": False, "cam_bien": [NGU], "phut": 20})
+    assert kh.dat_thiet_bi(DEN, bat=True)["tat_khi_vang"]["phut"] == 20, "không đè cài đặt của chủ máy"
+    monkeypatch.setattr(kh, "_so_do", lambda tb: (set(), set()))
+    assert kh.dat_thiet_bi("switch.khac", bat=True)["tat_khi_vang"]["bat"] is False
+
+
+def test_bang_vang_roi_quay_lai(kh, monkeypatch):
+    _nep_30_ngay()                                     # mỗi tối vắng 600 s rồi vào lại
+    monkeypatch.setattr(kh, "_so_do", lambda tb: ({NGU}, {LUX}))
+    kh.dat_thiet_bi(DEN, bat=True)
+    bang = kh.hoc(DEN)["vang_quay_lai"][NGU]
+    assert bang["5"] > 0 and bang["60"] < bang["5"]

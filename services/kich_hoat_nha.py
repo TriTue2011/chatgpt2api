@@ -203,6 +203,14 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
             _hen_tat_huy(tb)
         if bat is not None:
             cu["bat"] = bool(bat)
+            if bat and "tat_khi_vang" not in cu and tat_khi_vang is None:
+                # TẮT là ngược của BẬT (chủ máy 26/09/2026): người rời phòng — cảm biến hiện
+                # diện trong sơ đồ vắng liền MAC_DINH_VANG_PHUT phút. Không học được từ lịch sử:
+                # đo 30 ngày, 115/115 lần đèn phòng ngủ tắt ĐÚNG GIÂY cảm biến báo vắng (automation
+                # HA cũ), bot chưa từng thấy người tắt sau khi rời phòng.
+                hd_so_do = sorted(_so_do(tb)[0] & _lop(_LOP_HIEN_DIEN))
+                cu["tat_khi_vang"] = {"bat": bool(hd_so_do), "cam_bien": hd_so_do,
+                                      "phut": MAC_DINH_VANG_PHUT}
         if bo_nguon is not None:
             cu["bo_nguon"] = sorted({str(x) for x in bo_nguon})
             d["mo_hinh"].pop(tb, None)          # đổi nguồn là phải học lại
@@ -216,6 +224,9 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
         return dict(cu)
 
 
+#: Tắt khi vắng mặc định cho thiết bị vừa tích — chủ máy sửa được. Radar mất người 1–2 phút dù
+#: người còn đó (270/605 lần ở phòng ngủ dưới 3 phút); 10 phút bỏ qua gần hết các lần đó.
+MAC_DINH_VANG_PHUT = 10
 #: Bằng chứng "có người" đặc biệt: bấm công tắc/đèn/quạt bằng tay (không đồng loạt).
 CONG_TAC = "cong_tac"
 
@@ -434,6 +445,7 @@ def hoc(tb: str) -> dict[str, Any]:
     ts_sk = [t for t, _ in sk]
     ten = _ten_ha()
     ra: dict[str, Any] = {"luc": den, "co_so": "so_do" if nhi_phan else "tu_do", "dac_trung_so": ma_lux,
+                          "vang_quay_lai": _vang_quay_lai(sk_toan_nha, nhi_phan, den - tu),
                           "goi_y_them": _goi_y_them(sk_toan_nha, bat, ts_tb, gt_tb, nhi_phan)}
     for hd, dich in (("on", bat), ("off", tat)):
         truoc: Counter = Counter()
@@ -524,6 +536,29 @@ def quanh_gio(theo_gio: list[list[int]], gio: float) -> tuple[int, int, str]:
 #: 56%, các cảm biến khác 2–18%; đèn phòng ngủ — phòng ngủ 29%, ban công/bếp/cửa 5–9% (người đi
 #: ngang qua, chủ máy đã hỏi "nó để tránh ảo hay để điều khiển").
 GOI_Y_TY_LE = 0.25
+
+
+#: Số phút xét cho bảng "vắng bao lâu rồi lại có người" trên thẻ.
+VANG_MOC_PHUT = (3, 5, 10, 15, 20, 30, 60)
+
+
+def _vang_quay_lai(sk: list[tuple[float, str]], nhi_phan: set[str], giay: float) -> dict[str, dict[str, float]]:
+    """Mỗi cảm biến trong sơ đồ: trung bình MỖI NGÀY có mấy lần báo vắng ≥ N phút rồi lại có
+    người — số lần "tắt khi vắng N phút" sẽ tắt trong khi người quay lại / còn đó. Cho chủ máy
+    chọn số phút bằng số đo, không đoán."""
+    ngay = max(1.0, giay / 86400)
+    ra: dict[str, dict[str, float]] = {}
+    for ma in sorted(nhi_phan):
+        vang = sorted(t for t, n in sk if n == f"{ma} vắng")
+        vao = [t for t, n in sk if n == f"{ma} có người vào"]
+        # "vắng" đặt ở t0 + VANG; lần "vào" kế tiếp cho độ dài quãng vắng.
+        dai = []
+        for t in vao:
+            i = bisect.bisect_left(vang, t) - 1
+            if i >= 0 and t - vang[i] < 86400:
+                dai.append((t - vang[i] + VANG) / 60)
+        ra[ma] = {str(n): round(sum(1 for x in dai if x >= n) / ngay, 1) for n in VANG_MOC_PHUT}
+    return ra
 
 
 def _goi_y_them(sk: list[tuple[float, str]], bat: list[float], ts_tb: list[float], gt_tb: list[str],
@@ -1043,6 +1078,8 @@ def tong_quan() -> list[dict[str, Any]]:
                        "cam_bien": [{"ma": m, "ten": ten_ha.get(m, m)} for m in tv.get("cam_bien") or []],
                        # Gợi ý: cảm biến hiện diện trong sơ đồ của thiết bị.
                        "goi_y": [{"ma": m, "ten": ten_ha.get(m, m)} for m in sorted(nhi_phan & hien_dien)],
+                       "quay_lai_moi_ngay": {ten_ha.get(m, m): v for m, v in (mh.get("vang_quay_lai") or {}).items()
+                                             if m in (tv.get("cam_bien") or []) or m in hien_dien},
                    },
                    "co_so": mh.get("co_so") or "tu_do",
                    "goi_y_them": [{**x, "ten": ten_ha.get(x["ma"], x["ma"])} for x in mh.get("goi_y_them") or []],

@@ -67,7 +67,10 @@ type ThietBi = {
     ap_cho: string[]; nhin_lai_gio: number; cua: string[]; chan_gan_day: { luc: number; nguon: string }[];
     bang_chung?: { ma: string; ten: string }[];
   };
-  tat_khi_vang?: { bat: boolean; phut: number; cam_bien: { ma: string; ten: string }[]; goi_y: { ma: string; ten: string }[] };
+  tat_khi_vang?: {
+    bat: boolean; phut: number; cam_bien: { ma: string; ten: string }[]; goi_y: { ma: string; ten: string }[];
+    quay_lai_moi_ngay?: Record<string, Record<string, number>>;
+  };
   co_so?: "so_do" | "tu_do";
 };
 type ThucThe = { ma: string; ten: string; lop: string };
@@ -152,9 +155,18 @@ function TatKhiVang({ t, luu, doiMa }: {
         Tắt khi vắng
       </label>
       <p className="text-muted-foreground">
-        Mọi cảm biến dưới đây cùng báo vắng liền số phút này mà thiết bị còn bật thì bot tắt (người vừa tự bật
-        trong 5 phút thì chưa tắt). Radar hay mất người khi nằm yên — đặt dư phút.
+        Tắt là ngược của bật: mọi cảm biến dưới đây cùng báo vắng liền số phút này mà thiết bị còn bật thì bot
+        tắt (người vừa tự bật trong 5 phút thì chưa tắt; khung giờ «Tắt: không làm» — vd giờ ngủ — thì không
+        tắt). Radar hay mất người khi nằm yên — xem bảng dưới để chọn phút.
       </p>
+      {Object.entries(t.quay_lai_moi_ngay ?? {}).map(([ten, bang]) => (
+        <div key={ten} className="text-muted-foreground">
+          {ten}: vắng ≥ N phút rồi lại có người (lần/ngày) —{" "}
+          {Object.entries(bang).map(([n, so]) => (
+            <span key={n} className={`mr-2 ${Number(n) === t.phut ? "font-medium text-foreground" : ""}`}>{n}′: {so}</span>
+          ))}
+        </div>
+      ))}
       <div className="flex flex-wrap items-center gap-1">
         {t.cam_bien.map((x) => (
           <span key={x.ma} className="inline-flex items-center gap-1 rounded border bg-muted/50 px-1.5 py-0.5 text-[11px]">
@@ -253,7 +265,14 @@ function MotThietBi({ tb, taiLai, doiMa }: { tb: ThietBi; taiLai: () => Promise<
         return (
           <div key={hd} className="space-y-1 border-t pt-2">
             <div className="font-medium">{TEN_HD[hd]} — {h.so_lan} lần người {TEN_HD[hd].toLowerCase()} trong phần học</div>
-            <div className="text-xs"><CapDo h={h} nguong={tb.nguong} /></div>
+            {hd === "off" && tb.tat_khi_vang?.bat ? (
+              <div className="text-xs text-emerald-600">
+                Tắt khi: {tb.tat_khi_vang.cam_bien.map((x) => x.ten).join(" + ")} vắng liền {tb.tat_khi_vang.phut} phút
+                (sửa ở «Tắt khi vắng» bên dưới). Luật học từ lịch sử bên dưới chỉ để tham khảo.
+              </div>
+            ) : (
+              <div className="text-xs"><CapDo h={h} nguong={tb.nguong} /></div>
+            )}
             <TheoGio ds={h.theo_gio || []} />
             {h.nguon.length > 0 && (
               <div className="flex flex-wrap gap-1">
