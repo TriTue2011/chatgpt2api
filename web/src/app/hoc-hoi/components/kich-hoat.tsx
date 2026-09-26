@@ -15,6 +15,7 @@ import { Plus, RefreshCw, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { goiPost, layGet } from "./lib";
+import { docThu, THU, type MucLich } from "./lich-sinh-hoat";
 
 type Luat = { neu: string[]; p: number; k: number; n: number };
 type Nguon = { ma: string; ten: string; so_lan?: number; du_chac?: number };
@@ -30,7 +31,8 @@ type Huong = {
   sai_gan_day: number;
   theo_gio: { gio: number; k: number; n: number; cach: "tu_lam" | "hoi" | "im" }[];
 };
-type NgoaiLe = { hanh_dong: "on" | "off"; tu: string; den: string; cach: "hoi" | "khong"; ten: string };
+/** Khung ngoại lệ: giờ cố định (+ thứ), hoặc ĐI THEO một mục lịch sinh hoạt (`lich`). */
+type NgoaiLe = { hanh_dong: "on" | "off"; tu?: string; den?: string; thu?: number[]; lich?: string; cach: "hoi" | "khong"; ten: string };
 const TEN_CACH = { hoi: "luôn hỏi anh", khong: "không làm" } as const;
 const MAU_GIO = { tu_lam: "bg-emerald-500/70", hoi: "bg-amber-400/70", im: "bg-muted" } as const;
 
@@ -222,9 +224,19 @@ function CapDo({ h, nguong }: { h: Huong; nguong: ThietBi["nguong"] }) {
   );
 }
 
-function MotThietBi({ tb, taiLai, doiMa }: { tb: ThietBi; taiLai: () => Promise<void>; doiMa: (c: string) => string }) {
+function MotThietBi({ tb, taiLai, doiMa, lich }: {
+  tb: ThietBi; taiLai: () => Promise<void>; doiMa: (c: string) => string; lich: MucLich[];
+}) {
   const [dangHoc, setDangHoc] = useState(false);
-  const [nl, setNl] = useState<NgoaiLe>({ hanh_dong: "on", tu: "21:00", den: "23:30", cach: "hoi", ten: "" });
+  const [nl, setNl] = useState<NgoaiLe>({ hanh_dong: "on", tu: "21:00", den: "23:30", thu: [], cach: "hoi", ten: "" });
+  const docKhung = (x: NgoaiLe) => {
+    if (!x.lich) return `${x.tu}–${x.den}${x.thu?.length ? ` (${docThu(x.thu)})` : ""}`;
+    const m = lich.find((l) => l.ma === x.lich);
+    return m ? `theo lịch «${m.ten}» ${m.tu}–${m.den} (${docThu(m.thu)})` : `theo lịch «${x.lich}» — mục này đã bị xoá`;
+  };
+  const guiNl = (): NgoaiLe => (nl.lich
+    ? { hanh_dong: nl.hanh_dong, lich: nl.lich, cach: nl.cach, ten: nl.ten }
+    : { hanh_dong: nl.hanh_dong, tu: nl.tu, den: nl.den, thu: nl.thu, cach: nl.cach, ten: nl.ten });
 
   const dat = async (body: Record<string, unknown>) => {
     if (await goiPost("/api/hoc-hoi/kich-hoat/dat", { thiet_bi: tb.thiet_bi, ...body })) await taiLai();
@@ -319,7 +331,7 @@ function MotThietBi({ tb, taiLai, doiMa }: { tb: ThietBi; taiLai: () => Promise<
         </p>
         {tb.ngoai_le.map((x, i) => (
           <div key={i} className="flex items-center gap-2">
-            {x.ten ? <b>{x.ten}</b> : null} {x.tu}–{x.den} — {TEN_HD[x.hanh_dong]}: {TEN_CACH[x.cach || "khong"]}
+            {x.ten ? <b>{x.ten}</b> : null} {docKhung(x)} — {TEN_HD[x.hanh_dong]}: {TEN_CACH[x.cach || "khong"]}
             <button type="button" title="Bỏ ngoại lệ"
               onClick={() => void dat({ ngoai_le: tb.ngoai_le.filter((_, j) => j !== i) })}>
               <X className="size-3 text-destructive" />
@@ -339,9 +351,31 @@ function MotThietBi({ tb, taiLai, doiMa }: { tb: ThietBi; taiLai: () => Promise<
             <option value="hoi">luôn hỏi anh</option>
             <option value="khong">không làm</option>
           </select>
-          từ <Input type="time" className="h-7 w-28" value={nl.tu} onChange={(e) => setNl({ ...nl, tu: e.target.value })} />
-          đến <Input type="time" className="h-7 w-28" value={nl.den} onChange={(e) => setNl({ ...nl, den: e.target.value })} />
-          <Button variant="outline" size="sm" onClick={() => void dat({ ngoai_le: [...tb.ngoai_le, nl] })}>
+          <select className="rounded border bg-background px-1 py-0.5" value={nl.lich || ""}
+            title="Theo lịch sinh hoạt: đổi giờ ở lịch là khung này theo"
+            onChange={(e) => setNl({ ...nl, lich: e.target.value || undefined })}>
+            <option value="">giờ tự đặt</option>
+            {lich.map((m) => <option key={m.ma} value={m.ma}>theo lịch: {m.ten}</option>)}
+          </select>
+          {!nl.lich ? (
+            <>
+              từ <Input type="time" className="h-7 w-28" value={nl.tu} onChange={(e) => setNl({ ...nl, tu: e.target.value })} />
+              đến <Input type="time" className="h-7 w-28" value={nl.den} onChange={(e) => setNl({ ...nl, den: e.target.value })} />
+              <span className="flex gap-0.5" title="Không chọn thứ nào = mọi ngày">
+                {THU.map((t, k) => {
+                  const co = nl.thu?.includes(k);
+                  return (
+                    <button key={t} type="button"
+                      className={`rounded px-1 text-[10px] ${co ? "bg-primary text-primary-foreground" : "border text-muted-foreground"}`}
+                      onClick={() => setNl({ ...nl, thu: co ? nl.thu!.filter((v) => v !== k) : [...(nl.thu || []), k].sort() })}>
+                      {t}
+                    </button>
+                  );
+                })}
+              </span>
+            </>
+          ) : null}
+          <Button variant="outline" size="sm" onClick={() => void dat({ ngoai_le: [...tb.ngoai_le, guiNl()] })}>
             <Plus className="mr-1 size-3.5" /> Thêm
           </Button>
         </div>
@@ -367,10 +401,15 @@ function MotThietBi({ tb, taiLai, doiMa }: { tb: ThietBi; taiLai: () => Promise<
 export function KichHoat() {
   const [ds, setDs] = useState<ThietBi[]>([]);
   const [thucThe, setThucThe] = useState<ThucThe[]>([]);
+  const [lich, setLich] = useState<MucLich[]>([]);
 
   const tai = useCallback(async () => {
-    const r = await layGet<{ danh_sach?: ThietBi[] }>("/api/hoc-hoi/kich-hoat");
+    const [r, l] = await Promise.all([
+      layGet<{ danh_sach?: ThietBi[] }>("/api/hoc-hoi/kich-hoat"),
+      layGet<{ muc?: MucLich[] }>("/api/hoc-hoi/lich"),
+    ]);
     setDs(r.danh_sach || []);
+    setLich(l.muc || []);
   }, []);
 
   useEffect(() => {
@@ -392,7 +431,7 @@ export function KichHoat() {
         hỏi anh trong nhóm học hỏi («có»/«không»), rõ là không thì im. Anh làm ngược lại trong 10 phút là bot ghi
         sai. Dưới mỗi thiết bị: kiểm báo ảo trước khi bật, tắt khi vắng, khung giờ của anh — đều sửa được.
       </p>
-      {dangDieuKhien.map((tb) => <MotThietBi key={tb.thiet_bi} tb={tb} taiLai={tai} doiMa={doiMa} />)}
+      {dangDieuKhien.map((tb) => <MotThietBi key={tb.thiet_bi} tb={tb} taiLai={tai} doiMa={doiMa} lich={lich} />)}
       {!dangDieuKhien.length ? (
         <p className="text-center text-xs text-muted-foreground">Chưa thiết bị nào — tích ở Sơ đồ kích hoạt để giao cho bot.</p>
       ) : null}

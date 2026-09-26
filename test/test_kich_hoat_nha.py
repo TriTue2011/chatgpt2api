@@ -40,6 +40,8 @@ def kh(tmp_path, monkeypatch):
     dd._reset_for_tests()
     monkeypatch.setattr(dd, "_DB_PATH", tmp_path / "dd.sqlite")
     kich_hoat_nha._reset_for_tests(tmp_path / "kh.json")
+    from services import lich_sinh_hoat
+    lich_sinh_hoat._reset_for_tests(tmp_path / "lsh.json")
     monkeypatch.setattr(kich_hoat_nha, "_trang_thai_ha", lambda: TT)
     monkeypatch.setattr(kich_hoat_nha, "_so_do", lambda tb: (set(), set()))   # sơ đồ rỗng → tự dò
     goi: list[tuple] = []
@@ -427,3 +429,82 @@ def test_bang_vang_roi_quay_lai(kh, monkeypatch):
     kh.dat_thiet_bi(DEN, bat=True)
     bang = kh.hoc(DEN)["vang_quay_lai"][NGU]
     assert bang["5"] > 0 and bang["60"] < bang["5"]
+
+
+def _thu(ngay_trong_tuan: int, gio: int, phut: int = 0) -> float:
+    """Mốc gần nhất trong quá khứ rơi đúng thứ (0 = thứ 2) và giờ đó."""
+    d = datetime.now(_TZ).replace(hour=gio, minute=phut, second=0, microsecond=0)
+    while d.weekday() != ngay_trong_tuan:
+        d -= timedelta(days=1)
+    return d.timestamp()
+
+
+def test_lich_qua_nua_dem_thuoc_ngay_bat_dau(kh):
+    """Chủ máy 26/09/2026: "Cả nhà thường đi ngủ lúc 21h45". «Ngủ, thứ 6» vẫn đang diễn ra
+    lúc 2 giờ sáng thứ 7; 2 giờ sáng thứ 6 là giấc của thứ 5 — không thuộc mục này."""
+    from services import lich_sinh_hoat as lsh
+    lsh.dat([{"ma": "ngu", "ten": "Ngủ", "loai": "ngu", "tu": "21:45", "den": "06:00", "thu": [4]}])
+    m = lsh.tim("ngu")
+    assert lsh.trong(m, _thu(4, 22)) and lsh.trong(m, _thu(5, 2))
+    assert not lsh.trong(m, _thu(4, 2)) and not lsh.trong(m, _thu(5, 22)) and not lsh.trong(m, _thu(4, 21, 30))
+    for sai in ({"ten": "Ngủ", "tu": "21:45", "den": "06:00", "thu": []},
+                {"ten": "Ngủ", "tu": "21:45", "den": "06:00", "thu": [7]},
+                {"ten": "Ngủ", "loai": "ngu_trua", "tu": "12:00", "den": "13:00", "thu": [0]},
+                {"ten": "", "tu": "21:45", "den": "06:00", "thu": [0]}):
+        with pytest.raises(ValueError):
+            lsh.dat([sai])
+    with pytest.raises(ValueError):
+        lsh.dat([{"ma": "a", "ten": "A", "tu": "01:00", "den": "02:00", "thu": [0]}] * 2)
+    assert lsh.tim("ngu"), "lịch sai thì không ghi đè lịch cũ"
+    ra = lsh.dat([{"ten": "Ăn tối", "tu": "19:00", "den": "19:45", "thu": [1]},
+                  {"ten": "Ăn tối", "tu": "19:45", "den": "20:30", "thu": [0]}, lsh.tim("ngu")])
+    assert [m["ma"] for m in ra] == ["an_toi", "an_toi_2", "ngu"]
+    assert [m["ma"] for m in lsh.dat(ra[1:])] == ["an_toi_2", "ngu"], "xoá mục trên không đổi mã mục dưới"
+
+
+def test_khung_theo_lich_ngu_thi_khong_tat_khi_vang(kh, monkeypatch):
+    """Chủ máy 26/09/2026: ngủ mà "đèn còn bật tức là còn sử dụng thì không được tắt dù là
+    cảm biến trống". Khung «Ngủ» của đèn ĐI THEO lịch: sửa giờ ngủ ở lịch là mọi thiết bị
+    theo — không phải sửa từng khung."""
+    from services import lich_sinh_hoat as lsh
+    now = datetime.now(_TZ)
+    gio = lambda d: d.strftime("%H:%M")  # noqa: E731
+    lsh.dat([{"ma": "ngu", "ten": "Ngủ", "loai": "ngu", "tu": gio(now - timedelta(hours=1)),
+              "den": gio(now + timedelta(hours=1)), "thu": list(range(7))}])
+    tt = {x["entity_id"]: dict(x) for x in TT}
+    tt[DEN]["state"] = "on"
+    tt[NGU]["state"] = "off"
+    monkeypatch.setattr(kh, "_trang_thai_ha", lambda: list(tt.values()))
+    from services import ha_client
+    monkeypatch.setattr(ha_client, "get_state", lambda e: tt.get(e))
+    with pytest.raises(ValueError):
+        kh.dat_thiet_bi(DEN, ngoai_le=[{"hanh_dong": "off", "lich": "khong_co"}])
+    kh.dat_thiet_bi(DEN, bat=True, tat_khi_vang={"bat": True, "cam_bien": [NGU], "phut": 3},
+                    ngoai_le=[{"hanh_dong": "off", "lich": "ngu", "cach": "khong"}])
+    kh._tat_vi_vang(DEN)
+    assert kh.goi == [], "đang giờ ngủ: đèn còn bật là còn dùng"
+    lsh.dat([{"ma": "ngu", "ten": "Ngủ", "loai": "ngu", "tu": gio(now + timedelta(hours=2)),
+              "den": gio(now + timedelta(hours=3)), "thu": list(range(7))}])
+    kh._tat_vi_vang(DEN)
+    assert kh.goi == [("switch", "turn_off", {"entity_id": DEN})], "đổi giờ ngủ ở lịch là khung theo"
+
+
+def test_khung_gio_co_thu(kh):
+    """Khung giờ thường chọn được thứ: «Ăn tối muộn» chỉ thứ 2 và thứ 7."""
+    kh.dat_thiet_bi(DEN, ngoai_le=[{"hanh_dong": "on", "tu": "19:30", "den": "20:30", "thu": [0, 5],
+                                    "ten": "Ăn tối muộn"}])
+    x = kh._nap()["thiet_bi"][DEN]["ngoai_le"][0]
+    assert kh._khung_dang(x, _thu(0, 19, 45)) and kh._khung_dang(x, _thu(5, 20))
+    assert not kh._khung_dang(x, _thu(1, 19, 45))
+
+
+def test_lich_la_dac_trung_cua_cay(kh):
+    """Giờ thôi thì cây không phân biệt được thứ 2 ăn tối 19:45 với thứ 3 ăn 19:00 —
+    mục lịch là đặc trưng, và luật đọc ra bằng tên mục."""
+    from services import lich_sinh_hoat as lsh
+    lsh.dat([{"ma": "an_muon", "ten": "Ăn tối muộn", "loai": "an", "tu": "19:30", "den": "20:30", "thu": [0, 5]}])
+    x = kh._dac_trung(_thu(0, 19, 45), "a", ["a"], {})
+    assert x["lịch:an_muon"] == 1.0
+    assert kh._dac_trung(_thu(1, 19, 45), "a", ["a"], {})["lịch:an_muon"] == 0.0
+    assert kh._dieu_kien_doc("lịch:an_muon", False, 0.5, {}) == "đang giờ Ăn tối muộn"
+    assert kh._dieu_kien_doc("lịch:an_muon", True, 0.5, {}) == "ngoài giờ Ăn tối muộn"

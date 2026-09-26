@@ -178,15 +178,23 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
                  kiem_ao: dict[str, Any] | None = None,
                  tat_khi_vang: dict[str, Any] | None = None) -> dict[str, Any]:
     """Chủ máy sửa sơ đồ: bật/tắt, cho TỰ LÀM ngay, BỎ nguồn, đặt khung giờ NGOẠI LỆ
-    (``{"hanh_dong": "on"|"off", "tu": "HH:MM", "den": "HH:MM"}`` — trong khung đó
-    không bao giờ làm hướng ấy). Điều chủ máy đặt luôn thắng điều máy học."""
+    (``{"hanh_dong": "on"|"off", "tu": "HH:MM", "den": "HH:MM", "thu"?: [0..6]}`` hoặc
+    ĐI THEO LỊCH SINH HOẠT ``{"hanh_dong", "lich": "<mã mục lịch>"}`` — trong khung đó
+    hướng ấy luôn hỏi hoặc không làm). Điều chủ máy đặt luôn thắng điều máy học."""
+    from services import lich_sinh_hoat as lsh
+
     tb = str(tb or "").strip()
     if tb.split(".")[0] not in _MIEN_DIEU_KHIEN or "." not in tb:
         raise ValueError(f"{tb or '(trống)'} không phải thiết bị bật/tắt được.")
     for x in ngoai_le or []:
-        if x.get("hanh_dong") not in HANH_DONG or not all(
-                re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(x.get(k) or "")) for k in ("tu", "den")):
-            raise ValueError("Khung giờ phải có hanh_dong on/off và giờ dạng HH:MM.")
+        if x.get("hanh_dong") not in HANH_DONG:
+            raise ValueError("Khung giờ phải có hanh_dong on/off.")
+        if x.get("lich"):
+            if lsh.tim(str(x["lich"])) is None:
+                raise ValueError(f"Lịch sinh hoạt không có mục «{x['lich']}».")
+        elif not all(re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(x.get(k) or "")) for k in ("tu", "den")) \
+                or any(not isinstance(t, int) or not 0 <= t <= 6 for t in x.get("thu") or []):
+            raise ValueError("Khung giờ phải có giờ dạng HH:MM (thu: 0 = thứ 2 … 6 = chủ nhật) hoặc theo lịch.")
         if x.get("cach", "khong") not in CACH_KHUNG or len(str(x.get("ten") or "")) > 40:
             raise ValueError("Khung giờ: cách là «hoi» hoặc «khong», tên tối đa 40 chữ.")
     if kiem_ao is not None:
@@ -217,7 +225,10 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
         if tu_lam is not None:
             cu["tu_lam"] = bool(tu_lam)
         if ngoai_le is not None:
-            cu["ngoai_le"] = [{"hanh_dong": str(x["hanh_dong"]), "tu": str(x["tu"]), "den": str(x["den"]),
+            cu["ngoai_le"] = [{"hanh_dong": str(x["hanh_dong"]),
+                               **({"lich": str(x["lich"])} if x.get("lich") else
+                                  {"tu": str(x["tu"]), "den": str(x["den"]),
+                                   **({"thu": sorted(set(x["thu"]))} if x.get("thu") else {})}),
                                "cach": str(x.get("cach") or "khong"), "ten": str(x.get("ten") or "").strip()}
                               for x in ngoai_le]
         _luu()
@@ -322,6 +333,10 @@ def _dieu_kien_doc(key: str, nho_hon: bool, nguong: float, ten: dict[str, str]) 
         return f"{'trước' if nho_hon else 'từ'} {h:02d}:{m:02d}"
     if key.startswith("["):
         return f"{'không phải ' if nho_hon else ''}{_ten_nguon(key[1:-1], ten)}"
+    if key.startswith("lịch:"):
+        from services import lich_sinh_hoat as lsh
+        m = lsh.tim(key[5:]) or {"ten": key[5:]}
+        return f"{'ngoài' if nho_hon else 'đang'} giờ {m['ten']}"
     return f"{ten.get(key, key)} {'≤' if nho_hon else '>'} {nguong:.3g}"
 
 
@@ -394,14 +409,18 @@ def _lop(dc: tuple[str, ...]) -> set[str]:
 
 def _dac_trung(luc: float, nguon: str, ds_nguon: list[str],
                lux: dict[str, tuple[list[float], list[str]]]) -> dict[str, float]:
-    """Giờ + nguồn nào (one-hot) + độ sáng CHẶT TRƯỚC lúc đó (`tq._truoc`).
+    """Giờ + nguồn nào (one-hot) + độ sáng CHẶT TRƯỚC lúc đó (`tq._truoc`) + đang ở mục
+    nào của lịch sinh hoạt.
 
     Lux là đại lượng vật lý của đúng việc bật đèn nên mọi cảm biến độ sáng đều được
-    đưa vào; cây tự bỏ cái không liên quan."""
-    from services import thoi_quen_nha as tq
+    đưa vào; cây tự bỏ cái không liên quan. Lịch là LỜI KHAI theo giờ + thứ, không rò
+    tương lai: giờ thôi thì cây không biết thứ 2 ăn tối muộn hơn thứ 3."""
+    from services import lich_sinh_hoat as lsh, thoi_quen_nha as tq
 
     d = datetime.fromtimestamp(luc, _TZ)
     x: dict[str, float] = {"giờ": d.hour + d.minute / 60}
+    for m in lsh.ds():
+        x[f"lịch:{m['ma']}"] = 1.0 if lsh.trong(m, luc) else 0.0
     for n in ds_nguon:
         x[f"[{n}]"] = 1.0 if n == nguon else 0.0
     for ma, (ts, gt) in lux.items():
@@ -657,11 +676,23 @@ def nha_co_nguoi(tru: set[str], luc: float, tb: str | None = None) -> bool:
 
 
 # ── Sống: nhận sự kiện, hỏi, làm ───────────────────────────────────────────
-def _trong_khoang(luc: float, tu: str, den: str) -> bool:
-    d = datetime.fromtimestamp(luc, _TZ)
-    phut = d.hour * 60 + d.minute
-    a, b = int(tu[:2]) * 60 + int(tu[3:]), int(den[:2]) * 60 + int(den[3:])
-    return a <= phut < b if a <= b else (phut >= a or phut < b)
+def _khung_dang(x: dict[str, Any], luc: float) -> bool:
+    """Khung ngoại lệ có đang diễn ra không — theo mục lịch sinh hoạt, hoặc giờ (+ thứ)."""
+    from services import lich_sinh_hoat as lsh
+
+    if x.get("lich"):
+        m = lsh.tim(str(x["lich"]))
+        return m is not None and lsh.trong(m, luc)
+    return x["tu"] != x["den"] and lsh.trong({"tu": x["tu"], "den": x["den"], "thu": x.get("thu") or range(7)}, luc)
+
+
+def _ten_khung(x: dict[str, Any]) -> str:
+    from services import lich_sinh_hoat as lsh
+
+    if x.get("lich"):
+        m = lsh.tim(str(x["lich"])) or {}
+        return f"khung «{x.get('ten') or m.get('ten') or x['lich']}» theo lịch {m.get('tu', '?')}–{m.get('den', '?')}"
+    return f"khung «{x.get('ten') or ''}» {x['tu']}–{x['den']}"
 
 
 def _ten_tt(tb: str, hd: str) -> str:
@@ -728,8 +759,8 @@ def xet(tb: str, hd: str, nguon: str, luc: float) -> dict[str, Any]:
     if _nguoi_vua_cham(tb, luc):
         return {"lam": "im", "ly_do": "người vừa tự bật/tắt"}
     khung = next((x for x in (_nap()["thiet_bi"].get(tb) or {}).get("ngoai_le") or []
-                  if x.get("hanh_dong") == hd and _trong_khoang(luc, x["tu"], x["den"])), None)
-    ten_khung = f"khung «{khung.get('ten') or ''}» {khung['tu']}–{khung['den']}" if khung else ""
+                  if x.get("hanh_dong") == hd and _khung_dang(x, luc)), None)
+    ten_khung = _ten_khung(khung) if khung else ""
     if khung and khung.get("cach", "khong") == "khong":
         return {"lam": "im", "ly_do": f"{ten_khung}: anh đặt không làm"}
     dts = (_nap()["mo_hinh"].get(tb) or {}).get("dac_trung_so")
@@ -940,7 +971,7 @@ def _tat_vi_vang(tb: str) -> None:
         if _nguoi_vua_cham(tb, luc) or _vua_lam(tb, "off"):
             return
         if any(x.get("hanh_dong") == "off" and x.get("cach", "khong") == "khong"
-               and _trong_khoang(luc, x["tu"], x["den"]) for x in cd.get("ngoai_le") or []):
+               and _khung_dang(x, luc) for x in cd.get("ngoai_le") or []):
             return
         if not _lam(tb, "off", tu_lam=True):
             return

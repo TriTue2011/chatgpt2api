@@ -735,6 +735,36 @@ def create_router() -> APIRouter:
         except Exception as exc:
             return _loi(exc, "học kích hoạt")
 
+    @router.get("/api/hoc-hoi/lich")
+    async def lich(authorization: str | None = Header(default=None)):
+        """Lịch sinh hoạt của cả nhà — mọi thiết bị dùng chung."""
+        require_admin(authorization)
+        try:
+            from services import lich_sinh_hoat
+            return {"ok": True, "muc": lich_sinh_hoat.ds(), "loai": list(lich_sinh_hoat.LOAI)}
+        except Exception as exc:
+            return _loi(exc, "lịch sinh hoạt")
+
+    @router.post("/api/hoc-hoi/lich")
+    async def lich_dat(body: dict, authorization: str | None = Header(default=None)):
+        """Thay toàn bộ lịch. body: {muc: [{ma?, ten, loai, tu, den, thu}]}. Mục lịch là
+        đặc trưng học nên mọi thiết bị học lại ngay (chạy nền)."""
+        require_admin(authorization)
+        try:
+            from services import kich_hoat_nha, lich_sinh_hoat
+            if not isinstance(body.get("muc"), list):
+                return {"ok": False, "error": "Thiếu danh sách mục lịch."}
+            con = {m["ma"] for m in lich_sinh_hoat.dat(body["muc"])}
+            mat = sorted({f"{tb}: {x.get('lich')}" for tb, cd in kich_hoat_nha._nap()["thiet_bi"].items()
+                          for x in cd.get("ngoai_le") or [] if x.get("lich") and x["lich"] not in con})
+            for tb in kich_hoat_nha.ds_thiet_bi():
+                kich_hoat_nha._hoc_nen(tb)
+            return {"ok": True, "muc": lich_sinh_hoat.ds(), "khung_mat_lich": mat}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            return _loi(exc, "ghi lịch sinh hoạt")
+
     @router.get("/api/hoc-hoi/huong-dan")
     async def huong_dan(authorization: str | None = Header(default=None)):
         require_admin(authorization)
