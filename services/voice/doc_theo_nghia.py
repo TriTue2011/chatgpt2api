@@ -306,6 +306,15 @@ def chuan_bi(t: str, sea: Callable[[str], str]) -> str:
     # "?id=5" (sea đọc cả thành tiếng Anh: "colon slash slash … question mark … equals").
     t = _URL_RE.sub(_doc_url, t)
 
+    # Số hiệu văn bản "15/2023/QH15", "100/2019/NĐ-CP" — dạng số/năm/ký hiệu (Nghị định
+    # 30/2020/NĐ-CP về thể thức văn bản): đọc "15 năm 2023 QH15". sea đọc "/" là "trên":
+    # "mười lăm trên hai nghìn … trên quốc hội" (chủ máy nghe 26/09/2026). Ký hiệu phải có
+    # chữ in hoa nên ngày tháng "10/11/2025" không khớp. Ký hiệu một khối sea đã biết ("QH15"
+    # → "quốc hội mười lăm") đọc ngay — tách khỏi "/" thì bước mã chữ-số sẽ đánh vần nó.
+    t = re.sub(r"(?<![\w/])(\d{1,5})/((?:19|20)\d{2})/([A-ZĐ][A-ZĐ0-9]*(?:-[A-ZĐ][A-ZĐ0-9]*)*)(?![\w/])",
+               lambda m: f"{m.group(1)} năm {m.group(2)} "
+                         + (sea(m.group(3)) if "-" not in m.group(3) and sea_biet.biet(m.group(3))
+                            else m.group(3)), t)
     # Khoảng ngày "10-21/11/2025" → "10 đến ngày 21/11/2025" (sea đọc "ngày mười ngày hai mươi mốt").
     t = re.sub(r"(?<![\w/.,-])(\d{1,2})-(\d{1,2})(?=/\d{1,2}(?:/\d{2,4})?(?![\w/]))",
                lambda m: f"{m.group(1)} đến ngày {m.group(2)}" if int(m.group(1)) < int(m.group(2))
@@ -314,8 +323,16 @@ def chuan_bi(t: str, sea: Callable[[str], str]) -> str:
     # "0-100 km/h". sea đọc nhầm thành ngày tháng ("ngày hai tháng ba ngày") hoặc mất "đến".
     # Chỉ khi tăng dần — "3-1", "2-0" là tỉ số; và chỉ trước đơn vị (tập đóng), vì sau cặp số
     # còn là tỉ số ("thua 1-3 trước Leeds").
-    t = _KHOANG_RE.sub(lambda m: f"{m.group(1)} đến {m.group(2)}"
-                       if int(m.group(1)) < int(m.group(2)) else m.group(0), t)
+    # Khoảng bắt đầu từ 0 phải có "từ": "xe chạy 0-100 km/h" đọc "chạy không đến một trăm"
+    # nghe thành PHỦ ĐỊNH ("chạy không tới 100") — "không" vừa là số 0 vừa là "not" (chủ máy
+    # 26/09/2026). Khoảng khác không thêm: "trong từ hai đến ba ngày" gượng.
+    def _khoang(m):
+        a, b = int(m.group(1)), int(m.group(2))
+        if a >= b:
+            return m.group(0)
+        tu = "từ " if a == 0 and not re.search(r"\btừ\s*$", m.string[:m.start()]) else ""
+        return f"{tu}{m.group(1)} đến {m.group(2)}"
+    t = _KHOANG_RE.sub(_khoang, t)
     # Cặp số KHÔNG tăng ("3-1", "2-2") không bao giờ là khoảng, cũng không phải phép trừ trong
     # văn xuôi: sea đọc "kết quả 3-1" thành "ba TRỪ một", "trận 2-2" thành "hai ĐẾN hai". Là
     # ngày ("ngày 25-9", "sáng 3-1") thì sea tự nhận ra (đọc có "tháng") — hỏi chính sea với

@@ -182,6 +182,9 @@ def test_doc_cong_thuc_chon_nghia_tren_toan_van():
     ("chẩn đoán ĐTĐ type 2", "đái tháo đường"),
     # viết tắt ghép gạch nối, cả sau "/" của số hiệu văn bản
     ("thay thế NĐ 100/2019/NĐ-CP", "nghị định chính phủ"),
+    # số hiệu văn bản số/năm/ký hiệu: "năm", không phải "trên"
+    ("Luật số 15/2023/QH15 có hiệu lực", "số mười lăm năm hai nghìn không trăm hai mươi ba quốc hội"),
+    ("thay thế NĐ 100/2019/NĐ-CP", "một trăm năm hai nghìn không trăm mười chín nghị định chính phủ"),
     # số La Mã viết đúng luật tới 39 — "XXX" từng đọc "ích ích ích"
     ("Hội nghị lần thứ XXX, thế kỷ XXI", "lần thứ ba mươi, thế kỷ hai mươi mốt"),
     # mã có phần chữ đọc được thành từ
@@ -189,7 +192,9 @@ def test_doc_cong_thuc_chon_nghia_tren_toan_van():
     ("Hội nghị COP30 bàn về COVID-19", "cô vít"),
     # khoảng số trước đơn vị: sea đọc thành NGÀY THÁNG hoặc mất "đến"
     ("mất 2-3 ngày, khoảng 8-10 giờ", "hai đến ba ngày, khoảng tám đến mười giờ"),
-    ("Xe chạy 0-100 km/h", "không đến một trăm ki lô mét trên giờ"),
+    # bắt đầu từ 0 thì có "từ" — "chạy không đến một trăm" nghe thành phủ định
+    ("Xe chạy 0-100 km/h", "chạy từ không đến một trăm ki lô mét trên giờ"),
+    ("trẻ từ 0-6 tuổi", "từ không đến sáu tuổi"),
     ("diễn ra ngày 10-21/11/2025", "ngày mười đến ngày hai mươi mốt tháng mười một"),
     # cặp số không tăng là tỉ số, không phải phép trừ; là ngày thì sea tự đọc
     ("báo kết quả 3-1 trước Thái Lan", "kết quả ba một trước"),
