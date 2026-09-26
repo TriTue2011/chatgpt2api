@@ -101,6 +101,8 @@ IM_QUANH = 0.25
 #: không, kiểu đọc sách. Hoặc quá giờ chưa muốn tắt"): trong khung, một hướng là
 #: "hoi" (luôn hỏi — không tự làm, cũng không im) hoặc "khong" (không bao giờ làm).
 CACH_KHUNG = ("hoi", "khong")
+#: Giữ ngần này lần chặn báo ảo gần nhất để chủ máy xem trên trang Học hỏi.
+BAO_AO_GIU = 20
 #: Báo ảo: nhìn lại ngần này giây tìm dấu hiệu người.
 AO_NHIN_LAI = 6 * 3600
 HOC_LAI = 6 * 3600
@@ -412,6 +414,13 @@ def hoc(tb: str) -> dict[str, Any]:
             if doan_cay(cay, x) >= P_HOI:
                 theo_gio[int(x["giờ"])][0] += y
                 theo_gio[int(x["giờ"])][1] += 1
+        # Nguồn THẬT SỰ điều khiển: có mẫu rơi vào nhánh đủ chắc (và giờ đó không im). Còn
+        # lại là ứng viên đã xét rồi loại — chủ máy 26/09/2026 thấy cảm biến ban công trong
+        # danh sách của đèn phòng ngủ mà cây không bao giờ bật theo nó.
+        dieu_khien: Counter = Counter()
+        for x, y in hoc_:
+            if doan_cay(cay, x) >= P_HOI and quanh_gio(theo_gio, x["giờ"])[2] != "im":
+                dieu_khien[next(k[1:-1] for k, v in x.items() if k.startswith("[") and v)] += 1
         doan = trung = 0
         for x, y in thu:
             if doan_cay(cay, x) >= P_HOI and quanh_gio(theo_gio, x["giờ"])[2] != "im":
@@ -420,6 +429,7 @@ def hoc(tb: str) -> dict[str, Any]:
         ra[hd] = {
             "nguon": ds_nguon,
             "dem_nguon": {n: truoc[n] for n in ds_nguon}, "cay": cay, "theo_gio": theo_gio,
+            "dieu_khien": dict(dieu_khien),
             "luat": sorted(luat(cay, ten), key=lambda r: -r["p"]),
             "ten": {n: _ten_nguon(n, ten) for n in ds_nguon},
             "so_lan": sum(1 for t in dich if t < moc_thu),
@@ -632,6 +642,11 @@ def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
             if q["lam"] == "im":
                 if "báo ảo" in str(q.get("ly_do")):
                     logger.info({"event": "kich_hoat_bao_ao", "thiet_bi": tb, "nguon": nguon})
+                    with _khoa:
+                        ds = _nap().setdefault("bao_ao", [])
+                        ds.append({"luc": luc, "thiet_bi": tb, "nguon": nguon})
+                        del ds[:-BAO_AO_GIU]
+                        _luu()
                 return
             vi = (_nap()["mo_hinh"][tb][hd].get("ten") or {}).get(nguon, nguon)
             nhan = {"nguon": nguon, **{k: round(v, 2) for k, v in q["x"].items() if not k.startswith("[")}}
@@ -802,6 +817,8 @@ def tong_quan() -> list[dict[str, Any]]:
     from services import du_doan_nha as dd
     d = _nap()
     ten_ha = _ten_ha()
+    hien_dien = _lop(_LOP_HIEN_DIEN)
+    cua = sorted(_lop(_LOP_CUA))
     ra = []
     for tb, cd in sorted(d["thiet_bi"].items()):
         mh = d["mo_hinh"].get(tb) or {}
@@ -809,9 +826,15 @@ def tong_quan() -> list[dict[str, Any]]:
         for hd in HANH_DONG:
             m = mh.get(hd) or {}
             ten = _ten_tt(tb, hd)
+            dk = m.get("dieu_khien")
+
+            def _muc(n: str, m=m, dk=dk) -> dict[str, Any]:
+                return {"ma": n, "ten": (m.get("ten") or {}).get(n, n),
+                        "so_lan": (m.get("dem_nguon") or {}).get(n, 0), "du_chac": (dk or {}).get(n, 0)}
             huong[hd] = {
-                "nguon": [{"ma": n, "ten": (m.get("ten") or {}).get(n, n),
-                           "so_lan": (m.get("dem_nguon") or {}).get(n, 0)} for n in m.get("nguon") or []],
+                # Mô hình học trước khi có "dieu_khien" thì chưa tách được — coi như đều dùng.
+                "nguon": [_muc(n) for n in m.get("nguon") or [] if dk is None or n in dk],
+                "da_xet": [_muc(n) for n in m.get("nguon") or [] if dk is not None and n not in dk],
                 "luat": m.get("luat") or [], "kiem": m.get("kiem") or {}, "so_lan": m.get("so_lan", 0),
                 "theo_gio": [{"gio": h, "k": kk, "n": nn, "cach": quanh_gio(m["theo_gio"], h)[2]}
                              for h, (kk, nn) in enumerate(m.get("theo_gio") or []) if nn]
@@ -823,6 +846,16 @@ def tong_quan() -> list[dict[str, Any]]:
                    "tu_lam": bool(cd.get("tu_lam")),
                    "bo_nguon": [{"ma": n, "ten": _ten_nguon(n, ten_ha)} for n in cd.get("bo_nguon") or []],
                    "ngoai_le": cd.get("ngoai_le") or [], "hoc_luc": mh.get("luc"), "huong": huong,
+                   # Kiểm báo ảo TÁCH khỏi điều khiển: chỉ áp khi BẬT theo cảm biến hiện diện,
+                   # và dựa vào thứ KHÁC hẳn — bấm công tắc, mở cửa (xem `nha_co_nguoi`).
+                   "kiem_ao": {
+                       "ap_cho": [huong["on"]["nguon"][i]["ten"] for i, n in enumerate(huong["on"]["nguon"])
+                                  if n["ma"].endswith(" có người vào") and n["ma"].split(" ")[0] in hien_dien],
+                       "nhin_lai_gio": AO_NHIN_LAI // 3600,
+                       "cua": [ten_ha.get(c, c) for c in cua],
+                       "chan_gan_day": [{"luc": x["luc"], "nguon": _ten_nguon(x["nguon"], ten_ha)}
+                                        for x in d.get("bao_ao") or [] if x.get("thiet_bi") == tb][-5:],
+                   },
                    "nguong": {"so_luot": dd._MAU_LEN_CAP, "ty_le": dd._TY_LE_LEN_CAP}})
     return ra
 

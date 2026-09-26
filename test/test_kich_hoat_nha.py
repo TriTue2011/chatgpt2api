@@ -280,3 +280,22 @@ def test_gio_ngu_im_khung_doc_sach_thi_hoi(kh):
     assert q["lam"] == "hoi" and "Đọc sách" in q["ly_do"], q
     with pytest.raises(ValueError):
         kh.dat_thiet_bi(DEN, ngoai_le=[{"hanh_dong": "on", "tu": "21:00", "den": "23:30", "cach": "bat"}])
+
+
+def test_tach_dieu_khien_va_kiem_bao_ao(kh):
+    """Chủ máy 26/09/2026: thấy cảm biến ban công trong danh sách của đèn phòng ngủ — "nên
+    tách điều khiển và check báo ảo". Nguồn cây không bao giờ bật theo thì là "đã xét"."""
+    _hoc_xong(kh)
+    mh = kh._nap()["mo_hinh"][DEN]["on"]
+    assert f"{NGU} có người vào" in mh["dieu_khien"]
+    mh["nguon"] = mh["nguon"] + [f"{BEP} có người vào"]        # ứng viên cây không dùng
+    tq = kh.tong_quan()[0]
+    assert [n["ma"] for n in tq["huong"]["on"]["nguon"]] == [f"{NGU} có người vào"]
+    assert [n["ma"] for n in tq["huong"]["on"]["da_xet"]] == [f"{BEP} có người vào"]
+    assert tq["kiem_ao"]["ap_cho"] == ["Hiện diện phòng ngủ có người vào"]
+    assert tq["kiem_ao"]["cua"] == ["Cửa chính"] and tq["kiem_ao"]["nhin_lai_gio"] == 6
+    # Lần chặn báo ảo được giữ lại cho chủ máy xem.
+    kh._xu_ly(DEN, "on", f"{NGU} có người vào", _luc(0, 19, 5))
+    chan = kh.tong_quan()[0]["kiem_ao"]["chan_gan_day"]
+    assert len(chan) == 1 and "Hiện diện phòng ngủ" in chan[0]["nguon"]
+    assert kh.goi == [], "báo ảo thì không bật"

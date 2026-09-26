@@ -17,9 +17,10 @@ import { Input } from "@/components/ui/input";
 import { goiPost, layGet } from "./lib";
 
 type Luat = { neu: string[]; p: number; k: number; n: number };
-type Nguon = { ma: string; ten: string; so_lan?: number };
+type Nguon = { ma: string; ten: string; so_lan?: number; du_chac?: number };
 type Huong = {
   nguon: Nguon[];
+  da_xet?: Nguon[];
   luat: Luat[];
   kiem: { doan?: number; trung?: number; ngay?: number; dat?: boolean };
   so_lan: number;
@@ -62,7 +63,34 @@ type ThietBi = {
   hoc_luc?: number;
   huong: Record<"on" | "off", Huong>;
   nguong: { so_luot: number; ty_le: number };
+  kiem_ao?: { ap_cho: string[]; nhin_lai_gio: number; cua: string[]; chan_gan_day: { luc: number; nguon: string }[] };
 };
+
+/** Kiểm báo ảo — TÁCH khỏi điều khiển: dựa vào việc chỉ người trong nhà làm ra, không vào cảm biến. */
+function KiemAo({ k }: { k: NonNullable<ThietBi["kiem_ao"]> }) {
+  return (
+    <div className="space-y-1 border-t pt-2 text-xs">
+      <div className="font-medium">Kiểm báo ảo</div>
+      {k.ap_cho.length ? (
+        <p>
+          Khi bật theo <b>{k.ap_cho.join(", ")}</b>, bot chỉ tin là có người thật nếu {k.nhin_lai_gio} giờ
+          qua có người <b>bấm công tắc</b> (không tính nhiều công tắc đổi cùng một giây)
+          {k.cua.length ? <> hoặc <b>mở {k.cua.join(", ")}</b></> : null}. Không có thì coi là báo ảo, không bật,
+          không hỏi. Cảm biến hiện diện khác không được tính — nhà vắng chúng vẫn báo.
+        </p>
+      ) : (
+        <p className="text-muted-foreground">Không nguồn điều khiển nào là cảm biến hiện diện — không cần kiểm.</p>
+      )}
+      {k.chan_gan_day.length > 0 && (
+        <ul className="text-muted-foreground">
+          {k.chan_gan_day.map((x, i) => (
+            <li key={i}>Đã chặn {new Date(x.luc * 1000).toLocaleString("vi-VN")} — {x.nguon}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 const TEN_HD = { on: "Bật", off: "Tắt" } as const;
 /** Cùng ngưỡng mở miệng `P_HOI` của backend — luật dưới ngưỡng này bot không hỏi. */
@@ -137,10 +165,10 @@ function MotThietBi({ tb, taiLai }: { tb: ThietBi; taiLai: () => Promise<void> }
             <TheoGio ds={h.theo_gio || []} />
             {h.nguon.length > 0 && (
               <div className="flex flex-wrap gap-1">
-                <span className="text-xs text-muted-foreground">Khi:</span>
+                <span className="text-xs text-muted-foreground">Điều khiển — khi:</span>
                 {h.nguon.map((n) => (
                   <span key={n.ma} className="inline-flex items-center gap-1 rounded border bg-muted/50 px-1.5 py-0.5 text-[11px]"
-                    title={`${n.ma} — đứng trước ${n.so_lan ?? 0} lần`}>
+                    title={`${n.ma} — đứng trước ${n.so_lan ?? 0} lần người ${TEN_HD[hd].toLowerCase()}, ${n.du_chac ?? 0} lần rơi vào luật đủ chắc`}>
                     {n.ten} ({n.so_lan ?? 0})
                     <button type="button" title="Bỏ nguồn này (bot học lại không có nó)"
                       onClick={() => void dat({ bo_nguon: [...boMa, n.ma] })}>
@@ -148,6 +176,12 @@ function MotThietBi({ tb, taiLai }: { tb: ThietBi; taiLai: () => Promise<void> }
                     </button>
                   </span>
                 ))}
+              </div>
+            )}
+            {(h.da_xet?.length ?? 0) > 0 && (
+              <div className="text-[11px] text-muted-foreground">
+                Đã xét, không dùng (có đứng trước lần {TEN_HD[hd].toLowerCase()} nhưng luật không bao giờ đủ chắc theo nó):{" "}
+                {h.da_xet!.map((n) => n.ten).join(", ")}
               </div>
             )}
             <ul className="space-y-0.5 text-xs">
@@ -162,6 +196,8 @@ function MotThietBi({ tb, taiLai }: { tb: ThietBi; taiLai: () => Promise<void> }
           </div>
         );
       })}
+
+      {tb.kiem_ao ? <KiemAo k={tb.kiem_ao} /> : null}
 
       <div className="space-y-1 border-t pt-2 text-xs">
         <div className="font-medium">Khung giờ của anh</div>
