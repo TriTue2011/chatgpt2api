@@ -3118,12 +3118,18 @@ def _nhom_hoc_hoi(ev: dict, thread_id: str, text: str) -> str | None:
     # chấm và lời dạy là rơi mất.
     from services import thong_bao
 
+    # «nha.goi_y» cũng là đường VÀO: câu hỏi «bật đèn không ạ?» của
+    # `kich_hoat_nha` gửi ra kênh đó, câu trả lời «có»/«không» phải nhận ở đó.
     kenh_hoc_hoi = (set(thong_bao.cai_dat("hoc_hoi.hieu_thiet_bi")["kenh"])
-                    | set(thong_bao.cai_dat("hoc_hoi.ban_tin")["kenh"]))
+                    | set(thong_bao.cai_dat("hoc_hoi.ban_tin")["kenh"])
+                    | set(thong_bao.cai_dat("nha.goi_y")["kenh"]))
     if not text or f"zalop:{acc}:{thread_id}" not in kenh_hoc_hoi:
         return None
     nguoi = str(ev.get("display_name") or ev.get("sender_id") or "")
-    dap = hieu_thiet_bi_nha.tra_loi(text, nguoi=nguoi)
+    from services import kich_hoat_nha
+    dap = kich_hoat_nha.tra_loi(text)
+    if dap is None:
+        dap = hieu_thiet_bi_nha.tra_loi(text, nguoi=nguoi)
     if dap is None:
         dap = du_doan_nha.tra_loi(text, nguoi=nguoi)
     if dap is not None:

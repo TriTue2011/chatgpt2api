@@ -251,8 +251,10 @@ def _ghi_lich_su(new_state: dict[str, Any] | None, entity_id: str) -> None:
     gt = new_state.get("state")
     if gt is None or str(gt).lower() in ("unavailable", "unknown", ""):
         return
-    from services import lich_su_nha
-    lich_su_nha.ghi("ha", entity_id, "state", gt)
+    from services import kich_hoat_nha, lich_su_nha
+    do_ai = lich_su_nha.la_bot_tu_lam(entity_id)
+    lich_su_nha.ghi("ha", entity_id, "state", gt, do_ai=do_ai)
+    kich_hoat_nha.su_kien(entity_id, gt, do_ai=do_ai)
 
     if entity_id.lower().startswith("event."):
         tt = new_state.get("attributes") or {}

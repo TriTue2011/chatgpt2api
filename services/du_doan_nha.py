@@ -245,7 +245,9 @@ def ten_thiet_bi(ten: str) -> str:
     """
     from services import ha_client
 
-    ma = str(ten or "")
+    ma, _, huong = str(ten or "").partition("#")
+    if huong:       # sổ của `kich_hoat_nha`: mỗi hướng một thang, «switch.x#on»
+        return f"{ten_thiet_bi(ma)} ({'bật' if huong == 'on' else 'tắt'})"
     for s in ha_client.get_states():
         if s.get("entity_id") == ma:
             return str((s.get("attributes") or {}).get("friendly_name") or ma)

@@ -642,6 +642,49 @@ def create_router() -> APIRouter:
         except Exception as exc:
             return _loi(exc, "đo sơ đồ")
 
+    # ── Kích hoạt: KHI cảm biến … NẾU giờ/độ sáng … THÌ bật/tắt (`kich_hoat_nha`) ──
+    @router.get("/api/hoc-hoi/kich-hoat")
+    async def kich_hoat(authorization: str | None = Header(default=None)):
+        """Thiết bị đang học theo kích hoạt: nguồn, luật, kiểm tiến dần, cấp tự chủ."""
+        require_admin(authorization)
+        try:
+            from services import kich_hoat_nha
+            return {"ok": True, "danh_sach": await asyncio.to_thread(kich_hoat_nha.tong_quan)}
+        except Exception as exc:
+            return _loi(exc, "kích hoạt")
+
+    @router.post("/api/hoc-hoi/kich-hoat/dat")
+    async def kich_hoat_dat(body: dict, authorization: str | None = Header(default=None)):
+        """Chủ máy sửa sơ đồ một thiết bị. body: {thiet_bi, bat?, bo_nguon?, ngoai_le?} —
+        khoá nào không gửi thì giữ nguyên."""
+        require_admin(authorization)
+        try:
+            from services import kich_hoat_nha
+            cd = kich_hoat_nha.dat_thiet_bi(
+                str(body.get("thiet_bi") or ""),
+                bat=body.get("bat") if "bat" in body else None,
+                bo_nguon=list(body["bo_nguon"]) if isinstance(body.get("bo_nguon"), list) else None,
+                ngoai_le=list(body["ngoai_le"]) if isinstance(body.get("ngoai_le"), list) else None)
+            return {"ok": True, "cai_dat": cd}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            return _loi(exc, "sửa kích hoạt")
+
+    @router.post("/api/hoc-hoi/kich-hoat/hoc")
+    async def kich_hoat_hoc(body: dict, authorization: str | None = Header(default=None)):
+        """Học lại NGAY một thiết bị (bình thường tự học lại mỗi 6 giờ)."""
+        require_admin(authorization)
+        try:
+            from services import kich_hoat_nha
+            tb = str(body.get("thiet_bi") or "")
+            if tb not in kich_hoat_nha._nap()["thiet_bi"]:
+                return {"ok": False, "error": "Thiết bị này chưa được thêm vào học kích hoạt."}
+            ra = await asyncio.to_thread(kich_hoat_nha.hoc, tb)
+            return {"ok": True, "kiem": {hd: ra[hd]["kiem"] for hd in kich_hoat_nha.HANH_DONG}}
+        except Exception as exc:
+            return _loi(exc, "học kích hoạt")
+
     @router.get("/api/hoc-hoi/huong-dan")
     async def huong_dan(authorization: str | None = Header(default=None)):
         require_admin(authorization)

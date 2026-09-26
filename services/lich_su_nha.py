@@ -407,6 +407,30 @@ def _phan_loai_theo_nhip(conn: sqlite3.Connection, thiet_bi: str, truong: str,
     return loai if loai != "?" else _loai_truong(truong, gia_tri)
 
 
+# ── Bot tự làm qua HA ───────────────────────────────────────────────────────
+#: Lệnh bot TỰ QUYẾT gửi HA, chờ thay đổi trạng thái quay về qua `ha_live`.
+#:
+#: Đường MQTT ghi `do_ai=True` ngay lúc gửi lệnh (`mqtt_nha`), còn đường HA thì
+#: thay đổi quay về như mọi thay đổi khác và `ha_live` ghi `do_ai=False` — bot
+#: bật đèn, lượt học sau thấy "người bật đèn" rồi tự khẳng định vòng quanh.
+#: Chỉ việc bot TỰ quyết mới vào đây; bot làm vì người bảo (lệnh chat, trả lời
+#: «có») là quyết định của người.
+_BOT_TU_LAM_GIAY = 15.0
+_bot_tu_lam: dict[str, float] = {}
+
+
+def bot_tu_lam(thiet_bi: str) -> None:
+    """Đánh dấu: thay đổi của ``thiet_bi`` trong vài giây tới là do bot tự làm."""
+    _bot_tu_lam[thiet_bi] = time.time()
+
+
+def la_bot_tu_lam(thiet_bi: str) -> bool:
+    """Thay đổi vừa tới của ``thiet_bi`` có phải do bot tự làm không (trong
+    ``_BOT_TU_LAM_GIAY`` sau lệnh — HA báo cả thay đổi thuộc tính nên không dùng-một-lần)."""
+    luc = _bot_tu_lam.get(thiet_bi)
+    return luc is not None and time.time() - luc <= _BOT_TU_LAM_GIAY
+
+
 # ── Ghi ─────────────────────────────────────────────────────────────────────
 def ghi(nguon: str, thiet_bi: str, truong: str, gia_tri: Any,
         *, do_ai: bool = False, ts: float | None = None) -> None:
@@ -1195,3 +1219,4 @@ def _reset_for_tests() -> None:
     _stop.clear()
     for k in ("ghi", "bo", "loi"):
         _stats[k] = 0
+    _bot_tu_lam.clear()
