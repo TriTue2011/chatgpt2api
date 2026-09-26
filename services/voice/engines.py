@@ -1158,15 +1158,21 @@ def _zerotts_stream(text: str, voice: str):
 
 def _doc_cong_thuc(text: str, voice: str) -> str:
     """Việc cần NGỮ CẢNH CẢ BÀI, làm một lần trước khi engine cắt câu, cho mọi giọng
-    tiếng Việt: công thức hoá học → lời đọc (services/voice/hoa_hoc.py) và nghĩa chữ
-    viết tắt nhiều nghĩa (doc_theo_nghia.chon_nghia_ca_bai). Kokoro tiếng Anh và giọng
+    tiếng Việt: sổ cách đọc chủ máy dạy (services/voice/cach_doc.py), công thức hoá học →
+    lời đọc (services/voice/hoa_hoc.py) và nghĩa chữ viết tắt nhiều nghĩa
+    (doc_theo_nghia.chon_nghia_ca_bai). Kokoro tiếng Anh và giọng
     đa ngữ giữ nguyên. Chạy nhiều lần vô hại: lần sau không còn gì để đổi."""
     v = (voice or vcfg.tts_voice()).strip()
     if v.startswith("dangu:") or (v.startswith(vcfg.KOKORO_PREFIX)
                                   and not v.startswith(vcfg.KOKORO_VI_PREFIX)):
         return text
-    from services.voice import doc_theo_nghia, hoa_hoc
+    from services.voice import cach_doc, doc_theo_nghia, hoa_hoc
 
+    # Sổ cách đọc chủ máy dạy — ĐẦU TIÊN: điều người dạy luôn thắng điều máy đoán.
+    try:
+        text = cach_doc.ap(text)
+    except Exception as exc:  # noqa: BLE001 — như dưới
+        logger.warning("voice: so cach doc loi, bo qua: %s", str(exc)[:160])
     try:
         text = hoa_hoc.doc(text)
     except Exception as exc:  # noqa: BLE001 — chữ người dùng tuỳ ý: lỗi đọc công thức không được làm câm TTS

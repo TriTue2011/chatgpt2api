@@ -53,6 +53,7 @@ class TungNhomBanDungTool(_Base):
     #: (câu người dùng, tool phải có mặt, nhóm cần tích nếu có)
     CA = [
         ("vẽ cho anh con mèo", "generate_image", None),
+        ("dạy đọc: TBBH là trung tâm bảo hành", "day_cach_doc", None),
         ("làm bài hát về mùa thu", "generate_music", None),
         ("tạo video giới thiệu", "generate_video", None),
         ("viết chương trình python", "write_code", None),

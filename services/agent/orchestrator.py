@@ -1430,6 +1430,9 @@ _KW_YOUTUBE = _re_mod.compile(
 _KW_GHINHO = _re_mod.compile(
     r"nho la|ghi nho|dung quen|nho gium|nho ho|nho cho|luu lai (la|rang)|"
     r"tu gio .{0,20}(goi|xung|nho)|quen (chua|roi)")
+#: Dạy cách ĐỌC một chữ cho giọng nói (sổ cách đọc — day_cach_doc).
+_KW_CACHDOC = _re_mod.compile(
+    r"day (cach )?doc|cach doc|doc (sai|nham)|phat am|doc la\b|doc thanh\b")
 _KW_XOAMEDIA = _re_mod.compile(
     r"xoa (anh|video|nhac|hinh|bai|file media)|"
     r"(anh|video|nhac) .{0,10}xoa|don (thu vien|kho anh)")
@@ -1657,6 +1660,10 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
      "mà không gọi remember thì lượt sau quên sạch, còn họ tưởng đã xong. "
      "Xem lại/ghi chú việc đã nhắc → viec_nhac_toi; luật nhắc → luat_nhac; "
      "tóm tắt lại cuộc đang nói → tom_tat_hoi_thoai."),
+    ("memory", _KW_CACHDOC,
+     "- Người dùng DẠY cách đọc một chữ ('dạy đọc: TBBH là trung tâm bảo hành', 'TV "
+     "đọc là ti vi', 'đọc sai chữ X') → day_cach_doc(chu, doc) NGAY — sổ dùng cho mọi "
+     "giọng đọc; xem sổ → hanh_dong='xem', bỏ một chữ → hanh_dong='xoa'."),
     ("image", _KW_XOAMEDIA,
      "- Xoá ảnh/video/nhạc đã tạo → delete_media (cùng kho với library_media). "
      "Muốn biết thông số model ảnh → model_spec."),

@@ -3887,6 +3887,49 @@ def _h_send_voice(args: dict, ctx: dict) -> dict:
     return {"text": "File âm thanh của anh/chị đây ạ 🎧", "audio_path": str(path)}
 
 
+def _h_day_cach_doc(args: dict, ctx: dict) -> dict:
+    """Sổ cách đọc (services/voice/cach_doc.py): chủ máy dạy "TBBH đọc là trung tâm bảo
+    hành" — từ đó MỌI giọng tiếng Việt đọc đúng. Dạy xong gửi luôn file đọc thử để nghe.
+
+    Chỉ chủ máy: sổ dùng chung cho cả nhà, mọi loa, mọi tin thoại.
+    """
+    from services.voice import cach_doc
+
+    if not bool((ctx or {}).get("is_admin")):
+        return {"deliver_now": True,
+                "text": "Dạy cách đọc chỉ chủ máy làm được ạ — sổ này dùng chung cho cả nhà."}
+    hanh_dong = str(args.get("hanh_dong") or "day").strip().lower()
+    chu = str(args.get("chu") or "").strip()
+    if hanh_dong == "xem":
+        rows = cach_doc.danh_sach()
+        if not rows:
+            return {"text": "Sổ cách đọc đang trống ạ."}
+        return {"text": "Sổ cách đọc:\n" + "\n".join(f"• {r['chu']} → {r['doc']}" for r in rows)}
+    if hanh_dong == "xoa":
+        return {"text": (f"Đã bỏ cách đọc của \"{chu}\" — từ giờ em đọc như trước ạ."
+                         if cach_doc.xoa(chu) else f"Sổ chưa có chữ \"{chu}\" ạ.")}
+    try:
+        rec = cach_doc.day(chu, str(args.get("doc") or ""))
+    except ValueError as exc:
+        return {"text": f"Em chưa ghi được: {exc}"}
+    ra = {"text": f"Đã ghi: \"{rec['chu']}\" đọc là \"{rec['doc']}\". Anh/chị nghe thử nhé 🎧"}
+    from services import voice as _voice
+    if _voice.tts_ready():
+        try:
+            import uuid
+            from pathlib import Path
+            from services.config import config as _cfg
+            wav = _voice.speak_reply(f"{rec['chu']}.", str((ctx or {}).get("user_id") or ""))
+            out_dir = Path(_cfg.images_dir) / "voice"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            path = out_dir / f"tts_{uuid.uuid4().hex[:10]}.wav"
+            path.write_bytes(wav)
+            ra["audio_path"] = str(path)
+        except Exception as exc:  # noqa: BLE001 — đã ghi sổ; chỉ thiếu file nghe thử
+            logger.warning("day_cach_doc: khong tao duoc file nghe thu: %s", exc)
+    return ra
+
+
 def _speaker_scope(ctx: dict) -> tuple[str, str]:
     """(platform, chat_id) suy từ user_id orchestrator để lọc loa theo thread."""
     uid = str((ctx or {}).get("user_id") or "")
@@ -6556,6 +6599,21 @@ CAPABILITIES: dict[str, Capability] = {
             "text": {"type": "string",
                       "description": "Nội dung cần đọc thành file âm thanh gửi vào chat"}},
             "required": ["text"]}),
+    "day_cach_doc": Capability(
+        name="day_cach_doc", risk=CHANGE, handler=_h_day_cach_doc,
+        emoji="🗣️", label="Dạy cách đọc một chữ",
+        description=(
+            "Ghi vào SỔ CÁCH ĐỌC cách đọc một chữ / chữ viết tắt / tên riêng, để từ đó mọi "
+            "giọng đọc (loa, tin thoại, trợ lý) đọc đúng. Dùng khi người dùng DẠY cách đọc: "
+            "'dạy đọc: TBBH là trung tâm bảo hành', 'TV đọc là ti vi', 'LG đọc là eo gi', "
+            "'đọc sai chữ X, phải đọc là Y'. hanh_dong='xem' để liệt kê sổ, 'xoa' để bỏ một chữ."
+        ),
+        parameters={"type": "object", "properties": {
+            "hanh_dong": {"type": "string", "enum": ["day", "xoa", "xem"],
+                          "description": "day = dạy/sửa (mặc định), xoa = bỏ, xem = liệt kê"},
+            "chu": {"type": "string", "description": "Chữ cần dạy, đúng như viết (vd 'TBBH', 'LG')"},
+            "doc": {"type": "string",
+                    "description": "Cách đọc bằng chữ tiếng Việt (vd 'trung tâm bảo hành')"}}}),
     "speak_to_speaker": Capability(
         name="speak_to_speaker", risk=CHANGE, handler=_h_speak_to_speaker,
         emoji="🔊", label="Phát tiếng ra loa trong nhà",
@@ -7930,6 +7988,8 @@ _CAP_GROUP: dict[str, str] = {
     "khoa_cua_nha": "homeassistant",
     "tuya_thiet_bi": "homeassistant",
     "speak_to_speaker": "tts_speaker",
+    # Sổ cách đọc cùng nhóm "memory" với remember: dạy bot một điều để nhớ lâu dài.
+    "day_cach_doc": "memory",
     "play_music_on_speaker": "tts_speaker",
     "mo_nhac": "tts_speaker", "dieu_khien_nhac": "tts_speaker", "nhac_dang_phat": "tts_speaker",
     "announce_on_speaker": "tts_speaker",

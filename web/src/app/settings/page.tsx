@@ -14,6 +14,7 @@ import { HomeAssistantTabs } from "./components/ha-tabs";
 import { FacebookCard } from "./components/facebook-card";
 import { EmailCalendarCard } from "./components/email-calendar-card";
 import { VoiceSpeakersCard } from "./components/voice-speakers-card";
+import { CachDocCard } from "./components/cach-doc-card";
 import { TeacherSettingsCard } from "./components/teacher-settings-card";
 import { PersonasCard } from "./components/personas-card";
 import { TelegramCloudflareCard, CloudflareInfraCard } from "./components/telegram-cloudflare-card";
@@ -209,7 +210,10 @@ function SettingsPageContent() {
           description="TTS/STT (Piper · Zipformer), nghe thử 19 giọng, phát ra loa Cast/DLNA"
           icon={<Volume2 className="size-5" />}
         >
-          <VoiceSpeakersCard />
+          <div className="space-y-6">
+            <VoiceSpeakersCard />
+            <CachDocCard />
+          </div>
         </SettingsSection>
 
         <SettingsSection

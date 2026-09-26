@@ -9,6 +9,7 @@
   POST /api/voice/speakers/{id}/test   thử kết nối
   POST /api/voice/speakers/{id}/play   phát thử một câu
   POST /api/voice/speakers/import-ha   nhập media_player từ Home Assistant
+  GET/POST/DELETE /api/voice/cach-doc   sổ cách đọc chủ máy dạy (services/voice/cach_doc.py)
 """
 
 from __future__ import annotations
@@ -323,6 +324,33 @@ def create_router() -> APIRouter:
         require_admin(authorization)
         from services.voice import speakers as vspk
         return {"ok": vspk.remove(speaker_id)}
+
+    @router.get("/api/voice/cach-doc")
+    async def cach_doc_list(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        from services.voice import cach_doc
+        return {"ok": True, "rows": cach_doc.danh_sach()}
+
+    @router.post("/api/voice/cach-doc")
+    async def cach_doc_day(request: Request,
+                           authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        from services.voice import cach_doc
+
+        body = await request.json()
+        try:
+            rec = cach_doc.day(str(body.get("chu") or ""), str(body.get("doc") or ""))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        return {"ok": True, "row": rec}
+
+    @router.delete("/api/voice/cach-doc")
+    async def cach_doc_xoa(chu: str, authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        from services.voice import cach_doc
+        if not cach_doc.xoa(chu):
+            raise HTTPException(404, "Chưa dạy cách đọc chữ này")
+        return {"ok": True}
 
     @router.post("/api/voice/speakers/import-ha")
     async def speakers_import_ha(authorization: str | None = Header(default=None)):
