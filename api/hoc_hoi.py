@@ -655,7 +655,7 @@ def create_router() -> APIRouter:
 
     @router.post("/api/hoc-hoi/kich-hoat/dat")
     async def kich_hoat_dat(body: dict, authorization: str | None = Header(default=None)):
-        """Chủ máy sửa sơ đồ một thiết bị. body: {thiet_bi, bat?, bo_nguon?, ngoai_le?} —
+        """Chủ máy sửa sơ đồ một thiết bị. body: {thiet_bi, bat?, tu_lam?, bo_nguon?, ngoai_le?} —
         khoá nào không gửi thì giữ nguyên."""
         require_admin(authorization)
         try:
@@ -664,7 +664,8 @@ def create_router() -> APIRouter:
                 str(body.get("thiet_bi") or ""),
                 bat=body.get("bat") if "bat" in body else None,
                 bo_nguon=list(body["bo_nguon"]) if isinstance(body.get("bo_nguon"), list) else None,
-                ngoai_le=list(body["ngoai_le"]) if isinstance(body.get("ngoai_le"), list) else None)
+                ngoai_le=list(body["ngoai_le"]) if isinstance(body.get("ngoai_le"), list) else None,
+                tu_lam=bool(body["tu_lam"]) if "tu_lam" in body else None)
             return {"ok": True, "cai_dat": cd}
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}

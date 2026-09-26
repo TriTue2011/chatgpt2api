@@ -154,8 +154,9 @@ def ds_thiet_bi() -> dict[str, dict[str, Any]]:
 
 
 def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None = None,
-                 ngoai_le: list[dict[str, str]] | None = None) -> dict[str, Any]:
-    """Chủ máy sửa sơ đồ: bật/tắt, BỎ nguồn, đặt khung giờ NGOẠI LỆ
+                 ngoai_le: list[dict[str, str]] | None = None,
+                 tu_lam: bool | None = None) -> dict[str, Any]:
+    """Chủ máy sửa sơ đồ: bật/tắt, cho TỰ LÀM ngay, BỎ nguồn, đặt khung giờ NGOẠI LỆ
     (``{"hanh_dong": "on"|"off", "tu": "HH:MM", "den": "HH:MM"}`` — trong khung đó
     không bao giờ làm hướng ấy). Điều chủ máy đặt luôn thắng điều máy học."""
     tb = str(tb or "").strip()
@@ -173,6 +174,8 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
         if bo_nguon is not None:
             cu["bo_nguon"] = sorted({str(x) for x in bo_nguon})
             d["mo_hinh"].pop(tb, None)          # đổi nguồn là phải học lại
+        if tu_lam is not None:
+            cu["tu_lam"] = bool(tu_lam)
         if ngoai_le is not None:
             cu["ngoai_le"] = [{k: str(x[k]) for k in ("hanh_dong", "tu", "den")} for x in ngoai_le]
         _luu()
@@ -487,10 +490,15 @@ def _dang_cho(tb: str) -> dict[str, Any] | None:
 
 
 def _vua_lam(tb: str, hd: str) -> bool:
+    """Trong NGHI_LAP: đã hỏi/làm CÙNG hướng, hoặc bot đã TỰ làm thiết bị này ở BẤT KỲ
+    hướng nào. Chủ máy 26/09/2026: tự làm nhưng "không máy móc và nhiễu như HA" — đo 3
+    ngày: automation đèn bếp đổi trạng thái ~250 lần theo từng nhịp nhấp nháy của radar.
+    Bot vừa bật thì không được tắt ngay chỉ vì cảm biến vừa báo vắng."""
     from services import du_doan_nha as dd
     with dd._khoa:
-        r = dd._db().execute("SELECT 1 FROM du_doan WHERE ten=? AND ts>? LIMIT 1",
-                             (_ten_tt(tb, hd), time.time() - NGHI_LAP)).fetchone()
+        r = dd._db().execute(
+            "SELECT 1 FROM du_doan WHERE ts>? AND (ten=? OR (ten IN (?,?) AND cach='tu_lam')) LIMIT 1",
+            (time.time() - NGHI_LAP, _ten_tt(tb, hd), _ten_tt(tb, "on"), _ten_tt(tb, "off"))).fetchone()
     return r is not None
 
 
@@ -543,7 +551,20 @@ def xet(tb: str, hd: str, nguon: str, luc: float) -> dict[str, Any]:
             and not nha_co_nguoi({ma_nguon}, luc)):
         return {"lam": "im", "p": p,
                 "ly_do": "nghi báo ảo: 6 giờ qua không ai bấm công tắc hay mở cửa"}
-    return {"lam": "tu_lam" if dd.cap(_ten_tt(tb, hd)) >= 2 else "hoi", "p": p, "x": x}
+    return {"lam": "tu_lam" if _duoc_tu_lam(tb, hd) else "hoi", "p": p, "x": x}
+
+
+def _duoc_tu_lam(tb: str, hd: str) -> bool:
+    """Tự làm khi: đủ thang của `du_doan_nha` (50 lượt, 95%), HOẶC chủ máy cho tự làm
+    ngay (26/09/2026: "tôi muốn test thử tính năng bot tự thực hiện"). Cho tự làm ngay
+    vẫn KHÔNG vượt được hai chốt: khoá cửa/bếp/bình nóng lạnh, và sai 2 trong 10 lượt
+    gần nhất (chủ máy làm ngược lại) là quay về hỏi."""
+    from services import du_doan_nha as dd
+    ten = _ten_tt(tb, hd)
+    if dd.cap(ten) >= 2:
+        return True
+    return (bool((_nap()["thiet_bi"].get(tb) or {}).get("tu_lam")) and not dd._cam_tu_lam(ten)
+            and dd.sai_gan_day(ten) < dd._SAI_TUT_CAP)
 
 
 def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
@@ -747,10 +768,11 @@ def tong_quan() -> list[dict[str, Any]]:
                 "nguon": [{"ma": n, "ten": (m.get("ten") or {}).get(n, n),
                            "so_lan": (m.get("dem_nguon") or {}).get(n, 0)} for n in m.get("nguon") or []],
                 "luat": m.get("luat") or [], "kiem": m.get("kiem") or {}, "so_lan": m.get("so_lan", 0),
-                "cap": dd.cap(ten), "diem": round(dd.diem(ten), 3), "so_luot": dd.so_luot(ten),
+                "cap": 2 if _duoc_tu_lam(tb, hd) else 1, "diem": round(dd.diem(ten), 3), "so_luot": dd.so_luot(ten),
                 "sai_gan_day": dd.sai_gan_day(ten),
             }
         ra.append({"thiet_bi": tb, "ten": ten_ha.get(tb, tb), "bat": bool(cd.get("bat")),
+                   "tu_lam": bool(cd.get("tu_lam")),
                    "bo_nguon": [{"ma": n, "ten": _ten_nguon(n, ten_ha)} for n in cd.get("bo_nguon") or []],
                    "ngoai_le": cd.get("ngoai_le") or [], "hoc_luc": mh.get("luc"), "huong": huong,
                    "nguong": {"so_luot": dd._MAU_LEN_CAP, "ty_le": dd._TY_LE_LEN_CAP}})

@@ -216,3 +216,31 @@ def test_dung_va_dung_khong_lan(kh, cau, ra):
     kh.tra_loi(cau)
     kq = dd._db().execute("SELECT ket_qua FROM du_doan WHERE id=?", (id_,)).fetchone()[0]
     assert kq == (ra or "cho")
+
+
+def test_cho_tu_lam_ngay_van_giu_hai_chot(kh):
+    """Chủ máy 26/09/2026: "tôi muốn test thử tính năng bot tự thực hiện" — không chờ
+    50 lượt, nhưng sai 2/10 vẫn quay về hỏi, và khoá/bếp/bình nóng lạnh không bao giờ."""
+    from services import du_doan_nha as dd
+    _hoc_xong(kh)
+    luc = _luc(0, 19, 5)
+    _sk("switch.phong_hoc_l1", "on", luc - 3600)
+    nguon = f"{NGU} có người vào"
+    assert kh.xet(DEN, "on", nguon, luc)["lam"] == "hoi"
+    kh.dat_thiet_bi(DEN, tu_lam=True)
+    assert kh.xet(DEN, "on", nguon, luc)["lam"] == "tu_lam"
+    for _ in range(2):
+        dd.ghi_sai(dd.ghi_nhan(f"{DEN}#on", "on", 0.9, {}, "tu_lam"))
+    assert kh.xet(DEN, "on", nguon, luc)["lam"] == "hoi"
+    kh.dat_thiet_bi("switch.binh_nong_lanh", bat=True, tu_lam=True)
+    assert not kh._duoc_tu_lam("switch.binh_nong_lanh", "on")
+
+
+def test_bot_vua_tu_lam_thi_khong_doi_chieu_ngay(kh):
+    """Không nhiễu như automation HA: bot vừa bật thì không tắt ngay vì radar báo vắng."""
+    from services import du_doan_nha as dd
+    dd.ghi_nhan(f"{DEN}#on", "on", 0.9, {}, "tu_lam")
+    assert kh._vua_lam(DEN, "off") and kh._vua_lam(DEN, "on")
+    assert not kh._vua_lam("switch.khac", "off")
+    dd.ghi_nhan("switch.khac#on", "on", 0.9, {}, "hoi")
+    assert not kh._vua_lam("switch.khac", "off"), "chỉ HỎI thì chưa đổi gì — hướng kia vẫn được"

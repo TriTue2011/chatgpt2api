@@ -33,6 +33,7 @@ type ThietBi = {
   thiet_bi: string;
   ten: string;
   bat: boolean;
+  tu_lam: boolean;
   bo_nguon: Nguon[];
   ngoai_le: NgoaiLe[];
   hoc_luc?: number;
@@ -90,6 +91,12 @@ function MotThietBi({ tb, taiLai }: { tb: ThietBi; taiLai: () => Promise<void> }
           {tb.ten}
         </label>
         <span className="font-mono text-xs text-muted-foreground">{tb.thiet_bi}</span>
+        <label className="flex items-center gap-1 text-xs"
+          title="Không chờ đủ lượt chấm. Vẫn chỉ làm khi luật đủ chắc; anh làm ngược lại 2 lần trong 10 lượt gần nhất là bot quay về hỏi.">
+          <input type="checkbox" checked={tb.tu_lam} disabled={!tb.bat}
+            onChange={(e) => void dat({ tu_lam: e.target.checked })} />
+          Cho bot tự làm ngay
+        </label>
         <span className="ml-auto text-xs text-muted-foreground">
           {tb.hoc_luc ? `học lúc ${new Date(tb.hoc_luc * 1000).toLocaleString("vi-VN")}` : "chưa học"}
         </span>
