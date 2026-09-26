@@ -49,7 +49,7 @@ Rg Cn Nh Fl Mc Lv Ts Og""".split())
 #: "brom") thì bước phiên âm tiếng Anh chạy sau đọc thành "ma ghi", "ai ô ti", "brum".
 TEN_NGUYEN_TO = dict(x.split(":") for x in """
 H:hi_đrô He:hê_li Li:li_ti Be:bê_ri B:bo C:các_bon N:ni_tơ O:ô_xi F:phờ_lo Ne:nê_ông
-Na:na_tri Mg:ma_giê Al:nhôm Si:si_líc P:phốt_pho S:lưu_huỳnh Cl:cờ_lo Ar:a_gông K:ka_li
+Na:nát_tri Mg:ma_giê Al:nhôm Si:si_líc P:phốt_pho S:lưu_huỳnh Cl:cờ_lo Ar:a_gông K:ka_li
 Ca:can_xi Sc:xcan_đi Ti:ti_tan V:va_na_đi Cr:crôm Mn:man_gan Fe:sắt Co:cô_ban Ni:ni_ken
 Cu:đồng Zn:kẽm Ga:ga_li Ge:giéc_ma_ni As:a_xen Se:xê_len Br:brôm Kr:kríp_tôn Rb:ru_bi_đi
 Sr:xtrôn_ti Y:y_tri Zr:di_cô_ni Nb:ni_ô_bi Mo:mô_líp_đen Tc:tếch_nê_ti Ru:ru_tê_ni Rh:rô_đi
