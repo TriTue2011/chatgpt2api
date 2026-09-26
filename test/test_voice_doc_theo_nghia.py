@@ -237,9 +237,16 @@ def test_chuoi_viet_tat_doc_ca_chuoi(vao, co, khong):
 
 
 def test_tu_chua_gap_khong_keo_ve_nghia_hiem():
-    """"BS" 356 mẫu bác sĩ / 13 mẫu biển số: đứng cạnh từ chưa từng gặp không được ra biển số."""
-    assert d.chon_nghia("BS", "ThS BS", 4, 6) == "bác sĩ"
+    """"BS" 356 mẫu bác sĩ / 13 mẫu biển số: trong chuỗi ghép, đứng cạnh từ chưa từng gặp thì
+    không đoán (để từ điển đọc "bác sĩ"); có bằng chứng thì vẫn đoán ("NĐ" → chính phủ)."""
     assert d.chon_nghia("BS", "ThS BS", 4, 6, can_bang_chung=True) is None
+    assert d.chon_nghia("CP", "NĐ CP", 3, 5, can_bang_chung=True) == "chính phủ"
+
+
+def test_ca_cau_giu_cach_tinh_cu():
+    """Đo 26/09/2026: bỏ từ chưa gặp cho CẢ CÂU làm "Giá BTC hôm nay tăng" ra ban tổ chức."""
+    t = "Giá BTC hôm nay tăng 2,5%, trong khi BTC giải chạy báo 1.200 VĐV đăng ký."
+    assert d.chon_nghia("BTC", t, 4, 7) == "bitcoin"
 
 
 def test_chuoi_viet_tat_khong_can_sea_that():

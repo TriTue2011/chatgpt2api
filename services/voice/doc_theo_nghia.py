@@ -117,12 +117,15 @@ def chon_nghia(vt: str, t: str, a: int, b: int, *, can_bang_chung: bool = False)
     # lại 26/09/2026: phần kiểm tra 89,2% → 89,3% (+8 mẫu), ĐT 92% → 93%; k=3 thì tụt 88,4%.
     f = ([f"w:{x}" for x in trai + phai] + ([f"L1:{trai[-1]}"] * k if trai else [])
          + ([f"R1:{phai[0]}"] * k if phai else []))
-    # Chỉ từ ĐÃ GẶP ở ít nhất một nghĩa mới là bằng chứng. Từ chưa gặp mà vẫn tính thì
-    # làm mượt kéo về nghĩa ÍT mẫu (mẫu số nhỏ hơn): "ThS.BS" ra "biển số" (13 mẫu) thay
-    # vì "bác sĩ" (356 mẫu) chỉ vì chưa từng thấy "ths" (đo 26/09/2026).
-    f = [x for x in f if any(x in sn["dem"] for sn in m["nghia"].values())]
-    if can_bang_chung and not f:
-        return None
+    # ``can_bang_chung`` (chuỗi ghép "ThS.BS", "NĐ-CP"): chỉ từ ĐÃ GẶP ở ít nhất một nghĩa
+    # mới tính. Từ chưa gặp mà vẫn tính thì làm mượt kéo về nghĩa ÍT mẫu (mẫu số nhỏ hơn):
+    # "ThS.BS" ra "biển số" (13 mẫu) thay vì "bác sĩ" (356 mẫu) vì chưa từng thấy "ths".
+    # KHÔNG áp cho cả câu: ngưỡng `nguong` được chỉnh trên cách tính cũ, và đo 26/09/2026
+    # áp toàn cục làm "Giá BTC hôm nay tăng" đổi từ bít côi (đúng) sang ban tổ chức.
+    if can_bang_chung:
+        f = [x for x in f if any(x in sn["dem"] for sn in m["nghia"].values())]
+        if not f:
+            return None
     diem = {ng: s["tien"] + sum(math.log((s["dem"].get(x, 0) + m["alpha"]) / (s["tong"] + m["alpha"] * m["v"]))
                                 for x in f)
             for ng, s in m["nghia"].items()}
