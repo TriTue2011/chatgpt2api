@@ -185,6 +185,8 @@ def test_doc_cong_thuc_chon_nghia_tren_toan_van():
     # số hiệu văn bản số/năm/ký hiệu: "năm", không phải "trên"
     ("Luật số 15/2023/QH15 có hiệu lực", "số mười lăm năm hai nghìn không trăm hai mươi ba quốc hội"),
     ("thay thế NĐ 100/2019/NĐ-CP", "một trăm năm hai nghìn không trăm mười chín nghị định chính phủ"),
+    # ký hiệu đã thành chữ nhờ sổ cách đọc chủ máy dạy ("QH15" → "Quốc hội khoá 15")
+    ("Luật số 15/2023/Quốc hội khoá 15 có hiệu lực", "số mười lăm năm hai nghìn không trăm hai mươi ba quốc hội khoá mười lăm"),
     # số La Mã viết đúng luật tới 39 — "XXX" từng đọc "ích ích ích"
     ("Hội nghị lần thứ XXX, thế kỷ XXI", "lần thứ ba mươi, thế kỷ hai mươi mốt"),
     # mã có phần chữ đọc được thành từ

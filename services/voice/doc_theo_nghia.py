@@ -315,6 +315,9 @@ def chuan_bi(t: str, sea: Callable[[str], str]) -> str:
                lambda m: f"{m.group(1)} năm {m.group(2)} "
                          + (sea(m.group(3)) if "-" not in m.group(3) and sea_biet.biet(m.group(3))
                             else m.group(3)), t)
+    # Ký hiệu đã được đọc thành chữ ở bước trước — sổ cách đọc chủ máy dạy đổi "QH15" thành
+    # "Quốc hội khoá 15" (đo trên máy chủ 26/09/2026): phần "số/năm/" vẫn đọc "số … năm …".
+    t = re.sub(r"(?<![\w/])(\d{1,5})/((?:19|20)\d{2})/(?=[^\s/])", r"\1 năm \2 ", t)
     # Khoảng ngày "10-21/11/2025" → "10 đến ngày 21/11/2025" (sea đọc "ngày mười ngày hai mươi mốt").
     t = re.sub(r"(?<![\w/.,-])(\d{1,2})-(\d{1,2})(?=/\d{1,2}(?:/\d{2,4})?(?![\w/]))",
                lambda m: f"{m.group(1)} đến ngày {m.group(2)}" if int(m.group(1)) < int(m.group(2))
