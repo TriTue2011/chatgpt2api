@@ -136,7 +136,10 @@ def speak_reply(text: str, persona_key: str = "", *, session_id: str = "",
         try:
             from services.agent import persona as _persona
             pv = _persona.voice_for(persona_key) or {}
-            v = voice_name or str(pv.get("voice") or "")
+            # Persona chỉ LẤP chỗ trống: giọng ép tay (1) và giọng cài theo phiên (2) thắng.
+            # Trước đây dòng này đè cả (2) — persona luôn tự chọn giọng VieNeu theo giới
+            # tính, nên đổi giọng Zalo trong Cài đặt không có tác dụng (26/09/2026).
+            v = v or str(pv.get("voice") or "")
             base_style = str(pv.get("style") or "")
         except Exception:
             pass
