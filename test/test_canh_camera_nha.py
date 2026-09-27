@@ -797,3 +797,27 @@ class DoCuaSoTests(unittest.TestCase):
         self.assertIsNotNone(mat)
         # Cửa sổ đầu ở (0, 0): hộp dịch đúng bằng gốc cửa sổ.
         self.assertEqual(mat.hop, (8, 8, 40, 48))
+
+
+def test_video_cho_khung_dau_du_lau_de_mo_luong(monkeypatch):
+    """Đo 27/09/2026: mở luồng chính Cam cửa lần đầu sau quãng nghỉ mất 8,9 giây; chờ 4 giây
+    như khung thường thì lượt kết thúc với 0 khung (vợ chủ máy về lúc 08:21, không nhận mặt).
+    Khung đầu phải chờ đủ lâu; thời gian xem tính từ khung đầu."""
+    from services import camera_nha
+
+    goi: list[float] = []
+
+    class _Luong:
+        def khung_moi(self, sau, cho):
+            goi.append(cho)
+            if not sau:
+                return (1.0, "khung-1") if cho >= 9 else None   # mở mất ~9 giây
+            return None if sau >= 3.0 else (sau + 1.0, f"khung-{int(sau) + 1}")
+
+        def dong(self):
+            pass
+
+    monkeypatch.setattr(camera_nha, "mo_video", lambda ten: _Luong())
+    khung = [a for _t, a in cc._video_truc_tiep("Cam cửa", 8.0)]
+    assert khung == ["khung-1", "khung-2", "khung-3"]
+    assert goi[0] == cc._CHO_KHUNG_DAU and goi[1] == cc._CHO_KHUNG_SAU

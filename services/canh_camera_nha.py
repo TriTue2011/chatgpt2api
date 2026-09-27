@@ -610,18 +610,32 @@ def _xem_video(nguon, camera: str, goi_y=None, *, toi_da_giay: float = 8.0,
     return ung_vien, anh0, k0, so
 
 
+#: Chờ khung ĐẦU TIÊN của lượt video — gồm cả mở kết nối RTSP tới luồng chính và chờ khung
+#: khoá. Đo 27/09/2026 Cam cửa (6 lần mở): lần đầu sau quãng nghỉ 8,9 giây, các lần sau
+#: 1,3–1,5 giây. Chờ 4 giây như khung thường thì lượt 08:21 (vợ chủ máy về nhà) kết thúc
+#: với 0 khung — camera vẫn phát bình thường (Frigate ghi liền 08:21:11–08:21:40).
+_CHO_KHUNG_DAU = 12.0
+#: Giữa hai khung đã chảy đều: quá ngần này là luồng đứt thật.
+_CHO_KHUNG_SAU = 4.0
+
+
 def _video_truc_tiep(camera: str, toi_da_giay: float):
-    """Khung từ luồng CHÍNH của camera, khung mới nhất sau khung vừa xử lý."""
+    """Khung từ luồng CHÍNH của camera, khung mới nhất sau khung vừa xử lý.
+
+    Thời gian xem ``toi_da_giay`` tính từ KHUNG ĐẦU, không từ lúc mở: mở chậm không được ăn
+    vào thời gian nhìn mặt."""
     from services import camera_nha
 
     d = camera_nha.mo_video(camera)
     try:
         sau = 0.0
-        het = time.time() + toi_da_giay + 5.0       # chờ mở luồng + xem
-        while time.time() < het:
-            kq = d.khung_moi(sau, cho=4.0)
+        het = None
+        while het is None or time.time() < het:
+            kq = d.khung_moi(sau, cho=_CHO_KHUNG_DAU if het is None else _CHO_KHUNG_SAU)
             if kq is None:
                 return
+            if het is None:
+                het = time.time() + toi_da_giay
             sau, anh = kq
             yield sau, anh
     finally:
