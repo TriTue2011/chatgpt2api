@@ -5579,6 +5579,56 @@ def _nhan_dang_khung_camera(tho: bytes) -> tuple[str, bytes]:
                 camera_nha._thu_nho(tho, camera_nha.CANH_GUI))
 
 
+def _dich_cua_ctx(ctx: dict) -> str:
+    """Kênh chat của lượt này dạng ``plat:bot:chat`` (khoá của `digest.send_target`), hoặc "".
+
+    Cùng cách nhắc việc ghi lại nơi gửi (`reminders.channel_of` + `_capture_delivery_ctx`):
+    đúng bot / đúng tài khoản Zalo đã nhận tin. Khoá phiên nhóm tách theo người có đuôi
+    ``:u<người gửi>`` — bỏ đuôi đó, tin gửi vào nhóm chứ không vào một người.
+    """
+    from services.agent import reminders as rem
+
+    kenh, chat = rem.channel_of(str(ctx.get("user_id") or ""))
+    chat = chat.split(":u", 1)[0].strip()
+    if not chat or kenh not in ("tg", "zalo", "zalop"):
+        return ""
+    meta = rem._capture_delivery_ctx(kenh)
+    return f"{kenh}:{meta.get('bot_id') or meta.get('account') or ''}:{chat}"
+
+
+def _h_trong_xe(args: dict, ctx: dict) -> dict:
+    """Trông xe khi được nhờ — xem `services.trong_xe`."""
+    import datetime as _d
+
+    from services import trong_xe
+
+    lenh = str(args.get("lenh") or "bat").strip().lower()
+    if lenh == "dung":
+        return {"deliver_now": True, "text": "Dạ em thôi trông xe rồi ạ." if trong_xe.dung("chu_may")
+                else "Em đang không trông xe nào ạ."}
+    if lenh == "xem":
+        d = trong_xe.trang_thai()
+        if not d.get("bat"):
+            return {"deliver_now": True, "text": "Em đang không trông xe nào ạ."}
+        tu = _d.datetime.fromtimestamp(float(d.get("tu") or 0)).strftime("%H:%M %d/%m")
+        return {"deliver_now": True, "text": f"Em đang trông {len(d.get('xe') or [])} xe ở {d.get('camera')} từ {tu}."}
+    try:
+        kq = trong_xe.bat(str(args.get("camera") or "").strip(), dich=_dich_cua_ctx(ctx))
+    except trong_xe.LoiTrongXe as exc:
+        return {"deliver_now": True, "text": str(exc)}
+    loai = {"car": "ô tô", "motorcycle": "xe máy", "bicycle": "xe đạp", "truck": "xe tải", "bus": "xe buýt"}
+    ten_xe = ", ".join(loai.get(x["nhan"], x["nhan"]) for x in kq["xe"])
+    loa = kq.get("loa") or []
+    ra = {"deliver_now": True, "text": (
+        f"Dạ, em bắt đầu trông {ten_xe} ở {kq['camera']} (khung đỏ trong ảnh). Xe bị dời mà em không "
+        "nhận ra người nhà thì em báo động"
+        + (f" ra {len(loa)} loa" if loa else "") + " và nhắn về đây; người nhà lấy xe thì em tự thôi. "
+        "Nhắn «thôi trông xe» để dừng.")}
+    if kq.get("anh"):
+        ra["image_url"] = kq["anh"]
+    return ra
+
+
 def _h_tim_nguoi(args: dict, ctx: dict) -> dict:
     """«Con trai đang ở đâu» — chụp MỌI camera cùng lúc, nhận mặt, báo camera nào thấy.
 
@@ -7029,6 +7079,21 @@ CAPABILITIES: dict[str, Capability] = {
                   "'Chưa thấy mặt' KHÔNG có nghĩa là người đó không ở nhà — nói đúng "
                   "như tool (có người chưa thấy mặt ở đâu, lần cuối gặp lúc nào). "
                   "Tool báo chưa rõ là ai thì HỎI LẠI người dùng, đừng tự chọn.")),
+    "trong_xe": Capability(
+        name="trong_xe", risk=CHANGE, handler=_h_trong_xe,
+        emoji="🛵", label="Trông xe — xe bị dời thì báo động",
+        description=("CHỈ KHI ĐƯỢC NHỜ: trông xe đang đỗ trong khung camera. Xe bị dời chỗ mà "
+                     "không nhận ra người nhà → báo động ra loa và nhắn tin về chat này; người "
+                     "nhà lấy xe thì tự dừng. lenh=bat khi «trông xe giúp anh», dung khi «thôi / "
+                     "dừng trông xe», xem khi hỏi đang trông không."),
+        parameters={"type": "object", "properties": {
+            "lenh": {"type": "string", "enum": ["bat", "dung", "xem"]},
+            "camera": {"type": "string",
+                       "description": "Tên camera như người dùng nói (vd 'cửa'). Bỏ trống nếu "
+                                      "không nói — tool tự hỏi lại khi nhà có nhiều camera."}},
+            "required": ["lenh"]},
+        workflow=("Thuật lại đúng kết quả tool. Tool báo không thấy xe / chưa rõ camera thì "
+                  "HỎI LẠI người dùng, đừng tự chọn camera khác.")),
     "khuon_mat": Capability(
         name="khuon_mat", risk=CHANGE, handler=_h_khuon_mat,
         emoji="🧑", label="Khuôn mặt camera — ai tới lúc nào, dạy tên mặt lạ",
@@ -8244,6 +8309,7 @@ _CAP_GROUP: dict[str, str] = {
     "xem_camera": "camera",
     "khuon_mat": "camera",
     "tim_nguoi": "camera",
+    "trong_xe": "camera",
     "remember": "memory", "search_history": "memory",
     "model_spec": "image",
     "schedule": "schedule",

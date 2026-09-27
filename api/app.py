@@ -232,6 +232,12 @@ def create_app() -> FastAPI:
             canh_camera_nha.start()
         except Exception as exc:
             _record_startup_failure("canh_camera_nha", str(exc))
+        # Trông xe: chỉ chạy khi đang được nhờ trông dở từ trước khi khởi động lại.
+        try:
+            from services import trong_xe
+            trong_xe.khoi_phuc()
+        except Exception as exc:
+            _record_startup_failure("trong_xe", str(exc))
         # Tuya local — đường THỨ BA để bot biết thiết bị, không qua đám mây và
         # không cần Home Assistant. Nhà chưa có thiết bị nào nói chuyện local
         # được thì start() trả False im lặng (đo 10/09/2026: khoá cửa chạy pin

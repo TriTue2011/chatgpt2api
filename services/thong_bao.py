@@ -96,6 +96,10 @@ SU_KIEN: tuple[SuKien, ...] = (
     SuKien("camera.thay_vat", "Camera — thấy vật đã tích",
            "Thấy thứ khác người mà bạn đã tích (chó, mèo, xe máy…). "
            "Gộp theo cùng cửa sổ thời gian với lượt người.", "Nhà"),
+    SuKien("camera.trong_xe", "Camera — trông xe",
+           "Chỉ khi được nhờ trông xe: xe bị dời mà không nhận ra người nhà (báo động), "
+           "hoặc người nhà lấy xe. Tin luôn về chat người nhờ; kênh chọn ở đây nhận thêm.",
+           "Nhà"),
     SuKien("nha.goi_y", "Gợi ý bật thiết bị",
            "Bot đoán nên bật gì theo nếp nhà, chờ chủ máy chấm đúng/sai.",
            "Nhà"),

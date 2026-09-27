@@ -1,0 +1,190 @@
+"""Trông xe — chỉ khi được nhờ: xe bị dời thì báo động, người nhà lấy xe thì thôi.
+
+Chủ máy 27/09/2026: "trường hợp tôi yêu cầu em trông cho tôi xe ở cửa, báo động khi có trộm …
+khi xe thay đổi tọa độ thì báo động bằng âm thanh, tin nhắn. Nhưng nếu nhận diện được người nhà
+qua cam thì không báo động và dừng theo dõi, hoặc yêu cầu dừng theo dõi" — "chỉ giám sát khi được
+yêu cầu, không giám sát khi yêu cầu dừng hoặc người nhà lấy xe đi".
+
+Khung giả 200×200 xám 100; vùng xe (50..100) đổi sang 200 khi xe bị dắt đi. Không test nào phát
+ra loa thật: `_phat` luôn bị thay.
+"""
+from __future__ import annotations
+
+import os
+
+os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
+
+import numpy as np  # noqa: E402
+import pytest  # noqa: E402
+
+pytest.importorskip("cv2")
+
+from services import camera_nha, nhin_nha, so_mat_nha, trong_xe, yolo_nha  # noqa: E402
+
+pytestmark = pytest.mark.pure
+
+HOP = [50, 50, 100, 100]
+XE = yolo_nha.VatThe("motorcycle", 0.8, tuple(HOP))
+NGUOI_CHE = yolo_nha.VatThe("person", 0.9, (60, 20, 90, 120))
+
+
+def _khung(xe_con: bool = True):
+    anh = np.full((200, 200, 3), 100, np.uint8)
+    if not xe_con:
+        anh[50:100, 50:100] = 200
+    return anh
+
+
+@pytest.fixture
+def tx(tmp_path, monkeypatch):
+    trong_xe._reset_for_tests(tmp_path / "trong_xe.json")
+    canh = {"anh": _khung(), "vat": [XE], "mat": []}
+    gui: list[tuple] = []
+    loa: list[str] = []
+    monkeypatch.setattr(trong_xe, "_khung", lambda cam: canh["anh"])
+    monkeypatch.setattr(trong_xe, "_ve_xe", lambda anh, xe: "http://anh")
+    monkeypatch.setattr(trong_xe, "_chay", lambda: None)
+    monkeypatch.setattr(trong_xe, "_phat", lambda announce, ten, cau: loa.append(ten))
+    monkeypatch.setattr(camera_nha, "tim", lambda ten: ("Cam cửa", {"name": "Cam cửa"}, ["Cam cửa"]))
+    monkeypatch.setattr(nhin_nha, "vat_the", lambda anh, chi_nhan=None: [
+        v for v in canh["vat"] if chi_nhan is None or v.nhan in chi_nhan])
+    monkeypatch.setattr(nhin_nha, "co_mat", lambda: True)
+    monkeypatch.setattr(nhin_nha, "phan_tich_khung", lambda anh: nhin_nha.KhungDaXem(200, 200, [], canh["mat"]))
+    monkeypatch.setattr(so_mat_nha, "su_kien_gan", lambda *a, **k: [])
+    from services import digest, thong_bao
+    monkeypatch.setattr(thong_bao, "cai_dat", lambda k: {"bat": True, "kenh": ["zalop:acc:nhom", "tg:b:1"]})
+    monkeypatch.setattr(digest, "send_targets", lambda kenh, tin, anh="": gui.append((list(kenh), tin)) or len(kenh))
+    canh["gui"], canh["loa"] = gui, loa
+    yield canh
+    trong_xe._reset_for_tests(tmp_path / "trong_xe.json")
+
+
+def _bat(canh):
+    kq = trong_xe.bat("cửa", loa=["Loa khách"], dich="zalop:acc:nhom")
+    trong_xe.kiem_mot_lan()                       # dựng mốc
+    for _ in range(trong_xe.LAN_DO_NHIEU):         # bot tự đo độ nhiễu của chính vùng xe
+        assert trong_xe.kiem_mot_lan() == ""
+    return kq
+
+
+def test_khong_thay_xe_thi_hoi_lai(tx):
+    tx["vat"] = []
+    with pytest.raises(trong_xe.LoiTrongXe):
+        trong_xe.bat("cửa", loa=[])
+    assert not trong_xe.trang_thai().get("bat")
+
+
+def test_xe_nam_yen_khong_bao_dong(tx):
+    kq = _bat(tx)
+    assert kq["xe"][0]["nhan"] == "motorcycle" and kq["loa"] == ["Loa khách"]
+    for _ in range(20):
+        assert trong_xe.kiem_mot_lan() == ""
+    assert tx["gui"] == [] and tx["loa"] == []
+
+
+def test_xe_bi_dat_di_thi_bao_dong_mot_lan_moi_kenh(tx):
+    _bat(tx)
+    tx["anh"], tx["vat"] = _khung(xe_con=False), []
+    kq = [trong_xe.kiem_mot_lan() for _ in range(trong_xe.LAN_XAC_NHAN)]
+    assert kq == ["lech"] * (trong_xe.LAN_XAC_NHAN - 1) + ["bao_dong"]
+    assert tx["loa"] == ["Loa khách"]
+    assert len(tx["gui"]) == 1, "kênh người nhờ trùng kênh đã chọn: chỉ gửi MỘT lần"
+    assert tx["gui"][0][0] == ["zalop:acc:nhom", "tg:b:1"]
+    assert "BÁO ĐỘNG" in tx["gui"][0][1]
+    assert not trong_xe.trang_thai()["bat"], "báo động xong thì dừng, nhắn lại mới trông tiếp"
+
+
+def test_mot_khung_yolo_mat_xe_khong_bao_dong(tx):
+    """YOLO có lúc mất hẳn vật 1–2 khung (đo 27/09/2026) — ảnh vùng xe không đổi thì không đếm."""
+    _bat(tx)
+    tx["vat"] = []
+    for _ in range(5):
+        assert trong_xe.kiem_mot_lan() == ""
+    assert tx["loa"] == []
+
+
+def test_nguoi_dung_che_xe_thi_chua_dem_nguoi_nha_lay_xe_thi_thoi(tx):
+    """Người đứng che xe: chưa đếm (mặt người đang đi thì mờ, không nhận ra được). Nhận ra mặt
+    người nhà lúc họ còn đứng đó → xe đi thì dừng trông, không báo động."""
+    _bat(tx)
+    tx["anh"], tx["vat"] = _khung(xe_con=False), [NGUOI_CHE]
+    for _ in range(trong_xe.LAN_XAC_NHAN + 2):
+        assert trong_xe.kiem_mot_lan() == "co_nguoi"
+    tx["mat"] = [{"nguoi_id": "p1", "loai": "quen", "ten": "Con trai Trí Anh"}]
+    assert trong_xe.kiem_mot_lan() == "co_nguoi"
+    tx["vat"], tx["mat"] = [], []
+    kq = [trong_xe.kiem_mot_lan() for _ in range(trong_xe.LAN_XAC_NHAN)]
+    assert kq[-1] == "nguoi_nha"
+    assert tx["loa"] == []
+    assert "Con trai Trí Anh vừa lấy xe" in tx["gui"][0][1]
+
+
+def test_nguoi_che_xe_roi_di_mat_ca_xe_thi_bao_dong(tx):
+    """Kẻ dắt xe: lúc đứng che thì chưa đếm, đi khuất cùng xe thì đếm và báo động."""
+    _bat(tx)
+    tx["anh"], tx["vat"] = _khung(xe_con=False), [NGUOI_CHE]
+    trong_xe.kiem_mot_lan()
+    tx["vat"] = []
+    kq = [trong_xe.kiem_mot_lan() for _ in range(trong_xe.LAN_XAC_NHAN)]
+    assert kq[-1] == "bao_dong" and tx["loa"] == ["Loa khách"]
+
+
+def test_khoi_dong_lai_van_phan_bang_moc_tren_dia(tx):
+    """Mốc chỉ ở RAM thì sau khởi động lại chỉ còn MỘT khung YOLO để phán — đo 27/09/2026 ở Cam
+    ban công, vật đứng yên mà YOLO thấy 1/3 khung, lượt đầu lỡ là bot thôi trông. Mốc ghi đĩa:
+    khung YOLO lỡ mà ảnh vùng xe không đổi thì vẫn yên; xe đi thật thì báo như thường."""
+    _bat(tx)
+    trong_xe._moc.clear()                        # như vừa khởi động lại
+    tx["vat"] = []
+    assert [trong_xe.kiem_mot_lan() for _ in range(5)] == [""] * 5
+    trong_xe._moc.clear()
+    tx["anh"] = _khung(xe_con=False)
+    kq = [trong_xe.kiem_mot_lan() for _ in range(trong_xe.LAN_XAC_NHAN)]
+    assert kq[-1] == "bao_dong" and tx["loa"] == ["Loa khách"]
+
+
+def test_khong_co_moc_thi_cho_nhieu_luot_moi_ket_luan_xe_da_di(tx):
+    _bat(tx)
+    trong_xe._moc.clear()
+    trong_xe._tep_moc().unlink()
+    tx["anh"], tx["vat"] = _khung(xe_con=False), []
+    kq = [trong_xe.kiem_mot_lan() for _ in range(trong_xe.LAN_DO_NHIEU)]
+    assert kq == [""] * (trong_xe.LAN_DO_NHIEU - 1) + ["mat_xe_khi_nghi"]
+    assert tx["loa"] == [], "không chắc có trộm — chỉ nhắn, không hú loa"
+    assert "khởi động lại" in tx["gui"][0][1]
+    assert not trong_xe.trang_thai()["bat"] and not trong_xe._tep_moc().exists()
+
+
+def test_dung_theo_yeu_cau(tx):
+    _bat(tx)
+    assert trong_xe.dung() and not trong_xe.dung()
+    assert trong_xe.kiem_mot_lan() == ""
+
+
+def test_dung_roi_trong_lai_ngay_van_co_luong_moi(tmp_path, monkeypatch):
+    """Dùng chung một cờ dừng thì «dừng» rồi «trông xe» ngay gặp luồng cũ chưa kịp thoát —
+    lượt mới không ai trông."""
+    trong_xe._reset_for_tests(tmp_path / "t.json")
+    monkeypatch.setattr(trong_xe, "CHU_KY", 30.0)
+    trong_xe._luu({"bat": True, "camera": "Cam cửa", "xe": []})
+    trong_xe._chay()
+    cu = trong_xe._luong
+    trong_xe.dung()
+    trong_xe._luu({"bat": True, "camera": "Cam cửa", "xe": []})
+    trong_xe._chay()
+    moi = trong_xe._luong
+    assert cu is not None and moi is not None and moi[0] is not cu[0]
+    assert cu[1].is_set() and not moi[1].is_set()
+    trong_xe._reset_for_tests(tmp_path / "t.json")
+
+
+def test_tool_trong_xe_gui_ve_dung_chat(tx, monkeypatch):
+    from services.agent import capabilities as caps
+    from services.agent import reminders as rem
+    monkeypatch.setattr(rem, "_capture_delivery_ctx", lambda kenh: {"account": "acc"})
+    monkeypatch.setattr(trong_xe, "bat", lambda camera, dich="": {
+        "camera": "Cam cửa", "xe": [{"nhan": "motorcycle"}], "loa": ["L"], "anh": "http://a", "_dich": dich})
+    ra = caps.CAPABILITIES["trong_xe"].handler({"lenh": "bat"}, {"user_id": "zalop_nhom:u123"})
+    assert "xe máy ở Cam cửa" in ra["text"] and ra["image_url"] == "http://a"
+    assert caps._dich_cua_ctx({"user_id": "zalop_nhom:u123"}) == "zalop:acc:nhom"
+    assert caps._CAP_GROUP["trong_xe"] == "camera"
