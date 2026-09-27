@@ -380,6 +380,55 @@ def test_tat_khi_vang(kh, monkeypatch):
     assert kh.tong_quan()[0]["tat_khi_vang"]["cam_bien"][0]["ma"] == NGU
 
 
+def test_tat_vang_nham_thi_cho_bang_thoi_gian_mat_dau(kh, monkeypatch):
+    """Chủ máy 27/09/2026: "mỗi lần đèn bị tắt rồi có người bật lại ngay, bot tự nới thời gian chờ
+    cho đúng khung giờ đó" — nới bằng ĐÚNG thời gian mất dấu vừa gặp (+1 phút), không gấp đôi:
+    "50 phút thì lâu quá, không tiết kiệm điện"."""
+    from services import du_doan_nha as dd
+    kh.dat_thiet_bi(DEN, bat=True, tat_khi_vang={"bat": True, "cam_bien": [NGU], "phut": 3})
+    cd = lambda: kh._nap()["thiet_bi"][DEN]                     # noqa: E731
+    luc = _luc(0, 19, 30)
+    assert kh.phut_vang(cd(), luc) == 3
+
+    # Phòng trống 19:30, bot tắt sau 3 phút, người bật lại lúc 19:35 → mất dấu 5 phút.
+    id_ = dd.ghi_nhan(kh._ten_tt(DEN, "off"), "off", 1.0, {"nguon": "vắng 3 phút", "vang_tu": luc}, "tu_lam")
+    with dd._khoa:
+        dd._db().execute("UPDATE du_doan SET ts=? WHERE id=?", (luc + 180, id_)); dd._db().commit()
+    monkeypatch.setattr(kh.time, "time", lambda: luc + 300)
+    kh._nguoi_lam(DEN, "on", luc + 300)
+    assert dd.so_luot(kh._ten_tt(DEN, "off")) == 1
+    assert kh.phut_vang(cd(), luc) == 6, "5 phút mất dấu + 1"
+    assert kh.phut_vang(cd(), _luc(0, 12)) == 3, "giờ khác giữ nguyên"
+    assert kh.tong_quan()[0]["tat_khi_vang"]["tu_noi"] == [{"gio": 19, "phut": 6}]
+
+    # Chủ máy trả lời «sai» với một lần tắt khác → báo trong câu trả lời.
+    dd.ghi_nhan(kh._ten_tt(DEN, "off"), "off", 1.0, {"nguon": "vắng 6 phút", "vang_tu": luc - 180}, "tu_lam")
+    tl = kh.tra_loi("sai")
+    assert "chờ vắng 9 phút" in tl, tl
+
+
+def test_bot_tu_hoc_thoi_gian_cho_tu_thoi_gian_mat_dau(kh):
+    """Chủ máy 27/09/2026: "tôi cần bot học" và "nên dùng thời gian MẤT DẤU để học thời gian chờ,
+    chứ không phải cả đoạn thời gian dài". Tối nào 19h radar cũng mất người 5 phút rồi thấy lại
+    (đèn vẫn bật) → giờ 19 chờ 6 phút; lần vắng 1 giờ (đi thật) không kéo dài chờ; trưa giữ 3."""
+    kh.dat_thiet_bi(DEN, bat=True, tat_khi_vang={"bat": True, "cam_bien": [NGU], "phut": 3})
+    for n in range(6, 0, -1):
+        t = _luc(n, 19, 10)
+        _sk(DEN, "on", t - 600)
+        _sk(NGU, "on", t - 60)
+        _sk(NGU, "off", t)
+        _sk(NGU, "on", t + 300)            # mất dấu 5 phút
+        _sk(NGU, "off", t + 3600)
+        _sk(NGU, "on", t + 3600 + 3600)    # đi thật 1 giờ — không phải mất dấu
+        _sk(DEN, "off", t + 3600 + 200)
+    ra = kh.hoc(DEN)
+    cd = kh._nap()["thiet_bi"][DEN]
+    assert kh.phut_vang(cd, _luc(0, 19, 10)) == 6
+    assert kh.phut_vang(cd, _luc(0, 12)) == 3
+    assert ra["cho_vang"] == {"quang": 12, "mat_dau": 6, "nham": 0, "nham_co_dinh": 6}
+    assert kh.tong_quan()[0]["tat_khi_vang"]["tu_hoc"] == ra["cho_vang"]
+
+
 def test_goi_y_them_cam_bien_ngoai_so_do(kh, monkeypatch):
     """Sơ đồ thiếu nguồn mạnh (đèn trần thiếu cửa chính) thì GỢI Ý, không tự thêm."""
     for n in range(29, 0, -1):

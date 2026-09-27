@@ -569,6 +569,7 @@ def hoc(tb: str) -> dict[str, Any]:
         sk_toan_nha = _su_kien_nguon(ro, tu, den, bo)
         sk = [x for x in sk_toan_nha if x[1].split(" ")[0] in nhi_phan] if nhi_phan else sk_toan_nha
         lux = {m: tq._tuyen(ro, m, "state", tu, den) for m in ma_lux}
+        cho_vang = _hoc_cho_vang(ro, cd, ts_tb, gt_tb, tu, den)
     finally:
         ro.close()
     ts_sk = [t for t, _ in sk]
@@ -576,7 +577,8 @@ def hoc(tb: str) -> dict[str, Any]:
     ra: dict[str, Any] = {"luc": den, "co_so": "so_do" if nhi_phan else "tu_do", "dac_trung_so": ma_lux,
                           "den_gop": _den_gop_hoc(ts_tb, gt_tb, lux),
                           "vang_quay_lai": _vang_quay_lai(sk_toan_nha, nhi_phan, den - tu),
-                          "goi_y_them": _goi_y_them(sk_toan_nha, bat, ts_tb, gt_tb, nhi_phan)}
+                          "goi_y_them": _goi_y_them(sk_toan_nha, bat, ts_tb, gt_tb, nhi_phan),
+                          "cho_vang": cho_vang.get("do") or {}}
     for hd, dich in (("on", bat), ("off", tat)):
         truoc: Counter = Counter()
         for t in dich:
@@ -643,6 +645,13 @@ def hoc(tb: str) -> dict[str, Any]:
         }
     with _khoa:
         _nap()["mo_hinh"][tb] = ra
+        if cho_vang and tb in _nap()["thiet_bi"]:
+            cd_that = _nap()["thiet_bi"][tb]
+            cd_that["cho_vang"] = cho_vang["cho"]
+            # Lần nới vì tắt nhầm TRƯỚC lượt học này đã nằm trong số đo mất dấu — bỏ đi; lần nới
+            # xảy ra trong lúc đang học thì giữ tới lượt sau.
+            cd_that["noi_vang"] = {h: x for h, x in (cd_that.get("noi_vang") or {}).items()
+                                   if float(x.get("luc") or 0) >= den}
         _luu()
     logger.info({"event": "kich_hoat_hoc", "thiet_bi": tb,
                  "kiem": {hd: ra[hd]["kiem"] for hd in HANH_DONG}})
@@ -1052,7 +1061,7 @@ def _khoi_phuc(ds: dict[str, dict[str, Any]]) -> None:
             tat = [_lan_off_kho(m, luc) for m in cb]
             if any(t is None for t in tat):
                 continue
-            con = float(tv.get("phut") or MAC_DINH_VANG_PHUT) * 60 - (luc - max(tat))  # type: ignore[type-var]
+            con = phut_vang(cd, max(tat)) * 60 - (luc - max(tat))  # type: ignore[type-var,arg-type]
             _hen_tat_luc(tb, max(HEN_LAI, con))
         except Exception as exc:  # noqa: BLE001
             logger.warning({"event": "kich_hoat_khoi_phuc_loi", "thiet_bi": tb, "error": str(exc)[:160]})
@@ -1087,10 +1096,11 @@ def _nguoi_lam(tb: str, gt: str, luc: float) -> None:
     nguoc = "off" if gt == "on" else "on"
     with dd._khoa:
         r = dd._db().execute(
-            "SELECT id FROM du_doan WHERE ten=? AND cach='tu_lam' AND ket_qua='cho' AND ts>?",
+            "SELECT id, boi_canh FROM du_doan WHERE ten=? AND cach='tu_lam' AND ket_qua='cho' AND ts>?",
             (_ten_tt(tb, nguoc), luc - CHAM_TU_LAM)).fetchall()
     for x in r:
-        dd.ghi_sai(int(x["id"]))
+        if dd.ghi_sai(int(x["id"])) and nguoc == "off":
+            _noi_vang(tb, x["boi_canh"], luc)       # bot tắt vì vắng mà người bật lại ngay
 
 
 def cham_tu_lam() -> int:
@@ -1139,7 +1149,114 @@ def _theo_vang(ma: str, gt: str, ds: dict[str, dict[str, Any]]) -> None:
             if _deu_vang(cb):
                 sang = _troi_sang(tb, cd) is not None
                 _hen_tat_luc(tb, float((cd.get("tat_khi_sang") or {}).get("giay") or SANG_VANG_GIAY) if sang
-                             else float(tv.get("phut") or MAC_DINH_VANG_PHUT) * 60)
+                             else phut_vang(cd, time.time()) * 60)
+
+
+# ── Thời gian chờ «tắt khi vắng» bot tự học theo giờ ───────────────────────
+# Chủ máy 27/09/2026: "mỗi lần đèn bị tắt rồi có người bật lại ngay, bot tự nới thời gian chờ
+# cho đúng khung giờ đó; lâu không sai thì rút dần lại" → "tôi cần BOT học" → "50 phút thì lâu
+# quá, không tiết kiệm điện" → "nên dùng thời gian MẤT DẤU để học thời gian chờ, chứ không phải
+# cả đoạn thời gian dài".
+#
+# Mất dấu = mọi cảm biến đã chọn cùng báo vắng lúc thiết bị đang bật rồi thấy người lại trong
+# MAT_DAU_GIAY (cùng cửa sổ chấm "bật lại ngay" = tắt nhầm). Quãng dài hơn là người đi thật —
+# không dạy gì về thời gian chờ. Mỗi lượt học, chờ của giờ h = phân vị MAT_DAU_PHAN_VI của thời
+# gian mất dấu quanh h (± MAT_DAU_LAN giờ, 30 ngày) + 1 phút, không dưới số chủ máy đặt. Rút dần
+# tự nhiên: mất dấu cũ trôi khỏi cửa sổ 30 ngày.
+# Đo 27/09/2026 đèn phòng ngủ (123 lần phòng trống lúc đèn bật, 77 lần mất dấu): tối chờ 6–9
+# phút, tắt nhầm 17–22h còn 9 so với 22 khi giữ 3 phút — cách cũ "gấp đôi mỗi lần sai" cho
+# cùng số nhầm nhưng chờ tới 50 phút.
+MAT_DAU_GIAY = CHAM_TU_LAM
+MAT_DAU_PHAN_VI = 0.9
+MAT_DAU_LAN = 1
+MAT_DAU_MAU = 5
+
+
+def phut_vang(cd: dict[str, Any], luc: float) -> float:
+    """Số phút chờ «tắt khi vắng» khi phòng trống từ ``luc``: lớn nhất trong số chủ máy đặt, số
+    bot học cho giờ đó, và lần nới gần nhất vì tắt nhầm (còn hiệu lực tới lượt học sau)."""
+    goc = float((cd.get("tat_khi_vang") or {}).get("phut") or MAC_DINH_VANG_PHUT)
+    h = str(datetime.fromtimestamp(luc, _TZ).hour)
+    hoc = float((cd.get("cho_vang") or {}).get(h) or 0)
+    noi = float(((cd.get("noi_vang") or {}).get(h) or {}).get("phut") or 0)
+    return max(goc, hoc, noi)
+
+
+def _quang_vang(ro: sqlite3.Connection, cam_bien: list[str], tu: float, den: float) -> list[tuple[float, float]]:
+    """(bắt đầu, kết thúc) những quãng MỌI cảm biến đã chọn cùng báo vắng — đúng điều kiện
+    `_deu_vang` lúc sống. Quãng chưa kết thúc thì bỏ (chưa biết người có quay lại không)."""
+    if not cam_bien:
+        return []
+    dau = ",".join("?" * len(cam_bien))
+    tt: dict[str, str] = {}
+    ra: list[tuple[float, float]] = []
+    bat_dau: float | None = None
+    for t, ma, gt in ro.execute(
+            f"SELECT ts, thiet_bi, gia_tri FROM su_kien WHERE truong='state' AND ts>=? AND ts<?"
+            f" AND thiet_bi IN ({dau}) ORDER BY ts", (tu, den, *cam_bien)):
+        tt[str(ma)] = str(gt).lower()
+        deu = len(tt) == len(cam_bien) and all(v == "off" for v in tt.values())
+        if deu and bat_dau is None:
+            bat_dau = float(t)
+        elif not deu and bat_dau is not None:
+            ra.append((bat_dau, float(t)))
+            bat_dau = None
+    return ra
+
+
+def _hoc_cho_vang(ro: sqlite3.Connection, cd: dict[str, Any], ts_tb: list[float], gt_tb: list[str],
+                  tu: float, den: float) -> dict[str, Any]:
+    """BOT TỰ HỌC thời gian chờ từng giờ từ thời gian mất dấu của chính thiết bị. Trả
+    ``{"cho": {giờ: phút}, "do": {...}}``; thiết bị không bật tắt khi vắng → {}."""
+    from services import thoi_quen_nha as tq
+
+    tv = cd.get("tat_khi_vang") or {}
+    if not tv.get("bat"):
+        return {}
+    goc = float(tv.get("phut") or MAC_DINH_VANG_PHUT)
+    quang = [(a, b) for a, b in _quang_vang(ro, list(tv.get("cam_bien") or []), tu, den)
+             if str(tq._truoc(ts_tb, gt_tb, a) or "").lower() == "on"]
+    theo_gio: dict[int, list[float]] = {h: [] for h in range(24)}
+    for a, b in quang:
+        if b - a <= MAT_DAU_GIAY:
+            theo_gio[datetime.fromtimestamp(a, _TZ).hour].append((b - a) / 60)
+    cho: dict[str, float] = {}
+    for h in range(24):
+        gop = sorted(x for d in range(-MAT_DAU_LAN, MAT_DAU_LAN + 1) for x in theo_gio[(h + d) % 24])
+        if len(gop) >= MAT_DAU_MAU:
+            p = gop[min(len(gop) - 1, math.ceil(MAT_DAU_PHAN_VI * len(gop)) - 1)]
+            if math.ceil(p) + 1 > goc:
+                cho[str(h)] = float(math.ceil(p) + 1)
+
+    def nham(bang: dict[str, float]) -> int:
+        n = 0
+        for a, b in quang:
+            c = max(goc, bang.get(str(datetime.fromtimestamp(a, _TZ).hour), 0.0)) * 60
+            n += c <= b - a < c + MAT_DAU_GIAY
+        return n
+    return {"cho": cho, "do": {"quang": len(quang), "mat_dau": sum(len(v) for v in theo_gio.values()),
+                               "nham": nham(cho), "nham_co_dinh": nham({})}}
+
+
+def _noi_vang(tb: str, boi_canh: Any, luc: float) -> tuple[int, float] | None:
+    """Lần tắt vì vắng bị SAI (người bật lại trong CHAM_TU_LAM, hoặc chủ máy trả lời «sai») →
+    giờ lúc phòng bắt đầu trống chờ ĐÚNG bằng thời gian mất dấu vừa gặp + 1 phút, tới lượt học
+    sau (lượt học đưa lần mất dấu này vào số đo). Trả (giờ, số phút chờ); không phải lần tắt vì
+    vắng thì None."""
+    try:
+        vang_tu = float(json.loads(boi_canh or "{}").get("vang_tu"))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    with _khoa:
+        cd = _nap()["thiet_bi"].get(tb)
+        if not cd:
+            return None
+        h = datetime.fromtimestamp(vang_tu, _TZ).hour
+        moi = max(phut_vang(cd, vang_tu), float(math.ceil((luc - vang_tu) / 60) + 1))
+        cd.setdefault("noi_vang", {})[str(h)] = {"phut": moi, "luc": luc}
+        _luu()
+    logger.info({"event": "kich_hoat_noi_vang", "thiet_bi": tb, "gio": h, "phut": moi})
+    return h, moi
 
 
 #: Hẹn tắt bị chặn TẠM (người vừa chạm, bot vừa làm) thì ngần này giây kiểm lại — không bỏ
@@ -1185,10 +1302,16 @@ def _tat_vi_vang(tb: str) -> None:
             return
         if not _lam(tb, "off", tu_lam=True):
             return
-        phut = int(tv.get("phut") or MAC_DINH_VANG_PHUT)
         troi = _troi_sang(tb, cd)
+        nhan: dict[str, Any] = {}
+        if troi is None:
+            # Lúc phòng bắt đầu trống — để lần tắt này bị chấm sai thì biết nới giờ nào, bao lâu.
+            tat = [_lan_off_kho(m, luc) for m in tv.get("cam_bien") or []]
+            if tat and all(t is not None for t in tat):
+                nhan["vang_tu"] = max(tat)  # type: ignore[type-var]
+        phut = round(phut_vang(cd, float(nhan.get("vang_tu") or luc)))
         vi = f"phòng trống, trời đã sáng ~{troi:.0f} lux" if troi is not None else f"vắng {phut} phút"
-        id_ = dd.ghi_nhan(_ten_tt(tb, "off"), "off", 1.0, {"nguon": vi}, "tu_lam")
+        id_ = dd.ghi_nhan(_ten_tt(tb, "off"), "off", 1.0, {"nguon": vi, **nhan}, "tu_lam")
         thong_bao.gui("nha.goi_y", f"🤖 #{id_} Em đã tắt {_ten_tb(tb)} ({vi}).\nĐúng hay sai ạ? Anh trả "
                                    f"lời «đúng» hoặc «sai» — sai thì em bật lại ngay. Không trả lời trong "
                                    f"{CHAM_TU_LAM // 60} phút là em tính đúng.")
@@ -1422,11 +1545,14 @@ def tra_loi(text: str) -> str | None:
             return f"Dạ, em ghi là đúng: {_TEN_HD[hd].lower()} {_ten_tb(tb)}."
         dd.ghi_sai(int(r["id"]))
         nang = _nang_nguong_sang(tb, r["boi_canh"])
+        noi = _noi_vang(tb, r["boi_canh"], time.time()) if hd == "off" else None
         if not _lam(tb, _NGUOC[hd], tu_lam=False):
             return (f"Em ghi là em sai, nhưng chưa {_TEN_HD[_NGUOC[hd]].lower()} lại được "
                     f"{_ten_tb(tb)} — Home Assistant không nhận lệnh.")
         return (f"Dạ, em đã {_TEN_HD[_NGUOC[hd]].lower()} lại {_ten_tb(tb)} và ghi là em sai."
-                + (f" Em nâng ngưỡng «tắt khi đủ sáng» lên {nang:g} lux." if nang else ""))
+                + (f" Em nâng ngưỡng «tắt khi đủ sáng» lên {nang:g} lux." if nang else "")
+                + (f" Quanh {noi[0]}h em chờ vắng {noi[1]:g} phút mới tắt (lâu không sai em rút dần lại)."
+                   if noi else ""))
     if cau in _KHONG | _SAI:
         dd.ghi_sai(int(r["id"]))
         return f"Dạ, em không {_TEN_HD[hd].lower()} {_ten_tb(tb)}. Em ghi lại để lần sau đoán đúng hơn."
@@ -1493,6 +1619,14 @@ def tong_quan() -> list[dict[str, Any]]:
                    },
                    "tat_khi_vang": {
                        "bat": bool(tv.get("bat")), "phut": int(tv.get("phut") or MAC_DINH_VANG_PHUT),
+                       # Giờ đang được tự nới (tắt nhầm rồi người bật lại) — số phút chờ hiện dùng.
+                       # Giờ bot đang chờ lâu hơn số chủ máy đặt (học từ thời gian mất dấu, hoặc
+                       # vừa nới vì tắt nhầm) — và số đo của lượt học.
+                       "tu_noi": [{"gio": h, "phut": round(p)} for h in range(24)
+                                  if (p := max(float((cd.get("cho_vang") or {}).get(str(h)) or 0),
+                                               float(((cd.get("noi_vang") or {}).get(str(h)) or {}).get("phut") or 0)))
+                                  > float(tv.get("phut") or MAC_DINH_VANG_PHUT)],
+                       "tu_hoc": mh.get("cho_vang") or {},
                        "cam_bien": [{"ma": m, "ten": ten_ha.get(m, m)} for m in tv.get("cam_bien") or []],
                        # Gợi ý: cảm biến hiện diện trong sơ đồ của thiết bị.
                        "goi_y": [{"ma": m, "ten": ten_ha.get(m, m)} for m in sorted(nhi_phan & hien_dien)],

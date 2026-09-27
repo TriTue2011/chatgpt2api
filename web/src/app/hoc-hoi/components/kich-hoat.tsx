@@ -72,6 +72,8 @@ type ThietBi = {
   tat_khi_vang?: {
     bat: boolean; phut: number; cam_bien: { ma: string; ten: string }[]; goi_y: { ma: string; ten: string }[];
     quay_lai_moi_ngay?: Record<string, Record<string, number>>;
+    tu_noi?: { gio: number; phut: number }[];
+    tu_hoc?: { quang?: number; mat_dau?: number; nham?: number; nham_co_dinh?: number };
   };
   tat_khi_sang?: {
     bat: boolean; lux: number | null; phut: number; giay: number; cam_bien: { ma: string; ten: string } | null;
@@ -339,6 +341,19 @@ function MotThietBi({ tb, taiLai, doiMa, lich }: {
               <div className="text-xs text-emerald-600">
                 Tắt khi: {tb.tat_khi_vang.cam_bien.map((x) => x.ten).join(" + ")} vắng liền {tb.tat_khi_vang.phut} phút
                 (sửa ở «Tắt khi vắng» bên dưới). Luật học từ lịch sử bên dưới chỉ để tham khảo.
+                {tb.tat_khi_vang.tu_noi?.length ? (
+                  <div className="text-amber-600">
+                    Bot tự học từ thời gian mất dấu (radar mất người rồi thấy lại):{" "}
+                    {tb.tat_khi_vang.tu_noi.map((x) => `${x.gio}h chờ ${x.phut} phút`).join(" · ")}
+                  </div>
+                ) : null}
+                {tb.tat_khi_vang.tu_hoc?.quang ? (
+                  <div className="text-muted-foreground">
+                    30 ngày qua: {tb.tat_khi_vang.tu_hoc.quang} lần phòng trống lúc đang bật, {tb.tat_khi_vang.tu_hoc.mat_dau} lần
+                    mất dấu — theo số bot học thì tắt nhầm {tb.tat_khi_vang.tu_hoc.nham} lần (giữ {tb.tat_khi_vang.phut} phút:{" "}
+                    {tb.tat_khi_vang.tu_hoc.nham_co_dinh} lần).
+                  </div>
+                ) : null}
               </div>
             ) : (
               <div className="text-xs"><CapDo h={h} nguong={tb.nguong} /></div>
