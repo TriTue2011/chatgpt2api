@@ -651,6 +651,7 @@ def _chi_muc_registry(areas: list[dict], ents: list[dict], devs: list[dict]) -> 
     # options["switch_as_x"]["entity_id"] của thực thể bọc. KHÔNG suy theo thiết bị: một
     # công tắc Zigbee nhiều kênh chung thiết bị (phòng ngủ: l1 = đèn, l2 = điều hoà).
     entity_mirror: dict[str, str] = {}
+    entity_wrapper: dict[str, str] = {}      # cả hai thực thể của cặp → thực thể BỌC
     for e in ents:
         eid = e.get("entity_id")
         if not eid:
@@ -659,6 +660,7 @@ def _chi_muc_registry(areas: list[dict], ents: list[dict], devs: list[dict]) -> 
         if isinstance(boc, str) and "." in boc:
             entity_mirror[eid] = boc
             entity_mirror[boc] = eid
+            entity_wrapper[eid] = entity_wrapper[boc] = eid
         if e.get("platform"):
             entity_platform[eid] = str(e["platform"])
         if dev_ids.get(e.get("device_id")):
@@ -675,7 +677,8 @@ def _chi_muc_registry(areas: list[dict], ents: list[dict], devs: list[dict]) -> 
                   for a in areas if a.get("name")}
     return {"entity_area": entity_area, "area_names": area_names,
             "entity_aliases": entity_aliases, "entity_platform": entity_platform,
-            "entity_device_ids": entity_device_ids, "entity_mirror": entity_mirror}
+            "entity_device_ids": entity_device_ids, "entity_mirror": entity_mirror,
+            "entity_wrapper": entity_wrapper}
 
 
 def get_ha_area_index(use_cache: bool = True) -> dict[str, Any]:
@@ -707,6 +710,12 @@ def get_ha_area_index(use_cache: bool = True) -> dict[str, Any]:
 def thuc_the_guong(entity_id: str) -> str | None:
     """Thực thể còn lại của cặp gương `switch_as_x`, không có thì None."""
     return (get_ha_area_index().get("entity_mirror") or {}).get(entity_id)
+
+
+def thuc_the_boc(entity_id: str) -> str | None:
+    """Thực thể `switch_as_x` BỌC NGOÀI của cặp gương chứa ``entity_id`` (chính nó nếu nó là
+    thực thể bọc), không thuộc cặp nào thì None."""
+    return (get_ha_area_index().get("entity_wrapper") or {}).get(entity_id)
 
 
 def get_state(entity_id: str) -> dict[str, Any] | None:

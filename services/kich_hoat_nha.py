@@ -144,6 +144,9 @@ _hen_vang: dict[str, threading.Timer] = {}
 _hen_tat: dict[str, threading.Timer] = {}
 _cham_luc = 0.0
 _da_khoi_phuc = False
+#: Soát cặp gương (`_gop_guong`) trên đường sống mỗi ngần này giây — sổ đăng ký HA đổi hiếm.
+GOP_GIAY = 300
+_gop_luc = 0.0
 
 
 # ── Kho (cài đặt chủ máy + mô hình đã học) ─────────────────────────────────
@@ -171,6 +174,72 @@ def _luu() -> None:
 def ds_thiet_bi() -> dict[str, dict[str, Any]]:
     """Thiết bị chủ máy bật cho học kích hoạt: {mã: cài đặt}."""
     return {k: dict(v) for k, v in _nap()["thiet_bi"].items() if v.get("bat")}
+
+
+# ── Cặp gương: MỘT thiết bị thật ───────────────────────────────────────────
+# Chủ máy 27/09/2026 tích cả light.phong_ngu_l1 lẫn switch.phong_ngu_l1 (cặp `switch_as_x`,
+# một bóng đèn) → hai thiết bị học riêng: luật bật lệch (độ sáng ≤ 38,5 so với ≤ 62,2), cài
+# đặt lệch, cùng "tự làm" nên một cảm biến đẻ hai lượt xét, hai lệnh, hai tin Zalo. Mục light
+# còn không thấy SƠ ĐỒ (tầng hiểu thiết bị xếp cặp dưới mã switch) nên tự dò toàn nhà và học
+# luật tắt theo độ sáng Ở BẾP.
+def _chinh(tb: str) -> str:
+    """Mã CHÍNH của thiết bị thật chứa ``tb``: thực thể BỌC của cặp gương (cái HA đưa người
+    dùng) nếu miền của nó điều khiển được, không thì công tắc gốc. Không thuộc cặp nào → ``tb``."""
+    try:
+        from services import ha_client
+        boc = ha_client.thuc_the_boc(tb)
+        if not boc:
+            return tb
+        return boc if boc.split(".")[0] in _MIEN_DIEU_KHIEN else (ha_client.thuc_the_guong(boc) or tb)
+    except Exception:  # noqa: BLE001 — HA chưa trả sổ đăng ký thì giữ nguyên mã
+        return tb
+
+
+def _gop_guong() -> list[str]:
+    """Dồn mục của thực thể phụ trong cặp gương vào mã chính. Cài đặt của mã chính thắng, khoá
+    nào thiếu lấy từ mục kia, «bỏ nguồn» lấy hợp (chủ máy đã bỏ ở đâu thì vẫn bỏ); sổ thành tích
+    đổi sang tên chính (thang tự làm không mất lượt đã chấm); mô hình bỏ để học lại. Chạy lại bao
+    nhiêu lần cũng vậy. Trả các mã phụ đã dồn."""
+    from services import du_doan_nha as dd
+
+    cap = {tb: c for tb in list(_nap()["thiet_bi"]) if (c := _chinh(tb)) != tb}   # gọi HA ngoài khoá
+    if not cap:
+        return []
+    with _khoa:
+        d = _nap()
+        for tb, c in cap.items():
+            phu = d["thiet_bi"].pop(tb, None)
+            if phu is None:
+                continue
+            dich = d["thiet_bi"].setdefault(c, {})
+            for k, v in phu.items():
+                dich.setdefault(k, v)
+            dich["bat"] = bool(dich.get("bat")) or bool(phu.get("bat"))
+            dich["bo_nguon"] = sorted(set(dich.get("bo_nguon") or []) | set(phu.get("bo_nguon") or []))
+            d["mo_hinh"].pop(tb, None)
+            d["mo_hinh"].pop(c, None)
+            for x in d.get("bao_ao") or []:
+                if x.get("thiet_bi") == tb:
+                    x["thiet_bi"] = c
+        _luu()
+    for tb, c in cap.items():
+        _hen_tat_huy(tb)
+        _huy_sang(tb)
+        with dd._khoa:
+            conn = dd._db()
+            for hd in HANH_DONG:
+                moi, cu = _ten_tt(c, hd), _ten_tt(tb, hd)
+                conn.execute("UPDATE du_doan SET ten=? WHERE ten=?", (moi, cu))
+                # Bảng tổng của thang tự làm (`du_doan_nha.so_luot`) cũng theo tên — cộng dồn.
+                r = conn.execute("SELECT dung, sai FROM thanh_tich WHERE ten=?", (cu,)).fetchone()
+                if r:
+                    conn.execute("INSERT INTO thanh_tich (ten, dung, sai) VALUES (?,?,?) ON CONFLICT(ten)"
+                                 " DO UPDATE SET dung=dung+excluded.dung, sai=sai+excluded.sai",
+                                 (moi, int(r["dung"]), int(r["sai"])))
+                    conn.execute("DELETE FROM thanh_tich WHERE ten=?", (cu,))
+            conn.commit()
+        logger.info({"event": "kich_hoat_gop_guong", "phu": tb, "chinh": c})
+    return list(cap)
 
 
 def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None = None,
@@ -205,6 +274,8 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
         tat_khi_vang = _kiem_tat_khi_vang(tat_khi_vang)
     if tat_khi_sang is not None:
         tat_khi_sang = _kiem_tat_khi_sang(tat_khi_sang)
+    _gop_guong()
+    tb = _chinh(tb)          # tích công tắc gốc hay đèn bọc thì cũng là một thiết bị
     with _khoa:
         d = _nap()
         cu = d["thiet_bi"].setdefault(tb, {"bat": False, "bo_nguon": [], "ngoai_le": []})
@@ -298,9 +369,13 @@ def _so_do(tb: str) -> tuple[set[str], set[str]]:
     ngoại vi (`hieu_thiet_bi_nha`, đã áp phần chủ máy sửa). Chủ máy 26/09/2026: bật/tắt
     thiết bị "cơ sở là lấy theo sơ đồ kích hoạt"."""
     try:
-        from services import hieu_thiet_bi_nha as h
-        dk = (h.thoi_quen_hoc().get(tb) or {}).get("bat") or []
-        nv = (h.ngoai_vi_hoc().get(tb) or {}).get("ngoai_vi") or []
+        from services import ha_client, hieu_thiet_bi_nha as h
+        # Tầng hiểu thiết bị có thể xếp cặp gương dưới mã còn lại (đo 27/09/2026: cả 8 cặp có
+        # dữ liệu đều nằm dưới switch.*, còn trang kích hoạt dùng light.*) — tìm theo cả cặp.
+        ma_cap = [tb, ha_client.thuc_the_guong(tb)]
+        tq, nvh = h.thoi_quen_hoc(), h.ngoai_vi_hoc()
+        dk = next(((tq.get(m) or {}).get("bat") for m in ma_cap if (tq.get(m) or {}).get("bat")), [])
+        nv = next(((nvh.get(m) or {}).get("ngoai_vi") for m in ma_cap if (nvh.get(m) or {}).get("ngoai_vi")), [])
     except Exception as exc:  # noqa: BLE001 — sơ đồ hỏng thì tự dò như cũ
         logger.warning({"event": "kich_hoat_so_do_loi", "thiet_bi": tb, "error": str(exc)[:160]})
         return set(), set()
@@ -381,11 +456,20 @@ def _ten_nguon(nguon: str, ten: dict[str, str]) -> str:
 
 
 def _giay_dong_loat(ro: sqlite3.Connection, tu: float, den: float) -> set[int]:
-    """Những giây có ≥ DONG_LOAT thiết bị ĐIỀU KHIỂN đổi cùng lúc — việc của máy."""
+    """Những giây có ≥ DONG_LOAT thiết bị ĐIỀU KHIỂN đổi cùng lúc — việc của máy.
+
+    Đếm THIẾT BỊ THẬT, không đếm thực thể: cặp gương đổi cùng giây là một. Đo 27/09/2026, 30
+    ngày: 95/166 giây "đồng loạt" chỉ đạt ngưỡng vì cặp gương bị đếm hai lần (vd 06:20:56 chỉ
+    đèn bếp + đèn nhà tắm) — lần bấm tay thật bị loại khỏi bằng chứng có người."""
     mau = " OR ".join(f"thiet_bi LIKE '{m}.%'" for m in _MIEN_DIEU_KHIEN)
-    return {int(r[0]) for r in ro.execute(
-        f"SELECT CAST(ts AS INTEGER) g FROM su_kien WHERE ts>=? AND ts<? AND truong='state'"
-        f" AND ({mau}) GROUP BY g HAVING COUNT(DISTINCT thiet_bi)>=?", (tu, den, DONG_LOAT))}
+    theo_giay: dict[int, set[str]] = {}
+    for g, tb in ro.execute(
+            f"SELECT CAST(ts AS INTEGER), thiet_bi FROM su_kien WHERE ts>=? AND ts<? AND truong='state'"
+            f" AND ({mau})", (tu, den)):
+        theo_giay.setdefault(int(g), set()).add(str(tb))
+    chinh: dict[str, str] = {}
+    return {g for g, ds in theo_giay.items() if len(ds) >= DONG_LOAT
+            and len({chinh.setdefault(t, _chinh(t)) for t in ds}) >= DONG_LOAT}
 
 
 def _su_kien_nguon(ro: sqlite3.Connection, tu: float, den: float, bo: set[str],
@@ -1259,8 +1343,11 @@ def _hoi_sang(tb: str) -> None:
 
 def su_kien(ma: str, gia_tri: Any, *, do_ai: bool = False) -> None:
     """Gọi từ `ha_live` với MỌI thay đổi trạng thái. Không bao giờ raise, không chặn."""
-    global _cham_luc, _da_khoi_phuc
+    global _cham_luc, _da_khoi_phuc, _gop_luc
     try:
+        if time.time() - _gop_luc > GOP_GIAY:
+            _gop_luc = time.time()
+            _gop_guong()
         ds = ds_thiet_bi()
         if not ds:
             return
@@ -1356,6 +1443,7 @@ def tra_loi(text: str) -> str | None:
 # ── Cho trang Học hỏi ──────────────────────────────────────────────────────
 def tong_quan() -> list[dict[str, Any]]:
     from services import du_doan_nha as dd
+    _gop_guong()
     d = _nap()
     ten_ha = _ten_ha()
     hien_dien = _lop(_LOP_HIEN_DIEN)
@@ -1462,10 +1550,11 @@ def _nguong_cay(nut: dict[str, Any], key: str) -> float | None:
 
 
 def _reset_for_tests(duong: Path) -> None:
-    global _PATH, _du_lieu, _cham_luc, _da_khoi_phuc
+    global _PATH, _du_lieu, _cham_luc, _da_khoi_phuc, _gop_luc
     _PATH = duong
     _du_lieu = None
     _cham_luc = 0.0
+    _gop_luc = 0.0
     _da_khoi_phuc = True
     _lan_off.clear()
     for t in [*_hen_vang.values(), *_hen_tat.values(), *_hen_sang.values()]:

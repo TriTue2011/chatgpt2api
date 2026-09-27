@@ -532,6 +532,76 @@ def test_so_dang_ky_ra_cap_guong_switch_as_x():
     assert g == {"light.phong_ngu_l1": "switch.phong_ngu_l1", "switch.phong_ngu_l1": "light.phong_ngu_l1"}
 
 
+_CAP = {"switch.phong_ngu_l1": "light.phong_ngu_l1", "light.phong_ngu_l1": "switch.phong_ngu_l1"}
+
+
+@pytest.fixture
+def guong(monkeypatch):
+    from services import ha_client
+    monkeypatch.setattr(ha_client, "thuc_the_guong", lambda e: _CAP.get(e))
+    monkeypatch.setattr(ha_client, "thuc_the_boc", lambda e: "light.phong_ngu_l1" if e in _CAP else None)
+
+
+def test_so_dang_ky_ra_thuc_the_boc():
+    from services import ha_client
+    ents = [{"entity_id": "light.phong_ngu_l1", "options": {"switch_as_x": {"entity_id": "switch.phong_ngu_l1"}}},
+            {"entity_id": "switch.phong_ngu_l1", "options": {}}]
+    assert ha_client._chi_muc_registry([], ents, [])["entity_wrapper"] == {
+        "light.phong_ngu_l1": "light.phong_ngu_l1", "switch.phong_ngu_l1": "light.phong_ngu_l1"}
+
+
+def test_cap_guong_la_mot_thiet_bi(kh, guong):
+    """Chủ máy 27/09/2026 tích cả light lẫn switch của đèn phòng ngủ (một bóng, cặp switch_as_x)
+    → hai thiết bị học riêng, luật lệch (≤ 38,5 so với ≤ 62,2 lux), cùng tự làm. Gộp thành một:
+    cài đặt mã chính thắng, khoá thiếu lấy từ mục kia, «bỏ nguồn» lấy hợp, thành tích theo sang."""
+    from services import du_doan_nha as dd
+
+    d = kh._nap()
+    bo = "binary_sensor.ban_cong_person_occupancy có người vào"
+    d["thiet_bi"]["switch.phong_ngu_l1"] = {"bat": True, "tu_lam": True, "bo_nguon": [bo], "ngoai_le": [],
+                                            "tat_khi_vang": {"bat": True, "phut": 3, "cam_bien": [NGU]}}
+    d["thiet_bi"]["light.phong_ngu_l1"] = {"bat": True, "tu_lam": True, "bo_nguon": [], "ngoai_le": [
+        {"hanh_dong": "off", "lich": "ngu", "cach": "khong", "ten": "Ngủ"}]}
+    d["mo_hinh"]["switch.phong_ngu_l1"] = {"luc": 1.0}
+    for _ in range(3):
+        dd.ghi_dung(dd.ghi_nhan("switch.phong_ngu_l1#on", "on", 0.9, {}, "tu_lam"))
+    dd.ghi_dung(dd.ghi_nhan("light.phong_ngu_l1#on", "on", 0.9, {}, "tu_lam"))
+
+    assert kh._gop_guong() == ["switch.phong_ngu_l1"]
+    ds = kh._nap()["thiet_bi"]
+    assert list(ds) == ["light.phong_ngu_l1"]
+    m = ds["light.phong_ngu_l1"]
+    assert m["ngoai_le"][0]["lich"] == "ngu", "cài đặt của mã chính thắng"
+    assert m["tat_khi_vang"]["phut"] == 3, "khoá mã chính thiếu thì lấy từ mục kia"
+    assert m["bo_nguon"] == [bo], "chủ máy đã bỏ nguồn ở đâu thì vẫn bỏ"
+    assert "switch.phong_ngu_l1" not in kh._nap()["mo_hinh"]
+    assert dd.so_luot("light.phong_ngu_l1#on") == 4 and dd.so_luot("switch.phong_ngu_l1#on") == 0
+    assert kh._gop_guong() == [], "chạy lại không đổi gì"
+    kh.dat_thiet_bi("switch.phong_ngu_l1", bat=True)
+    assert list(kh._nap()["thiet_bi"]) == ["light.phong_ngu_l1"], "tích công tắc gốc vẫn là một thiết bị"
+    assert [x["thiet_bi"] for x in kh.tong_quan()] == ["light.phong_ngu_l1"]
+
+
+def test_so_do_tim_theo_ca_cap_guong(guong, monkeypatch):
+    """Tầng hiểu thiết bị xếp cặp dưới switch.*; mục light.* không thấy sơ đồ thì tự dò toàn nhà
+    — đo 27/09/2026: luật tắt đèn phòng ngủ học theo độ sáng Ở BẾP."""
+    from services import hieu_thiet_bi_nha as h, kich_hoat_nha as kh
+    monkeypatch.setattr(h, "thoi_quen_hoc", lambda: {"switch.phong_ngu_l1": {"bat": [{"ma": NGU}]}})
+    monkeypatch.setattr(h, "ngoai_vi_hoc", lambda: {"switch.phong_ngu_l1": {"ngoai_vi": [{"ma": LUX}]}})
+    assert kh._so_do("light.phong_ngu_l1") == ({NGU}, {LUX})
+
+
+def test_dong_loat_dem_thiet_bi_that_khong_dem_thuc_the(kh, guong):
+    """Đo 27/09/2026: 95/166 giây "đồng loạt" chỉ đạt ngưỡng vì cặp gương bị đếm hai lần — lần
+    bấm tay thật bị loại khỏi bằng chứng có người."""
+    luc = _luc(0, 6, 20)
+    for ma in ("switch.phong_ngu_l1", "light.phong_ngu_l1", "switch.bep_left"):
+        _sk(ma, "on", luc)
+    assert kh.nha_co_nguoi({NGU}, luc + 60, None), "hai thiết bị thật bấm tay = có người"
+    _sk("switch.nha_tam_l1", "on", luc)
+    assert not kh.nha_co_nguoi({NGU}, luc + 60, None), "ba thiết bị thật cùng giây = máy làm"
+
+
 def test_tu_lam_tra_loi_dung_sai(kh):
     """Chủ máy 26/09/2026: tin "em đã bật" phải cho chọn đúng / sai. Sai thì làm ngược lại
     ngay; với việc ĐÃ tự làm chỉ nhận đúng hai chữ — "không" nhắn cho việc khác không được
