@@ -840,6 +840,10 @@ def test_video_cho_khung_dau_du_lau_de_mo_luong(monkeypatch):
     khung = [a for _t, a in cc._video_truc_tiep("Cam cửa", 8.0)]
     assert khung == ["khung-1", "khung-2", "khung-3"]
     assert goi[0] == cc._CHO_KHUNG_DAU and goi[1] == cc._CHO_KHUNG_SAU
+    # Khung khoá thưa (tới >6 giây khi camera bật Smart Codec): chờ giữa hai khung lâu hơn.
+    goi.clear()
+    list(cc._video_truc_tiep("Cam cửa", 8.0, "khoa"))
+    assert goi[1] == cc._CHO_KHUNG_KHOA_SAU > cc._CHO_KHUNG_SAU
 
 
 def test_luong_chinh_giu_mo_chi_doi_mau_khi_co_nguoi_cho(monkeypatch):
@@ -923,3 +927,9 @@ def test_chon_luong_theo_suc_may_va_khoa_cheo(monkeypatch):
     assert cc.luong_yolo(khoe) == "chinh"
     assert cc._luong_can_giu(khoe) == {("Cam cửa", "chinh")}
     assert cc._luong_can_giu(dict(mac_dinh, camera=[])) == set(), "không canh camera nào thì không giữ gì"
+    # Khung khoá (27/09/2026): cùng khoá chéo — YOLO đọc khung khoá chỉ khi giữ khung khoá.
+    assert cc.luong_yolo(dict(mac_dinh, yolo_luong="khoa")) == "phu"
+    khoa = dict(mac_dinh, giu_khung_khoa=True, giu_luong_phu=False, yolo_luong="khoa", chup_luong="khoa")
+    assert cc.luong_yolo(khoa) == "khoa" and cc.luong_chup(khoa) == "khoa"
+    assert cc._luong_can_giu(khoa) == {("Cam cửa", "khoa")}
+    assert cc.luong_chup(dict(mac_dinh, chup_luong="la")) == "chinh"

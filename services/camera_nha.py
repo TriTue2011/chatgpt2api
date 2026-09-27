@@ -508,10 +508,84 @@ class _DocBenBi:
             self._cap = None
 
 
+_CO_VIDEO = re.compile(r"Video:.*?\b(\d{2,5})x(\d{2,5})\b")
+
+
+class _DocKhungKhoa(_DocBenBi):
+    """CHỈ khung khoá (I) của luồng chính — ffmpeg ``-skip_frame nokey`` bỏ giải mã mọi khung
+    khác, trả ảnh BGR thô qua ống.
+
+    Đo 27/09/2026 Cam cửa, cùng người đi qua cửa 10:29–10:33: khung khoá nhận ra chủ máy 3
+    lần (giống 57–61), lượt video luồng chính 0 lần — khung thường khi người đang đi bị nén
+    bết (camera dồn byte cho khung khoá, ~119 KB so với ~19 KB). Chỉ giải mã khung khoá tốn
+    ~7% một nhân (8 phút, 417 khung, 0 lỗi) so với ~26% giữ cả luồng chính. Đổi lại chỉ có
+    khoảng 1 khung mỗi giây (theo I Interval của camera).
+    """
+
+    _proc: Any = None
+
+    def _chay(self) -> None:
+        import numpy as np
+
+        lenh = ["ffmpeg", "-hide_banner", "-nostats", "-loglevel", "info"]
+        if self._url.lower().startswith("rtsp://"):
+            lenh += ["-rtsp_transport", "tcp"]
+        lenh += ["-skip_frame", "nokey", "-i", self._url, "-an", "-fps_mode", "passthrough",
+                 "-f", "rawvideo", "-pix_fmt", "bgr24", "pipe:1"]
+        while not self._dung.is_set():
+            try:
+                p = subprocess.Popen(lenh, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            except FileNotFoundError:
+                logger.info({"event": "camera_khung_khoa_thieu_ffmpeg", "camera": self._ten})
+                return
+            self._proc = p
+            if self._dung.is_set():           # `dong()` chạy giữa lúc vừa mở
+                p.kill()
+            co = None
+            for dong in iter(p.stderr.readline, b""):
+                m = _CO_VIDEO.search(dong.decode("utf-8", "ignore"))
+                if m:
+                    co = int(m.group(1)), int(m.group(2))
+                    break
+            if co is not None:
+                # Xả stderr ở luồng riêng: ống đầy là ffmpeg đứng, không còn khung nào ra.
+                threading.Thread(target=p.stderr.read, daemon=True).start()
+                rong, cao = co
+                n = rong * cao * 3
+                while not self._dung.is_set():
+                    buf = p.stdout.read(n)
+                    if len(buf) < n:
+                        break
+                    khung = np.frombuffer(buf, np.uint8).reshape(cao, rong, 3)
+                    with self._khoa:
+                        self._khung, self._luc = khung, time.time()
+            p.kill()
+            p.wait()
+            if not self._dung.is_set():
+                # Không bao giờ ghi stderr ra log: dòng lỗi của ffmpeg mang nguyên URL có mật khẩu.
+                logger.info({"event": "camera_khung_khoa_dut", "camera": self._ten,
+                             "co": co is not None, "ma_thoat": p.returncode})
+                self._dung.wait(5.0)          # camera đang sập, đừng quay tít
+
+    def dong(self) -> None:
+        self._dung.set()
+        if self._proc is not None:
+            self._proc.kill()
+        self._luong.join(timeout=3.0)
+
+
+def _tao_doc(ten: str, luong: str, *, chi_khi_can: bool = False) -> _DocBenBi:
+    if luong == "khoa":
+        return _DocKhungKhoa(url_luong(ten, "chinh"), f"{ten}-khoa")
+    return _DocBenBi(url_luong(ten, luong), f"{ten}-{luong}", chi_khi_can=chi_khi_can)
+
+
 def url_luong(ten: str, luong: str = "chinh") -> str:
     """URL RTSP của luồng ``"chinh"`` hoặc ``"phu"`` (go2rtc phát lại theo tên luồng, hoặc
     URL RTSP khai thẳng). Luồng phụ phải KHAI (``src_ai`` / ``url_ai``) — không bao giờ đoán
-    bằng cách ghép ``"-sub"``. Ném ``LoiCamera`` khi không có luồng đọc được."""
+    bằng cách ghép ``"-sub"``. Ném ``LoiCamera`` khi không có luồng đọc được.
+
+    ``"khoa"`` (khung khoá) đọc trên luồng chính — xem ``_DocKhungKhoa``."""
     ten_that, cam = _lay(ten)
     phu = luong == "phu"
     if cam.get("kind") == "go2rtc":
@@ -568,8 +642,7 @@ def giu_luong(tap: set[tuple[str, str]]) -> None:
         dong = [_doc_ben_bi.pop(k) for k in bo]
         for ten_that, luong in muon - set(_doc_ben_bi):
             try:
-                _doc_ben_bi[(ten_that, luong)] = _DocBenBi(
-                    url_luong(ten_that, luong), f"{ten_that}-{luong}", chi_khi_can=True)
+                _doc_ben_bi[(ten_that, luong)] = _tao_doc(ten_that, luong, chi_khi_can=True)
                 logger.info({"event": "camera_luong_ben_bi_mo", "camera": ten_that, "luong": luong})
             except LoiCamera as exc:
                 logger.info({"event": "camera_luong_ben_bi_khong_mo", "camera": ten_that,
@@ -587,7 +660,7 @@ def mo_video(ten: str, luong: str = "chinh") -> "_DocBenBi | _Muon":
         d = _doc_ben_bi.get((_ten_that(ten), luong))
     if d is not None:
         return _Muon(d)
-    return _DocBenBi(url_luong(ten, luong), f"v-{ten}")
+    return _tao_doc(ten, luong)
 
 
 def khung_ben_bi(ten: str, luong: str = "phu"):

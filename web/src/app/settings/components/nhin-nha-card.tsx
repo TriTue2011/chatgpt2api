@@ -20,12 +20,13 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { useSettingsStore } from "../store";
 import { request } from "@/lib/request";
 
+type Luong = "chinh" | "phu" | "khoa";
 type Canh = {
   bat?: boolean; frigate?: boolean; yolo_quet?: boolean; chu_ky_giay?: number;
   cach_giay?: number; phien_phut?: number; camera?: string[]; camera_ve?: string[];
   hoi_ten_sau?: number; nhan?: string[];
-  giu_luong_chinh?: boolean; giu_luong_phu?: boolean;
-  yolo_luong?: "chinh" | "phu"; chup_luong?: "chinh" | "phu";
+  giu_luong_chinh?: boolean; giu_luong_phu?: boolean; giu_khung_khoa?: boolean;
+  yolo_luong?: Luong; chup_luong?: Luong;
 };
 type NhinNha = {
   yolo?: { model?: string; nguong?: number; luong?: number };
@@ -270,8 +271,8 @@ export function NhinNhaCard() {
             {oTich("Nguồn: sự kiện person của Frigate", canh.frigate !== false, (v) => datCanh({ frigate: v }))}
             {oTich("Nguồn: YOLO tự quét", canh.yolo_quet !== false, (v) => datCanh({ yolo_quet: v }))}
           </div>
-          {/* Luồng giữ mở — theo sức máy. Khoá chéo: YOLO đọc luồng chính CHỈ khi giữ luồng
-              chính (backend cũng tự ép về luồng phụ nếu đặt lệch). */}
+          {/* Luồng giữ mở — theo sức máy. Khoá chéo: YOLO đọc luồng chính / khung khoá CHỈ khi
+              giữ đúng luồng ấy (backend cũng tự ép về luồng phụ nếu đặt lệch). */}
           <div className="space-y-1 rounded bg-muted/40 p-2">
             <div className="flex flex-wrap gap-4">
               {oTich("Giữ luồng chính mở sẵn (~26% một nhân — nhận mặt có khung ngay)", !!canh.giu_luong_chinh,
@@ -279,25 +280,33 @@ export function NhinNhaCard() {
                                  : { giu_luong_chinh: false, yolo_luong: "phu" }))}
               {oTich("Giữ luồng phụ mở sẵn (~11% một nhân)", canh.giu_luong_phu !== false,
                 (v) => datCanh({ giu_luong_phu: v }))}
+              {oTich("Giữ khung khoá luồng chính (~7% một nhân — ~1 ảnh nét mỗi giây)", !!canh.giu_khung_khoa,
+                (v) => datCanh(v ? { giu_khung_khoa: true }
+                                 : { giu_khung_khoa: false, ...(canh.yolo_luong === "khoa" ? { yolo_luong: "phu" } : {}) }))}
             </div>
             <div className="flex flex-wrap gap-4 text-sm">
               <label className="flex items-center gap-2">
                 YOLO dò người trên
                 <select className="rounded border bg-background px-1 py-0.5"
-                  value={canh.giu_luong_chinh && canh.yolo_luong === "chinh" ? "chinh" : "phu"}
-                  onChange={(e) => datCanh({ yolo_luong: e.target.value as "chinh" | "phu" })}>
+                  value={canh.giu_luong_chinh && canh.yolo_luong === "chinh" ? "chinh"
+                    : canh.giu_khung_khoa && canh.yolo_luong === "khoa" ? "khoa" : "phu"}
+                  onChange={(e) => datCanh({ yolo_luong: e.target.value as Luong })}>
                   <option value="phu">luồng phụ</option>
                   <option value="chinh" disabled={!canh.giu_luong_chinh}>
                     luồng chính{canh.giu_luong_chinh ? "" : " (cần giữ luồng chính)"}
+                  </option>
+                  <option value="khoa" disabled={!canh.giu_khung_khoa}>
+                    khung khoá{canh.giu_khung_khoa ? "" : " (cần giữ khung khoá)"}
                   </option>
                 </select>
               </label>
               <label className="flex items-center gap-2">
                 Nhận mặt trên
                 <select className="rounded border bg-background px-1 py-0.5"
-                  value={canh.chup_luong === "phu" ? "phu" : "chinh"}
-                  onChange={(e) => datCanh({ chup_luong: e.target.value as "chinh" | "phu" })}>
-                  <option value="chinh">luồng chính (nét, nên chọn)</option>
+                  value={canh.chup_luong === "phu" || canh.chup_luong === "khoa" ? canh.chup_luong : "chinh"}
+                  onChange={(e) => datCanh({ chup_luong: e.target.value as Luong })}>
+                  <option value="khoa">khung khoá luồng chính (nét nhất khi người đang đi)</option>
+                  <option value="chinh">luồng chính (mọi khung)</option>
                   <option value="phu">luồng phụ (nhẹ, mặt nhỏ khó nhận)</option>
                 </select>
               </label>
@@ -306,6 +315,8 @@ export function NhinNhaCard() {
               Máy yếu: giữ luồng phụ, YOLO trên luồng phụ — luồng chính chỉ mở khi có người (chậm 1–9 giây).
               Máy khoẻ: giữ luồng chính, YOLO trên luồng chính, bỏ giữ luồng phụ — thấy người là có mặt ngay.
               Luồng không giữ thì đọc bằng cách chụp một khung mỗi lần (chậm hơn, không tốn CPU thường trực).
+              Khung khoá: camera nén đầy đủ ~1 ảnh mỗi giây — mặt người đang đi không bị nhoè như khung thường;
+              đặt I Interval bằng FPS và tắt Smart Codec trên camera để khung khoá đều.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">

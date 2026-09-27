@@ -347,6 +347,41 @@ class ChupRtspTests(unittest.TestCase):
         self.assertLess(len(nho), len(goc.getvalue()))
 
 
+@pytest.mark.integration
+@unittest.skipUnless(CO_FFMPEG, "máy này không có ffmpeg — chỉ kiểm được trong image/CI")
+class DocKhungKhoaTests(unittest.TestCase):
+    """ffmpeg thật: chỉ khung KHOÁ ra khỏi ống, đúng cỡ, đúng màu."""
+
+    def test_chi_tra_khung_khoa(self) -> None:
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        clip = str(Path(tmp.name) / "c.mp4")
+        # Độ sáng tăng đều theo thời gian (60/giây), khung khoá mỗi 15 khung = mỗi giây:
+        # khung khoá ở 0 / 1 / 2 giây ra BGR sáng ~0 / 51 / 121; khung cuối (khung thường) ~186.
+        p = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                            "color=c=black:s=160x120:r=15:d=3,format=yuv420p,geq=lum='T*60':cb=128:cr=128",
+                            "-c:v", "libx264", "-g", "15", "-keyint_min", "15", "-sc_threshold", "0",
+                            "-pix_fmt", "yuv420p", clip], capture_output=True)
+        if p.returncode:
+            self.skipTest("ffmpeg máy này không mã hoá được H.264")
+        d = cam._DocKhungKhoa(clip, "thu")
+        self.addCleanup(d.dong)
+        sang, sau = [], 0.0
+        while (kq := d.khung_moi(sau, cho=3.0)) is not None and len(sang) < 3:
+            sau, anh = kq
+            self.assertEqual(anh.shape, (120, 160, 3))
+            sang.append(float(anh.mean()))
+        self.assertTrue(sang, "không ra khung nào")
+        for s in sang:
+            # Mỗi khung phải là một khung khoá, không phải khung thường.
+            self.assertTrue(any(abs(s - k) < 12 for k in (0, 51, 121)), sang)
+        self.assertLess(sang[-1], 160, "khung cuối clip (~186) là khung thường — lọt ra ngoài")
+
+
 if __name__ == "__main__":
     unittest.main()
 

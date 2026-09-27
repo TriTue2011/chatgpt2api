@@ -71,8 +71,12 @@ _MAC_DINH: dict[str, Any] = {
     # Giữ luồng chính ~26% một nhân nhưng lượt nhận mặt có khung sau 0,02–0,04 giây.
     "giu_luong_chinh": False,
     "giu_luong_phu": True,
-    "yolo_luong": "phu",   # "chinh" CHỈ có hiệu lực khi giu_luong_chinh — khoá chéo
-    "chup_luong": "chinh", # luồng dùng để nhận mặt
+    # Khung khoá của luồng chính (~1 khung/giây, ~7% một nhân): nét hơn hẳn khung thường
+    # khi người đang đi — xem `camera_nha._DocKhungKhoa`.
+    "giu_khung_khoa": False,
+    # "chinh" / "khoa" CHỈ có hiệu lực khi giữ đúng luồng ấy — khoá chéo
+    "yolo_luong": "phu",
+    "chup_luong": "chinh", # luồng dùng để nhận mặt: "chinh" | "phu" | "khoa"
 }
 
 _hang: "queue.Queue[tuple[str, str]]" = queue.Queue(maxsize=32)
@@ -139,18 +143,23 @@ def cfg() -> dict[str, Any]:
 
 
 def luong_yolo(c: dict[str, Any]) -> str:
-    """Luồng YOLO đọc. Khoá chéo: luồng chính chỉ khi ĐANG GIỮ luồng chính — không giữ mà
-    YOLO mỗi giây mở luồng chính là tốn hơn cả giữ."""
-    return "chinh" if c.get("yolo_luong") == "chinh" and c.get("giu_luong_chinh") else "phu"
+    """Luồng YOLO đọc. Khoá chéo: luồng chính / khung khoá chỉ khi ĐANG GIỮ đúng luồng ấy —
+    không giữ mà YOLO mỗi giây mở luồng chính là tốn hơn cả giữ."""
+    l = c.get("yolo_luong")
+    if (l == "chinh" and c.get("giu_luong_chinh")) or (l == "khoa" and c.get("giu_khung_khoa")):
+        return l
+    return "phu"
 
 
 def luong_chup(c: dict[str, Any]) -> str:
-    return "phu" if c.get("chup_luong") == "phu" else "chinh"
+    l = c.get("chup_luong")
+    return l if l in ("phu", "khoa") else "chinh"
 
 
 def _luong_can_giu(c: dict[str, Any]) -> set[tuple[str, str]]:
     return {(t, l) for t in _camera_duoc_canh(c)
-            for l, co in (("chinh", c.get("giu_luong_chinh")), ("phu", c.get("giu_luong_phu"))) if co}
+            for l, co in (("chinh", c.get("giu_luong_chinh")), ("phu", c.get("giu_luong_phu")),
+                          ("khoa", c.get("giu_khung_khoa"))) if co}
 
 
 def _so(v: Any, mac_dinh: float, thap: float, cao: float) -> float:
@@ -647,6 +656,9 @@ def _xem_video(nguon, camera: str, goi_y=None, *, toi_da_giay: float = 8.0,
 _CHO_KHUNG_DAU = 12.0
 #: Giữa hai khung đã chảy đều: quá ngần này là luồng đứt thật.
 _CHO_KHUNG_SAU = 4.0
+#: Khung khoá cách nhau theo I Interval của camera; Smart Codec bật thì thưa tới 6 giây
+#: (đo 27/09/2026 Cam cửa: 1 / 2 / >6 giây trong ba lần đo).
+_CHO_KHUNG_KHOA_SAU = 8.0
 
 
 def _video_truc_tiep(camera: str, toi_da_giay: float, luong: str = "chinh"):
@@ -657,11 +669,12 @@ def _video_truc_tiep(camera: str, toi_da_giay: float, luong: str = "chinh"):
     from services import camera_nha
 
     d = camera_nha.mo_video(camera, luong)
+    cho_sau = _CHO_KHUNG_KHOA_SAU if luong == "khoa" else _CHO_KHUNG_SAU
     try:
         sau = 0.0
         het = None
         while het is None or time.time() < het:
-            kq = d.khung_moi(sau, cho=_CHO_KHUNG_DAU if het is None else _CHO_KHUNG_SAU)
+            kq = d.khung_moi(sau, cho=_CHO_KHUNG_DAU if het is None else cho_sau)
             if kq is None:
                 return
             if het is None:
