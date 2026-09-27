@@ -908,8 +908,7 @@ def _dat_nha(monkeypatch, gan_mac_dinh="manhdung", loa=()):
     monkeypatch.setattr(engines, "_vieneu", object())
     monkeypatch.setattr(engines, "_zerotts", object())
     monkeypatch.setattr(engines, "_DUNG_LUC", {"vieneu": 0.0, "zerotts": 0.0})
-    monkeypatch.setattr(engines, "_RAM_HO", {})
-    monkeypatch.setattr(engines, "_RAM_TEP", Path(tempfile.mkdtemp()) / "ram.json")
+    monkeypatch.setattr(vcfg, "tts_giu_san", lambda: set())
     monkeypatch.setattr(engines, "_rss_mb", lambda: 0.0)
 
 
@@ -940,21 +939,23 @@ def test_model_dang_doc_do_thi_de_luot_sau(monkeypatch):
     assert "vieneu" in engines._DUNG_LUC                                # còn chờ lượt sau
 
 
-def test_ho_nhe_nha_mot_lan_roi_giu_luon_va_nho_qua_khoi_dong_lai(monkeypatch):
-    """Chủ máy 24/09/2026: NghiTTS nạp lại ~3 s sau mỗi 30 phút rảnh — "giữ nhẹ hợp lý"."""
+def test_ho_chu_may_chon_giu_san_thi_khong_nha(monkeypatch):
+    """Chủ máy 24/09/2026 "giữ nghi và kokoro, zero"; 27/09/2026 nhả VieNeu Nano. Giữ theo lựa
+    chọn ghi trong cài đặt, không suy từ RAM đo khi nhả (đo thấp hơn thật, giữ nhầm Nano)."""
     _dat_nha(monkeypatch)
-    rss = iter([3000.0, 1760.0, 1760.0, 1700.0])     # vieneu trả 1240 MB, zerotts 60 MB
-    monkeypatch.setattr(engines, "_rss_mb", lambda: next(rss))
-    assert engines.nha_model_nhan_roi(bay_gio=31 * 60) == ["vieneu", "zerotts"]
-    assert engines._RAM_HO == {"vieneu": 1240.0, "zerotts": 60.0}
+    monkeypatch.setattr(vcfg, "tts_giu_san", lambda: {"zerotts"})
+    assert engines.nha_model_nhan_roi(bay_gio=31 * 60) == ["vieneu"]
+    assert engines._zerotts is not None
 
-    monkeypatch.setattr(engines, "_RAM_HO", None)                     # khởi động lại
-    monkeypatch.setattr(engines, "_vieneu", object())
-    monkeypatch.setattr(engines, "_zerotts", object())
-    monkeypatch.setattr(engines, "_DUNG_LUC", {"vieneu": 0.0, "zerotts": 0.0})
-    monkeypatch.setattr(engines, "_rss_mb", lambda: 0.0)
-    assert engines.nha_model_nhan_roi(bay_gio=31 * 60) == ["vieneu"]  # họ nặng vẫn nhả
-    assert engines._zerotts is not None                               # họ nhẹ giữ, không nhả thử lại
+
+def test_giu_san_mac_dinh_va_doc_tu_cai_dat(monkeypatch):
+    monkeypatch.setattr(vcfg, "_sub", lambda name: {})
+    assert vcfg.tts_giu_san() == {"nghi", "kokorovi", "zerotts"}
+    assert "vieneunano" not in vcfg.tts_giu_san()
+    monkeypatch.setattr(vcfg, "_sub", lambda name: {"giu_san": ["Nghi", " vieneunano "]})
+    assert vcfg.tts_giu_san() == {"nghi", "vieneunano"}
+    monkeypatch.setattr(vcfg, "_sub", lambda name: {"giu_san": []})
+    assert vcfg.tts_giu_san() == set(), "danh sách rỗng = không giữ họ nào ngoài họ đang gán"
 
 
 def test_nho_giong_gan_nhat_moi_ho_ghi_khi_doi(monkeypatch):
@@ -968,12 +969,14 @@ def test_nho_giong_gan_nhat_moi_ho_ghi_khi_doi(monkeypatch):
     assert _json.loads(tep.read_text()) == {"nghi": "nghi:my-tam", "kokorovi": "kokorovi:mai_linh"}
 
 
-def test_nap_san_chi_ho_nhe_da_dung_bang_giong_gan_nhat(monkeypatch):
-    """Chủ máy 24/09/2026: đổi ảnh xong câu đầu không phải chờ nạp model."""
-    monkeypatch.setattr(engines, "_RAM_HO", {"nghi": 158.0, "zerotts": 464.0, "vieneu": 1240.0})
+def test_nap_san_chi_ho_giu_da_dung_bang_giong_gan_nhat(monkeypatch):
+    """Chủ máy 24/09/2026: đổi ảnh xong câu đầu không phải chờ nạp model — với họ GIỮ. Họ không
+    giữ (VieNeu Nano) không nạp sẵn: nạp rồi 30 phút sau lại nhả."""
+    monkeypatch.setattr(vcfg, "tts_giu_san", lambda: {"nghi", "zerotts"})
+    monkeypatch.setattr(engines, "_ho_dang_gan", lambda: set())
     monkeypatch.setattr(engines, "_GIONG_CUOI", {
         "nghi": "nghi:my-tam", "zerotts": "zerotts:maichi", "vieneu": "vieneu:Trúc Ly",
-        "kokorovi": "kokorovi:mai_linh"})                              # chưa đo → không nạp
+        "vieneunano": "vieneunano:Mạnh Dũng"})
     goi: list[str] = []
 
     def gia(text, voice):
@@ -984,7 +987,7 @@ def test_nap_san_chi_ho_nhe_da_dung_bang_giong_gan_nhat(monkeypatch):
 
     monkeypatch.setattr(engines, "synthesize", gia)
     assert engines.nap_giong_da_dung() == ["nghi"]                     # zerotts lỗi thì bỏ qua
-    assert goi == ["nghi:my-tam", "zerotts:maichi"]                    # họ nặng không nạp
+    assert goi == ["nghi:my-tam", "zerotts:maichi"]                    # họ không giữ không nạp
     goi.clear()
     assert engines.nap_giong_da_dung(bo_qua="nghi:my-tam") == []       # warmup vừa nạp rồi
 
@@ -995,13 +998,6 @@ def test_warmup_khong_nap_vieneu_khi_mac_dinh_la_giong_khac(monkeypatch):
     monkeypatch.setattr(engines, "_vieneu_stream", lambda *a, **k: (_ for _ in ()).throw(AssertionError("nap VieNeu")))
     monkeypatch.setattr(engines, "_warm_zerotts", lambda: None)
     assert engines.warmup_tts("manhdung")["ok"] is False
-
-
-def test_so_ram_hong_thi_coi_nhu_chua_do(monkeypatch):
-    _dat_nha(monkeypatch)
-    engines._RAM_TEP.write_text("khong phai json")
-    monkeypatch.setattr(engines, "_RAM_HO", None)
-    assert engines.nha_model_nhan_roi(bay_gio=31 * 60) == ["vieneu", "zerotts"]
 
 
 # ── ZeroTTS: chip khoẻ giữ fp32, không kịp thời gian thực thì int8 (24/09/2026) ──

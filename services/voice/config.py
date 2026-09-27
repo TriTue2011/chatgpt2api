@@ -241,6 +241,20 @@ def tts_voice() -> str:
     return str(_sub("tts").get("voice") or _DEFAULT_VOICE).strip() or _DEFAULT_VOICE
 
 
+#: Họ model TTS giữ sẵn trong RAM dù không gán cho loa/kênh nào — lựa chọn của chủ máy, sửa được
+#: qua cài đặt ``voice.tts.giu_san``. 24/09/2026: "giữ nghi và kokoro, zero"; 27/09/2026: nhả
+#: VieNeu Nano. Không suy từ số đo RAM được: Nano tốn ~308 MB khi nạp, Kokoro Việt ~732 MB — không
+#: ngưỡng nào vừa giữ Kokoro vừa nhả Nano.
+_GIU_SAN_MAC_DINH = ("nghi", "kokorovi", "zerotts")
+
+
+def tts_giu_san() -> set[str]:
+    v = _sub("tts").get("giu_san")
+    if isinstance(v, list):
+        return {str(x).strip().lower() for x in v if str(x).strip()}
+    return set(_GIU_SAN_MAC_DINH)
+
+
 def tts_length_scale() -> float:
     """>1 = đọc chậm lại (piper --length-scale). Stack trên 200 dùng 1.1."""
     try:

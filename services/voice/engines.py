@@ -194,18 +194,12 @@ def to_wav_16k_mono(audio: bytes, src_hint: str = "") -> bytes:
 _NHA_SAU_GIAY = 30 * 60
 _NHA_NHIP_GIAY = 5 * 60
 _DUNG_LUC: dict[str, float] = {}
-# Nhả họ nhẹ chẳng tiết kiệm được bao nhiêu mà lượt kế phải nạp lại vài giây
-# (NghiTTS ~3 s). Chủ máy 24/09/2026: "giữ nghi và kokoro, zero". Không liệt kê
-# họ nào nhẹ: lần nhả đầu ĐO RAM thật trả về; dưới ngưỡng thì từ đó giữ luôn.
-# Đo trên c2a cùng ngày (MB trả về khi nhả): nghi 80–158, kokorovi 338,
-# vieneunano 281, zerotts int8 464 — VieNeu Turbo ~1240 và ZeroTTS fp32 (máy
-# khoẻ tự chọn, 867 MB trên đĩa) vượt ngưỡng nên vẫn nhả. Số đo ghi ra đĩa để
-# khởi động lại (mỗi lần đổi ảnh) không phải nhả thử lần nữa.
-_NHE_MB = 600.0
-_RAM_HO: dict[str, float] | None = None       # họ → MB trả về khi nhả (đã đo)
-_RAM_TEP = Path(vcfg.DATA_DIR) / "tts_ram_ho.json"
+# Họ nào GIỮ luôn: đang gán (mặc định, sổ loa, Assist) và họ chủ máy chọn giữ sẵn
+# (`vcfg.tts_giu_san`). Trước 27/09/2026 "giữ" suy từ RAM trả về khi nhả (< 600 MB) — số ấy
+# đo thấp hơn thật (Kokoro Việt ghi 338 MB, nạp tốn ~732 MB; ZeroTTS 464 so với ~664), và
+# giữ luôn VieNeu Nano (~308 MB) không gán cho ai mà chủ máy không chọn.
 # Giọng đọc gần nhất của từng họ: khởi động lại (đổi ảnh) thì nạp sẵn đúng giọng
-# ấy cho họ nhẹ, câu đầu không phải chờ nạp model (xem `nap_giong_da_dung`).
+# ấy cho họ giữ sẵn, câu đầu không phải chờ nạp model (xem `nap_giong_da_dung`).
 _GIONG_CUOI: dict[str, str] | None = None
 _GIONG_TEP = Path(vcfg.DATA_DIR) / "tts_giong_cuoi.json"
 _GIU_ASSIST: set[str] = set()
@@ -227,6 +221,11 @@ def giu_cho_assist(voice: str) -> None:
     """Assist (Wyoming) vừa đọc giọng này: giữ họ ấy trong RAM."""
     if voice:
         _GIU_ASSIST.add(_ho_engine(voice))
+
+
+def _ho_giu() -> set[str]:
+    """Họ không bao giờ nhả: đang gán + chủ máy chọn giữ sẵn."""
+    return _ho_dang_gan() | vcfg.tts_giu_san()
 
 
 def _ho_dang_gan() -> set[str]:
@@ -275,11 +274,11 @@ def nha_model_nhan_roi(bay_gio: float | None = None) -> list[str]:
     import time as _time
 
     bay_gio = _time.monotonic() if bay_gio is None else bay_gio
-    giu = _ho_dang_gan()
-    ram = _ram_ho()
+    giu = _ho_giu()
+    tra: dict[str, float] = {}
     da_nha = []
     for ho, luc in list(_DUNG_LUC.items()):
-        if ho in giu or bay_gio - luc < _NHA_SAU_GIAY or ram.get(ho, _NHE_MB) < _NHE_MB:
+        if ho in giu or bay_gio - luc < _NHA_SAU_GIAY:
             continue
         truoc = _rss_mb()
         if not _bo_model(ho):
@@ -292,13 +291,12 @@ def nha_model_nhan_roi(bay_gio: float | None = None) -> list[str]:
             ctypes.CDLL("libc.so.6").malloc_trim(0)
         except Exception:
             pass
-        ram[ho] = max(0.0, truoc - _rss_mb())
+        tra[ho] = max(0.0, truoc - _rss_mb())
         _DUNG_LUC.pop(ho, None)
         da_nha.append(ho)
     if da_nha:
-        _ghi_ram_ho(ram)
         logger.info("voice: nha model khong dung: %s (giu: %s)",
-                    ", ".join(f"{ho} {ram[ho]:.0f} MB" for ho in da_nha), ",".join(sorted(giu)))
+                    ", ".join(f"{ho} {tra[ho]:.0f} MB" for ho in da_nha), ",".join(sorted(giu)))
     return da_nha
 
 
@@ -306,16 +304,6 @@ def _rss_mb() -> float:
     import os
     with open("/proc/self/statm") as f:
         return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 2**20
-
-
-def _ram_ho() -> dict[str, float]:
-    global _RAM_HO
-    if _RAM_HO is None:
-        try:
-            _RAM_HO = {str(k): float(v) for k, v in json.loads(_RAM_TEP.read_text()).items()}
-        except (OSError, ValueError, AttributeError):
-            _RAM_HO = {}
-    return _RAM_HO
 
 
 def _giong_cuoi() -> dict[str, str]:
@@ -344,18 +332,18 @@ def _nho_giong(voice: str) -> None:
 
 
 def nap_giong_da_dung(bo_qua: str = "") -> list[str]:
-    """Nạp sẵn họ NHẸ đã từng đọc, bằng giọng gần nhất của họ ấy.
+    """Nạp sẵn họ GIỮ (`_ho_giu`) đã từng đọc, bằng giọng gần nhất của họ ấy.
 
-    Gọi nền lúc khởi động, sau `warmup_tts` (``bo_qua``: giọng nó vừa nạp).
-    Chỉ họ đã đo là nhẹ (`_RAM_HO` < `_NHE_MB`): họ nặng như VieNeu Turbo không
-    nạp sẵn. Lỗi họ nào bỏ họ ấy — lượt đọc thật tự nạp như cũ.
+    Gọi nền lúc khởi động, sau `warmup_tts` (``bo_qua``: giọng nó vừa nạp). Họ không
+    giữ thì không nạp sẵn — nạp rồi 30 phút sau lại nhả. Lỗi họ nào bỏ họ ấy — lượt
+    đọc thật tự nạp như cũ.
     """
     import time as _time
 
-    ram = _ram_ho()
+    giu = _ho_giu()
     da_nap = []
     for ho, giong in list(_giong_cuoi().items()):
-        if giong == bo_qua or ram.get(ho, _NHE_MB) >= _NHE_MB:
+        if giong == bo_qua or ho not in giu:
             continue
         t0 = _time.perf_counter()
         try:
@@ -366,13 +354,6 @@ def nap_giong_da_dung(bo_qua: str = "") -> list[str]:
         da_nap.append(ho)
         logger.info("voice: nap san %s (%d ms)", giong, int((_time.perf_counter() - t0) * 1000))
     return da_nap
-
-
-def _ghi_ram_ho(ram: dict[str, float]) -> None:
-    try:
-        _RAM_TEP.write_text(json.dumps({k: round(v, 1) for k, v in ram.items()}))
-    except OSError as exc:
-        logger.warning("voice: khong ghi duoc so RAM ho model: %s", str(exc)[:120])
 
 
 def _vong_nha() -> None:
