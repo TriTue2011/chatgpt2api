@@ -42,13 +42,17 @@ def tx(tmp_path, monkeypatch):
     gui: list[tuple] = []
     loa: list[str] = []
     monkeypatch.setattr(trong_xe, "_khung", lambda cam, luong="phu": canh["anh"])
+    monkeypatch.setattr(trong_xe, "XAC_NHAN_GIAY", 0.0)   # đếm lượt; mốc giây có test riêng
+    monkeypatch.setattr(trong_xe, "_chay_nen", lambda f: f())  # nhìn mặt nền → chạy đồng bộ
     monkeypatch.setattr(trong_xe, "_anh_ro", lambda cam: canh["anh"])
     monkeypatch.setattr(trong_xe, "_ve_xe", lambda anh, xe: "http://anh")
     monkeypatch.setattr(trong_xe, "_chay", lambda: None)
     monkeypatch.setattr(trong_xe, "_phat", lambda announce, ten, cau: loa.append(ten))
     monkeypatch.setattr(camera_nha, "tim", lambda ten: ("Cam cửa", {"name": "Cam cửa"}, ["Cam cửa"]))
-    monkeypatch.setattr(nhin_nha, "vat_the", lambda anh, chi_nhan=None: [
-        v for v in canh["vat"] if chi_nhan is None or v.nhan in chi_nhan])
+    monkeypatch.setattr(nhin_nha, "vat_the", lambda anh, chi_nhan=None, nguong=None: [
+        v for v in canh["vat"] if (chi_nhan is None or v.nhan in chi_nhan)
+        and (nguong is None or v.diem >= nguong)])
+    monkeypatch.setattr(nhin_nha, "nguong_yolo", lambda: 0.35)
     monkeypatch.setattr(nhin_nha, "co_mat", lambda: True)
     monkeypatch.setattr(nhin_nha, "phan_tich_khung", lambda anh: nhin_nha.KhungDaXem(200, 200, [], canh["mat"]))
     monkeypatch.setattr(so_mat_nha, "su_kien_gan", lambda *a, **k: [])
@@ -66,6 +70,17 @@ def _bat(canh):
     for _ in range(trong_xe.LAN_DO_NHIEU):         # bot tự đo độ nhiễu của chính vùng xe
         assert trong_xe.kiem_mot_lan() == ""
     return kq
+
+
+def test_xe_diem_thap_van_trong_nguoi_diem_thap_khong_tinh(tx):
+    """27/09/2026 23:5x: xe đạp trẻ em sát tường ban đêm YOLO chỉ 0,20–0,28 → "không thấy xe nào".
+    Chủ máy đã nói có xe: dò xe ở NGUONG_XE; người giữ ngưỡng chung."""
+    xe_mo = yolo_nha.VatThe("motorcycle", 0.22, tuple(HOP))
+    bong = yolo_nha.VatThe("person", 0.2, (150, 0, 195, 45))
+    tx["vat"] = [xe_mo, bong]
+    kq = trong_xe.bat("cửa", loa=[], dich="zalop:acc:nhom")
+    assert kq["xe"][0]["nhan"] == "motorcycle"
+    assert trong_xe._moc["yen"], "bóng mờ 0,2 không phải người — cảnh vẫn yên"
 
 
 def test_khong_thay_xe_thi_hoi_lai(tx):
@@ -110,8 +125,27 @@ def test_nguoi_nha_o_cho_xe_thi_thoi_khong_bao(tx):
     tx["anh"], tx["vat"] = _khung(xe_con=False), [NGUOI_CHE]
     tx["mat"] = [{"nguoi_id": "p1", "loai": "quen", "ten": "Con trai Trí Anh"}]
     assert trong_xe.kiem_mot_lan() == "nguoi_nha"
-    assert tx["loa"] == [] and len(tx["gui"]) == 1
-    assert "Con trai Trí Anh vừa lấy xe" in tx["gui"][0][1]
+    assert tx["loa"] == [] and len(tx["gui"]) == 2, "báo sớm NGAY, nhìn mặt xong mới biết là người nhà"
+    assert "vừa bị động tới" in tx["gui"][0][1] and "Con trai Trí Anh vừa lấy xe" in tx["gui"][1][1]
+
+
+def test_bao_dong_roi_moi_nhan_ra_nguoi_nha_thi_dinh_chinh(tx, monkeypatch):
+    """Nhìn mặt chạy nền (~2 giây) — báo động có thể tới trước. Nhận ra người nhà sau đó thì
+    nhắn đính chính, không im."""
+    cho: list = []
+    monkeypatch.setattr(trong_xe, "_chay_nen", lambda f: cho.append(f))
+    _bat(tx)
+    tx["anh"], tx["vat"] = _khung(xe_con=False), [NGUOI_CHE]
+    kq = [trong_xe.kiem_mot_lan() for _ in range(trong_xe.LAN_XAC_NHAN)]
+    assert kq[-1] == "bao_dong" and len(cho) == 1
+    tx["mat"] = [{"nguoi_id": "p1", "loai": "quen", "ten": "Con trai Trí Anh"}]
+    cho[0]()
+    assert "✅ Em vừa nhận ra Con trai Trí Anh" in tx["gui"][-1][1]
+
+
+def test_hai_nhan_cung_mot_xe_thi_gop(tx):
+    tx["vat"] = [yolo_nha.VatThe("bicycle", 0.25, tuple(HOP)), yolo_nha.VatThe("motorcycle", 0.24, tuple(HOP))]
+    assert [x["nhan"] for x in trong_xe.bat("cửa", loa=[])["xe"]] == ["bicycle"]
 
 
 def test_ke_dat_xe_con_trong_khung_van_bao_ngay(tx):
@@ -215,6 +249,21 @@ def test_tat_den_ca_phong_khong_bao_dong(tx):
     assert tx["gui"] == []
     tx["anh"], tx["vat"] = np.full((200, 200, 3), 20, np.uint8), [XE]   # YOLO thấy lại xe → lấy lại mốc
     assert trong_xe.kiem_mot_lan() == "doi_sang"
+
+
+def test_bao_dong_sau_du_giay_lech_lien(tx, monkeypatch):
+    """Chủ máy 27/09/2026: "báo động sau khoảng 4 giây — xuống còn 2s thôi". Lệch liền đủ
+    XAC_NHAN_GIAY (1,0 s) và ≥ LAN_XAC_NHAN lượt thì báo — không phụ thuộc nhịp lượt."""
+    monkeypatch.setattr(trong_xe, "XAC_NHAN_GIAY", 1.0)
+    _bat(tx)
+    gio = [1000.0]
+    monkeypatch.setattr(trong_xe.time, "time", lambda: gio[0])
+    tx["anh"], tx["vat"] = _khung(xe_con=False), []
+    kq = []
+    for _ in range(4):                               # mỗi lượt ~0,8 giây như máy thật
+        kq.append(trong_xe.kiem_mot_lan()); gio[0] += 0.8
+    assert kq == ["lech", "lech", "bao_dong", ""], kq
+    assert "vừa bị động tới" in tx["gui"][0][1] and "BÁO ĐỘNG" in tx["gui"][-1][1]
 
 
 def test_mac_dinh_khong_hu_loa_chi_nhan_tin(tx, monkeypatch):

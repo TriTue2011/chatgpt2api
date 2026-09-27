@@ -28,11 +28,25 @@ from services.config import DATA_DIR
 from utils.log import logger
 
 XE = frozenset({"car", "motorcycle", "bicycle", "truck", "bus"})
-CHU_KY = 1.0
+#: Ngưỡng YOLO cho XE khi trông — thấp hơn ngưỡng chung (0,35): chủ máy đã NÓI có xe, còn báo
+#: nhầm hay không do các lớp của chính bot (vùng ảnh khác hẳn nhiễu tự đo, độ ổn định tự đo).
+#: Đo 27/09/2026 23:5x Cam phòng khách, xe đạp trẻ em đặt sát tường ban đêm: luồng chính 0,20–0,27,
+#: luồng phụ 0,15–0,28 → "không thấy xe nào"; cùng xe giữa phòng lúc 23:07 được 0,71. NGƯỜI giữ
+#: ngưỡng chung — bóng mờ mà coi là người thì cảnh không bao giờ "yên".
+NGUONG_XE = 0.15
+#: Nghỉ giữa hai lượt kiểm. Một lượt (lấy khung luồng giữ mở + YOLO) ~0,3 giây → ~0,8 giây/lượt.
+CHU_KY = 0.5
 #: Báo sớm «có người ở chỗ xe» tối đa một lần trong ngần này giây.
 BAO_SOM_CACH = 60.0
 IOU_CON = 0.5
-LAN_XAC_NHAN = 3
+#: Báo động khi xe lệch LIÊN TỤC đủ `XAC_NHAN_GIAY` và ít nhất `LAN_XAC_NHAN` lượt. Chủ máy
+#: 27/09/2026: báo động ~4 giây sau khi xe đi là chậm — "xuống còn 2s thôi". Đo theo GIÂY chứ không
+#: theo số lượt: nhịp lượt đổi theo máy, còn điều chủ máy cần là thời gian. Không lo YOLO lỡ 1–2
+#: khung: "lệch" còn đòi ảnh vùng xe khác hẳn nhiễu tự đo.
+#: Đo thật 23:58 (xe đạp, Cam phòng khách): chạm xe ~19,3–19,8 → báo sớm 19,8, báo động 22,0 với
+#: mốc 1,5 giây (lượt giãn 1,1 giây lúc nhìn mặt chạy nền) → hạ 1,0.
+LAN_XAC_NHAN = 2
+XAC_NHAN_GIAY = 1.0
 LAN_DO_NHIEU = 5
 #: Đủ ngần này lượt YÊN (có mốc) thì bắt đầu phán — không bắt chờ đủ LAN_DO_NHIEU: chủ máy
 #: 27/09/2026 "ít nhất phải thông báo ngay chứ".
@@ -133,6 +147,14 @@ def _anh_ro(cam: str):
     """Ảnh luồng CHÍNH để nhìn mặt — mặt trong luồng phụ 640×480 chỉ còn vài chục điểm ảnh."""
     from services import camera_nha, yolo_nha
     return yolo_nha.doc_anh(camera_nha.chup_tho(cam, timeout=10)[1])
+
+
+def _vat(anh) -> list:
+    """Xe ở ngưỡng `NGUONG_XE`, người ở ngưỡng chung — một lượt YOLO."""
+    from services import nhin_nha
+    nguong = nhin_nha.nguong_yolo()
+    return [v for v in nhin_nha.vat_the(anh, chi_nhan=set(XE) | {"person"}, nguong=NGUONG_XE)
+            if v.nhan in XE or v.diem >= nguong]
 
 
 def _iou(a, b) -> float:
@@ -297,9 +319,13 @@ def bat(camera: str = "", *, loa: list[str] | None = None, dich: str = "") -> di
         raise LoiTrongXe("Em chưa rõ camera nào. Đang có: " + ", ".join(goi_y))
     luong = cai_dat()["luong"]
     anh = _khung(ten, luong)
-    vat = nhin_nha.vat_the(anh, chi_nhan=set(XE) | {"person"})
-    xe = [{"nhan": v.nhan, "diem": round(float(v.diem), 2), "hop": [int(x) for x in v.hop]}
-          for v in vat if v.nhan in XE]
+    vat = _vat(anh)
+    xe: list[dict[str, Any]] = []
+    for v in sorted((v for v in vat if v.nhan in XE), key=lambda v: -v.diem):
+        # Một chiếc xe YOLO hay trả HAI nhãn cùng hộp (bicycle 0,25 + motorcycle 0,24 — đo thật
+        # 27/09/2026): giữ nhãn điểm cao, bỏ hộp trùng.
+        if all(_iou(v.hop, x["hop"]) < 0.7 for x in xe):
+            xe.append({"nhan": v.nhan, "diem": round(float(v.diem), 2), "hop": [int(x) for x in v.hop]})
     if not xe:
         raise LoiTrongXe(f"Em không thấy xe nào ở {ten} lúc này — anh kiểm lại xe có trong khung camera không ạ.")
     if loa is None:
@@ -342,17 +368,15 @@ def _mat_nha_trong_khung(anh, kq_vat: list) -> str:
     return ""
 
 
-def _nguoi_nha(cam: str, anh, kq_vat: list) -> str:
-    """Tên người nhà vừa thấy quanh xe, không có → "".
+def _nguoi_nha(cam: str) -> str:
+    """Tên người nhà vừa thấy quanh xe, không có → "". KHÔNG nhìn mặt ở đây (chậm) — nhìn mặt
+    chạy nền (`_xet_mat_nen`) và ghi vào `_moc["nha"]`.
 
-    Ba nguồn: mặt trong khung này; mặt nhận được lúc có người đứng che xe (`_moc["nha"]`,
-    ghi trong lúc chờ); lượt gặp người quen của camera canh / thiết bị nhận mặt ngoài.
+    Hai nguồn: mặt nhận được lúc có người ở chỗ xe (`_moc["nha"]`); lượt gặp người quen của
+    camera canh / thiết bị nhận mặt ngoài.
     """
     from services import so_mat_nha
 
-    ten = _mat_nha_trong_khung(anh, kq_vat)
-    if ten:
-        return ten
     nha = _moc.get("nha")
     if nha and time.time() - nha[1] <= NHA_GIAY:
         return str(nha[0])
@@ -407,7 +431,7 @@ def kiem_mot_lan() -> str:
         return ""
     cam = d["camera"]
     anh = _khung(cam, str(d.get("luong") or "phu"))
-    vat = nhin_nha.vat_the(anh, chi_nhan=set(XE) | {"person"})
+    vat = _vat(anh)
     hien = [v for v in vat if v.nhan in XE]
     global _cho_xe
     with _khoa:
@@ -474,22 +498,18 @@ def kiem_mot_lan() -> str:
                 lech_ca = True
         _moc["lech_lien"] = _moc["lech_lien"] + 1 if lech_ca else 0
         lech_lien = _moc["lech_lien"]
+        if not lech_ca:
+            _moc.pop("xet_mat", None)               # hết lệch: lần sau lại nhìn mặt
+        if lech_lien == 1:
+            _moc["lech_tu"] = time.time()
+        du_lau = time.time() - float(_moc.get("lech_tu") or time.time()) >= XAC_NHAN_GIAY
     # KHÔNG còn chờ người rời khung mới đếm. Đo 27/09/2026 23:07 Cam phòng khách: người vào khung
     # 23:07:35 (Frigate), dắt xe, rời khung 23:07:58 — bot báo đúng 23:07:58 vì luật "có người
     # đứng che xe thì chưa đếm"; chủ máy: "lấy trộm đi xa rồi mới báo". Nay: lượt lệch đầu tiên có
     # người ở chỗ xe → nhìn mặt (luồng chính); người nhà thì dừng, không thì BÁO SỚM ngay; đủ
-    # LAN_XAC_NHAN lượt lệch liền → báo động.
-    if lech_ca and _che_xe(d["xe"], vat):
-        try:
-            ten = _mat_nha_trong_khung(_anh_ro(cam), [v for v in vat if v.nhan == "person"])
-        except Exception as exc:  # noqa: BLE001 — không chụp được luồng chính thì thôi nhìn mặt
-            logger.info({"event": "trong_xe_anh_ro_loi", "loi": str(exc)[:120]})
-            ten = ""
-        if ten:
-            with _khoa:
-                _moc["nha"] = (ten, time.time())
+    # XAC_NHAN_GIAY lệch liền (≥ LAN_XAC_NHAN lượt) → báo động.
     if lech_ca and lech_lien == 1:
-        ten = _nguoi_nha(cam, anh, vat)
+        ten = _nguoi_nha(cam)
         if ten:
             dung("nguoi_nha")
             _bao(d, f"🏠 {ten} vừa lấy xe ở {cam} — em dừng trông xe.", "")
@@ -500,9 +520,17 @@ def kiem_mot_lan() -> str:
             _bao(d, f"⚠️ Xe ở {cam} vừa bị động tới lúc {time.strftime('%H:%M:%S')}"
                     + (" — có người ở chỗ xe" if _che_xe(d["xe"], vat) else "")
                     + ", em chưa nhận ra người nhà. Em đang theo dõi tiếp.", _ve_xe(anh, d["xe"]))
-    if lech_lien < LAN_XAC_NHAN:
+    if lech_ca and _che_xe(d["xe"], vat) and not _moc.get("xet_mat"):
+        # Nhìn mặt NỀN, không chặn lượt kiểm: chụp luồng chính + nhận mặt tốn ~2 giây. Đo thật
+        # 27/09/2026 23:56: nhìn mặt ngay trong lượt → lượt lệch đầu mất 2,4 giây, báo động ~4
+        # giây sau khi chạm xe; chủ máy cần ~2 giây.
+        _moc["xet_mat"] = True
+        _chay_nen(lambda: _xet_mat_nen(cam, [v for v in vat if v.nhan == "person"], d))
+        if not _nap().get("bat"):                   # (test chạy nền đồng bộ: đã dừng vì người nhà)
+            return "nguoi_nha"
+    if lech_lien < LAN_XAC_NHAN or not du_lau:
         return "lech" if lech_ca else ""
-    ten = _nguoi_nha(cam, anh, vat)
+    ten = _nguoi_nha(cam)
     if ten:
         dung("nguoi_nha")
         _bao(d, f"🏠 {ten} vừa lấy xe ở {cam} — em dừng trông xe.", "")
@@ -510,6 +538,28 @@ def kiem_mot_lan() -> str:
     dung("bao_dong")
     _bao_dong(d, anh)
     return "bao_dong"
+
+
+def _chay_nen(f) -> None:
+    threading.Thread(target=f, name="trong-xe-mat", daemon=True).start()
+
+
+def _xet_mat_nen(cam: str, nguoi: list, d: dict[str, Any]) -> None:
+    """Nhìn mặt trên ảnh luồng CHÍNH. Người nhà: chưa báo động thì dừng trông, đã báo thì đính chính."""
+    try:
+        ten = _mat_nha_trong_khung(_anh_ro(cam), nguoi)
+    except Exception as exc:  # noqa: BLE001 — không chụp được luồng chính thì thôi nhìn mặt
+        logger.info({"event": "trong_xe_anh_ro_loi", "loi": str(exc)[:120]})
+        ten = ""
+    if not ten:
+        return
+    with _khoa:
+        _moc["nha"] = (ten, time.time())
+    if _nap().get("bat"):
+        dung("nguoi_nha")
+        _bao(d, f"🏠 {ten} vừa lấy xe ở {cam} — em dừng trông xe.", "")
+    elif _nap().get("ly_do") == "bao_dong":
+        _bao(d, f"✅ Em vừa nhận ra {ten} ở chỗ xe ({cam}) — có lẽ không phải trộm ạ.", "")
 
 
 def _vong(dung_ev: threading.Event) -> None:
