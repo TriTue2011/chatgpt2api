@@ -416,19 +416,32 @@ def _phan_loai_theo_nhip(conn: sqlite3.Connection, thiet_bi: str, truong: str,
 #: Chỉ việc bot TỰ quyết mới vào đây; bot làm vì người bảo (lệnh chat, trả lời
 #: «có») là quyết định của người.
 _BOT_TU_LAM_GIAY = 15.0
-_bot_tu_lam: dict[str, float] = {}
+_bot_tu_lam: dict[str, tuple[float, str]] = {}
 
 
-def bot_tu_lam(thiet_bi: str) -> None:
-    """Đánh dấu: thay đổi của ``thiet_bi`` trong vài giây tới là do bot tự làm."""
-    _bot_tu_lam[thiet_bi] = time.time()
+def bot_tu_lam(thiet_bi: str, huong: str = "") -> None:
+    """Đánh dấu: thay đổi của ``thiet_bi`` trong vài giây tới là do bot tự làm.
+
+    ``huong``: "on" / "off" — chiều bot vừa ra lệnh, để thay đổi NGƯỢC chiều trong cửa sổ ấy
+    không bị tính cho bot (xem `la_bot_tu_lam`)."""
+    _bot_tu_lam[thiet_bi] = (time.time(), str(huong or "").lower())
 
 
-def la_bot_tu_lam(thiet_bi: str) -> bool:
+def la_bot_tu_lam(thiet_bi: str, gia_tri: Any = None) -> bool:
     """Thay đổi vừa tới của ``thiet_bi`` có phải do bot tự làm không (trong
-    ``_BOT_TU_LAM_GIAY`` sau lệnh — HA báo cả thay đổi thuộc tính nên không dùng-một-lần)."""
-    luc = _bot_tu_lam.get(thiet_bi)
-    return luc is not None and time.time() - luc <= _BOT_TU_LAM_GIAY
+    ``_BOT_TU_LAM_GIAY`` sau lệnh — HA báo cả thay đổi thuộc tính nên không dùng-một-lần).
+
+    Trạng thái mới NGƯỢC chiều lệnh thì không phải bot: bot bật mà trạng thái về «off», hay bot
+    tắt mà trạng thái khác «off». Đo 27/09/2026: bot bật đèn phòng ngủ 17:34:51, người tắt
+    17:35:02 — 11 giây, lọt cửa sổ, bị ghi do_ai=1; lần bật ấy thành «đúng» dù người đã tắt ngay.
+    Không so khớp «on» khi bot bật: bật điều hoà ra «cool», rèm ra «open»."""
+    moc = _bot_tu_lam.get(thiet_bi)
+    if moc is None or time.time() - moc[0] > _BOT_TU_LAM_GIAY:
+        return False
+    if gia_tri is None or not moc[1]:
+        return True
+    tat = str(gia_tri).lower() == "off"
+    return tat if moc[1] == "off" else not tat
 
 
 # ── Ghi ─────────────────────────────────────────────────────────────────────

@@ -1700,6 +1700,10 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
      "ai («vân tay 11 là con trai», «đó là tôi») thì gọi viec='dat_ten' — "
      "đây là cách bot HỌC tên, đừng bỏ qua."),
     ("homeassistant", _KW_NHATHONGMINH,
+     "- Trả lời tin bot «#N Em đã bật/tắt … Đúng hay sai ạ?» / «#N … bật không ạ?» bằng lời "
+     "tự nhiên → tra_loi_bot_nha (dung/sai/co/khong). Người dùng DẠY bot về nhà (thiết bị nào "
+     "nối với nào, cảm biến nào là gì) → ghi_du_kien. Còn LỆNH «tắt đèn đi» → control_home."),
+    ("homeassistant", _KW_NHATHONGMINH,
      "- Nếp sinh hoạt bot học được (giờ ăn, buổi sáng, trước khi ngủ) → "
      "tinh_huong_nha. Người dùng đồng ý với tên bot đề xuất thì gọi "
      "viec='duyet', đặt tên khác thì thêm ten_moi."),

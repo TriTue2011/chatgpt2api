@@ -864,16 +864,32 @@ def _dang_cho(tb: str) -> dict[str, Any] | None:
     return dict(r) if r else None
 
 
-def _vua_lam(tb: str, hd: str) -> bool:
-    """Trong NGHI_LAP: đã hỏi/làm CÙNG hướng, hoặc bot đã TỰ làm thiết bị này ở BẤT KỲ
-    hướng nào. Chủ máy 26/09/2026: tự làm nhưng "không máy móc và nhiễu như HA" — đo 3
-    ngày: automation đèn bếp đổi trạng thái ~250 lần theo từng nhịp nhấp nháy của radar.
-    Bot vừa bật thì không được tắt ngay chỉ vì cảm biến vừa báo vắng."""
+#: Đánh dấu trong ``boi_canh`` của lần bot tự làm vì một điều kiện đã KÉO DÀI (vắng liền N phút,
+#: sáng liền N phút) — không phải một nhịp cảm biến. Xem `_vua_lam`.
+BEN_VUNG = "ben_vung"
+
+
+def _vua_lam(tb: str, hd: str, *, ca_chieu_nguoc: bool = True) -> bool:
+    """Trong NGHI_LAP: đã hỏi/làm CÙNG hướng, hoặc bot đã TỰ làm thiết bị này ở hướng kia.
+    Chủ máy 26/09/2026: tự làm nhưng "không máy móc và nhiễu như HA" — đo 3 ngày: automation
+    đèn bếp đổi trạng thái ~250 lần theo từng nhịp nhấp nháy của radar. Bot vừa bật thì không
+    được tắt ngay chỉ vì cảm biến vừa báo vắng.
+
+    Chốt đổi chiều chỉ chống NHẤP NHÁY: cả lần trước lẫn lần này đều do một nhịp cảm biến tức
+    thời. Nên nó KHÔNG áp khi một trong hai là điều kiện kéo dài:
+
+    * ``ca_chieu_nguoc=False`` — lần NÀY kéo dài («tắt khi vắng» đòi vắng LIỀN số phút chủ máy
+      đặt). Đo 27/09/2026: bot bật đèn 18:00:32, người ra 18:04:50, đủ 3 phút vắng lúc 18:07:50
+      mà chốt giữ đèn tới 18:10:50 — chủ máy nhắn «sao lại bật khi không có người».
+    * Lần TRƯỚC kéo dài (``boi_canh`` có `BEN_VUNG`). Đo cùng tối: bot tắt vì vắng 18:10:50,
+      chủ máy quay vào 18:17:39, chốt chặn bật tới 18:20:50 — «sao vừa vào không thấy bật đèn»."""
     from services import du_doan_nha as dd
+    nguoc = (_ten_tt(tb, "on"), _ten_tt(tb, "off")) if ca_chieu_nguoc else (_ten_tt(tb, hd),) * 2
     with dd._khoa:
         r = dd._db().execute(
-            "SELECT 1 FROM du_doan WHERE ts>? AND (ten=? OR (ten IN (?,?) AND cach='tu_lam')) LIMIT 1",
-            (time.time() - NGHI_LAP, _ten_tt(tb, hd), _ten_tt(tb, "on"), _ten_tt(tb, "off"))).fetchone()
+            "SELECT 1 FROM du_doan WHERE ts>? AND (ten=? OR (ten IN (?,?) AND cach='tu_lam'"
+            f" AND COALESCE(json_extract(boi_canh, '$.{BEN_VUNG}'), 0) = 0)) LIMIT 1",
+            (time.time() - NGHI_LAP, _ten_tt(tb, hd), *nguoc)).fetchone()
     return r is not None
 
 
@@ -885,7 +901,7 @@ def _lam(tb: str, hd: str, *, tu_lam: bool) -> bool:
         # (do_ai=1), light.phong_ngu_l1 đổi cùng giây nhưng ghi do_ai=0 → "người vừa bật",
         # hẹn tắt khi vắng bị chặn, và lượt học sau tưởng người bật.
         for ma in {tb, ha_client.thuc_the_guong(tb)} - {None}:
-            lich_su_nha.bot_tu_lam(ma)
+            lich_su_nha.bot_tu_lam(ma, hd)
     return ha_client.call_service(tb.split(".")[0], "turn_on" if hd == "on" else "turn_off",
                                   {"entity_id": tb})
 
@@ -1294,7 +1310,7 @@ def _tat_vi_vang(tb: str) -> None:
             return
         if str((ha_client.get_state(tb) or {}).get("state") or "").lower() != "on":
             return
-        if _nguoi_vua_cham(tb, luc) or _vua_lam(tb, "off"):
+        if _nguoi_vua_cham(tb, luc) or _vua_lam(tb, "off", ca_chieu_nguoc=False):
             _hen_tat_luc(tb, HEN_LAI)       # chặn tạm — vẫn vắng thì lát nữa xét lại
             return
         if any(x.get("hanh_dong") == "off" and x.get("cach", "khong") == "khong"
@@ -1311,7 +1327,7 @@ def _tat_vi_vang(tb: str) -> None:
                 nhan["vang_tu"] = max(tat)  # type: ignore[type-var]
         phut = round(phut_vang(cd, float(nhan.get("vang_tu") or luc)))
         vi = f"phòng trống, trời đã sáng ~{troi:.0f} lux" if troi is not None else f"vắng {phut} phút"
-        id_ = dd.ghi_nhan(_ten_tt(tb, "off"), "off", 1.0, {"nguon": vi, **nhan}, "tu_lam")
+        id_ = dd.ghi_nhan(_ten_tt(tb, "off"), "off", 1.0, {"nguon": vi, BEN_VUNG: 1, **nhan}, "tu_lam")
         thong_bao.gui("nha.goi_y", f"🤖 #{id_} Em đã tắt {_ten_tb(tb)} ({vi}).\nĐúng hay sai ạ? Anh trả "
                                    f"lời «đúng» hoặc «sai» — sai thì em bật lại ngay. Không trả lời trong "
                                    f"{CHAM_TU_LAM // 60} phút là em tính đúng.")
@@ -1445,7 +1461,7 @@ def _hoi_sang(tb: str) -> None:
             return
         _da_hoi_sang.add(tb)
         ten, lux = _ten_tt(tb, "off"), cd["tat_khi_sang"]["lux"]
-        nhan = {"nguon": f"trời sáng {troi:.0f} lux", "troi": round(troi, 1)}
+        nhan = {"nguon": f"trời sáng {troi:.0f} lux", "troi": round(troi, 1), BEN_VUNG: 1}
         if dd.cap(ten) >= 2:
             if not _lam(tb, "off", tu_lam=True):
                 return
@@ -1542,7 +1558,12 @@ def tra_loi(text: str) -> str | None:
             return None
         if cau in _DUNG:
             dd.ghi_dung(int(r["id"]))
-            return f"Dạ, em ghi là đúng: {_TEN_HD[hd].lower()} {_ten_tb(tb)}."
+            # «Đúng» chỉ chấm lần bật vừa rồi, không phải «giữ đèn sáng». Chủ máy 27/09/2026: "trả
+            # lời đúng theo câu hỏi thì nó lại giữ sáng" — nói rõ luật tắt vẫn chạy như thường.
+            tv = (ds_thiet_bi().get(tb) or {}).get("tat_khi_vang") or {}
+            con = (f" Phòng trống {round(phut_vang(ds_thiet_bi().get(tb) or {}, time.time())):g} phút "
+                   "em vẫn tự tắt như thường." if hd == "on" and tv.get("bat") else "")
+            return f"Dạ, em ghi là đúng: {_TEN_HD[hd].lower()} {_ten_tb(tb)}.{con}"
         dd.ghi_sai(int(r["id"]))
         nang = _nang_nguong_sang(tb, r["boi_canh"])
         noi = _noi_vang(tb, r["boi_canh"], time.time()) if hd == "off" else None

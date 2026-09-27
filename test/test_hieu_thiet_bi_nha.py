@@ -523,7 +523,8 @@ class HieuThietBiNhaTest(unittest.TestCase):
             self.assertIn("bo_qua", self.ht.chay_mot_lan())
 
     # ── cổng nhóm học hỏi trong Zalo Cá Nhân ───────────────────────────────
-    def _cong(self, text: str, *, thread: str = "nhom", tag: bool = False):
+    def _cong(self, text: str, *, thread: str = "nhom", tag: bool = False, tat_ai: bool = True,
+              ev_ra: dict | None = None):
         import services.zalo_personal as zp
 
         # Cổng VÀO của nhóm học hỏi đọc kênh từ sổ đăng ký `thong_bao`
@@ -535,17 +536,66 @@ class HieuThietBiNhaTest(unittest.TestCase):
         self.addCleanup(self.ls.config.data.pop, "thong_bao", None)
         ev = {"account_id": "acc", "thread_id": thread, "sender_id": "u1",
               "display_name": "Việt", "text": text, "thread_type": 1, "mentions": []}
+        if ev_ra is not None:
+            for k, v in ev.items():
+                ev_ra.setdefault(k, v)
+            ev = ev_ra
         with mock.patch("services.agent.capabilities.mention_required_for",
                         return_value=(True, "@bot")), \
+             mock.patch("services.agent.capabilities.ai_off_for", return_value=tat_ai), \
              mock.patch.object(zp, "is_bot_tagged", return_value=tag):
             return zp._nhom_hoc_hoi(ev, thread, text)
 
     def test_CONG_NHOM_HOC_HOI_nhan_CAU_CHAM_va_DU_KIEN(self) -> None:
-        """Tin dạy không tag bot từng bị cổng tag bỏ im lặng."""
+        """Nhóm TẮT AI: tin dạy không tag bot từng bị cổng tag bỏ im lặng — vẫn ghi sổ."""
         ids = [d["id"] for d in self._luu(self._nhom_bep())["moi"]]
         self.assertIn("Em ghi rồi", self._cong(f"hh {ids[0]} đúng"))
         self.assertIn("dữ kiện #", self._cong("Dàn âm thanh bật theo công tắc mini"))
         self.assertEqual(len(self.ht.du_kien_gan_day()), 1)
+
+    def test_NHOM_BAT_AI_tin_khong_tag_DI_TOI_BOT_khong_thanh_du_kien(self) -> None:
+        """27/09/2026 18:07: «Tắt đèn phòng ngủ đi, sao lại bật khi không có người» thành dữ
+        kiện #6, đèn vẫn sáng. Nhóm bật AI thì bot chính đọc và tự quyết; tin đi qua cổng tag
+        như đã gọi bot."""
+        ev: dict = {}
+        self.assertIsNone(self._cong("Tắt đèn phòng ngủ đi, sao lại bật khi không có người",
+                                     tat_ai=False, ev_ra=ev))
+        self.assertTrue(ev.get("_tu_toi_da_tag"))
+        self.assertEqual(self.ht.du_kien_gan_day(), [])
+
+    def test_BO_TAG_truoc_khi_cham(self) -> None:
+        """27/09/2026 18:01 và 18:34: «@Botmitbap đúng» không tới bộ chấm — bot chat đáp «cứ để
+        bật nhé», không ghi gì. Bóc đoạn tag theo pos/len (UTF-16) Zalo gửi kèm."""
+        import services.zalo_personal as zp
+        ev = {"account_id": "acc", "mentions": [{"pos": 0, "len": 10, "uid": "acc"}]}
+        self.assertEqual(zp._bo_tag(ev, "@Botmitbap đúng"), "đúng")
+        # Emoji trước tag chiếm 2 đơn vị UTF-16 — cắt theo ký tự Python là lệch.
+        ev = {"account_id": "acc", "mentions": [{"pos": 3, "len": 8, "uid": "acc"}]}
+        self.assertEqual(zp._bo_tag(ev, "👍 @Ben Bắp sai rồi"), "👍 sai rồi")
+        with mock.patch.object(zp, "_bot_account_aliases", return_value=["Botmitbap"]):
+            self.assertEqual(zp._bo_tag({"account_id": "acc"}, "@botmitbap đúng 23"), "đúng 23")
+        self.assertEqual(zp._bo_tag({}, "đúng"), "đúng")
+
+    def test_CONG_NHOM_cham_tin_CO_TAG(self) -> None:
+        import services.zalo_personal as zp
+        from services import kich_hoat_nha
+        nhan: list[str] = []
+        ev = {"mentions": [{"pos": 0, "len": 10, "uid": "acc"}]}
+        with mock.patch.object(kich_hoat_nha, "tra_loi", side_effect=lambda t: nhan.append(t) or "Dạ, em ghi là đúng"):
+            self.assertIn("ghi là đúng", self._cong("@Botmitbap đúng", tag=True, ev_ra=ev))
+        self.assertEqual(nhan, ["đúng"])
+
+    def test_TOOL_GHI_DU_KIEN_cua_bot_chinh(self) -> None:
+        """Bot chính gặp lời dạy thì gọi tool — cùng sổ, lượt hiểu thiết bị kế tiếp đọc được."""
+        from services.agent import capabilities as caps
+        self.assertEqual(caps.CAPABILITIES["ghi_du_kien"].handler({}, {})["text"],
+                         "Anh muốn em ghi điều gì vào sổ học ạ?")
+        dap = caps.CAPABILITIES["ghi_du_kien"].handler(
+            {"noi_dung": "vân tay số 2 là của tôi"}, {"user_id": "zalop_nhom"})
+        self.assertIn("dữ kiện #", dap["text"])
+        self.assertEqual([d["noi_dung"] for d in self.ht.du_kien_gan_day()], ["vân tay số 2 là của tôi"])
+        self.assertTrue(self.ht.co_du_kien_moi())
+        self.assertEqual(caps._CAP_GROUP["ghi_du_kien"], "homeassistant")
 
     def test_CONG_NHOM_HOC_HOI_de_TIN_TAG_BOT_va_NHOM_KHAC_di_tiep(self) -> None:
         """Tag bot là muốn trò chuyện; nhóm khác không phải nơi dạy bot."""

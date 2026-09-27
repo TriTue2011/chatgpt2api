@@ -175,6 +175,18 @@ def test_bot_tu_lam_ghi_do_ai():
     assert not ls.la_bot_tu_lam(DEN)
 
 
+def test_nguoi_lam_NGUOC_chieu_trong_cua_so_khong_tinh_cho_bot():
+    """27/09/2026 17:34:51 bot bật đèn, 17:35:02 người tắt — lọt cửa sổ 15 giây, bị ghi là bot."""
+    from services import lich_su_nha as ls
+    ls.bot_tu_lam(DEN, "on")
+    assert ls.la_bot_tu_lam(DEN, "on") and ls.la_bot_tu_lam(DEN, "cool")
+    assert not ls.la_bot_tu_lam(DEN, "off")
+    ls.bot_tu_lam(DEN, "off")
+    assert ls.la_bot_tu_lam(DEN, "off") and not ls.la_bot_tu_lam(DEN, "on")
+    assert ls.la_bot_tu_lam(DEN), "thay đổi thuộc tính (không kèm trạng thái) vẫn tính cho bot"
+    ls._reset_for_tests()
+
+
 def test_su_kien_song_cung_luat_voi_luc_hoc(kh):
     """Radar mất người 1–2 phút rồi thấy lại (chủ máy 26/09/2026) không phải "vào"."""
     assert kh._nguon_cua(NGU, "off", 1000.0) == []
@@ -247,6 +259,37 @@ def test_bot_vua_tu_lam_thi_khong_doi_chieu_ngay(kh):
     assert not kh._vua_lam("switch.khac", "off")
     dd.ghi_nhan("switch.khac#on", "on", 0.9, {}, "hoi")
     assert not kh._vua_lam("switch.khac", "off"), "chỉ HỎI thì chưa đổi gì — hướng kia vẫn được"
+
+
+def test_tat_khi_vang_khong_bi_chot_boi_lan_BAT_vua_roi(kh, monkeypatch):
+    """27/09/2026: bot bật đèn 18:00:32, người ra 18:04:50, đủ 3 phút vắng mà chốt 10 phút của
+    lần BẬT giữ đèn tới 18:10:50. «Tắt khi vắng» đã đòi vắng liền số phút chủ máy đặt — chỉ
+    chặn khi bot vừa TẮT, không chặn vì bot vừa bật."""
+    from services import du_doan_nha as dd, ha_client
+    tt = {x["entity_id"]: dict(x) for x in TT}
+    tt[DEN]["state"] = "on"
+    tt[NGU]["state"] = "off"
+    monkeypatch.setattr(kh, "_trang_thai_ha", lambda: list(tt.values()))
+    monkeypatch.setattr(ha_client, "get_state", lambda e: tt.get(e))
+    kh.dat_thiet_bi(DEN, bat=True, tat_khi_vang={"bat": True, "cam_bien": [NGU], "phut": 3})
+    dd.ghi_nhan(f"{DEN}#on", "on", 0.9, {}, "tu_lam")
+    kh._tat_vi_vang(DEN)
+    assert kh.goi == [("switch", "turn_off", {"entity_id": DEN})]
+    kh.goi.clear()
+    kh._tat_vi_vang(DEN)
+    assert kh.goi == [], "vừa TẮT rồi thì không tắt lặp"
+
+
+def test_bot_tat_vi_vang_roi_nguoi_quay_vao_thi_bat_ngay(kh):
+    """27/09/2026: bot tắt vì vắng 18:10:50, chủ máy quay vào 18:17:39 — chốt đổi chiều chặn
+    bật tới 18:20:50: «sao vừa vào không thấy bật đèn». Tắt vì vắng LIỀN 3 phút là điều kiện
+    kéo dài, không phải nhịp nhấp nháy; còn bật vì một nhịp «có người» thì vẫn giữ chốt."""
+    from services import du_doan_nha as dd
+    dd.ghi_nhan(f"{DEN}#off", "off", 1.0, {"nguon": "vắng 3 phút", kh.BEN_VUNG: 1}, "tu_lam")
+    assert not kh._vua_lam(DEN, "on")
+    assert kh._vua_lam(DEN, "off"), "cùng hướng vẫn không lặp"
+    dd.ghi_nhan(f"{DEN}#on", "on", 0.8, {"nguon": "x có người vào"}, "tu_lam")
+    assert kh._vua_lam(DEN, "off"), "vừa bật vì một nhịp cảm biến: vẫn chốt"
 
 
 def test_quanh_gio_tu_lam_hoi_im():
@@ -665,6 +708,28 @@ def test_tu_lam_tra_loi_dung_sai(kh):
     assert "đúng" in kh.tra_loi(f"đúng {id2}")
     assert dd._db().execute("SELECT ket_qua FROM du_doan WHERE id=?", (id2,)).fetchone()[0] == "dung"
     assert len(kh.goi) == 1, "đúng thì không làm gì thêm"
+
+
+def test_tra_loi_dung_noi_ro_van_tu_tat_khi_vang(kh):
+    """Chủ máy 27/09/2026: "trả lời đúng theo câu hỏi thì nó lại giữ sáng". «Đúng» chỉ chấm lần
+    bật — câu đáp nói rõ luật tắt khi vắng vẫn chạy."""
+    from services import du_doan_nha as dd
+    kh.dat_thiet_bi(DEN, bat=True, tat_khi_vang={"bat": True, "cam_bien": [NGU], "phut": 3})
+    dd.ghi_nhan(f"{DEN}#on", "on", 0.9, {}, "tu_lam")
+    dap = kh.tra_loi("đúng")
+    assert "Phòng trống 3 phút em vẫn tự tắt" in dap and kh.goi == []
+
+
+def test_tool_tra_loi_bot_nha_cham_loi_tu_do(kh):
+    """«Em bật đúng rồi» (sổ học 27/09/2026) — model hiểu ý, tool chấm bằng từ chuẩn."""
+    from services import du_doan_nha as dd
+    from services.agent import capabilities as caps
+    id1 = dd.ghi_nhan(f"{DEN}#on", "on", 0.9, {}, "tu_lam")
+    tool = caps.CAPABILITIES["tra_loi_bot_nha"]
+    assert "đúng" in tool.handler({"tra_loi": "dung", "so": id1}, {})["text"]
+    assert dd._db().execute("SELECT ket_qua FROM du_doan WHERE id=?", (id1,)).fetchone()[0] == "dung"
+    assert "Không có câu nào" in tool.handler({"tra_loi": "sai"}, {})["text"]
+    assert caps._CAP_GROUP["tra_loi_bot_nha"] == "homeassistant"
 
 
 def test_den_gop_do_tu_lich_su():

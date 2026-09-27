@@ -3087,6 +3087,36 @@ def _skey_zalop(thread_id, thread_type, sender_id) -> str:
     return skey
 
 
+def _bo_tag(ev: dict, text: str) -> str:
+    """Chữ của tin sau khi bóc các đoạn TAG (mention) — để câu chấm «@Bot đúng» là «đúng».
+
+    Đo 27/09/2026 18:01 và 18:34: chủ máy trả lời «@Botmitbap đúng» cho câu «#23 Em đã bật đèn…
+    Đúng hay sai ạ?». Bộ chấm so NGUYÊN câu nên «botmitbap đúng» không phải câu trả lời → tin
+    sang bot chat, bot đáp «Đèn phòng ngủ cứ để bật nhé» mà không ghi gì.
+
+    Bóc theo vị trí Zalo gửi kèm (``pos``/``len``, đơn vị UTF-16 như JS) — không đoán theo tên.
+    Nền tảng không gửi vị trí thì bóc «@tên» của chính tài khoản bot (`_bot_account_aliases`).
+    """
+    own = str((ev or {}).get("account_id") or "").strip()
+    cat: list[tuple[int, int]] = []
+    for x in (ev or {}).get("mentions") or []:
+        if isinstance(x, dict):
+            try:
+                cat.append((int(x.get("pos")), int(x.get("len"))))
+            except (TypeError, ValueError):
+                continue
+    b = str(text or "").encode("utf-16-le")
+    for pos, dai in sorted(cat, reverse=True):
+        if 0 <= pos and dai > 0 and 2 * (pos + dai) <= len(b):
+            b = b[:2 * pos] + b[2 * (pos + dai):]
+    ra = b.decode("utf-16-le", errors="ignore")
+    if not cat and "@" in ra:
+        for al in sorted(_bot_account_aliases(own), key=len, reverse=True):
+            if al.strip():
+                ra = re.sub("@" + re.escape(al.strip()), " ", ra, flags=re.I)
+    return " ".join(ra.split())
+
+
 def _nhom_hoc_hoi(ev: dict, thread_id: str, text: str) -> str | None:
     """Nhóm nhận bản tin học hỏi là nơi chủ máy DẠY bot. Trả câu đáp, hoặc None.
 
@@ -3097,8 +3127,14 @@ def _nhom_hoc_hoi(ev: dict, thread_id: str, text: str) -> str | None:
     * «hh …» là câu chấm hiểu thiết bị (`hieu_thiet_bi_nha.tra_loi`);
     * «gy …» là câu chấm gợi ý bật thiết bị (`du_doan_nha.tra_loi`) — trước
       11/09/2026 gợi ý hỏi "anh có muốn em bật không" mà chỉ chấm được trên web;
-    * tin KHÔNG tag bot là dữ kiện, ghi vào sổ học;
-    * tin CÓ tag bot vẫn đi đường chat bình thường — chủ máy vẫn hỏi bot được.
+    * tin khác đi đường chat như tin đã tag bot: bot chính đọc rồi tự quyết — lệnh thì làm,
+      hỏi thì đáp, lời dạy thì gọi tool `ghi_du_kien`. Nhóm TẮT AI thì không có bot chính
+      nào đọc, nên tin không tag vẫn ghi thẳng vào sổ học như cũ.
+
+    Vì sao không tự ghi mọi tin không tag thành dữ kiện nữa: đo sổ học 27/09/2026, 5 tin
+    nhóm tự ghi thì 3 tin KHÔNG phải lời dạy — «Em bật đúng rồi», «Tắt theo điều kiện
+    bình thường», «Tắt đèn phòng ngủ đi, sao lại bật khi không có người». Lệnh tắt đèn
+    thành dữ kiện #6, đèn vẫn sáng. Có tag hay không là HÌNH THỨC, không nói lên ý định.
 
     Chỉ nhận trong kênh nhận bản tin học hỏi: câu hỏi chỉ gửi tới đó, nên câu
     chấm và lời dạy cũng chỉ có nghĩa ở đó.
@@ -3127,11 +3163,12 @@ def _nhom_hoc_hoi(ev: dict, thread_id: str, text: str) -> str | None:
         return None
     nguoi = str(ev.get("display_name") or ev.get("sender_id") or "")
     from services import kich_hoat_nha
-    dap = kich_hoat_nha.tra_loi(text)
+    cham = _bo_tag(ev, text)
+    dap = kich_hoat_nha.tra_loi(cham)
     if dap is None:
-        dap = hieu_thiet_bi_nha.tra_loi(text, nguoi=nguoi)
+        dap = hieu_thiet_bi_nha.tra_loi(cham, nguoi=nguoi)
     if dap is None:
-        dap = du_doan_nha.tra_loi(text, nguoi=nguoi)
+        dap = du_doan_nha.tra_loi(cham, nguoi=nguoi)
     if dap is not None:
         return dap
     try:
@@ -3140,7 +3177,15 @@ def _nhom_hoc_hoi(ev: dict, thread_id: str, text: str) -> str | None:
         kw = ""
     if is_bot_tagged(ev, kw):
         return None
-    return hieu_thiet_bi_nha.nhan_du_kien(text, nguoi=nguoi)
+    try:
+        tat_ai = _caps.ai_off_for("zalop", acc, thread_id)
+    except Exception:
+        tat_ai = False
+    if tat_ai:
+        return hieu_thiet_bi_nha.nhan_du_kien(text, nguoi=nguoi)
+    # Người gửi đã qua cổng admin ở chỗ gọi: coi như đã gọi bot, khỏi đòi tag.
+    ev["_tu_toi_da_tag"] = True
+    return None
 
 
 def _dat_nguoi_hoi(ev: dict, caps) -> None:

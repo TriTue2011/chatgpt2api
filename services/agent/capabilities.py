@@ -1104,6 +1104,46 @@ def _h_youtube_transcript(args: dict, ctx: dict) -> dict:
     return {"text": text[:8000]}
 
 
+def _h_ghi_du_kien(args: dict, ctx: dict) -> dict:
+    """Lời chủ máy DẠY bot về nhà (thiết bị nào nối với nào, cảm biến nào là gì, vân tay của ai)
+    → sổ học của `hieu_thiet_bi_nha`, lượt hiểu thiết bị kế tiếp đọc nó.
+
+    Trước 27/09/2026 nhóm «Ai học hỏi» tự ghi MỌI tin không tag bot vào sổ này, nên lệnh
+    «Tắt đèn phòng ngủ đi» thành dữ kiện và đèn vẫn sáng. Nay bot chính đọc tin rồi tự quyết:
+    lệnh thì làm, lời dạy thì gọi tool này.
+    """
+    from services import hieu_thiet_bi_nha
+
+    noi = str(args.get("noi_dung") or "").strip()
+    if not noi:
+        return {"text": "Anh muốn em ghi điều gì vào sổ học ạ?"}
+    # Quyền đi theo nhóm «homeassistant» của thread — ai điều khiển được đèn thì dạy được về
+    # đèn. Không đòi admin: nhóm học hỏi không phải thread admin nên chính chủ máy cũng bị chặn.
+    id_ = hieu_thiet_bi_nha.ghi_du_kien(noi, nguoi=str(ctx.get("user_id") or ""), nguon="chat")
+    return {"text": f"Đã ghi dữ kiện #{id_} vào sổ học. Vài phút nữa em xem lại thiết bị có dùng "
+                    "dữ kiện này, rồi báo anh em hiểu ra sao."}
+
+
+def _h_tra_loi_bot_nha(args: dict, ctx: dict) -> dict:
+    """Câu trả lời TỰ DO cho câu bot vừa hỏi / vừa tự làm trong nhà («#N Em đã bật … Đúng hay sai
+    ạ?», «💡 #N … bật không ạ?») → đúng đường chấm của `kich_hoat_nha.tra_loi`.
+
+    Bộ chấm chỉ nhận NGUYÊN câu «đúng» / «sai» / «có» / «không» (tập đóng — xem `_CO`). Sổ học
+    27/09/2026 có «Em bật đúng rồi»: lời nói tự nhiên như thế trước đây thành dữ kiện, không ai
+    chấm. Model hiểu ý, tool chấm bằng từ chuẩn.
+    """
+    from services import kich_hoat_nha
+
+    tu = {"dung": "đúng", "sai": "sai", "co": "có", "khong": "không"}.get(
+        str(args.get("tra_loi") or "").strip().lower())
+    if not tu:
+        return {"text": "tra_loi phải là dung / sai / co / khong."}
+    so = args.get("so")
+    dap = kich_hoat_nha.tra_loi(f"{tu} {int(so)}" if isinstance(so, (int, float)) or str(so or "").isdigit()
+                                else tu)
+    return {"text": dap or "Không có câu nào của em đang chờ anh trả lời (hoặc đã quá hạn) ạ."}
+
+
 def _h_remember(args: dict, ctx: dict) -> dict:
     fact = str(args.get("fact") or "").strip()
     if not fact:
@@ -7168,6 +7208,30 @@ CAPABILITIES: dict[str, Capability] = {
         workflow=("Em đã tự viết config + nạp vào HA + tự sửa nếu lỗi (tối đa 3 lần). "
                   "Thuật lại kết quả ngắn gọn (tên automation, đã nạp chưa). Nếu vẫn "
                   "lỗi sau 3 lần, xin người dùng mô tả rõ hơn.")),
+    "tra_loi_bot_nha": Capability(
+        name="tra_loi_bot_nha", risk=READ, handler=_h_tra_loi_bot_nha,
+        emoji="✅", label="Chấm việc bot tự bật/tắt trong nhà",
+        description=("Người dùng TRẢ LỜI tin bot vừa gửi kiểu «🤖 #N Em đã bật/tắt … Đúng hay sai ạ?» "
+                     "hoặc «💡 #N … bật/tắt không ạ?» bằng lời tự nhiên («em bật đúng rồi», «sai "
+                     "rồi», «ừ bật đi», «thôi khỏi»). tra_loi=dung/sai cho việc bot ĐÃ làm (sai thì "
+                     "bot tự làm ngược lại), co/khong cho câu bot HỎI. «Đúng» chỉ là chấm — KHÔNG "
+                     "có nghĩa giữ nguyên thiết bị mãi."),
+        parameters={"type": "object", "properties": {
+            "tra_loi": {"type": "string", "enum": ["dung", "sai", "co", "khong"]},
+            "so": {"type": "integer", "description": "Số #N trong tin của bot nếu người dùng nêu."}},
+            "required": ["tra_loi"]}),
+    "ghi_du_kien": Capability(
+        name="ghi_du_kien", risk=READ, handler=_h_ghi_du_kien,
+        emoji="📝", label="Dạy bot về nhà — sổ học",
+        description=("Ghi một điều chủ máy DẠY về thiết bị / cảm biến / người trong nhà vào sổ học "
+                     "để bot tự hiểu nhà (vd «aptomat điều hòa và điều hòa là một thiết bị», «cảm "
+                     "biến phòng khách là cảm biến, không phải thiết bị», «vân tay số 2 là của "
+                     "tôi»). KHÔNG dùng cho LỆNH («tắt đèn đi» → control_home) hay câu hỏi — "
+                     "lệnh thì làm luôn. Điều dặn về cách trò chuyện / sở thích → remember."),
+        parameters={"type": "object", "properties": {
+            "noi_dung": {"type": "string",
+                         "description": "Lời dạy, giữ đúng ý chủ máy nói."}},
+            "required": ["noi_dung"]}),
     "remember": Capability(
         name="remember", risk=CHANGE, handler=_h_remember,
         emoji="🧠", label="Ghi nhớ",
@@ -8150,6 +8214,7 @@ _CAP_GROUP: dict[str, str] = {
     "chi_duong": "web",
     "write_code": "code",
     "home_status": "homeassistant", "control_home": "homeassistant",
+    "ghi_du_kien": "homeassistant", "tra_loi_bot_nha": "homeassistant",
     "describe_device": "homeassistant",
     # MQTT cùng nhóm quyền với Home Assistant: ai được điều khiển nhà thì được
     # điều khiển qua cả hai đường, không phải tích thêm ô riêng.
