@@ -11,10 +11,10 @@
  */
 
 import { useState } from "react";
+import Link from "next/link";
 
 import { HACard } from "./ha-card";
 import { CameraCard } from "./camera-card";
-import { NhinNhaCard } from "./nhin-nha-card";
 import { MqttCard } from "./mqtt-card";
 import { TuyaCard } from "./tuya-card";
 import { HaDevicesCard } from "./ha-devices-card";
@@ -59,7 +59,14 @@ export function HomeAssistantTabs() {
 
       {tab === "ha" && <HACard />}
       {tab === "camera" && <CameraCard />}
-      {tab === "khuon-mat" && <NhinNhaCard />}
+      {/* Chủ máy 27/09/2026: khuôn mặt ra tab chính (/khuon-mat) để xem nhanh — một chỗ
+          sửa duy nhất cho khoá `nhin_nha`, ở đây chỉ còn đường dẫn. */}
+      {tab === "khuon-mat" && (
+        <p className="text-sm">
+          Khuôn mặt, người lạ, cách canh camera nay ở tab riêng:{" "}
+          <Link href="/khuon-mat" className="font-medium text-primary underline">mở tab Khuôn mặt</Link>.
+        </p>
+      )}
       {tab === "mqtt" && <MqttCard />}
       {tab === "tuya" && <TuyaCard />}
       {tab === "thiet-bi" && <HaDevicesCard />}
