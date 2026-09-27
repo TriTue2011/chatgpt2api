@@ -277,13 +277,14 @@ class BoNhanMat:
             tc = ort.SessionOptions()
             tc.intra_op_num_threads = max(1, int(luong))
             tc.inter_op_num_threads = 1
-            return ort.InferenceSession(str(thu_muc / tep), tc,
-                                        providers=["CPUExecutionProvider"])
+            # "Tại chỗ" = iGPU Intel nếu máy có (igpu), không thì CPU.
+            return igpu.lai(str(thu_muc / tep), ort.InferenceSession(
+                str(thu_muc / tep), tc, providers=["CPUExecutionProvider"]))
 
-        from services import onnx_xa
+        from services import igpu, onnx_xa
 
         self.bo = bo
-        # Chạy trên GPU nhà khi được (onnx_xa), lỗi thì CPU tại chỗ — cùng graph.
+        # Chạy trên GPU nhà khi được (onnx_xa), lỗi thì tại chỗ — cùng graph.
         # Chủ máy chọn 24/09/2026: đưa nhận mặt lên GPU máy NVR trong LAN.
         self._do = onnx_xa.lai(Path(bo.tep_do).stem, _phien(bo.tep_do))
         self._vec = onnx_xa.lai(Path(bo.tep_vector).stem, _phien(bo.tep_vector))

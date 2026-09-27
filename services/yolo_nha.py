@@ -209,8 +209,11 @@ class BoPhatHien:
         # `pthread_setaffinity_np failed` mỗi lần nạp (đo 15/09/2026).
         tuy_chon.intra_op_num_threads = max(1, int(luong))
         tuy_chon.inter_op_num_threads = 1
-        self._phien = ort.InferenceSession(str(duong_model), tuy_chon,
-                                           providers=["CPUExecutionProvider"])
+        from services import igpu
+
+        # iGPU Intel nếu máy có (chủ máy 27/09/2026), không thì CPU.
+        self._phien = igpu.lai(str(duong_model), ort.InferenceSession(
+            str(duong_model), tuy_chon, providers=["CPUExecutionProvider"]))
         self._vao = self._phien.get_inputs()[0].name
         meta = self._phien.get_modelmeta().custom_metadata_map
         # `names` là repr của dict Python — literal_eval chỉ đọc hằng, không chạy mã.
