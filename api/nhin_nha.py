@@ -202,6 +202,15 @@ def create_router() -> APIRouter:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, **kq}
 
+    @router.post("/api/nhin-nha/mat-ngoai")
+    async def mat_ngoai(body: dict, authorization: str | None = Header(default=None)):
+        """Thiết bị nhận mặt NGOÀI báo một lượt gặp (Hanet, Double Take, HA ``rest_command``…).
+        body: ``{"ten", "vi_tri"?, "anh"? (URL | base64), "do_tin"?, "nguon"?}`` — xem `mat_ngoai`."""
+        require_admin(authorization)
+        from services import mat_ngoai as mn
+
+        return await run_in_threadpool(mn.nhan, body, nguon=str(body.get("nguon") or "http")[:40])
+
     @router.post("/api/nhin-nha/nguoi/{nguoi_id}/doi-ten")
     async def doi_ten(nguoi_id: str, body: dict, authorization: str | None = Header(default=None)):
         require_admin(authorization)

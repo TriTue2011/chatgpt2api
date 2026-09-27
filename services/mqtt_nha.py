@@ -330,6 +330,10 @@ def _nap_tin(chu_de: str, payload: bytes, dang_ky) -> None:
         # Sự kiện Frigate: ghi_frigate() đã viết và đã test từ lâu nhưng CHƯA
         # AI GỌI — đây là chỗ nối. Nó chỉ giữ lúc bắt đầu/kết thúc, bỏ 'update'
         # (Frigate phát 208 tin/40 giây, phần lớn là update của cùng sự kiện).
+        # Thiết bị nhận mặt NGOÀI (Hanet, Double Take, HA…) — hợp đồng ở `mat_ngoai`.
+        if chu_de == "c2a/khuon_mat" or chu_de.startswith("c2a/khuon_mat/"):
+            from services import mat_ngoai
+            mat_ngoai.tu_mqtt(chu_de, payload)
         if chu_de == "frigate/events":
             try:
                 _su_kien = json.loads(payload.decode("utf-8", "replace"))

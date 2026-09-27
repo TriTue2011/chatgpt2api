@@ -543,6 +543,7 @@ class ApiQuyenTests(unittest.TestCase):
                               ("post", "/api/nhin-nha/mat-la/x/dat-ten"),
                               ("post", "/api/nhin-nha/nguoi/x/doi-ten"),
                               ("post", "/api/nhin-nha/mat/x/chuyen"),
+                              ("post", "/api/nhin-nha/mat-ngoai"),
                               ("post", "/api/nhin-nha/su-kien/1/chuyen")):
             # POST nào nhận `body: dict` thì thiếu body là FastAPI trả 422 ở bước
             # kiểm dữ liệu, TRƯỚC khi `require_admin` kịp chạy — tức bài test sẽ
