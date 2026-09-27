@@ -5539,6 +5539,161 @@ def _nhan_dang_khung_camera(tho: bytes) -> tuple[str, bytes]:
                 camera_nha._thu_nho(tho, camera_nha.CANH_GUI))
 
 
+def _h_tim_nguoi(args: dict, ctx: dict) -> dict:
+    """«Con trai đang ở đâu» — chụp MỌI camera cùng lúc, nhận mặt, báo camera nào thấy.
+
+    Chủ máy 27/09/2026: "ví dụ con trai đang ở đâu thì chụp ảnh tất cả các cam rồi nhận diện
+    khuôn mặt xác định vị trí để báo lại". Tên camera là vị trí ("Cam phòng khách"). Khung lấy
+    từ kết nối đang GIỮ MỞ nếu có (khung khoá, rồi luồng chính — ra ngay), không thì chụp một
+    khung luồng chính. Không thấy mặt thì nói thật: camera nào có người mà chưa thấy mặt, và
+    lần cuối camera canh gặp người đó lúc nào.
+    """
+    import datetime as _d
+    import time as _t
+    from concurrent.futures import ThreadPoolExecutor
+
+    from services import camera_nha, nhin_nha, so_mat_nha, yolo_nha
+    from services.config import config as _cfg
+
+    ten = str(args.get("ten") or "").strip()
+    nguoi = None
+    if ten:
+        nguoi = so_mat_nha.tim_nguoi(ten)
+        if nguoi is None:
+            # Người dùng nói tắt ("con trai") — chỉ nhận khi khớp ĐÚNG MỘT người đã dạy mặt,
+            # và câu trả lời nêu tên đầy đủ để người hỏi thấy em hiểu là ai.
+            ds = so_mat_nha.danh_sach_nguoi()
+            gon = _bo_dau_ascii(ten).lower()
+            khop = [n for n in ds if gon in _bo_dau_ascii(n["ten"]).lower()]
+            if len(khop) != 1:
+                return {"deliver_now": True, "text": (
+                    f"Em chưa rõ «{ten}» là ai. Em nhận mặt được: "
+                    + ", ".join(n["ten"] for n in ds) + " — anh/chị nói đúng tên giúp em ạ."
+                    if ds else "Em chưa được dạy mặt ai — gửi ảnh vào chat rồi chọn «Dạy khuôn mặt» ạ.")}
+            nguoi = khop[0]
+    if not nhin_nha.co_mat():
+        return {"deliver_now": True, "text": "Máy chưa tải model nhận khuôn mặt nên em chưa tìm người được ạ "
+                                             f"(chạy: {nhin_nha.LENH_TAI} --mat {nhin_nha.bo_mat().ma})."}
+    cams = [str(c.get("name")) for c in camera_nha.danh_sach() if c.get("name")]
+    if not cams:
+        return {"deliver_now": True, "text": "Nhà chưa khai camera nào ạ."}
+
+    def _khung(cam: str):
+        anh = camera_nha.khung_ben_bi(cam, "khoa")
+        if anh is None:
+            anh = camera_nha.khung_ben_bi(cam, "chinh")
+        if anh is None:
+            anh = yolo_nha.doc_anh(camera_nha.chup_tho(cam, timeout=10)[1])
+        return anh
+
+    def _quen(k: Any) -> dict[str, dict]:
+        ra: dict[str, dict] = {}
+        for m in k.mat:
+            if m.get("nguoi_id") and m.get("loai") in ("quen", "co_the"):
+                if m["nguoi_id"] not in ra or m["do_giong"] > ra[m["nguoi_id"]]["do_giong"]:
+                    ra[m["nguoi_id"]] = m
+        return ra
+
+    def _xem(cam: str) -> dict[str, Any]:
+        """Một camera: số người + người quen nhận ra. Có người mà chưa nhận ra mặt thì nhìn thêm
+        tới LAN_THEM khung — đo 27/09/2026 chủ máy ở bếp, 6 khung liền: 4 khung «có thể là Tôi»
+        (42–45), 2 khung ra «người lạ» (33–35); nhìn một khung là may rủi."""
+        r: dict[str, Any] = {"cam": cam, "so": 0, "quen": {}, "anh": None, "k": None}
+        try:
+            for lan in range(1 + LAN_THEM):
+                anh = _khung(cam)
+                k = nhin_nha.phan_tich_khung(anh)
+                so = sum(1 for v in k.vat_the if v.nhan == "person")
+                if r["anh"] is None or so > r["so"]:
+                    r.update(so=so, anh=anh, k=k)
+                for nid, m in _quen(k).items():
+                    if nid not in r["quen"] or m["do_giong"] > r["quen"][nid][0]["do_giong"]:
+                        r["quen"][nid] = (m, anh, k)
+                if r["so"] <= len(r["quen"]):
+                    break
+        except Exception as exc:  # noqa: BLE001 — một camera hỏng không làm hỏng cả lượt tìm
+            logger.info({"event": "tim_nguoi_camera_loi", "camera": cam, "loi": str(exc)[:120]})
+            r["loi"] = True
+        return r
+
+    LAN_THEM = 2
+    with ThreadPoolExecutor(max_workers=min(4, len(cams))) as ex:
+        kq = list(ex.map(_xem, cams))
+
+    def _luu(cam: str, anh: Any, k: Any) -> str:
+        try:
+            thu_muc = _cfg.images_dir / _t.strftime("%Y") / _t.strftime("%m") / _t.strftime("%d")
+            thu_muc.mkdir(parents=True, exist_ok=True)
+            _an = re.sub(r"[^0-9a-z]+", "_", _ten_chat(cam)).strip("_")
+            tep = f"tim_nguoi_{_an or 'cam'}_{int(_t.time())}.jpg"
+            # Chỉ vẽ NGƯỜI và mặt — câu hỏi là tìm người, khung tủ lạnh/ghế chỉ làm rối (đo
+            # 27/09/2026 Cam bếp: 11 khung, 1 người).
+            chi_nguoi = nhin_nha.KhungDaXem(k.rong, k.cao, [v for v in k.vat_the if v.nhan == "person"], k.mat)
+            (thu_muc / tep).write_bytes(camera_nha._thu_nho(nhin_nha.ve_khung(anh, chi_nguoi), camera_nha.CANH_GUI))
+            return f"{gateway_base_url()}/images/{_t.strftime('%Y/%m/%d')}/{tep}"
+        except Exception as exc:  # noqa: BLE001 — không lưu được ảnh thì vẫn trả lời bằng lời
+            logger.warning("tim_nguoi lưu ảnh lỗi: %s", exc)
+            return ""
+
+    # Chủ máy 27/09/2026: "đầu tiên khi báo cần báo rằng ở đâu có bao nhiêu người cùng câu trả
+    # lời người cần hỏi có đó không" — "nếu không nhận ra người cần hỏi ở đâu thì báo ở đâu có
+    # bao nhiêu người".
+    def _ten_mat(m: dict) -> str:
+        chu = f"**{m['ten']}**" if nguoi and m["nguoi_id"] == nguoi["id"] else m["ten"]
+        return chu + (" (có thể)" if m["loai"] == "co_the" else "")
+
+    dong: list[str] = []
+    trong: list[str] = []
+    hong: list[str] = []
+    tim_thay: tuple[str, dict, Any, Any] | None = None
+    for r in kq:
+        if r.get("loi"):
+            hong.append(r["cam"])
+            continue
+        quen = sorted((x[0] for x in r["quen"].values()), key=lambda m: -m["do_giong"])
+        so = max(r["so"], len(quen))
+        if not so:
+            trong.append(r["cam"])
+            continue
+        phan = [", ".join(_ten_mat(m) for m in quen)] if quen else []
+        if so > len(quen):
+            phan.append(f"{so - len(quen)} người chưa nhận ra mặt")
+        dong.append(f"• **{r['cam']}**: {so} người — " + "; ".join(phan))
+        if nguoi and nguoi["id"] in r["quen"]:
+            m, anh, k = r["quen"][nguoi["id"]]
+            if tim_thay is None or m["do_giong"] > tim_thay[1]["do_giong"]:
+                tim_thay = (r["cam"], m, anh, k)
+    dau = (["Camera đang thấy người:"] + dong) if dong else [f"Không camera nào thấy người lúc này ({len(cams) - len(hong)} camera)."]
+    if trong and dong:
+        dau.append("Không có ai: " + ", ".join(trong) + ".")
+    if nguoi:
+        if tim_thay:
+            cam, m, _a, _k = tim_thay
+            dau.append(f"→ 📍 **{m['ten']}** đang ở **{cam}** (giống {m['do_giong']:.0f}/100"
+                       + (", chưa chắc lắm" if m["loai"] == "co_the" else "") + ").")
+        else:
+            dau.append(f"→ Em chưa nhận ra **{nguoi['ten']}** ở camera nào.")
+            gan = so_mat_nha.su_kien_gan(24, nguoi_id=nguoi["id"], gioi_han=1)
+            if gan:
+                luc = _d.datetime.fromtimestamp(float(gan[0]["ts"]), _d.timezone(_d.timedelta(hours=7)))
+                dau.append(f"Lần cuối camera gặp {nguoi['ten']}: {gan[0]['camera']} lúc {luc:%H:%M %d/%m}.")
+    if hong:
+        dau.append("Không chụp được: " + ", ".join(hong) + ".")
+    # Ảnh: camera có người cần tìm; không thì camera nhiều người chưa nhận ra mặt nhất.
+    anh_url = ""
+    if tim_thay:
+        anh_url = _luu(tim_thay[0], tim_thay[2], tim_thay[3])
+    else:
+        co_nguoi = [r for r in kq if not r.get("loi") and r["so"] > len(r["quen"])]
+        if co_nguoi:
+            r = max(co_nguoi, key=lambda r: r["so"] - len(r["quen"]))
+            anh_url = _luu(r["cam"], r["anh"], r["k"])
+    ra: dict[str, Any] = {"text": "\n".join(dau)}
+    if anh_url:
+        ra["image_url"] = anh_url
+    return ra
+
+
 def _h_khuon_mat(args: dict, ctx: dict) -> dict:
     """Camera thấy AI lúc nào, và DẠY tên cho mặt lạ — cùng khuôn `_h_khoa_cua`.
 
@@ -6818,6 +6973,22 @@ CAPABILITIES: dict[str, Capability] = {
                   "camera nào, KHÔNG tự chụp đại một cái. Có nhận dạng thì TÊN "
                   "NGƯỜI chỉ lấy đúng từ kết quả nhận mặt ('người lạ' là chưa dạy "
                   "mặt) — không đoán tên từ dáng người hay quần áo.")),
+    "tim_nguoi": Capability(
+        name="tim_nguoi", risk=CHANGE, handler=_h_tim_nguoi,
+        emoji="📍", label="Tìm người trong nhà — chụp mọi camera, nhận mặt",
+        description=("Tìm một NGƯỜI ĐÃ DẠY MẶT đang ở đâu trong nhà NGAY LÚC NÀY: chụp "
+                     "tất cả camera cùng lúc, nhận khuôn mặt, báo camera nào thấy (tên "
+                     "camera là vị trí). Dùng khi hỏi «con trai đang ở đâu», «bà ở phòng "
+                     "nào», «ai đang ở nhà». Hỏi camera ĐÃ thấy ai lúc nào → khuon_mat."),
+        parameters={"type": "object", "properties": {
+            "ten": {"type": "string",
+                    "description": "Tên người cần tìm như người dùng nói (vd 'con trai'). "
+                                   "Bỏ trống = liệt kê mọi người quen camera đang thấy."}},
+            "required": []},
+        workflow=("Chỉ thuật lại đúng kết quả tool: người ở camera nào, độ giống. "
+                  "'Chưa thấy mặt' KHÔNG có nghĩa là người đó không ở nhà — nói đúng "
+                  "như tool (có người chưa thấy mặt ở đâu, lần cuối gặp lúc nào). "
+                  "Tool báo chưa rõ là ai thì HỎI LẠI người dùng, đừng tự chọn.")),
     "khuon_mat": Capability(
         name="khuon_mat", risk=CHANGE, handler=_h_khuon_mat,
         emoji="🧑", label="Khuôn mặt camera — ai tới lúc nào, dạy tên mặt lạ",
@@ -8007,6 +8178,7 @@ _CAP_GROUP: dict[str, str] = {
     # cấu hình bộ lọc.
     "xem_camera": "camera",
     "khuon_mat": "camera",
+    "tim_nguoi": "camera",
     "remember": "memory", "search_history": "memory",
     "model_spec": "image",
     "schedule": "schedule",

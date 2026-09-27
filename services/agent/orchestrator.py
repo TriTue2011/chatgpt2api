@@ -1410,7 +1410,11 @@ _KW_CAMERA = _re_mod.compile(
     # Sổ khuôn mặt của camera (tool khuon_mat): «ai vừa về», «mặt lạ ab12 là…».
     # Chỉ là dòng chỉ đường, không quyết hành động — lọt thì tool vẫn có trong
     # thread đã tích camera.
-    r"khuon mat|mat la\b|nguoi la\b|ai (vua|moi) (ve|den|toi)|day mat")
+    r"khuon mat|mat la\b|nguoi la\b|ai (vua|moi) (ve|den|toi)|day mat|"
+    # Tìm người trong nhà (tool tim_nguoi): «con trai đang ở đâu», «bà ở phòng nào», «ai
+    # đang ở nhà». Chủ máy 27/09/2026. Câu hỏi này không có chữ camera nào nên thiếu dòng
+    # này là nhóm camera bị lọc mất khỏi lượt, model không có tool để tìm.
+    r"dang o dau\b|o phong nao\b|ai (dang )?o nha\b")
 _KW_FACEBOOK = _re_mod.compile(
     r"facebook|\bfb\b|\bpage\b|dang bai|len trang|dang len")
 _KW_KHODAMMAY = _re_mod.compile(
@@ -1634,8 +1638,9 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
      "không'. Hỏi CÓ GÌ / MẤY / Ở ĐÂU / AI trong camera → xem_camera với "
      "nhan_dang=true (YOLO + nhận mặt trên máy, trả toạ độ và tên người đã dạy "
      "mặt). Hỏi camera ĐÃ thấy ai lúc nào ('ai vừa về', 'hôm nay ai đến cửa'), "
-     "hoặc trả lời 'mặt lạ <mã> là <tên>' → khuon_mat. KHÁC device_capture "
-     "(webcam máy tính)."),
+     "hoặc trả lời 'mặt lạ <mã> là <tên>' → khuon_mat. Hỏi một NGƯỜI đang ở ĐÂU "
+     "trong nhà ngay lúc này ('con trai đang ở đâu', 'bà ở phòng nào') → tim_nguoi "
+     "(chụp mọi camera, nhận mặt). KHÁC device_capture (webcam máy tính)."),
     ("facebook", _KW_FACEBOOK,
      "- Facebook Page → facebook_trang_thai (kiểm tra token còn sống, "
      "thread gắn Page nào); dang_facebook (đăng bài, loai=chu|link|anh|"
