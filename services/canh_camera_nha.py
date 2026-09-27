@@ -65,6 +65,14 @@ _MAC_DINH: dict[str, Any] = {
     "dong_thuan": 2,       # phải ngần này lần nhìn cùng chỉ một người mới dám gọi tên
     "hoi_ten_sau": 3,      # mặt lạ gặp ngần này lượt thì hỏi tên
     "frigate_ban_do": {},  # {"cua": "Cam cửa"} khi tên Frigate không khớp tên camera
+    # Luồng nào GIỮ MỞ sẵn và việc nào đọc luồng nào — theo sức máy (chủ máy 27/09/2026:
+    # "có phải ai cũng có máy khỏe như tôi đâu"). Mặc định = cách cũ, nhẹ: giữ luồng phụ
+    # cho YOLO (~11% một nhân), mở luồng chính mỗi lượt nhận mặt (chậm 1,3–8,9 giây).
+    # Giữ luồng chính ~26% một nhân nhưng lượt nhận mặt có khung sau 0,02–0,04 giây.
+    "giu_luong_chinh": False,
+    "giu_luong_phu": True,
+    "yolo_luong": "phu",   # "chinh" CHỈ có hiệu lực khi giu_luong_chinh — khoá chéo
+    "chup_luong": "chinh", # luồng dùng để nhận mặt
 }
 
 _hang: "queue.Queue[tuple[str, str]]" = queue.Queue(maxsize=32)
@@ -128,6 +136,21 @@ def cfg() -> dict[str, Any]:
     if isinstance(raw, dict):
         ra.update({k: v for k, v in raw.items() if k in _MAC_DINH})
     return ra
+
+
+def luong_yolo(c: dict[str, Any]) -> str:
+    """Luồng YOLO đọc. Khoá chéo: luồng chính chỉ khi ĐANG GIỮ luồng chính — không giữ mà
+    YOLO mỗi giây mở luồng chính là tốn hơn cả giữ."""
+    return "chinh" if c.get("yolo_luong") == "chinh" and c.get("giu_luong_chinh") else "phu"
+
+
+def luong_chup(c: dict[str, Any]) -> str:
+    return "phu" if c.get("chup_luong") == "phu" else "chinh"
+
+
+def _luong_can_giu(c: dict[str, Any]) -> set[tuple[str, str]]:
+    return {(t, l) for t in _camera_duoc_canh(c)
+            for l, co in (("chinh", c.get("giu_luong_chinh")), ("phu", c.get("giu_luong_phu"))) if co}
 
 
 def _so(v: Any, mac_dinh: float, thap: float, cao: float) -> float:
@@ -306,21 +329,28 @@ def _vong_quet() -> None:
     while not _stop.is_set():
         c = cfg()
         nghi = _so(c["chu_ky_giay"], 2.0, 0.5, 600.0)
+        # Giữ luồng theo lựa chọn khi đang canh — kể cả tắt YOLO (Frigate vẫn gọi nhận
+        # mặt, cần luồng chính sẵn). Không canh thì đóng hết, khỏi giải mã vô ích.
+        if c["bat"]:
+            camera_nha.giu_luong(_luong_can_giu(c))
+        else:
+            camera_nha.dong_luong_ben_bi()
         if not c["bat"] or not c["yolo_quet"] or not nhin_nha.co_yolo():
             _stop.wait(5.0)
             continue
+        ly = luong_yolo(c)
         for ten in _camera_duoc_canh(c):
             if _stop.is_set():
                 return
             if time.time() < _hong_toi.get(ten, 0.0):
                 continue
             try:
-                # Kết nối giữ mở trả khung trong 0–4 ms; `chup_tho` tốn ~1 giây
-                # mỗi lần vì go2rtc phải chờ khung khoá (đo 16/09/2026, 20 lần).
-                # Không dùng được thì rơi về cách cũ — chậm chứ không mất ảnh.
-                anh = camera_nha.khung_ben_bi(ten)
+                # Kết nối LUỒNG CHÍNH giữ mở (dùng chung với lượt nhận mặt) trả khung
+                # ngay; `chup_tho` tốn ~1 giây mỗi lần vì go2rtc phải chờ khung khoá
+                # (đo 16/09/2026). Chưa dùng được (đang mở) thì rơi về cách cũ.
+                anh = camera_nha.khung_ben_bi(ten, ly)
                 if anh is None:
-                    _, tho = camera_nha.chup_tho(ten, phu=True, timeout=10)
+                    _, tho = camera_nha.chup_tho(ten, phu=ly == "phu", timeout=10)
                     anh = yolo_nha.doc_anh(tho)
                 else:
                     _stats["ben_bi"] += 1
@@ -619,14 +649,14 @@ _CHO_KHUNG_DAU = 12.0
 _CHO_KHUNG_SAU = 4.0
 
 
-def _video_truc_tiep(camera: str, toi_da_giay: float):
+def _video_truc_tiep(camera: str, toi_da_giay: float, luong: str = "chinh"):
     """Khung từ luồng CHÍNH của camera, khung mới nhất sau khung vừa xử lý.
 
     Thời gian xem ``toi_da_giay`` tính từ KHUNG ĐẦU, không từ lúc mở: mở chậm không được ăn
     vào thời gian nhìn mặt."""
     from services import camera_nha
 
-    d = camera_nha.mo_video(camera)
+    d = camera_nha.mo_video(camera, luong)
     try:
         sau = 0.0
         het = None
@@ -772,7 +802,7 @@ def xu_ly(camera: str, nguon: str) -> dict[str, Any]:
         t_bat = time.time()
         try:
             ung_vien, anh, k, so_khung_xem = _xem_video(
-                _video_truc_tiep(camera, toi_da), camera, goi_y, toi_da_giay=toi_da)
+                _video_truc_tiep(camera, toi_da, luong_chup(c)), camera, goi_y, toi_da_giay=toi_da)
             logger.info({"event": "canh_camera_video", "camera": camera,
                          "so_khung": so_khung_xem, "so_mat": len(ung_vien),
                          "so_vet": len({m.get("_vet") for _d, m, _a in ung_vien}),
@@ -790,7 +820,7 @@ def xu_ly(camera: str, nguon: str) -> dict[str, Any]:
         if _stop.is_set():
             break
         try:
-            _, tho = camera_nha.chup_tho(camera, timeout=15)
+            _, tho = camera_nha.chup_tho(camera, phu=luong_chup(c) == "phu", timeout=15)
             t_khung = time.monotonic()
             anh_i = yolo_nha.doc_anh(tho)
         except Exception as exc:

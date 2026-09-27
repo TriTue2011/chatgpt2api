@@ -24,6 +24,8 @@ type Canh = {
   bat?: boolean; frigate?: boolean; yolo_quet?: boolean; chu_ky_giay?: number;
   cach_giay?: number; phien_phut?: number; camera?: string[]; camera_ve?: string[];
   hoi_ten_sau?: number; nhan?: string[];
+  giu_luong_chinh?: boolean; giu_luong_phu?: boolean;
+  yolo_luong?: "chinh" | "phu"; chup_luong?: "chinh" | "phu";
 };
 type NhinNha = {
   yolo?: { model?: string; nguong?: number; luong?: number };
@@ -266,7 +268,45 @@ export function NhinNhaCard() {
           </div>
           <div className="flex flex-wrap gap-4">
             {oTich("Nguồn: sự kiện person của Frigate", canh.frigate !== false, (v) => datCanh({ frigate: v }))}
-            {oTich("Nguồn: YOLO tự quét luồng phụ", canh.yolo_quet !== false, (v) => datCanh({ yolo_quet: v }))}
+            {oTich("Nguồn: YOLO tự quét", canh.yolo_quet !== false, (v) => datCanh({ yolo_quet: v }))}
+          </div>
+          {/* Luồng giữ mở — theo sức máy. Khoá chéo: YOLO đọc luồng chính CHỈ khi giữ luồng
+              chính (backend cũng tự ép về luồng phụ nếu đặt lệch). */}
+          <div className="space-y-1 rounded bg-muted/40 p-2">
+            <div className="flex flex-wrap gap-4">
+              {oTich("Giữ luồng chính mở sẵn (~26% một nhân — nhận mặt có khung ngay)", !!canh.giu_luong_chinh,
+                (v) => datCanh(v ? { giu_luong_chinh: true }
+                                 : { giu_luong_chinh: false, yolo_luong: "phu" }))}
+              {oTich("Giữ luồng phụ mở sẵn (~11% một nhân)", canh.giu_luong_phu !== false,
+                (v) => datCanh({ giu_luong_phu: v }))}
+            </div>
+            <div className="flex flex-wrap gap-4 text-sm">
+              <label className="flex items-center gap-2">
+                YOLO dò người trên
+                <select className="rounded border bg-background px-1 py-0.5"
+                  value={canh.giu_luong_chinh && canh.yolo_luong === "chinh" ? "chinh" : "phu"}
+                  onChange={(e) => datCanh({ yolo_luong: e.target.value as "chinh" | "phu" })}>
+                  <option value="phu">luồng phụ</option>
+                  <option value="chinh" disabled={!canh.giu_luong_chinh}>
+                    luồng chính{canh.giu_luong_chinh ? "" : " (cần giữ luồng chính)"}
+                  </option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2">
+                Nhận mặt trên
+                <select className="rounded border bg-background px-1 py-0.5"
+                  value={canh.chup_luong === "phu" ? "phu" : "chinh"}
+                  onChange={(e) => datCanh({ chup_luong: e.target.value as "chinh" | "phu" })}>
+                  <option value="chinh">luồng chính (nét, nên chọn)</option>
+                  <option value="phu">luồng phụ (nhẹ, mặt nhỏ khó nhận)</option>
+                </select>
+              </label>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Máy yếu: giữ luồng phụ, YOLO trên luồng phụ — luồng chính chỉ mở khi có người (chậm 1–9 giây).
+              Máy khoẻ: giữ luồng chính, YOLO trên luồng chính, bỏ giữ luồng phụ — thấy người là có mặt ngay.
+              Luồng không giữ thì đọc bằng cách chụp một khung mỗi lần (chậm hơn, không tốn CPU thường trực).
+            </p>
           </div>
           <div className="flex flex-wrap gap-3">
             {oSo("Nghỉ giữa hai vòng quét (giây)", canh.chu_ky_giay, 2, (v) => datCanh({ chu_ky_giay: v }))}

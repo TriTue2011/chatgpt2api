@@ -289,22 +289,6 @@ class NguonTests(_Nen):
             if "|" in d:
                 self.assertLessEqual(len(d.split("|")[0].strip()), 40)
 
-    def test_ten_luong_phu_chi_nhan_TEN_go2rtc_khong_nhan_URL(self):
-        """Khai URL thì không suy ra tên luồng được — và KHÔNG được đoán «-sub».
-
-        Ghép «-sub» là quy ước của riêng một nhà; nhà khác đặt tên khác thì
-        đoán như vậy là đọc nhầm sang camera của người ta.
-        """
-        from services import camera_nha
-
-        self.assertEqual(
-            camera_nha._ten_luong_phu({"kind": "go2rtc", "src_ai": "cua-sub"}), "cua-sub")
-        self.assertEqual(
-            camera_nha._ten_luong_phu({"kind": "go2rtc", "src_ai": "rtsp://may/cua"}), "")
-        self.assertEqual(camera_nha._ten_luong_phu({"kind": "go2rtc", "src_ai": ""}), "")
-        self.assertEqual(
-            camera_nha._ten_luong_phu({"kind": "rtsp", "src_ai": "cua-sub"}), "")
-
     def test_khung_ben_bi_camera_khong_co_thi_tra_None_chu_khong_nem(self):
         """Đường TĂNG TỐC: hỏng thì rơi về cách cũ, không được làm mất ảnh."""
         from services import camera_nha
@@ -817,7 +801,90 @@ def test_video_cho_khung_dau_du_lau_de_mo_luong(monkeypatch):
         def dong(self):
             pass
 
-    monkeypatch.setattr(camera_nha, "mo_video", lambda ten: _Luong())
+    monkeypatch.setattr(camera_nha, "mo_video", lambda ten, luong="chinh": _Luong())
     khung = [a for _t, a in cc._video_truc_tiep("Cam cửa", 8.0)]
     assert khung == ["khung-1", "khung-2", "khung-3"]
     assert goi[0] == cc._CHO_KHUNG_DAU and goi[1] == cc._CHO_KHUNG_SAU
+
+
+def test_luong_chinh_giu_mo_chi_doi_mau_khi_co_nguoi_cho(monkeypatch):
+    """Chủ máy 27/09/2026: giữ luồng chính mở sẵn, bỏ luồng phụ. Giải mã liên tục (bắt
+    buộc) nhưng chỉ đổi màu khi có người chờ — đo: đọc đủ 35% một nhân, chỉ giải mã 25%.
+    Lượt nhận mặt mượn kết nối đó, chỉ nhận khung SAU lúc mượn, trả lại không đóng."""
+    import sys
+    import time
+    import types
+
+    from services import camera_nha
+
+    dem = {"grab": 0, "retrieve": 0}
+
+    class _Cap:
+        def isOpened(self):
+            return True
+
+        def set(self, *_a):
+            return True
+
+        def grab(self):
+            dem["grab"] += 1
+            time.sleep(0.005)
+            return True
+
+        def retrieve(self):
+            dem["retrieve"] += 1
+            return True, f"khung-{dem['grab']}"
+
+        def read(self):
+            return self.grab(), self.retrieve()[1]
+
+        def release(self):
+            pass
+
+    cv2_gia = types.SimpleNamespace(VideoCapture=lambda *_a: _Cap(), CAP_FFMPEG=0, CAP_PROP_BUFFERSIZE=0)
+    monkeypatch.setitem(sys.modules, "cv2", cv2_gia)
+    monkeypatch.setattr(camera_nha, "_lay", lambda ten: ("Cam cửa", {"kind": "go2rtc"}))
+    monkeypatch.setattr(camera_nha, "url_luong", lambda ten, luong="chinh": f"rtsp://gia/cua-{luong}")
+    monkeypatch.setattr(camera_nha, "_doc_ben_bi", {})
+    try:
+        assert camera_nha.khung_ben_bi("Cam cửa", "chinh") is None, "không giữ thì không tự mở"
+        camera_nha.giu_luong({("Cam cửa", "chinh")})
+        t = time.time()
+        while camera_nha.khung_ben_bi("Cam cửa", "chinh") is None and time.time() - t < 3:
+            pass
+        assert camera_nha.khung_ben_bi("Cam cửa", "chinh").startswith("khung-"), "YOLO lấy khung luồng chính"
+        time.sleep(0.2)
+        truoc = dict(dem)
+        time.sleep(0.2)
+        assert dem["grab"] > truoc["grab"] and dem["retrieve"] == truoc["retrieve"], \
+            "không ai chờ thì chỉ giải mã, không đổi màu"
+        d = camera_nha._doc_ben_bi[("Cam cửa", "chinh")]
+        luot = camera_nha.mo_video("Cam cửa")
+        assert isinstance(luot, camera_nha._Muon), "lượt nhận mặt mượn kết nối đang giữ"
+        kq = luot.khung_moi(0.0, cho=2.0)
+        assert kq is not None and kq[0] >= luot._tu, "chỉ khung đọc sau lúc mượn"
+        luot.dong()
+        assert not d._dung.is_set(), "trả lại không đóng kết nối"
+        camera_nha.giu_luong({("Cam cửa", "phu")})
+        assert d._dung.is_set(), "bỏ chọn luồng chính thì đóng kết nối của nó"
+        assert set(camera_nha._doc_ben_bi) == {("Cam cửa", "phu")}
+    finally:
+        camera_nha.dong_luong_ben_bi()
+
+
+def test_chon_luong_theo_suc_may_va_khoa_cheo(monkeypatch):
+    """Chủ máy 27/09/2026: nút chọn giữ luồng chính / phụ, YOLO và chụp mặt đọc luồng nào —
+    "giữ luồng chính mới tích được yolo luồng chính … có phải ai cũng có máy khỏe như tôi
+    đâu". Mặc định = cách cũ, nhẹ."""
+    from services import camera_nha
+
+    monkeypatch.setattr(camera_nha, "danh_sach", lambda: [{"name": "Cam cửa"}, {"name": "Cam bếp"}])
+    mac_dinh = dict(cc._MAC_DINH, camera=["Cam cửa"])
+    assert cc.luong_yolo(mac_dinh) == "phu" and cc.luong_chup(mac_dinh) == "chinh"
+    assert cc._luong_can_giu(mac_dinh) == {("Cam cửa", "phu")}
+    lech = dict(mac_dinh, yolo_luong="chinh")                  # tích YOLO chính mà không giữ
+    assert cc.luong_yolo(lech) == "phu", "khoá chéo: không giữ luồng chính thì YOLO dùng phụ"
+    khoe = dict(mac_dinh, giu_luong_chinh=True, giu_luong_phu=False, yolo_luong="chinh")
+    assert cc.luong_yolo(khoe) == "chinh"
+    assert cc._luong_can_giu(khoe) == {("Cam cửa", "chinh")}
+    assert cc._luong_can_giu(dict(mac_dinh, camera=[])) == set(), "không canh camera nào thì không giữ gì"

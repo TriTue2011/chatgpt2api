@@ -391,7 +391,7 @@ def _bocc(cam: dict[str, Any], timeout: float) -> bytes:
             else _chup_rtsp(cam, timeout))
 
 
-# ── Luồng phụ giữ mở ─────────────────────────────────────────────────────────
+# ── Luồng giữ mở (chính và/hoặc phụ — chọn theo sức máy, `giu_luong`) ─────────
 #
 # `frame.jpeg` tốn ~1 GIÂY mỗi lần gọi vì go2rtc phải chờ một khung khoá. Đo
 # 16/09/2026 trên Cam cửa, 20 lần mỗi đường: gọi theo tên luồng 1019 ms, gọi
@@ -405,17 +405,16 @@ def _bocc(cam: dict[str, Any], timeout: float) -> bytes:
 # Ngõ cụt đã thử, đừng thử lại: `/api/stream.mjpeg` trả 200 nhưng 0 byte (camera
 # phát H.264, go2rtc không tự chuyển mã), `/api/frame.mjpeg` trả 404.
 #
-# CHỈ bật khi luồng phụ khai bằng TÊN luồng go2rtc (vd `cua-sub`). Khai bằng URL
-# thì chịu — và tuyệt đối KHÔNG đoán tên bằng cách ghép `"-sub"`: đó là quy ước
-# của riêng một nhà, nhà khác đặt tên khác là đọc nhầm camera.
+# 27/09/2026: giữ LUỒNG CHÍNH (không còn luồng phụ) — lượt nhận mặt cần luồng chính,
+# mở mới mỗi lượt tốn 1,3–8,9 giây; một kết nối dùng chung cho YOLO và nhận mặt. Không
+# bao giờ đoán tên luồng phụ bằng cách ghép `"-sub"`: quy ước riêng của một nhà.
 
 #: Cổng RTSP mặc định của go2rtc (cổng HTTP là 1984).
 CONG_RTSP_GO2RTC = 8554
-#: Khung cũ hơn ngần này giây coi như kết nối đã chết — mở lại.
-_KHUNG_QUA_HAN = 5.0
 
 _khoa_doc = threading.Lock()
-_doc_ben_bi: dict[str, "_DocBenBi"] = {}
+#: (tên camera thật, "chinh"|"phu") → kết nối giữ mở.
+_doc_ben_bi: dict[tuple[str, str], "_DocBenBi"] = {}
 
 
 class _DocBenBi:
@@ -423,10 +422,16 @@ class _DocBenBi:
 
     Luồng nền đọc liên tục chứ không đọc theo yêu cầu: ffmpeg đệm sẵn, không
     rút ra đều thì khung tồn lại và ảnh trả về là ảnh cũ vài giây.
+
+    ``chi_khi_can``: vẫn GIẢI MÃ mọi khung (phải thế — khung sau dựa khung trước) nhưng
+    chỉ ĐỔI MÀU và cất khung khi có người đang chờ (`khung_moi`). Đo 27/09/2026 luồng
+    chính 1080p Cam cửa: đọc đủ 35% một nhân, chỉ giải mã 25%.
     """
 
-    def __init__(self, url: str, ten: str) -> None:
+    def __init__(self, url: str, ten: str, *, chi_khi_can: bool = False) -> None:
         self._url, self._ten = url, ten
+        self._chi_khi_can = chi_khi_can
+        self._muon = 0                    # số người đang chờ khung (chi_khi_can)
         self._cap: Any = None
         self._khoa = threading.Lock()
         self._dung = threading.Event()
@@ -456,20 +461,22 @@ class _DocBenBi:
                 if self._cap is None:
                     self._dung.wait(5.0)      # camera đang sập, đừng quay tít
                     continue
-            ok, khung = self._cap.read()
+            if self._chi_khi_can:
+                ok, khung = self._cap.grab(), None
+                if ok:
+                    with self._khoa:
+                        can = self._muon > 0
+                    if can:
+                        ok, khung = self._cap.retrieve()
+            else:
+                ok, khung = self._cap.read()
             if not ok:
                 self._cap.release()
                 self._cap = None
                 continue
-            with self._khoa:
-                self._khung, self._luc = khung, time.time()
-
-    def khung(self) -> Any:
-        """Khung mới nhất, hoặc ``None`` khi kết nối chưa sẵn/đã ôi."""
-        with self._khoa:
-            if self._khung is None or time.time() - self._luc > _KHUNG_QUA_HAN:
-                return None
-            return self._khung
+            if khung is not None:
+                with self._khoa:
+                    self._khung, self._luc = khung, time.time()
 
     def khung_moi(self, sau: float, cho: float = 3.0) -> tuple[float, Any] | None:
         """Khung đọc được SAU mốc ``sau`` (giây, đồng hồ thực), chờ tối đa ``cho``.
@@ -478,14 +485,20 @@ class _DocBenBi:
         mới nhất tiếp theo — nhịp tự khớp với tốc độ máy, không dồn khung cũ.
         """
         het = time.time() + cho
-        while not self._dung.is_set():
+        with self._khoa:
+            self._muon += 1
+        try:
+            while not self._dung.is_set():
+                with self._khoa:
+                    if self._khung is not None and self._luc > sau:
+                        return self._luc, self._khung
+                if time.time() >= het:
+                    return None
+                self._dung.wait(0.02)
+            return None
+        finally:
             with self._khoa:
-                if self._khung is not None and self._luc > sau:
-                    return self._luc, self._khung
-            if time.time() >= het:
-                return None
-            self._dung.wait(0.02)
-        return None
+                self._muon -= 1
 
     def dong(self) -> None:
         self._dung.set()
@@ -495,69 +508,100 @@ class _DocBenBi:
             self._cap = None
 
 
-def url_luong_chinh(ten: str) -> str:
-    """URL RTSP luồng CHÍNH của camera (go2rtc phát lại theo tên luồng, hoặc URL RTSP
-    khai thẳng). Ném ``LoiCamera`` khi camera không có luồng video đọc được."""
+def url_luong(ten: str, luong: str = "chinh") -> str:
+    """URL RTSP của luồng ``"chinh"`` hoặc ``"phu"`` (go2rtc phát lại theo tên luồng, hoặc
+    URL RTSP khai thẳng). Luồng phụ phải KHAI (``src_ai`` / ``url_ai``) — không bao giờ đoán
+    bằng cách ghép ``"-sub"``. Ném ``LoiCamera`` khi không có luồng đọc được."""
     ten_that, cam = _lay(ten)
+    phu = luong == "phu"
     if cam.get("kind") == "go2rtc":
-        src = str(cam.get("src") or "").strip()
+        src = str(cam.get("src_ai" if phu else "src") or "").strip()
         if src.lower().startswith("rtsp://"):
             return src
         u = urlsplit(str(cam.get("base") or ""))
         if not src or src.lower().startswith(("http://", "https://")) or not u.hostname:
-            raise LoiCamera(f"camera «{ten_that}» không có luồng go2rtc đọc video được")
+            raise LoiCamera(f"camera «{ten_that}» không có luồng {'phụ' if phu else 'go2rtc'} đọc video được")
         tk = ""
         if cam.get("username"):
             # Mật khẩu có ký tự như "@" phải mã hoá mới nằm được trong URL.
             tk = f"{quote(str(cam['username']), safe='')}:{quote(str(cam.get('password') or ''), safe='')}@"
         return f"rtsp://{tk}{u.hostname}:{CONG_RTSP_GO2RTC}/{src}"
-    url = str(cam.get("url") or "").strip()
+    url = str(cam.get("url_ai" if phu else "url") or "").strip()
     if not url.lower().startswith("rtsp://"):
-        raise LoiCamera(f"camera «{ten_that}» không có URL RTSP")
+        raise LoiCamera(f"camera «{ten_that}» không có URL RTSP {'luồng phụ' if phu else ''}".strip())
     return url
 
 
-def mo_video(ten: str) -> "_DocBenBi":
-    """Mở luồng CHÍNH để xem video trong một lượt nhận mặt. Người gọi phải ``dong()``."""
-    return _DocBenBi(url_luong_chinh(ten), f"v-{ten}")
+def url_luong_chinh(ten: str) -> str:
+    return url_luong(ten, "chinh")
 
 
-def _ten_luong_phu(cam: dict[str, Any]) -> str:
-    """Tên luồng phụ trên go2rtc, rỗng nếu camera này không khai bằng tên."""
-    if cam.get("kind") != "go2rtc":
-        return ""
-    s = str(cam.get("src_ai") or "").strip()
-    return "" if not s or s.lower().startswith(("rtsp://", "http://", "https://")) else s
+class _Muon:
+    """Lượt nhận mặt MƯỢN kết nối đang giữ mở — chỉ nhận khung đọc SAU lúc mượn (không
+    bao giờ khung cũ còn sót), trả lại thì kết nối vẫn mở."""
+
+    def __init__(self, d: _DocBenBi) -> None:
+        self._d, self._tu = d, time.time()
+
+    def khung_moi(self, sau: float, cho: float = 3.0) -> tuple[float, Any] | None:
+        return self._d.khung_moi(max(sau, self._tu), cho)
+
+    def dong(self) -> None:
+        pass
 
 
-def khung_ben_bi(ten: str):
-    """Khung BGR mới nhất từ kết nối giữ mở, hoặc ``None``.
-
-    ``None`` nghĩa là "cách này không dùng được ở đây" — người gọi rơi về
-    ``chup_tho``. Không ném lỗi: đây là đường TĂNG TỐC, hỏng thì chỉ chậm lại
-    như cũ chứ không được làm mất ảnh.
-    """
+def _ten_that(ten: str) -> str:
     try:
-        ten_that, cam = _lay(ten)
+        return _lay(ten)[0]
     except LoiCamera:
-        return None
-    luong = _ten_luong_phu(cam)
-    if not luong:
-        return None
+        return ten
+
+
+def giu_luong(tap: set[tuple[str, str]]) -> None:
+    """Giữ mở ĐÚNG các cặp (camera, "chinh"|"phu") — mở cặp còn thiếu, đóng cặp không
+    còn chọn. Chủ máy 27/09/2026: tuỳ chọn theo sức máy ("có phải ai cũng có máy khỏe
+    như tôi đâu"). Kết nối giữ mở chỉ GIẢI MÃ liên tục, đổi màu khi có người chờ — đo
+    luồng chính 1080p Cam cửa ~26% một nhân, luồng phụ VGA ~11%."""
+    muon = {(_ten_that(t), l) for t, l in tap}
     with _khoa_doc:
-        d = _doc_ben_bi.get(ten_that)
-        if d is None:
-            u = urlsplit(str(cam.get("base") or ""))
-            if not u.hostname:
-                return None
-            tk = ""
-            if cam.get("username"):
-                tk = f"{cam['username']}:{cam.get('password') or ''}@"
-            d = _DocBenBi(f"rtsp://{tk}{u.hostname}:{CONG_RTSP_GO2RTC}/{luong}", ten_that)
-            _doc_ben_bi[ten_that] = d
-            logger.info({"event": "camera_luong_ben_bi_mo", "camera": ten_that,
-                         "luong": luong})
-    return d.khung()
+        bo = [k for k in _doc_ben_bi if k not in muon]
+        dong = [_doc_ben_bi.pop(k) for k in bo]
+        for ten_that, luong in muon - set(_doc_ben_bi):
+            try:
+                _doc_ben_bi[(ten_that, luong)] = _DocBenBi(
+                    url_luong(ten_that, luong), f"{ten_that}-{luong}", chi_khi_can=True)
+                logger.info({"event": "camera_luong_ben_bi_mo", "camera": ten_that, "luong": luong})
+            except LoiCamera as exc:
+                logger.info({"event": "camera_luong_ben_bi_khong_mo", "camera": ten_that,
+                             "luong": luong, "loi": str(exc)[:120]})
+    for d in dong:
+        d.dong()
+
+
+def mo_video(ten: str, luong: str = "chinh") -> "_DocBenBi | _Muon":
+    """Xem một luồng trong một lượt nhận mặt. Người gọi phải ``dong()``.
+
+    Luồng đó đang được giữ mở thì MƯỢN kết nối: mở mới mỗi lượt tốn 1,3–8,9 giây (đo
+    27/09/2026 luồng chính Cam cửa) — người đi nhanh qua cửa là mất mặt."""
+    with _khoa_doc:
+        d = _doc_ben_bi.get((_ten_that(ten), luong))
+    if d is not None:
+        return _Muon(d)
+    return _DocBenBi(url_luong(ten, luong), f"v-{ten}")
+
+
+def khung_ben_bi(ten: str, luong: str = "phu"):
+    """Khung BGR mới (đọc SAU lúc gọi) từ kết nối ĐANG GIỮ MỞ của luồng đó, hoặc ``None``.
+
+    ``None`` nghĩa là "cách này không dùng được" (luồng không được giữ, đang mở, camera
+    sập) — người gọi rơi về ``chup_tho``. Không ném lỗi, không tự mở kết nối: giữ luồng
+    nào là lựa chọn theo sức máy (`giu_luong`)."""
+    with _khoa_doc:
+        d = _doc_ben_bi.get((_ten_that(ten), luong))
+    if d is None:
+        return None
+    kq = d.khung_moi(time.time(), cho=2.0)
+    return kq[1] if kq else None
 
 
 def dong_luong_ben_bi() -> int:
