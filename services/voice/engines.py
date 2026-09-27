@@ -14,13 +14,16 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
 import queue
 import re as _re
+import shutil
 import socket
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import wave
 from collections import OrderedDict
 from pathlib import Path
@@ -331,19 +334,36 @@ def _nho_giong(voice: str) -> None:
         logger.warning("voice: khong ghi duoc so giong gan nhat: %s", str(exc)[:120])
 
 
+def _giong_dang_gan() -> list[str]:
+    """Giọng đang gán: mặc định + từng loa. Không đọc được sổ loa thì chỉ giọng mặc định."""
+    ds = [vcfg.tts_voice()]
+    try:
+        from services.voice import speakers
+        ds += [str(sp.get("voice")) for sp in speakers.list_speakers() if sp.get("voice")]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("voice: khong doc duoc so loa de nap san: %s", str(exc)[:120])
+    return ds
+
+
 def nap_giong_da_dung(bo_qua: str = "") -> list[str]:
-    """Nạp sẵn họ GIỮ (`_ho_giu`) đã từng đọc, bằng giọng gần nhất của họ ấy.
+    """Nạp sẵn giọng: giọng gần nhất của mỗi họ GIỮ (`_ho_giu`) + MỌI giọng đang gán (mặc định,
+    từng loa). Trả các giọng đã nạp.
 
     Gọi nền lúc khởi động, sau `warmup_tts` (``bo_qua``: giọng nó vừa nạp). Họ không
-    giữ thì không nạp sẵn — nạp rồi 30 phút sau lại nhả. Lỗi họ nào bỏ họ ấy — lượt
+    giữ thì không nạp sẵn — nạp rồi 30 phút sau lại nhả. Lỗi giọng nào bỏ giọng ấy — lượt
     đọc thật tự nạp như cũ.
+
+    Giọng đang gán phải nạp đủ, không chỉ một giọng mỗi họ: Piper giữ MỘT tiến trình mỗi giọng
+    (`_PiperGiu`), lần đầu mở ~1,3–1,8 giây (đo 27/09/2026) — giọng «ngochuyennew» của loa R1 đen
+    và pipeline Home sẽ chịu lần đầu chậm nếu chỉ nạp «manhdung».
     """
     import time as _time
 
     giu = _ho_giu()
+    ds = [g for ho, g in _giong_cuoi().items() if ho in giu] + _giong_dang_gan()
     da_nap = []
-    for ho, giong in list(_giong_cuoi().items()):
-        if giong == bo_qua or ho not in giu:
+    for giong in dict.fromkeys(ds):
+        if not giong or giong == bo_qua:
             continue
         t0 = _time.perf_counter()
         try:
@@ -351,7 +371,7 @@ def nap_giong_da_dung(bo_qua: str = "") -> list[str]:
         except Exception as exc:
             logger.warning("voice: nap san %s loi: %s", giong, str(exc)[:160])
             continue
-        da_nap.append(ho)
+        da_nap.append(giong)
         logger.info("voice: nap san %s (%d ms)", giong, int((_time.perf_counter() - t0) * 1000))
     return da_nap
 
@@ -1240,11 +1260,86 @@ def _qua_sea(text: str, *, chi_chuan_bi: bool) -> str:
     return ra
 
 
+class _PiperGiu:
+    """MỘT tiến trình ``piper --json-input`` giữ sẵn cho một giọng: model chỉ nạp một lần.
+
+    Mở tiến trình mới cho MỖI câu thì mỗi câu lại nạp model. Đo 27/09/2026 trong c2a: giọng
+    "manhdung" 1,25 giây mỗi câu; giữ tiến trình thì câu sau chỉ 0,20–0,29 giây. Từ HA: giọng
+    Piper (pipeline Home, loa R1 đen, giọng mặc định) chờ 1,5 giây mới có tiếng đầu — lâu gấp
+    3 lần ZeroTTS/NghiTTS vốn giữ model trong bộ nhớ.
+    piper ≥1.2: mỗi dòng JSON ``{"text", "output_file"}`` → ghi WAV, in đường dẫn khi xong.
+    """
+
+    def __init__(self, binary: str, model: Path, length_scale: float) -> None:
+        self.khoa = threading.Lock()
+        self.thu_muc = tempfile.mkdtemp(prefix="piper_")
+        self.p = subprocess.Popen(
+            [binary, "--model", str(model), "--json-input", "--output_dir", self.thu_muc,
+             "--length_scale", str(length_scale)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, bufsize=1)
+        self.dem = 0
+        self.dung_luc = time.monotonic()
+
+    def doc(self, text: str) -> bytes:
+        with self.khoa:
+            self.dung_luc = time.monotonic()
+            self.dem += 1
+            tep = os.path.join(self.thu_muc, f"{self.dem}.wav")
+            self.p.stdin.write(json.dumps({"text": text, "output_file": tep}, ensure_ascii=False) + "\n")
+            self.p.stdin.flush()
+            ra = self.p.stdout.readline().strip()
+            if not ra:
+                raise VoiceError("piper giữ sẵn đã thoát.")
+            try:
+                return Path(ra).read_bytes()
+            finally:
+                Path(ra).unlink(missing_ok=True)
+
+    def song(self) -> bool:
+        return self.p.poll() is None
+
+    def dong(self) -> None:
+        try:
+            self.p.stdin.close()
+            self.p.wait(3)
+        except Exception:
+            self.p.kill()
+        shutil.rmtree(self.thu_muc, ignore_errors=True)
+
+
+_PIPER_GIU: dict[tuple[str, str, float], _PiperGiu] = {}
+_PIPER_GIU_KHOA = threading.Lock()
+_PIPER_GIU_TOI_DA = 4
+
+
+def _piper_giu(binary: str, model: Path) -> _PiperGiu:
+    khoa = (binary, str(model), float(vcfg.tts_length_scale()))
+    with _PIPER_GIU_KHOA:
+        g = _PIPER_GIU.get(khoa)
+        if g is not None and g.song():
+            return g
+        if g is not None:
+            g.dong()
+        if len(_PIPER_GIU) >= _PIPER_GIU_TOI_DA:
+            cu = min(_PIPER_GIU, key=lambda k: _PIPER_GIU[k].dung_luc)
+            _PIPER_GIU.pop(cu).dong()
+        g = _PIPER_GIU[khoa] = _PiperGiu(binary, model, khoa[2])
+        return g
+
+
 def _piper_local(text: str, voice: str = "") -> bytes:
     binary = vcfg.piper_binary()
     model = vcfg.voice_model_path(voice)
     if not binary or model is None:
         raise VoiceError("Piper local chưa sẵn sàng (thiếu binary hoặc file giọng).")
+    for _lan in range(2):                    # tiến trình giữ sẵn chết thì mở lại MỘT lần
+        try:
+            data = _piper_giu(binary, model).doc(_doc_vi(text))
+            if data:
+                return data
+        except Exception as exc:  # noqa: BLE001 — hỏng thì rơi về cách mở tiến trình mỗi câu
+            logger.warning("voice: piper giu san loi: %s", str(exc)[:160])
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as out:
         out_path = out.name
     try:
@@ -2358,10 +2453,63 @@ def _lam_am_stt(rec) -> None:
         logger.info("voice: lam am STT bo qua: %s", str(exc)[:120])
 
 
+#: Ngôn ngữ STT đã từng nhận — khởi động lại (mỗi lần đổi ảnh) thì nạp sẵn đúng những model ấy.
+_STT_DA_DUNG_TEP = Path(vcfg.DATA_DIR) / "stt_da_dung.json"
+_STT_DA_DUNG: set[str] | None = None
+
+
+def _stt_da_dung() -> set[str]:
+    global _STT_DA_DUNG
+    if _STT_DA_DUNG is None:
+        try:
+            _STT_DA_DUNG = {str(x) for x in json.loads(_STT_DA_DUNG_TEP.read_text())}
+        except (OSError, ValueError, TypeError):
+            _STT_DA_DUNG = set()
+    return _STT_DA_DUNG
+
+
+def _nho_stt(lang: str) -> None:
+    ds = _stt_da_dung()
+    if lang and lang not in ds:
+        ds.add(lang)
+        try:
+            _STT_DA_DUNG_TEP.write_text(json.dumps(sorted(ds)))
+        except OSError as exc:
+            logger.warning("voice: khong ghi duoc so STT da dung: %s", str(exc)[:120])
+
+
+def warmup_stt() -> list[str]:
+    """Nạp sẵn model STT đã từng dùng (chưa có sổ thì tiếng Việt) và nhận thử 0,5 giây im lặng.
+
+    Đo 27/09/2026 từ pipeline_debug của HA: 3/4 lượt nói thật chờ ~1,6 giây từ lúc HA thấy hết
+    nói tới lúc có chữ — đều là lượt STT ĐẦU TIÊN sau một lần c2a khởi động lại (21:22, 21:32 đổi
+    ảnh; 19:32). Lượt kế tiếp 0,17 giây; nhận dạng thuần 0,10–0,12 giây. Model chỉ nạp lúc có người
+    nói đầu tiên (~1,4 giây). wyoming-vietnamese nạp sẵn và giải mã thử lúc khởi động
+    (`warm_up_stt`) — cùng cách.
+    """
+    import numpy as np
+
+    da = []
+    for lang in sorted(_stt_da_dung() or {"vi"}):
+        try:
+            if not vcfg.stt_co_model(lang):
+                continue
+            rec = _get_recognizer(lang)
+            with _stt_lock:
+                s = rec.create_stream()
+                s.accept_waveform(16000, np.zeros(8000, dtype=np.float32))
+                rec.decode_stream(s)
+            da.append(lang)
+        except Exception as exc:  # noqa: BLE001 — một tiếng hỏng thì lượt nói thật tự nạp như cũ
+            logger.warning("voice: nap san STT %s loi: %s", lang, str(exc)[:160])
+    return da
+
+
 def _sherpa_local(wav16: bytes, lang: str = "vi") -> str:
     import numpy as np
 
     rec = _get_recognizer(lang)
+    _nho_stt(lang)
     rate, width, _channels, pcm = _wav_parts(wav16)
     if width != 2:
         raise VoiceError("STT cần WAV 16-bit.")

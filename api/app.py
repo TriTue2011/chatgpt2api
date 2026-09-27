@@ -315,6 +315,16 @@ def create_app() -> FastAPI:
             ve_tinh_camera.start()
         except Exception as exc:
             _record_startup_failure("ve_tinh_camera", str(exc))
+        # Nạp sẵn STT nền: lượt nói đầu tiên sau mỗi lần đổi ảnh từng chờ nạp model ~1,4 giây
+        # (đo 27/09/2026 từ pipeline_debug của HA) — xem `engines.warmup_stt`.
+        try:
+            from services.voice import config as _vconf_stt
+            if _vconf_stt.has_local_stt():
+                import threading as _thr_stt
+                from services.voice.engines import warmup_stt as _warmup_stt
+                _thr_stt.Thread(target=_warmup_stt, name="stt-warmup", daemon=True).start()
+        except Exception as exc:
+            _record_startup_failure("stt_warmup_start", str(exc))
         # Prewarm TTS (VieNeu/Kokoro) nền — lần đọc đầu không trả cold-start 1–2s.
         try:
             from services.voice import config as _vconf

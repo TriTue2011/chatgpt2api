@@ -974,6 +974,7 @@ def test_nap_san_chi_ho_giu_da_dung_bang_giong_gan_nhat(monkeypatch):
     giữ (VieNeu Nano) không nạp sẵn: nạp rồi 30 phút sau lại nhả."""
     monkeypatch.setattr(vcfg, "tts_giu_san", lambda: {"nghi", "zerotts"})
     monkeypatch.setattr(engines, "_ho_dang_gan", lambda: set())
+    monkeypatch.setattr(engines, "_giong_dang_gan", lambda: [])
     monkeypatch.setattr(engines, "_GIONG_CUOI", {
         "nghi": "nghi:my-tam", "zerotts": "zerotts:maichi", "vieneu": "vieneu:Trúc Ly",
         "vieneunano": "vieneunano:Mạnh Dũng"})
@@ -986,10 +987,14 @@ def test_nap_san_chi_ho_giu_da_dung_bang_giong_gan_nhat(monkeypatch):
         return b""
 
     monkeypatch.setattr(engines, "synthesize", gia)
-    assert engines.nap_giong_da_dung() == ["nghi"]                     # zerotts lỗi thì bỏ qua
+    assert engines.nap_giong_da_dung() == ["nghi:my-tam"]              # zerotts lỗi thì bỏ qua
     assert goi == ["nghi:my-tam", "zerotts:maichi"]                    # họ không giữ không nạp
     goi.clear()
     assert engines.nap_giong_da_dung(bo_qua="nghi:my-tam") == []       # warmup vừa nạp rồi
+    goi.clear()
+    monkeypatch.setattr(engines, "_giong_dang_gan", lambda: ["manhdung", "ngochuyennew", "manhdung"])
+    assert engines.nap_giong_da_dung(bo_qua="nghi:my-tam") == ["manhdung", "ngochuyennew"]
+    assert "ngochuyennew" in goi, "giọng gán cho loa (R1 đen) cũng nạp sẵn, không chỉ một giọng mỗi họ"
 
 
 def test_warmup_khong_nap_vieneu_khi_mac_dinh_la_giong_khac(monkeypatch):
@@ -1149,3 +1154,77 @@ def test_zerotts_doc_so_kem_don_vi_bang_sea_g2p(monkeypatch):
     for giu in ("lúc 18h09", "PM2.5 ở mức 9", "Bot n8n", "Loa Phicomm_R1_912F", "máy 172.16.10.200",
                 "có 7 thiết bị", "năm 2026–2027", "ngày 9/9/2026", "57%"):
         assert engines._doc_don_vi(giu) == giu, giu
+
+
+# ── Nạp sẵn STT lúc khởi động (27/09/2026) ──────────────────────────────────
+
+
+class _RecGia:
+    def __init__(self):
+        self.giai = 0
+
+    def create_stream(self):
+        return types.SimpleNamespace(accept_waveform=lambda r, x: None,
+                                     result=types.SimpleNamespace(text="TẮT QUẠT"))
+
+    def decode_stream(self, s):
+        self.giai += 1
+
+
+def test_nap_san_stt_ngon_ngu_da_dung_chua_co_thi_tieng_viet(monkeypatch):
+    """pipeline_debug HA 27/09/2026: lượt nói ĐẦU sau mỗi lần đổi ảnh chờ ~1,6 giây (nạp Zipformer);
+    lượt sau 0,17 giây. Nạp sẵn như wyoming-vietnamese (`warm_up_stt`)."""
+    tep = Path(tempfile.mkdtemp()) / "stt.json"
+    monkeypatch.setattr(engines, "_STT_DA_DUNG_TEP", tep)
+    monkeypatch.setattr(engines, "_STT_DA_DUNG", None)
+    monkeypatch.setattr(vcfg, "stt_co_model", lambda lang: True)
+    rec: dict = {}
+    monkeypatch.setattr(engines, "_get_recognizer", lambda lang: rec.setdefault(lang, _RecGia()))
+    assert engines.warmup_stt() == ["vi"] and rec["vi"].giai == 1
+    import numpy as _np
+    import wave as _wave
+    import io as _io
+    buf = _io.BytesIO()
+    with _wave.open(buf, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+        w.writeframes(_np.zeros(1600, dtype="<i2").tobytes())
+    engines._sherpa_local(buf.getvalue(), "en")
+    monkeypatch.setattr(engines, "_STT_DA_DUNG", None)                # khởi động lại: đọc từ đĩa
+    assert engines.warmup_stt() == ["en"]
+
+
+# ── Piper giữ sẵn một tiến trình mỗi giọng (27/09/2026) ─────────────────────
+
+_PIPER_GIA = r'''#!/usr/bin/env python3
+import json, os, sys, wave
+open(os.environ["PIPER_DEM"], "a").write("mo\n")
+for dong in sys.stdin:
+    d = json.loads(dong)
+    if d["text"] == "CHET":
+        sys.exit(1)
+    with wave.open(d["output_file"], "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(22050); w.writeframes(b"\x01\x00" * 100)
+    print(d["output_file"], flush=True)
+'''
+
+
+def test_piper_giu_mot_tien_trinh_cho_nhieu_cau(monkeypatch):
+    """Mở tiến trình mỗi câu = nạp model mỗi câu: đo 1,25 giây/câu; giữ sẵn 0,20–0,29 giây."""
+    thu = Path(tempfile.mkdtemp())
+    bin_ = thu / "piper"; bin_.write_text(_PIPER_GIA); bin_.chmod(0o755)
+    model = thu / "giong.onnx"; model.write_bytes(b"x")
+    dem = thu / "dem.txt"; dem.write_text("")
+    monkeypatch.setenv("PIPER_DEM", str(dem))
+    monkeypatch.setattr(vcfg, "piper_binary", lambda: str(bin_))
+    monkeypatch.setattr(vcfg, "voice_model_path", lambda v: model)
+    monkeypatch.setattr(engines, "_doc_vi", lambda t: t)
+    monkeypatch.setattr(engines, "_PIPER_GIU", {})
+    for cau in ("một", "hai", "ba"):
+        assert engines._piper_local(cau, "gia")[:4] == b"RIFF"
+    assert dem.read_text().count("mo") == 1, "ba câu, MỘT tiến trình"
+    g = next(iter(engines._PIPER_GIU.values()))
+    g.p.kill(); g.p.wait()
+    assert engines._piper_local("bốn", "gia")[:4] == b"RIFF"
+    assert dem.read_text().count("mo") == 2, "tiến trình chết thì mở lại"
+    for g in engines._PIPER_GIU.values():
+        g.dong()
