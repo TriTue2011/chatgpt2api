@@ -178,6 +178,56 @@ def test_dung_roi_trong_lai_ngay_van_co_luong_moi(tmp_path, monkeypatch):
     trong_xe._reset_for_tests(tmp_path / "t.json")
 
 
+NGUOI_XA = yolo_nha.VatThe("person", 0.9, (150, 0, 195, 45))
+
+
+def test_luc_bat_co_nguoi_di_lai_thi_cho_yen_roi_moi_do(tx):
+    """27/09/2026 20:52 Cam phòng khách: chủ máy đặt xe đạp rồi đi ra đúng lúc bot đo 5 lượt đầu —
+    vùng xe lệch tới 55,8 → ngưỡng 167; dắt xe đi thật chỉ lệch 32, bot im. Nay: chưa yên thì chờ,
+    nhiễu đo bằng trung vị trên lượt yên."""
+    rng = np.random.default_rng(0)
+    tx["vat"] = [XE, NGUOI_XA]
+    trong_xe.bat("cửa", loa=[], dich="zalop:acc:nhom")
+    for _ in range(4):                               # người còn đi lại, cảnh đổi liên tục
+        tx["anh"] = rng.integers(0, 255, (200, 200, 3), dtype=np.uint8)
+        assert trong_xe.kiem_mot_lan() == "cho_yen"
+    tx["anh"], tx["vat"] = _khung(), [XE]            # người đã ra, cảnh yên
+    kq = [trong_xe.kiem_mot_lan() for _ in range(trong_xe.LAN_DO_NHIEU + 1)]
+    assert kq[0] == "cho_yen" and set(kq[1:]) == {""}
+    anh = _khung(); anh[50:100, 50:100] = 130        # xe đi: vùng xe chỉ lệch 30
+    tx["anh"], tx["vat"] = anh, []
+    kq = [trong_xe.kiem_mot_lan() for _ in range(trong_xe.LAN_XAC_NHAN)]
+    assert kq[-1] == "bao_dong" and "BÁO ĐỘNG" in tx["gui"][0][1]
+
+
+def test_tat_den_ca_phong_khong_bao_dong(tx):
+    """Cả khung tối đi, YOLO mất xe: chưa phân biệt được đèn tắt với xe đi — không đếm."""
+    _bat(tx)
+    tx["anh"], tx["vat"] = np.full((200, 200, 3), 20, np.uint8), []
+    for _ in range(6):
+        assert trong_xe.kiem_mot_lan() == "doi_canh"
+    assert tx["gui"] == []
+    tx["anh"], tx["vat"] = np.full((200, 200, 3), 20, np.uint8), [XE]   # YOLO thấy lại xe → lấy lại mốc
+    assert trong_xe.kiem_mot_lan() == "doi_sang"
+
+
+def test_mac_dinh_khong_hu_loa_chi_nhan_tin(tx, monkeypatch):
+    """Chủ máy 27/09/2026: "Tạm thời cảnh báo về zalo, không cảnh báo loa"."""
+    from services.config import config
+    from services.voice import speakers
+    monkeypatch.setattr(speakers, "list_speakers", lambda: [{"name": "Loa khách"}])
+    monkeypatch.setitem(config.data, "trong_xe", {})
+    assert trong_xe.bat("cửa", dich="zalop:acc:nhom")["loa"] == []
+    trong_xe.kiem_mot_lan()
+    for _ in range(trong_xe.LAN_DO_NHIEU):
+        trong_xe.kiem_mot_lan()
+    tx["anh"], tx["vat"] = _khung(xe_con=False), []
+    kq = [trong_xe.kiem_mot_lan() for _ in range(trong_xe.LAN_XAC_NHAN)]
+    assert kq[-1] == "bao_dong" and tx["loa"] == [] and "BÁO ĐỘNG" in tx["gui"][0][1]
+    monkeypatch.setitem(config.data, "trong_xe", {"bao_loa": True})
+    assert trong_xe._loa_bao_dong() == ["Loa khách"]
+
+
 def test_tool_trong_xe_gui_ve_dung_chat(tx, monkeypatch):
     from services.agent import capabilities as caps
     from services.agent import reminders as rem

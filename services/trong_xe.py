@@ -9,7 +9,8 @@ Vì sao không chỉ nhìn hộp YOLO: đo 27/09/2026 trên vật đứng yên (
 ~2 giây): hộp giữ IoU trung vị 0,96–0,99, nhưng vật YOLO kém chắc (điểm 0,38–0,45) có lúc MẤT
 HẲN 1–2 khung hoặc lệch còn 0,33. Nên "xe bị dời" phải đủ HAI dấu hiệu, LIÊN TIẾP `LAN_XAC_NHAN`
 lần kiểm: (1) không còn xe nào ở chỗ cũ (IoU < `IOU_CON`), và (2) ảnh vùng xe khác hẳn lúc bắt
-đầu — "khác hẳn" do BOT TỰ ĐO độ nhiễu của chính vùng ấy ở `LAN_DO_NHIEU` lần kiểm đầu. Cả khung
+đầu — "khác hẳn" do BOT TỰ ĐO độ nhiễu (trung vị) của chính vùng ấy ở các lượt YÊN (không người
+trong khung) đầu tiên; mốc cũng chỉ chụp lúc yên. Cả khung
 đổi sáng (bật đèn, camera chuyển hồng ngoại) thì lấy lại mốc, không báo động.
 
 Người nhà: lúc xe đổi chỗ, nhìn mặt trong khung đó, và xem lượt gặp người quen ở camera này hoặc
@@ -31,6 +32,13 @@ CHU_KY = 2.0
 IOU_CON = 0.5
 LAN_XAC_NHAN = 3
 LAN_DO_NHIEU = 5
+#: Đủ ngần này lượt YÊN (có mốc) thì bắt đầu phán — không bắt chờ đủ LAN_DO_NHIEU: chủ máy
+#: 27/09/2026 "ít nhất phải thông báo ngay chứ".
+LAN_PHAN_TOI_THIEU = 3
+#: Lúc yên YOLO thấy xe ở ngần này tỉ lệ lượt trở lên thì YOLO "mất xe" đáng tin hơn — hạ ngưỡng
+#: "vùng xe khác hẳn" từ 3× xuống 2× nhiễu. KHÔNG bỏ hẳn điều kiện ảnh: ảnh vùng xe không đổi là
+#: bằng chứng mạnh xe còn nằm đó, YOLO lỡ thì chỉ là YOLO lỡ.
+THAY_ON_DINH = 0.8
 #: Sàn của ngưỡng "khác hẳn" (độ lệch trung bình 0–255 của vùng xe, ảnh xám 64×64).
 SAN_KHAC = 12.0
 NHA_GIAY = 180
@@ -90,6 +98,11 @@ def _vung(anh, hop):
     return cv2.resize(cv2.cvtColor(cat, cv2.COLOR_BGR2GRAY), (64, 64)).astype("float32")
 
 
+def _trung_vi(ds) -> float:
+    s = sorted(ds)
+    return float(s[len(s) // 2]) if s else 0.0
+
+
 def _lech(a, b) -> float:
     import numpy as np
     return float(np.mean(np.abs(a - b)))
@@ -120,9 +133,13 @@ def _luu_moc() -> None:
         nhieu[i, :len(ds)] = ds
     canh = np.full(LAN_DO_NHIEU, np.nan, np.float32)
     canh[:len(_moc["nhieu_canh"])] = _moc["nhieu_canh"]
+    thay = np.full((len(_moc["vung"]), LAN_DO_NHIEU + 1), np.nan, np.float32)
+    for i, ds in enumerate(_moc["thay"]):
+        thay[i, :len(ds)] = ds
     try:
         with open(_tep_moc(), "wb") as f:
-            np.savez(f, canh=_moc["canh"], vung=np.stack(_moc["vung"]), nhieu=nhieu, nhieu_canh=canh)
+            np.savez(f, canh=_moc["canh"], vung=np.stack(_moc["vung"]), nhieu=nhieu, nhieu_canh=canh,
+                     thay=thay, yen=np.array(bool(_moc.get("yen"))))
     except OSError as exc:
         logger.warning({"event": "trong_xe_luu_moc_loi", "loi": str(exc)[:120]})
 
@@ -135,7 +152,9 @@ def _nap_moc(so_xe: int) -> bool:
             vung, nhieu, canh = list(z["vung"]), z["nhieu"], z["nhieu_canh"]
             _moc.update(canh=z["canh"], vung=vung, lech_lien=0,
                         nhieu=[[float(x) for x in hang if x == x] for hang in nhieu],
-                        nhieu_canh=[float(x) for x in canh if x == x])
+                        nhieu_canh=[float(x) for x in canh if x == x],
+                        thay=[[bool(x) for x in hang if x == x] for hang in z["thay"]],
+                        yen=bool(z["yen"]))
     except (OSError, KeyError, ValueError):
         return False
     if len(_moc["vung"]) != so_xe:
@@ -144,11 +163,14 @@ def _nap_moc(so_xe: int) -> bool:
     return True
 
 
-def _dung_moc(anh, xe: list[dict[str, Any]]) -> None:
+def _dung_moc(anh, xe: list[dict[str, Any]], *, yen: bool = True) -> None:
+    """Mốc ảnh để so. ``yen`` = khung này yên (không người, YOLO thấy đủ xe). Mốc KHÔNG yên chỉ là
+    tạm: lượt yên đầu tiên sẽ chụp lại, và chưa có mốc yên thì chưa đo nhiễu, chưa phán."""
     nha = _moc.get("nha")
     _moc.clear()
     _moc.update(canh=_toan_canh(anh), vung=[_vung(anh, x["hop"]) for x in xe],
-                nhieu=[[] for _ in xe], nhieu_canh=[], lech_lien=0)
+                nhieu=[[] for _ in xe], nhieu_canh=[], lech_lien=0,
+                thay=[[True] for _ in xe] if yen else [[] for _ in xe], yen=yen)
     if nha:
         _moc["nha"] = nha
     _luu_moc()
@@ -196,6 +218,20 @@ def _ve_xe(anh, xe: list[dict[str, Any]]) -> str:
     return f"{gateway_base_url()}/images/{time.strftime('%Y/%m/%d')}/{tep}"
 
 
+def _loa_bao_dong() -> list[str]:
+    """Loa hú khi báo động: mọi loa đã khai, trừ khi chủ máy tắt (cài đặt ``trong_xe.bao_loa``).
+
+    Chủ máy 27/09/2026 20:5x: "Tạm thời cảnh báo về zalo, không cảnh báo loa" — mặc định TẮT loa,
+    chỉ nhắn tin. Bật lại: ``trong_xe.bao_loa = true``.
+    """
+    from services.config import config
+    c = config.data.get("trong_xe")
+    if not (isinstance(c, dict) and c.get("bao_loa")):
+        return []
+    from services.voice import speakers
+    return [str(r.get("name")) for r in speakers.list_speakers() if r.get("name")]
+
+
 def bat(camera: str = "", *, loa: list[str] | None = None, dich: str = "") -> dict[str, Any]:
     """Bắt đầu trông xe ở ``camera``. ``loa``: tên loa báo động (None = mọi loa đã khai, [] =
     không loa). ``dich``: kênh chat của người nhờ (tin báo động gửi thẳng về đó). Trả
@@ -211,17 +247,17 @@ def bat(camera: str = "", *, loa: list[str] | None = None, dich: str = "") -> di
     elif cam is None:
         raise LoiTrongXe("Em chưa rõ camera nào. Đang có: " + ", ".join(goi_y))
     anh = _khung(ten)
+    vat = nhin_nha.vat_the(anh, chi_nhan=set(XE) | {"person"})
     xe = [{"nhan": v.nhan, "diem": round(float(v.diem), 2), "hop": [int(x) for x in v.hop]}
-          for v in nhin_nha.vat_the(anh, chi_nhan=set(XE))]
+          for v in vat if v.nhan in XE]
     if not xe:
         raise LoiTrongXe(f"Em không thấy xe nào ở {ten} lúc này — anh kiểm lại xe có trong khung camera không ạ.")
     if loa is None:
-        from services.voice import speakers
-        loa = [str(r.get("name")) for r in speakers.list_speakers() if r.get("name")]
+        loa = _loa_bao_dong()
     d = {"bat": True, "camera": ten, "xe": xe, "tu": time.time(), "loa": list(loa), "dich": dich}
     with _khoa:
         _luu(d)
-        _dung_moc(anh, xe)
+        _dung_moc(anh, xe, yen=not any(v.nhan == "person" for v in vat))
     _chay()
     logger.info({"event": "trong_xe_bat", "camera": ten, "so_xe": len(xe)})
     return {"camera": ten, "xe": xe, "loa": list(loa), "anh": _ve_xe(anh, xe)}
@@ -331,7 +367,7 @@ def kiem_mot_lan() -> str:
             # đủ để kết luận (vật kém chắc có lúc mất 1–2 khung): đợi LAN_DO_NHIEU lượt liền.
             if all(max([_iou(x["hop"], v.hop) for v in hien] or [0]) >= IOU_CON for x in d["xe"]):
                 _cho_xe = 0
-                _dung_moc(anh, d["xe"])
+                _dung_moc(anh, d["xe"], yen=not any(v.nhan == "person" for v in vat))
                 return ""
             _cho_xe += 1
             if _cho_xe < LAN_DO_NHIEU:
@@ -343,28 +379,48 @@ def kiem_mot_lan() -> str:
         _bao(d, f"⚠️ Máy vừa khởi động lại, em không còn thấy xe ở chỗ cũ ({cam}). Em dừng trông — "
                 "anh kiểm tra xe giúp em.", _ve_xe(anh, d["xe"]))
         return ra
+    # YÊN = không ai trong khung. Chỉ lượt yên mới được làm mốc và đo nhiễu. Đo 27/09/2026 ở Cam
+    # phòng khách: chủ máy đặt xe đạp rồi đi ra đúng lúc bot đo 5 lượt đầu — cả khung lệch 14–16,
+    # vùng xe tới 55,8 → ngưỡng "khác hẳn" 3 × 55,8 = 167; dắt xe đi thật chỉ lệch 32, bot im.
+    yen = not any(v.nhan == "person" for v in vat)
+    iou = [max([_iou(x["hop"], v.hop) for v in hien] or [0]) for x in d["xe"]]
     with _khoa:
-        lech_canh = _lech(_toan_canh(anh), _moc["canh"])
-        do_them = len(_moc["nhieu_canh"]) < LAN_DO_NHIEU
-        if do_them:
-            _moc["nhieu_canh"].append(lech_canh)
-        elif lech_canh > max(SAN_KHAC, 3 * max(_moc["nhieu_canh"])):
-            # Cả khung đổi sáng: lấy lại mốc chứ không báo động (xe vẫn nằm đó thì YOLO vẫn thấy).
-            if all(max([_iou(x["hop"], v.hop) for v in hien] or [0]) >= IOU_CON for x in d["xe"]):
+        if not _moc.get("yen"):
+            if yen and all(i >= IOU_CON for i in iou):
                 _dung_moc(anh, d["xe"])
-                return "doi_sang"
-        lech_ca = False
-        for i, x in enumerate(d["xe"]):
-            iou = max([_iou(x["hop"], v.hop) for v in hien] or [0])
-            k = _lech(_vung(anh, x["hop"]), _moc["vung"][i])
-            if len(_moc["nhieu"][i]) < LAN_DO_NHIEU:
-                _moc["nhieu"][i].append(k)
-                do_them = True
-                continue
-            if iou < IOU_CON and k > max(SAN_KHAC, 3 * max(_moc["nhieu"][i])):
-                lech_ca = True
-        if do_them:
+            return "cho_yen"
+        k = [_lech(_vung(anh, x["hop"]), _moc["vung"][i]) for i, x in enumerate(d["xe"])]
+        lech_canh = _lech(_toan_canh(anh), _moc["canh"])
+        if yen and len(_moc["nhieu_canh"]) < LAN_DO_NHIEU:
+            _moc["nhieu_canh"].append(lech_canh)
+            for i in range(len(d["xe"])):
+                _moc["thay"][i].append(iou[i] >= IOU_CON)
+                if iou[i] >= IOU_CON:            # nhiễu chỉ đo lúc xe còn đó
+                    _moc["nhieu"][i].append(k[i])
             _luu_moc()
+        elif (len(_moc["nhieu_canh"]) >= LAN_DO_NHIEU
+              and lech_canh > max(SAN_KHAC, 3 * _trung_vi(_moc["nhieu_canh"]))
+              and all(i >= IOU_CON for i in iou)):
+            # Cả khung đổi sáng mà xe vẫn nằm đó (YOLO vẫn thấy): lấy lại mốc, không báo động.
+            _dung_moc(anh, d["xe"], yen=yen)
+            return "doi_sang"
+        if min(len(t) for t in _moc["thay"]) < LAN_PHAN_TOI_THIEU:
+            return ""
+        if (_moc["nhieu_canh"] and lech_canh > max(SAN_KHAC, 3 * _trung_vi(_moc["nhieu_canh"]))
+                and not all(i >= IOU_CON for i in iou) and yen):
+            # Cả khung đổi hẳn (tắt/bật đèn, camera chuyển hồng ngoại) mà YOLO mất xe: chưa phân
+            # biệt được "đèn tắt" với "xe đi" — chưa đếm, chờ cảnh ổn lại (YOLO thấy xe → lấy lại mốc).
+            _moc["lech_lien"] = 0
+            return "doi_canh"
+        lech_ca = False
+        for i in range(len(d["xe"])):
+            if iou[i] >= IOU_CON:
+                continue
+            on_dinh = sum(_moc["thay"][i]) / len(_moc["thay"][i]) >= THAY_ON_DINH
+            he_so = 2 if on_dinh else 3
+            nguong = max(SAN_KHAC, he_so * _trung_vi(_moc["nhieu"][i])) if _moc["nhieu"][i] else SAN_KHAC
+            if k[i] > nguong:
+                lech_ca = True
         che = lech_ca and _che_xe(d["xe"], vat)
         if not che:
             _moc["lech_lien"] = _moc["lech_lien"] + 1 if lech_ca else 0
