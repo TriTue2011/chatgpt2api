@@ -22,115 +22,132 @@ Tài liệu này dành cho người **mới cài lần đầu**. Đọc theo th�
 
 ## 1. Chạy lần đầu
 
+Thứ tự: chuẩn bị máy → tạo khoá bí mật → chạy stack → đăng nhập → tải model. Làm hết
+mục 1.1 tới 1.6 là dùng được; 1.7 và 1.8 chỉ khi muốn dùng PostgreSQL.
+
 ### 1.1. Cần gì trước khi bắt đầu
 
 | Thứ | Bắt buộc? | Ghi chú |
 |---|---|---|
-| Docker + Docker Compose | ✅ | Bản mới bất kỳ |
-| RAM | ✅ | Tối thiểu 2 GB; bật giọng nói local nên có 4 GB |
-| Ổ đĩa | ✅ | ~12 GB: image 5,7 GB (kèm Chrome để tự động hoá web) + chỗ cho dữ liệu và model giọng nói |
-| Tài khoản AI | ✅ | ít nhất một: ChatGPT, Gemini, Claude… |
-| Domain HTTPS | ❌ | chỉ cần khi dùng bot Telegram/Zalo (xem Cloudflare Tunnel) |
+| Docker Engine + plugin `docker compose` v2 | ✅ | 20.10 trở lên. `docker compose version` phải in ra `v2…` |
+| CPU | ✅ | x86-64 hoặc ARM64 |
+| RAM | ✅ | 4 GB. Bật giọng nói tại chỗ và camera thì nên 8 GB — đo thật: c2a chiếm 2,45 GB ngay sau khởi động |
+| Ổ đĩa | ✅ | ~15 GB: ảnh c2a 5,8 GB, ảnh dịch và tìm kiếm, cộng dữ liệu và model (mục 1.6) |
+| Tài khoản AI | ✅ | Ít nhất một: ChatGPT, Codex, Gemini, Claude… |
+| Home Assistant | ❌ | Chỉ khi điều khiển nhà, loa, camera |
+| Domain HTTPS | ❌ | Chỉ khi dùng bot Telegram/Zalo Bot (webhook cần HTTPS — xem Cloudflare ở 3.6) |
 
-Bảng trên là mức tối thiểu để chạy. Muốn biết con số đĩa đã đo thật, cách cài
-Docker trên NAS (Synology / QNAP / TrueNAS / Unraid), và danh sách những thứ
-**không** đóng gói sẵn trong image: [CHUAN_BI_TRUOC_KHI_PULL.md](CHUAN_BI_TRUOC_KHI_PULL.md).
+Cài Docker trên NAS (Synology / QNAP / TrueNAS / Unraid), số đo đĩa chi tiết, bản ảnh
+GPU: [CHUAN_BI_TRUOC_KHI_PULL.md](CHUAN_BI_TRUOC_KHI_PULL.md).
+
+**Stack gồm ba container** (khai trong `docker-compose.yml`):
+
+| Container | Ảnh | Vai trò |
+|---|---|---|
+| `c2a` | `ghcr.io/tritue2011/chatgpt2api` | Mọi thứ chính: web, API, bot, giọng nói, camera, MCP, máy chủ Zalo, trình duyệt đăng nhập (noVNC) |
+| `searxng` | `searxng/searxng` | Máy tìm kiếm web cho bot |
+| `vn-translate` | `ghcr.io/tritue2011/vn-translate` | Máy dịch tự dựng (tab Dịch, lệnh `/dich`) — không tốn lượt AI |
 
 ### 1.2. Cách A — Docker Compose (dòng lệnh)
 
-**Bước 1 — Lấy mã nguồn:**
+**Bước 1 — Lấy mã nguồn.** Cần bản git vì compose đọc cấu hình SearXNG
+(`deploy/searxng/settings.yml`) từ đây:
 
 ```bash
-git clone <repo-url> chatgpt2api
-cd chatgpt2api
+git clone https://github.com/TriTue2011/chatgpt2api.git /opt/c2a
+cd /opt/c2a
 ```
 
-**Bước 2 — Mở `docker-compose.yml`, sửa 2 chỗ bắt buộc:**
+**Bước 2 — Tạo tệp `.env`.** Năm khoá đầu là **bắt buộc**: thiếu khoá nào thì
+`docker compose` dừng ngay và báo tên khoá đó (không có giá trị mặc định đoán được).
+Lệnh dưới sinh sẵn chuỗi ngẫu nhiên; ý nghĩa từng khoá ở mục 1.4.
 
-```yaml
-services:
-  c2a:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: c2a:latest
-    container_name: c2a
-    restart: unless-stopped
-
-    ports:
-      - "3030:80"      # ← web UI + API (đổi số trái nếu 3030 bị chiếm)
-      - "6080:6080"    # noVNC — LAN; BẮT BUỘC đặt VNC_PASSWORD
-      - "3001:3001"    # zalo-server (HA/integration có thể ở máy khác)
-      - "10600-10604:10600-10604"  # Wyoming ĐỌC: việt/anh/nhật/trung/hàn (HA khác host → đừng bind 127.0.0.1)
-      - "10700-10704:10700-10704"  # Wyoming NGHE: cùng thứ tự tiếng
-
-    volumes:
-      - /opt/c2a-data:/app/data   # ← đổi /opt/c2a-data thành thư mục BẤT KỲ trên máy bạn
-
-    environment:
-      CHATGPT2API_AUTH_KEY: your_secret_key_here     # ← ĐỔI thành chuỗi bí mật của bạn
-      CAPTCHA_SOLVER_API_KEY: your_secret_key_here    # ← đổi luôn (khác giá trị trên cũng được)
-      VNC_PASSWORD: your_vnc_password                 # ← bắt buộc nếu mở 6080 trên LAN
-      STORAGE_BACKEND: json
-      # CAPTCHA_SOLVER_NOVNC_EXTERNAL_URL: "http://IP_HOST:6080/vnc.html?host=IP_HOST&port=6080&autoconnect=1"
+```bash
+cat > .env <<EOF
+CHATGPT2API_AUTH_KEY=$(openssl rand -hex 24)
+CAPTCHA_SOLVER_API_KEY=$(openssl rand -hex 24)
+ZALO_SERVER_API_KEY=$(openssl rand -hex 24)
+VNC_PASSWORD=$(openssl rand -hex 8)
+SEARXNG_SECRET=$(openssl rand -hex 32)
+VAULT_MASTER_KEY=$(openssl rand -base64 32)
+VAULT_REQUIRE_ENCRYPTION=1
+EOF
+chmod 600 .env
 ```
 
-| Chỗ cần sửa | Vì sao |
-|---|---|
-| `CHATGPT2API_AUTH_KEY` | Mật khẩu đăng nhập + API key. Để nguyên `your_secret_key_here` thì ai cũng đăng nhập được |
-| `VNC_PASSWORD` | noVNC không mật khẩu = ai trên LAN cũng điều khiển trình duyệt captcha |
-| `/opt/c2a-data` (vế trái của volume) | Nơi lưu **toàn bộ** dữ liệu — tài khoản, cấu hình, model giọng nói. Thư mục này phải tồn tại và còn chỗ trống (khuyên ≥15 GB) |
-| `3030:80` | Nếu máy đã có dịch vụ khác dùng cổng 3030, đổi số bên trái, vd `8080:80` |
-| `10600-10604` / `10700-10704` / `3001` | **Không** bind `127.0.0.1` nếu Home Assistant / client nằm máy khác trong LAN (106xx = Wyoming ĐỌC, 107xx = NGHE — mỗi cổng một tiếng, xem 4.2c) |
+**Bước 3 — Chọn ảnh dựng sẵn.** `docker-compose.yml` mặc định **dựng ảnh từ mã
+nguồn** (khối `build:` + `image: c2a:latest`): mất 15–30 phút và cần nhiều RAM lúc
+dựng. Dùng ảnh GitHub đã dựng sẵn thì chỉ việc tải:
 
-**Máy ít RAM, chạy chung với container khác?** Đặt trần RAM cho từng container bằng
-biến môi trường (trong tệp `.env` cạnh `docker-compose.yml`, hoặc ô **Environment
-variables** của Portainer). Bỏ trống = không giới hạn (mặc định):
+```bash
+sed -i '/^  c2a:$/,/^    image: c2a:latest$/{/build:/d;/context: \./d;/dockerfile: Dockerfile/d;s|image: c2a:latest|image: ghcr.io/tritue2011/chatgpt2api:latest|}' docker-compose.yml
+grep -n "image: ghcr.io/tritue2011/chatgpt2api" docker-compose.yml   # phải in ra đúng một dòng
+```
+
+Muốn tự dựng thì bỏ qua bước này và chạy `docker compose up -d --build` ở bước 5.
+
+**Bước 4 — Xem lại các chỗ tuỳ máy** trong `docker-compose.yml`, service `c2a`:
+
+| Chỗ | Mặc định | Khi nào đổi |
+|---|---|---|
+| `volumes: - /opt/c2a-data:/app/data` | `/opt/c2a-data` | Muốn để dữ liệu chỗ khác. Đây là nơi giữ **toàn bộ** tài khoản, cấu hình, model — khuyên để trên ổ còn ≥15 GB |
+| `"3030:${APP_PORT:-80}"` | cổng 3030 | Máy đã có dịch vụ khác dùng 3030: đổi số bên trái, vd `8080:…` |
+| `6080` (noVNC), `3001` (Zalo) | mở ra LAN | Chỉ dùng trên chính máy này: đổi thành `127.0.0.1:6080:6080`. **Không** mở 6080 ra Internet |
+| `10600-10604`, `10700-10704` | mở ra LAN | Cổng Wyoming cho Home Assistant (106xx = đọc, 107xx = nghe; mỗi cổng một tiếng — xem 4.2c). HA ở máy khác thì **đừng** gắn `127.0.0.1` |
+
+Máy ít RAM, chạy chung với container khác? Đặt trần RAM bằng biến trong `.env`. Bỏ
+trống = không giới hạn (mặc định):
 
 | Biến | Gợi ý | Ghi chú |
 |---|---|---|
-| `C2A_MEM_LIMIT` | `4g` | c2a gồm trình duyệt, giọng nói, MCP, Zalo — đo thật ~2,5 GB ngay sau khởi động, đặt dưới ~3,5g dễ bị tắt vì hết RAM |
-| `SEARXNG_MEM_LIMIT` | `512m` | đo ~110 MB |
-| `VN_TRANSLATE_MEM_LIMIT` | `1g` | model dịch nạp vào RAM khi dùng |
-| `LIBRETRANSLATE_MEM_LIMIT` | `2g` | chỉ khi bật profile `libretranslate` |
+| `C2A_MEM_LIMIT` | `4g` | Đặt dưới ~3,5g dễ bị tắt vì hết RAM lúc mở trình duyệt / nạp model |
+| `SEARXNG_MEM_LIMIT` | `512m` | Đo ~110 MB |
+| `VN_TRANSLATE_MEM_LIMIT` | `1g` | Model dịch nạp vào RAM khi dùng |
 
-Container chạm trần thì Docker tắt nó và tự bật lại — trần là để không kéo sập cả
+Container chạm trần thì Docker tắt nó rồi tự bật lại — trần là để không kéo sập cả
 máy, không làm c2a nhẹ hơn.
 
-**Bước 3 — Chạy:**
+**Giới hạn CPU.** Nếu trong compose bạn đặt `cpus:` (hoặc `--cpus` lúc `docker run`),
+hãy đặt số luồng giọng nói **bằng đúng số nhân đó**:
+
+| Container | Biến | Ví dụ `cpus: "2"` |
+|---|---|---|
+| c2a | `VIENEU_THREADS` | `2` |
+| wyoming-vietnamese | `CPU_THREADS` | `2` |
+
+Để trống / `0` thì chương trình tự đếm. `os.cpu_count()` **không** thấy hạn mức
+`cpus` của Docker (nó đếm nhân máy chủ). ONNX mở quá nhiều luồng, các luồng tranh
+quota, tiếng đầu ra chậm thêm khoảng 2 giây. Số luồng bằng số nhân được cấp thì
+có tiếng sau khoảng 200–300 ms. c2a có đọc `cpu.max` khi hạn mức nằm đúng chỗ;
+vẫn nên khai biến cho chắc, nhất là container Wyoming tiếng Việt (`CPU_THREADS=0`
+chỉ nhìn số nhân tiến trình, không nhìn quota).
+
+**Bước 5 — Chạy và kiểm tra:**
 
 ```bash
-# Build image từ mã nguồn (lần đầu mất 5–15 phút tuỳ máy)
-docker compose up -d --build
-
-# Hoặc nếu chỉ muốn dùng image build sẵn (nhanh hơn, không cần build)
-docker compose up -d --no-build
+mkdir -p /opt/c2a-data           # đúng đường dẫn ở dòng volumes
+docker compose up -d
+docker compose ps                # c2a phải "Up … (healthy)" sau khoảng 1 phút
+docker compose logs -f c2a       # xem log, Ctrl+C để thôi xem
 ```
 
-**Bước 4 — Kiểm tra đã chạy chưa:**
-
-```bash
-docker compose ps          # cột STATUS phải là "Up ... (healthy)"
-docker compose logs -f c2a # xem log trực tiếp, Ctrl+C để thoát xem
-```
-
-Mở trình duyệt: `http://<ip-máy>:3030` (đổi `<ip-máy>` thành `localhost` nếu chạy
-ngay trên máy đang mở trình duyệt, hoặc IP LAN của máy chủ nếu chạy từ xa).
+Mở trình duyệt: `http://<IP-máy>:3030` (`localhost` nếu mở ngay trên máy chủ).
 
 **Lệnh hay dùng về sau:**
 
 ```bash
-docker compose pull && docker compose up -d --no-build   # cập nhật lên bản mới nhất
-docker compose restart c2a                                # khởi động lại
-docker compose down                                       # dừng hẳn (dữ liệu vẫn còn trong volume)
+git pull && docker compose pull && docker compose up -d   # cập nhật lên bản mới nhất
+docker compose restart c2a                                # khởi động lại c2a
+docker image prune -f                                     # dọn ảnh treo — KHÔNG thêm -a
 ```
 
-### 1.3. Cách B — Portainer (giao diện web, không cần gõ lệnh)
+`-a` xoá luôn ảnh cũ còn gắn thẻ, tức bản dự phòng để lùi khi bản mới hỏng. Muốn tự
+cập nhật thì chạy thêm [Watchtower](https://containrrr.dev/watchtower/): nó kéo ảnh
+`:latest` mới rồi khởi động lại c2a.
 
-Portainer là bảng điều khiển Docker chạy trên web — hợp với ai không quen dòng lệnh
-hoặc quản lý nhiều container cùng lúc.
+### 1.3. Cách B — Portainer (giao diện web)
 
-**Bước 1 — Có Portainer chưa?** Nếu máy chưa cài:
+Portainer là bảng điều khiển Docker trên web. Máy chưa có thì cài:
 
 ```bash
 docker volume create portainer_data
@@ -140,82 +157,167 @@ docker run -d -p 9443:9443 --name portainer --restart=always \
   portainer/portainer-ce:latest
 ```
 
-Mở `https://<ip-máy>:9443`, tạo tài khoản quản trị ở lần đăng nhập đầu.
+Mở `https://<IP-máy>:9443`, tạo tài khoản quản trị ở lần đầu.
 
-**Bước 2 — Tạo Stack:**
+**Bước 1 — Vẫn cần mã nguồn trên máy chủ** cho tệp cấu hình SearXNG:
 
-1. Menu trái → **Stacks** → **Add stack**.
-2. **Name**: gõ `chatgpt2api` (tuỳ ý).
-3. **Build method**: chọn **Web editor**.
-4. Dán nội dung file `docker-compose.yml` của repo vào ô soạn thảo (xem mẫu ở
-   Cách A) — **sửa `CHATGPT2API_AUTH_KEY` và đường dẫn volume** giống hệt Cách A.
-5. Vì Portainer không tự có mã nguồn để build, đổi phần `build:` thành `image:` trỏ
-   thẳng tới bản build sẵn trên GHCR:
+```bash
+git clone https://github.com/TriTue2011/chatgpt2api.git /opt/c2a
+```
 
-   ```yaml
-   services:
-     c2a:
-       image: ghcr.io/tritue2011/chatgpt2api:latest
-       container_name: c2a
-       restart: unless-stopped
-       ports:
-         - "3030:80"
-         - "6080:6080"      # noVNC — đặt VNC_PASSWORD; siết 127.0.0.1 nếu chỉ SSH tunnel
-         - "3001:3001"      # zalo — LAN (HA có thể khác host)
-         - "10600-10604:10600-10604"   # Wyoming ĐỌC (TTS) — HA khác host
-         - "10700-10704:10700-10704"   # Wyoming NGHE (STT)
-       volumes:
-         - /opt/c2a/data:/app/data
-       environment:
-         CHATGPT2API_AUTH_KEY: your_secret_key_here
-         CAPTCHA_SOLVER_API_KEY: your_secret_key_here
-         VNC_PASSWORD: your_vnc_password
-         STORAGE_BACKEND: json
-   ```
+**Bước 2 — Tạo Stack:** Menu trái → **Stacks** → **Add stack** → đặt tên (vd `c2a`)
+→ **Web editor**, dán nội dung `/opt/c2a/docker-compose.yml` rồi sửa hai chỗ:
 
-   > 💡 **Khắc phục lỗi `unauthorized` khi pull image trong Portainer**:
-   > Nếu GHCR báo lỗi `unauthorized`, truy cập GitHub Package `chatgpt2api` -> **Package settings** -> Chuyển **Package visibility** sang `Public`. Hoặc trong Portainer: **Registries** -> **Add registry** -> **GitHub Container Registry**, điền username + Personal Access Token (PAT có quyền `read:packages`).
+1. Service `c2a`: xoá khối `build:` (3 dòng) và đổi `image: c2a:latest` thành
+   `image: ghcr.io/tritue2011/chatgpt2api:latest`. Portainer không có mã nguồn để dựng.
+2. Service `searxng`: đổi `./deploy/searxng/settings.yml` thành đường dẫn tuyệt đối
+   `/opt/c2a/deploy/searxng/settings.yml`. Đường dẫn tương đối trong Web editor trỏ
+   vào thư mục riêng của Portainer, SearXNG sẽ không có cấu hình.
 
+**Bước 3 — Khai khoá bí mật:** cuộn xuống **Environment variables** → **Advanced
+mode**, dán các dòng `TÊN=giá trị` giống tệp `.env` ở mục 1.2 bước 2 (sinh chuỗi bằng
+`openssl rand -hex 24` trên máy chủ). Portainer **không** đọc tệp `.env` trên máy chủ —
+mọi biến phải nằm ở ô này.
 
-6. Bấm **Deploy the stack** ở cuối trang. Đợi cột trạng thái chuyển xanh.
+**Bước 4 —** Bấm **Deploy the stack**, đợi cả ba container xanh.
 
-**Bước 3 — Vào container xem log / chạy lệnh** (khi cần, ví dụ tải model giọng nói
-ở Phần 4): **Containers** → bấm vào `c2a` → tab **Logs** để xem log, hoặc nút
-**Console** → **Connect** → chọn `/bin/sh` để mở terminal ngay trong trình duyệt.
+> 💡 GHCR báo `unauthorized` khi kéo ảnh: vào **Registries** → **Add registry** →
+> **GitHub Container Registry**, điền tên GitHub + Personal Access Token có quyền
+> `read:packages`.
 
-**Cập nhật lên bản mới:** **Stacks** → mở stack `chatgpt2api` → **Pull and redeploy**
-(hoặc **Update the stack** nếu bạn vừa sửa nội dung file).
+**Chạy lệnh trong container** (tải model ở mục 1.6): **Containers** → `c2a` →
+**Console** → **Connect** với `/bin/sh`. Trong console này bỏ phần
+`docker exec c2a` ở đầu mỗi lệnh — chỉ gõ `/app/.venv/bin/python scripts/…`.
 
-### 1.4. `CHATGPT2API_AUTH_KEY` dùng để làm gì
+**Cập nhật lên bản mới:** **Stacks** → mở stack → **Update the stack**, bật **Re-pull
+image**. Không bật thì Portainer dùng lại ảnh cũ đang có trên máy.
 
-Vừa là mật khẩu đăng nhập trang quản trị, vừa là API key khi ứng dụng ngoài gọi vào
-(`Authorization: Bearer <khóa>`). Đặt chuỗi khó đoán và **không** đưa lên GitHub.
+### 1.4. Các khoá bí mật dùng để làm gì
 
-### 1.5. Bốn việc nên làm ngay sau khi đăng nhập
+| Khoá | Bắt buộc | Dùng để làm gì |
+|---|---|---|
+| `CHATGPT2API_AUTH_KEY` | ✅ | Mật khẩu đăng nhập web **và** API key khi ứng dụng ngoài gọi vào (`Authorization: Bearer <khoá>`) |
+| `CAPTCHA_SOLVER_API_KEY` | ✅ | Khoá nội bộ của bộ giải captcha (đăng nhập web ChatGPT / Gemini / Claude / Flow) |
+| `ZALO_SERVER_API_KEY` | ✅ | Khoá nội bộ giữa c2a và máy chủ Zalo chạy cùng container |
+| `VNC_PASSWORD` | ✅ | Mật khẩu noVNC (cổng 6080) — trình duyệt để đăng nhập tay. Không có nó ai trong LAN cũng điều khiển được trình duyệt đó |
+| `SEARXNG_SECRET` | ✅ | Khoá của SearXNG |
+| `SESSION_SECRET` | không | Ký phiên đăng nhập trang quản trị Zalo (cổng 3001). Bỏ trống thì tự sinh và lưu trong thư mục dữ liệu |
+| `ZALO_SERVER_ADMIN_PASSWORD` | nên có | Mật khẩu trang quản trị của máy chủ Zalo (cổng 3001) |
+| `VAULT_MASTER_KEY` + `VAULT_REQUIRE_ENCRYPTION=1` | nên có | Mã hoá AES-256-GCM mật khẩu và mã TOTP của tài khoản AI đã lưu. **Đừng đổi, đừng mất** — sai khoá là mọi mật khẩu đã lưu thành rỗng, phải nhập lại; chép một bản ra ngoài máy chủ. Phải là base64 của đúng 32 byte (`openssl rand -base64 32`) |
+
+Không đưa `.env` lên GitHub. Biến mới qua các đợt nâng cấp:
+[docs/BAO_MAT_VA_NANG_CAP_2026-08.md](docs/BAO_MAT_VA_NANG_CAP_2026-08.md).
+
+### 1.5. Việc làm ngay sau khi đăng nhập
 
 1. **Thêm tài khoản AI** — `▸ AI Core → Tài khoản`. Chưa có tài khoản thì mọi thứ
    khác đều vô nghĩa.
-2. **Kiểm tra model** — `▸ AI Core → Model`. Danh sách phải hiện ra model từ tài
-   khoản vừa thêm.
-3. **Thử chat** — `▸ Studio → Chat`. Gõ một câu; có trả lời tức là đường ống thông.
+2. **Kiểm tra model** — `▸ AI Core → Model`. Danh sách phải hiện model từ tài khoản
+   vừa thêm.
+3. **Thử chat** — `▸ Studio → Chat`. Gõ một câu; có trả lời là đường ống thông.
 4. **Đặt “Địa chỉ truy cập hình ảnh”** — `▸ Hệ thống → Cài đặt → Cấu hình chung`.
-   Điền `http://<ip-máy>:3030`. Thiếu ô này thì ảnh/âm thanh sinh ra sẽ hiện link
-   hỏng khi gửi ra ngoài.
+   Điền `http://<IP-máy>:3030`. Thiếu ô này thì ảnh/âm thanh gửi ra ngoài là link hỏng.
+5. **Tải model** — `▸ Hệ thống → Cài đặt → Model cần tải` (mục 1.6).
+6. Tuỳ nhu cầu: nối **Home Assistant** và camera (3.7), bật **bot Zalo/Telegram**
+   (Phần 5), bật **giọng nói** và khai loa (Phần 4).
 
-### 1.6. Dữ liệu nằm ở đâu
+### 1.6. Tải model — bảng đầy đủ
 
-Mọi thứ trong thư mục `data/` (mount volume, sống qua mọi lần cập nhật image):
+**Ảnh Docker chỉ mang chương trình chạy model, không kèm model.** Model tải về thư mục
+dữ liệu (`/app/data`, tức volume ở mục 1.2), nên chỉ tải **một lần**, cập nhật ảnh
+không mất, và ảnh không phình thêm vài GB. Chưa tải model nào thì tính năng đó báo
+thiếu hoặc lặng im — c2a vẫn chạy bình thường.
+
+**Trong c2a đã có sẵn hướng dẫn:** `▸ Hệ thống → Cài đặt → Model cần tải`. Thẻ này:
+
+- kiểm từng model **đã có chưa** (✓ / ✗), bằng đúng hàm c2a dùng lúc chạy;
+- đánh dấu **Cần** khi tính năng đang bật hay giọng đang gán dùng tới model đó (vd bật
+  «canh camera» thì YOLO + khuôn mặt thành Cần; gán giọng `zerotts:…` cho loa thì ZeroTTS
+  thành Cần), **Nên có**, hoặc **Tuỳ chọn**;
+- báo dòng đỏ «Thiếu N model đang CẦN» nếu có;
+- cho lệnh tải kèm nút «Chép» — dán vào terminal máy chủ, tải xong bấm «Kiểm lại».
+
+Mọi lệnh chạy trên **máy chủ có container `c2a`**. Dùng đúng `/app/.venv/bin/python` —
+`python` trần trong container là Python hệ thống, thiếu thư viện (vd `huggingface_hub`)
+nên vài script sẽ lỗi. Tải xong **không cần khởi động lại** — model nạp ở lần dùng đầu.
+**Trừ một chỗ:** cổng Wyoming cho Home Assistant (4.2c) chỉ mở lúc c2a khởi động, và
+chỉ mở cho tiếng đã có model. Vừa tải model nghe/đọc của một tiếng mà muốn HA dùng qua
+Wyoming thì khởi động lại c2a một lần (`docker compose restart c2a`).
+
+**Bộ khởi đầu tiếng Việt** (~300 MB — nghe, đọc, camera):
+
+```bash
+docker exec c2a /app/.venv/bin/python scripts/download_stt_model.py
+docker exec c2a /app/.venv/bin/python scripts/download_silero_vad.py
+docker exec c2a /app/.venv/bin/python scripts/download_piper_voices.py --pack minimal
+docker exec c2a /app/.venv/bin/python scripts/download_nhin_nha.py
+```
+
+**Bảng đầy đủ.** Cột lệnh là phần sau `docker exec c2a /app/.venv/bin/python scripts/`:
+
+| Nhóm | Model | Dùng cho | Dung lượng | Lệnh |
+|---|---|---|---|---|
+| Nghe | Tiếng Việt (Zipformer) | HA Assist, tin thoại Zalo/Telegram, mic camera | ~100 MB | `download_stt_model.py` |
+| Nghe | Cắt đoạn lời nói (Silero VAD) | Tách chỗ có tiếng nói; không có thì cắt theo độ lớn tiếng | 0,6 MB | `download_silero_vad.py` |
+| Nghe | Tiếng Anh (Parakeet-TDT) | Cổng Wyoming 10701, dạy tiếng Anh | ~600 MB | `download_stt_en_model.py` |
+| Nghe | Trung / Nhật / Hàn (SenseVoice) | Tab Dịch, đàm thoại, cổng 10702–10704 | ~230 MB | `download_stt_da_ngu.py --sense` |
+| Đọc | Piper — giọng mặc định `ngochuyennew` | Nhẹ nhất, chạy máy yếu | ~64 MB | `download_piper_voices.py --pack minimal` |
+| Đọc | Piper — cả 19 giọng (`manhdung`, `banmai`…) | Giọng `piper:…` khác | ~1,2 GB | `download_piper_voices.py --pack full` |
+| Đọc | NghiTTS — giọng mặc định | Giọng `nghi:…` — tự nhiên, nhanh | ~64 MB | `download_nghitts_voices.py` |
+| Đọc | NghiTTS — cả 19 giọng | Giọng `nghi:…` khác | ~1,2 GB | `download_nghitts_voices.py --all` |
+| Đọc | ZeroTTS (8 giọng giữ thanh điệu) | Giọng `zerotts:…` — hay nhất, cần CPU khá | ~900 MB | `download_zerotts.py` |
+| Đọc | ZeroTTS bản int8 | Máy yếu — nhanh gấp đôi | tạo tại chỗ từ bản thường, cần tải bản thường trước | `download_zerotts.py --int8` |
+| Đọc | Kokoro Việt (14 giọng) | Giọng `kokorovi:…` | ~330 MB | `download_kokoro_vi.py --all` |
+| Đọc | VieNeu Nano | Giọng `vieneunano:…` — nhẹ, nhanh | ~400 MB | `download_vieneu_nano.py` |
+| Đọc | VieNeu Turbo | Giọng `vieneu:…` — nặng, cần CPU mạnh | ~1,2 GB RAM khi chạy | `download_vieneu_model.py` |
+| Đọc | Kokoro tiếng Anh | Giọng `kokoro:…` | ~305 MB | `download_kokoro_model.py` |
+| Đọc | Trung / Nhật / Hàn | Tab Dịch đọc kết quả | ~260 MB | `download_tts_da_ngu.py` |
+| Camera | YOLO26 (mặc định `yolo26n`) | Canh camera, tìm người, trông xe | ~10 MB | `download_nhin_nha.py --yolo yolo26n` |
+| Camera | Khuôn mặt InsightFace (mặc định `buffalo_s`) | Nhận người nhà, hỏi tên người lạ | ~128 MB | `download_nhin_nha.py --mat buffalo_s` |
+| Dịch | Từ điển Anh/Trung/Nhật/Hàn → Việt | Tra nghĩa từng từ trong tab Dịch | ~44 MB | `tai_tu_dien.py` |
+
+Ghi chú:
+
+- **Camera:** `download_nhin_nha.py --list` in mọi bản YOLO (n/s/m/l/x) và bộ mặt
+  (`buffalo_s`, `buffalo_l`) kèm số đo tốc độ. Đổi bản trong `▸ Cài đặt → Home
+  Assistant → Nhận vật thể`; thẻ «Model cần tải» luôn cho lệnh của **bản đang chọn**.
+  Model khuôn mặt InsightFace chỉ được dùng **phi thương mại**.
+- **Giọng nào cần?** Giọng gán cho loa, cho từng nhóm chat, và giọng Home Assistant
+  Assist đã gọi — thẻ «Model cần tải» tự gom và đánh dấu Cần.
+- **Chỉ kiểm, không tải:** đa số script nhận `--check`.
+
+**Máy chủ không ra Internet được từ container?** Tải bằng `wget` trên máy chủ vào đúng
+thư mục dữ liệu. Hai model tiếng Việt cơ bản nằm ở GitHub Release của repo này:
+
+```bash
+# Nghe tiếng Việt → <thư mục dữ liệu>/stt/
+mkdir -p /opt/c2a-data/stt && cd /opt/c2a-data/stt
+for f in bpe.model config.json decoder-epoch-20-avg-10.onnx encoder-epoch-20-avg-10.onnx joiner-epoch-20-avg-10.onnx; do
+  wget -q "https://github.com/TriTue2011/chatgpt2api/releases/download/stt-zipformer-v1/$f"
+done
+
+# Giọng mặc định → <thư mục dữ liệu>/piper/
+mkdir -p /opt/c2a-data/piper && cd /opt/c2a-data/piper
+for f in ngochuyennew.onnx ngochuyennew.onnx.json; do
+  wget -q "https://github.com/TriTue2011/chatgpt2api/releases/download/piper-voices-v1/$f"
+done
+```
+
+**Dữ liệu nằm ở đâu** (bên trong container là `/app/data`, ngoài máy chủ là thư mục
+bạn khai ở dòng `volumes`):
 
 ```
-data/config.json    cấu hình (tài khoản, bot, bộ lọc…)
-data/piper/         giọng đọc .onnx        ← tải riêng, KHÔNG có trong image
-data/stt/           model nhận dạng giọng  ← tải riêng
-data/voice/         file âm thanh tạm + sổ loa
-data/agent/         trí nhớ, phiên chat, nhắc hẹn, wiki
+config.json      cấu hình (tài khoản, bot, bộ lọc…)
+agent/           trí nhớ, phiên chat, nhắc hẹn, lịch sử nhà (bot tự học), sổ + ảnh mặt người nhà
+voice/           âm thanh tạm + sổ loa
+stt/ stt-en/ stt-sense/ …          model nghe
+piper/ nghitts/ zerotts/ kokoro-vi/ kokoro/ kokoro-zh/ supertonic/ hf/   model đọc
+nhin-nha/        model YOLO + khuôn mặt
+tudien/          từ điển tab Dịch
 ```
 
-Nguyên tắc xuyên suốt: **mã nguồn nằm trong image, model nằm ngoài volume** — nhờ
-vậy image không phình thêm hơn 1 GB.
+Nguyên tắc: **mã nguồn nằm trong ảnh, model và dữ liệu nằm trong volume.** Sao lưu
+volume là sao lưu tất cả. `agent/khuon_mat*` là ảnh và vector mặt người nhà — đừng đem chia sẻ.
 
 ### 1.7. Sử dụng Cơ Sở Dữ Liệu PostgreSQL & Chuyển Đổi Dữ Liệu (Migration)
 
@@ -269,7 +371,7 @@ services:
 
 **2. Lệnh chuyển đổi toàn bộ dữ liệu từ JSON sang Postgres:**
 ```bash
-docker exec -it c2a python scripts/migrate_storage.py \
+docker exec -it c2a /app/.venv/bin/python scripts/migrate_storage.py \
   --from json \
   --to postgres \
   --to-url "postgresql://c2a_user:c2a_secure_password_123@db:5432/c2a_db"
@@ -629,50 +731,13 @@ Ba việc: tải model → bật trong Cài đặt → khai báo loa.
 
 ### 4.1. Tải model (chỉ làm một lần)
 
-```bash
-# --- CÁCH A: Chạy script trực tiếp trong container c2a (Khuyên dùng) ---
-# Tiếng Việt (đủ để dùng ngay)
-docker exec -it c2a python scripts/download_piper_voices.py --pack minimal
-docker exec -it c2a python scripts/download_stt_model.py
-docker exec -it c2a python scripts/download_vieneu_model.py
+Danh sách đủ mọi model nghe/đọc, dung lượng và lệnh tải: **mục 1.6**. Nhanh nhất là mở
+`▸ Hệ thống → Cài đặt → Model cần tải` — thẻ đó đánh dấu model nào đang **Cần** cho
+giọng bạn đã gán và cho lệnh để chép.
 
-# Giọng Việt GIỮ THANH ĐIỆU tốt nhất (tuỳ chọn, xem mục 4.2g)
-docker exec -it c2a python scripts/download_kokoro_vi.py --all   # Kokoro Việt, 14 giọng ~330 MB
-docker exec -it c2a python scripts/download_zerotts.py           # ZeroTTS, 8 giọng ~900 MB
-
-# Tiếng Anh (tuỳ chọn) — giọng Kokoro + bộ nghe Parakeet
-docker exec -it c2a python scripts/download_kokoro_model.py
-docker exec -it c2a python scripts/download_stt_en_model.py
-
-# Trung / Nhật / Hàn (tuỳ chọn) — cho tab Dịch, đàm thoại, cổng Wyoming
-docker exec -it c2a python scripts/download_stt_da_ngu.py       # NGHE  ~340 MB
-docker exec -it c2a python scripts/download_tts_da_ngu.py       # ĐỌC   ~263 MB
-
-# --- CÁCH B: Tải thủ công bằng wget từ GitHub Release về host (/opt/c2a/data/) ---
-
-# 1. Model nghe tiếng Việt (Zipformer STT -> /opt/c2a/data/stt/)
-mkdir -p /opt/c2a/data/stt && cd /opt/c2a/data/stt
-wget https://github.com/TriTue2011/chatgpt2api/releases/download/stt-zipformer-v1/bpe.model
-wget https://github.com/TriTue2011/chatgpt2api/releases/download/stt-zipformer-v1/config.json
-wget https://github.com/TriTue2011/chatgpt2api/releases/download/stt-zipformer-v1/decoder-epoch-20-avg-10.onnx
-wget https://github.com/TriTue2011/chatgpt2api/releases/download/stt-zipformer-v1/encoder-epoch-20-avg-10.onnx
-wget https://github.com/TriTue2011/chatgpt2api/releases/download/stt-zipformer-v1/joiner-epoch-20-avg-10.onnx
-
-# 2. Giọng đọc tiếng Việt (Piper TTS -> /opt/c2a/data/piper/)
-mkdir -p /opt/c2a/data/piper && cd /opt/c2a/data/piper
-wget https://github.com/TriTue2011/chatgpt2api/releases/download/piper-voices-v1/ngochuyennew.onnx
-wget https://github.com/TriTue2011/chatgpt2api/releases/download/piper-voices-v1/ngochuyennew.onnx.json
-wget https://github.com/TriTue2011/chatgpt2api/releases/download/piper-voices-v1/banmai.onnx
-wget https://github.com/TriTue2011/chatgpt2api/releases/download/piper-voices-v1/banmai.onnx.json
-wget https://github.com/TriTue2011/chatgpt2api/releases/download/piper-voices-v1/minhkhang.onnx
-wget https://github.com/TriTue2011/chatgpt2api/releases/download/piper-voices-v1/minhkhang.onnx.json
-```
-
-File lưu vào `data/piper/`, `data/stt/`, `data/hf/`, `data/kokoro-vi/`, `data/zerotts/`, `data/stt-en/`, `data/kokoro/`,
-`data/stt-{zh,ja,ko}/`, `data/kokoro-zh/`, `data/supertonic/`.
-**Không** nằm trong image nên cập nhật image không mất, và image không nặng thêm.
-Tải tiếng nào thì tiếng đó dùng được — chưa tải thì mục tương ứng trong Cài đặt
-hiện `✗` và cổng Wyoming của tiếng đó không mở.
+Tải tiếng nào thì tiếng đó dùng được. Chưa tải thì mục tương ứng trong Cài đặt hiện `✗`
+và cổng Wyoming của tiếng đó không mở — cổng chỉ mở lúc c2a khởi động, nên tải xong
+model của một tiếng mới thì khởi động lại c2a một lần.
 
 ### 4.2. Cài đặt trong `▸ Hệ thống → Cài đặt → Giọng nói & Loa`
 
@@ -865,14 +930,14 @@ Hai họ giọng dưới đây được thêm để chữa đúng chỗ đó.
 
 ```bash
 # Kokoro Việt — model chung ~326 MB + mỗi giọng ~0,5 MB
-docker exec -it c2a python scripts/download_kokoro_vi.py              # chỉ giọng hung_thinh
-docker exec -it c2a python scripts/download_kokoro_vi.py mai_linh     # thêm một giọng
-docker exec -it c2a python scripts/download_kokoro_vi.py --all        # cả 14 giọng
-docker exec -it c2a python scripts/download_kokoro_vi.py --list       # xem giọng nào đã có
+docker exec -it c2a /app/.venv/bin/python scripts/download_kokoro_vi.py              # chỉ giọng hung_thinh
+docker exec -it c2a /app/.venv/bin/python scripts/download_kokoro_vi.py mai_linh     # thêm một giọng
+docker exec -it c2a /app/.venv/bin/python scripts/download_kokoro_vi.py --all        # cả 14 giọng
+docker exec -it c2a /app/.venv/bin/python scripts/download_kokoro_vi.py --list       # xem giọng nào đã có
 
 # ZeroTTS — cả gói ~900 MB, đủ 8 giọng
-docker exec -it c2a python scripts/download_zerotts.py
-docker exec -it c2a python scripts/download_zerotts.py --check        # chỉ kiểm tra
+docker exec -it c2a /app/.venv/bin/python scripts/download_zerotts.py
+docker exec -it c2a /app/.venv/bin/python scripts/download_zerotts.py --check        # chỉ kiểm tra
 ```
 
 Tải xong vào **Cài đặt → Giọng nói & Loa → Tiếng Việt**, chọn giọng `kokorovi:<mã>`
@@ -1154,7 +1219,7 @@ Persona + giọng ngay tại dòng đó.
 | Không tự dò thấy loa | Docker bridge chặn mDNS/SSDP | Nhập IP loa bằng tay — hành vi bình thường |
 | Gửi ghi âm mà bot im | Chưa tải model STT | Chạy `download_stt_model.py`; xem ô trạng thái 🎤 |
 | Bot không đọc thành tiếng | Chưa tích `🔉 Trả lời bằng giọng nói`, hoặc đã bật `🔇 Tắt giọng nói (TTS)` cho phạm vi đó | Xem Phần 6.2/6.4 |
-| Bật giọng nói mà **vẫn ra chữ** | TTS lỗi / chưa tải model → bot tự fallback gửi chữ | Tải model TTS (Phần 4.1); xem ô trạng thái 🔊 |
+| Bật giọng nói mà **vẫn ra chữ** | TTS lỗi / chưa tải model → bot tự fallback gửi chữ | Tải model TTS (mục 1.6); xem ô trạng thái 🔊 |
 | Nhóm bật "bắt buộc tag" mà bot không trả lời | User chỉ **gõ tên bằng chữ**, chưa bấm `@` chọn bot; hoặc **Từ khóa** chưa khớp | Bấm `@` chọn bot, hoặc điền đúng Từ khóa (Phần 6.5) |
 | Bật webhook mà ChatGPT im | Đúng thiết kế: **bật webhook cấp thread = AI không trả lời** | Tắt webhook nếu vẫn muốn AI trả (Phần 6.5) |
 | Bot trả lời sai/lạ | Xem nó gọi công cụ nào | `▸ Hệ thống → Agent runs` |

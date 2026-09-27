@@ -1,6 +1,6 @@
 [🇺🇸 English](README_VN_MCP_HUB.md) | [🇻🇳 Tiếng Việt](README_VN_MCP_HUB.vi.md)
 
-**[🔙 Quay lại Trang Chủ (Main README)](README.vi.md)**
+**[🔙 Quay lại Trang Chủ (Main README)](README.md)**
 
 # 📖 Hướng Dẫn Sử Dụng & Cấu Hình VN MCP Hub
 

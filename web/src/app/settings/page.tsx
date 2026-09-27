@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { LoaderCircle, Settings, KeyRound, Cpu, Zap, Link, Archive, Plug, MessageCircle, Cloud, Volume2, GraduationCap } from "lucide-react";
+import { LoaderCircle, Settings, KeyRound, Cpu, Zap, Link, Archive, Plug, MessageCircle, Cloud, Volume2, GraduationCap, Download } from "lucide-react";
 
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { SettingsSection } from "@/components/settings-section";
@@ -14,6 +14,7 @@ import { HomeAssistantTabs } from "./components/ha-tabs";
 import { FacebookCard } from "./components/facebook-card";
 import { EmailCalendarCard } from "./components/email-calendar-card";
 import { VoiceSpeakersCard } from "./components/voice-speakers-card";
+import { ModelCanTaiCard } from "./components/model-can-tai-card";
 import { CachDocCard } from "./components/cach-doc-card";
 import { TeacherSettingsCard } from "./components/teacher-settings-card";
 import { PersonasCard } from "./components/personas-card";
@@ -82,6 +83,14 @@ function SettingsPageContent() {
           icon={<Settings className="size-5" />}
         >
           <ConfigCard />
+        </SettingsSection>
+
+        <SettingsSection
+          title="Model cần tải"
+          description="Giọng nói, nghe, camera, dịch — model nào đã có, cái nào cần, lệnh tải để chép"
+          icon={<Download className="size-5" />}
+        >
+          <ModelCanTaiCard />
         </SettingsSection>
 
         <SettingsSection

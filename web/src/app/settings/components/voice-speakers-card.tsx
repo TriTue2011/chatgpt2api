@@ -845,8 +845,7 @@ export function VoiceSpeakersCard() {
                 <span className="text-[10px] text-muted-foreground">{tryText.length}/600</span>
                 {!ready && pick ? (
                   <span className="text-[10px] text-amber-500">
-                    Giọng này chưa tải — chạy{" "}
-                    <code>python scripts/download_piper_voices.py --pack full</code>
+                    Giọng này chưa tải — lệnh tải ở mục «Model cần tải» trong trang Cài đặt
                   </span>
                 ) : null}
               </div>

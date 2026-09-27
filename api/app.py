@@ -8,7 +8,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from api import accounts, ai, browser_auth, camera, captcha_proxy, channels, claude, devices, dich, hoc_hoi, image_tasks, mcp, mcp_admin, mqtt, nhin_nha, novnc_proxy, oauth, ollama_compat, rclone, register, system, thong_bao, voice, youtube_phat, zalo_bot, zalo_personal
+from api import accounts, ai, browser_auth, camera, captcha_proxy, channels, claude, danh_muc_model, devices, dich, hoc_hoi, image_tasks, mcp, mcp_admin, mqtt, nhin_nha, novnc_proxy, oauth, ollama_compat, rclone, register, system, thong_bao, voice, youtube_phat, zalo_bot, zalo_personal
 from api.support import resolve_web_asset, start_limited_account_watcher, require_admin
 from api.veo_video import handle_video_generation
 from services.backup_service import backup_service
@@ -463,6 +463,7 @@ def create_app() -> FastAPI:
     app.include_router(zalo_personal.create_router())  # kênh Zalo Cá Nhân (bot server zca-js)
     app.include_router(channels.create_router())  # hoạt động gần đây + blacklist đa kênh
     app.include_router(camera.create_router())  # camera nhà (go2rtc / RTSP), không cần Home Assistant
+    app.include_router(danh_muc_model.create_router())  # «Model cần tải»: đã có chưa, lệnh tải
     app.include_router(nhin_nha.create_router())  # YOLO + khuôn mặt: trạng thái model, sổ người/mặt lạ/sự kiện
     app.include_router(mqtt.create_router())  # MQTT nhà: thiết bị + điều khiển, không cần Home Assistant
     app.include_router(hoc_hoi.create_router())  # tab Học hỏi: xem/sửa/xoá + tự thêm những gì bot học
