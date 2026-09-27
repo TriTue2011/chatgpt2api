@@ -608,6 +608,41 @@ class ApiNhinNhaTests(_Nen):
         # URL nội bộ (127.0.0.1) không được lọt ra web — bấm vào chỉ báo lỗi.
         self.assertFalse(any("anh" in s for s in ds))
 
+    def test_anh_mat_tra_ve_web_la_anh_MOI_NHAT(self):
+        """Web ghi «chỉ hiện N ảnh mới nhất». Chủ máy 27/09/2026 tải 20 ảnh, kho
+        nhận 19, web chỉ thấy 2 — vì API trả N ảnh CŨ nhất (6 ảnh camera chiếm chỗ)."""
+        import cv2
+
+        from api import nhin_nha as api_nn
+
+        so = api_nn.TOI_DA_ANH + 3
+        thu = iter(range(so))
+
+        class _May:
+            bo = self.nn.bo_mat()
+
+            def do(self_may, anh, nguong=0.5):
+                from services import khuon_mat_nha as km
+                return [km.Mat((100.0, 100.0, 260.0, 300.0), 0.9, None)]
+
+            def vector(self_may, anh, m):
+                m.vector = _vec(next(thu))    # mỗi ảnh một mặt khác hẳn — không bị gộp trùng
+                return m.vector
+
+        _ok, buf = cv2.imencode(".jpg", np.full((480, 640, 3), 120, np.uint8))
+        gio = [1000.0]
+        with mock.patch.object(self.nn, "mat", lambda: _May()), \
+             mock.patch("time.time", lambda: gio[0]):
+            for _ in range(so):
+                gio[0] += 1
+                self.assertTrue(self.client.post(
+                    "/api/nhin-nha/day", data={"ten": "Lan"},
+                    files={"anh": ("a.jpg", buf.tobytes(), "image/jpeg")}).json()["ok"])
+        n = self.client.get("/api/nhin-nha/nguoi").json()["nguoi"][0]
+        self.assertEqual(n["so_mat"], so)
+        moi_nhat = [m["id"] for m in self.sm.mat_cua(n["id"])][::-1][:api_nn.TOI_DA_ANH]
+        self.assertEqual([m["id"] for m in n["mat_ds"]], moi_nhat)
+
     def test_chuyen_mat_nham_sang_dung_nguoi_qua_tuyen_web(self):
         """Đi qua HTTP thật, không gọi thẳng hàm: route, quyền và hình dạng trả về
         đều là chỗ hỏng được mà test mức dịch vụ không thấy."""

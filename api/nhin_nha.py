@@ -148,9 +148,12 @@ def create_router() -> APIRouter:
                 # Kèm MÃ từng ảnh, không chỉ ảnh: web phải trỏ được vào một ảnh
                 # cụ thể để chuyển nó sang người khác khi thấy nhận nhầm. `nguon`
                 # đi cùng vì mặt vào sổ từ camera dễ sai hơn mặt dạy bằng ảnh tay.
+                # MỚI NHẤT trước (`mat_cua` xếp cũ → mới): web ghi "chỉ hiện N ảnh mới
+                # nhất" mà trước đây trả N ảnh CŨ nhất — chủ máy 27/09/2026 tải 20 ảnh
+                # con, kho nhận 19, web chỉ thấy 2 (6 ảnh camera cũ chiếm chỗ).
                 n["mat_ds"] = [{"id": m["id"], "anh": a, "nguon": m["nguon"]}
                                for m, a in ((m, _anh_nho(m["anh"]))
-                                            for m in so_mat_nha.mat_cua(n["id"])[:TOI_DA_ANH])
+                                            for m in so_mat_nha.mat_cua(n["id"])[::-1][:TOI_DA_ANH])
                                if a]
             return ds
         return {"ok": True, "nguoi": await run_in_threadpool(_doc)}
