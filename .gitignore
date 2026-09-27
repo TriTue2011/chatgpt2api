@@ -137,6 +137,8 @@ data/kokoro/
 data/nghitts/
 data/hf/
 *.onnx
+# Model tự huấn luyện (models/lua…) thì CÓ vào git — cài chỗ khác khỏi huấn luyện lại
+!models/**/*.onnx
 !voices/**/*.json
 # zalo-server (Node nhung)
 zalo-server/node_modules/
