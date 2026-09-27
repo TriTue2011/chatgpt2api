@@ -399,6 +399,14 @@ html[data-brand="supabase"].dark {
 /* ═══ Base + Mesh background ═══ */
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
+/* Ô chọn rộng bằng lựa chọn DÀI NHẤT của nó; trên điện thoại nó tràn khỏi khung và ép chữ nhãn
+   bên cạnh thành mỗi dòng một từ (chủ máy chụp 28/09, thẻ Nhìn nhà). Chặn một lần cho mọi ô
+   thay vì sửa từng ô: không rộng quá khung chứa, và nhãn chứa ô chọn được xuống dòng — chữ nhãn
+   giữ nguyên, ô chọn rơi xuống dòng dưới. Nằm trong tầng base để lớp max-w-* riêng vẫn thắng. */
+@layer base {
+  select { max-width: 100%; }
+  label:has(> select) { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+}
 body {
   /* Geist nạp qua next/font trong layout.tsx. Bản cũ ghi cứng "Inter"
      nhưng KHÔNG nạp webfont nào, nên máy không cài sẵn Inter thì rơi về
