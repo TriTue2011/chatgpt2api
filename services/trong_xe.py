@@ -28,7 +28,9 @@ from services.config import DATA_DIR
 from utils.log import logger
 
 XE = frozenset({"car", "motorcycle", "bicycle", "truck", "bus"})
-CHU_KY = 2.0
+CHU_KY = 1.0
+#: Báo sớm «có người ở chỗ xe» tối đa một lần trong ngần này giây.
+BAO_SOM_CACH = 60.0
 IOU_CON = 0.5
 LAN_XAC_NHAN = 3
 LAN_DO_NHIEU = 5
@@ -75,12 +77,61 @@ def trang_thai() -> dict[str, Any]:
     return _nap()
 
 
-def _khung(cam: str):
+LUONG = ("phu", "chinh", "khoa")
+
+
+def cai_dat() -> dict[str, Any]:
+    """``nhin_nha.trong_xe`` — chủ máy chỉnh trên web (thẻ Nhìn nhà), cùng khuôn nhận mặt.
+
+    * ``luong``: luồng camera dùng khi trông — "phu" (mặc định, nhẹ) | "chinh" | "khoa".
+    * ``bao_loa``: báo động có hú loa không. Mặc định TẮT — chủ máy 27/09/2026 "Tạm thời cảnh
+      báo về zalo, không cảnh báo loa".
+    """
+    from services.config import config
+    c = (config.data.get("nhin_nha") or {}).get("trong_xe")
+    c = c if isinstance(c, dict) else {}
+    luong = str(c.get("luong") or "phu")
+    return {"luong": luong if luong in LUONG else "phu", "bao_loa": bool(c.get("bao_loa"))}
+
+
+#: Luồng giữ mở suốt lúc trông: khung mới gần như tức thì (chụp ảnh qua go2rtc tốn ~1 giây mỗi
+#: lần). Mốc lúc bật và MỌI lượt kiểm cùng lấy từ luồng phụ nên toạ độ hộp xe luôn khớp. Đo
+#: 27/09/2026 Cam phòng khách: luồng phụ 640×480 mở ~3 giây rồi ra khung liên tục; luồng khung khoá
+#: của camera này 12 giây không ra khung nào — nên không dùng.
+_doc: dict[str, Any] = {}
+
+
+def _khung(cam: str, luong: str = "phu"):
     from services import camera_nha, yolo_nha
-    for luong in ("khoa", "chinh", "phu"):
-        anh = camera_nha.khung_ben_bi(cam, luong)
-        if anh is not None:
-            return anh
+    with _khoa:
+        d = _doc.get(cam)
+        if d is None:
+            try:
+                d = _doc[cam] = camera_nha.mo_video(cam, luong)
+            except Exception as exc:  # noqa: BLE001 — không giữ được luồng thì chụp ảnh luồng phụ
+                logger.info({"event": "trong_xe_khong_mo_luong", "loi": str(exc)[:120]})
+    if d is not None:
+        kq = d.khung_moi(time.time(), cho=4.0)
+        if kq is not None:
+            return kq[1]
+    # Luồng không ra khung (khung khoá của vài camera không đều): chụp ảnh ĐÚNG CỠ luồng ấy.
+    return yolo_nha.doc_anh(camera_nha.chup_tho(cam, phu=luong == "phu", timeout=10)[1])
+
+
+def _dong_luong() -> None:
+    with _khoa:
+        ds = list(_doc.values())
+        _doc.clear()
+    for d in ds:
+        try:
+            d.dong()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _anh_ro(cam: str):
+    """Ảnh luồng CHÍNH để nhìn mặt — mặt trong luồng phụ 640×480 chỉ còn vài chục điểm ảnh."""
+    from services import camera_nha, yolo_nha
     return yolo_nha.doc_anh(camera_nha.chup_tho(cam, timeout=10)[1])
 
 
@@ -222,11 +273,9 @@ def _loa_bao_dong() -> list[str]:
     """Loa hú khi báo động: mọi loa đã khai, trừ khi chủ máy tắt (cài đặt ``trong_xe.bao_loa``).
 
     Chủ máy 27/09/2026 20:5x: "Tạm thời cảnh báo về zalo, không cảnh báo loa" — mặc định TẮT loa,
-    chỉ nhắn tin. Bật lại: ``trong_xe.bao_loa = true``.
+    chỉ nhắn tin. Bật lại: ô «hú loa» ở mục Trông xe (``nhin_nha.trong_xe.bao_loa``).
     """
-    from services.config import config
-    c = config.data.get("trong_xe")
-    if not (isinstance(c, dict) and c.get("bao_loa")):
+    if not cai_dat()["bao_loa"]:
         return []
     from services.voice import speakers
     return [str(r.get("name")) for r in speakers.list_speakers() if r.get("name")]
@@ -246,7 +295,8 @@ def bat(camera: str = "", *, loa: list[str] | None = None, dich: str = "") -> di
         ten = ds[0]
     elif cam is None:
         raise LoiTrongXe("Em chưa rõ camera nào. Đang có: " + ", ".join(goi_y))
-    anh = _khung(ten)
+    luong = cai_dat()["luong"]
+    anh = _khung(ten, luong)
     vat = nhin_nha.vat_the(anh, chi_nhan=set(XE) | {"person"})
     xe = [{"nhan": v.nhan, "diem": round(float(v.diem), 2), "hop": [int(x) for x in v.hop]}
           for v in vat if v.nhan in XE]
@@ -254,7 +304,7 @@ def bat(camera: str = "", *, loa: list[str] | None = None, dich: str = "") -> di
         raise LoiTrongXe(f"Em không thấy xe nào ở {ten} lúc này — anh kiểm lại xe có trong khung camera không ạ.")
     if loa is None:
         loa = _loa_bao_dong()
-    d = {"bat": True, "camera": ten, "xe": xe, "tu": time.time(), "loa": list(loa), "dich": dich}
+    d = {"bat": True, "camera": ten, "xe": xe, "tu": time.time(), "loa": list(loa), "dich": dich, "luong": luong}
     with _khoa:
         _luu(d)
         _dung_moc(anh, xe, yen=not any(v.nhan == "person" for v in vat))
@@ -272,6 +322,7 @@ def dung(ly_do: str = "chu_may") -> bool:
         _luu(d)
         _moc.clear()
         _tep_moc().unlink(missing_ok=True)
+        _dong_luong()
         if _luong is not None:
             _luong[1].set()
     logger.info({"event": "trong_xe_dung", "ly_do": ly_do})
@@ -355,7 +406,7 @@ def kiem_mot_lan() -> str:
     if not d.get("bat"):
         return ""
     cam = d["camera"]
-    anh = _khung(cam)
+    anh = _khung(cam, str(d.get("luong") or "phu"))
     vat = nhin_nha.vat_the(anh, chi_nhan=set(XE) | {"person"})
     hien = [v for v in vat if v.nhan in XE]
     global _cho_xe
@@ -421,18 +472,36 @@ def kiem_mot_lan() -> str:
             nguong = max(SAN_KHAC, he_so * _trung_vi(_moc["nhieu"][i])) if _moc["nhieu"][i] else SAN_KHAC
             if k[i] > nguong:
                 lech_ca = True
-        che = lech_ca and _che_xe(d["xe"], vat)
-        if not che:
-            _moc["lech_lien"] = _moc["lech_lien"] + 1 if lech_ca else 0
-            if _moc["lech_lien"] < LAN_XAC_NHAN:
-                return "lech" if lech_ca else ""
-    if che:
-        # Chưa đếm; nhân lúc người còn đứng gần thì nhìn mặt — lát nữa họ đi khuất thì hết cơ hội.
-        ten = _mat_nha_trong_khung(anh, vat)
+        _moc["lech_lien"] = _moc["lech_lien"] + 1 if lech_ca else 0
+        lech_lien = _moc["lech_lien"]
+    # KHÔNG còn chờ người rời khung mới đếm. Đo 27/09/2026 23:07 Cam phòng khách: người vào khung
+    # 23:07:35 (Frigate), dắt xe, rời khung 23:07:58 — bot báo đúng 23:07:58 vì luật "có người
+    # đứng che xe thì chưa đếm"; chủ máy: "lấy trộm đi xa rồi mới báo". Nay: lượt lệch đầu tiên có
+    # người ở chỗ xe → nhìn mặt (luồng chính); người nhà thì dừng, không thì BÁO SỚM ngay; đủ
+    # LAN_XAC_NHAN lượt lệch liền → báo động.
+    if lech_ca and _che_xe(d["xe"], vat):
+        try:
+            ten = _mat_nha_trong_khung(_anh_ro(cam), [v for v in vat if v.nhan == "person"])
+        except Exception as exc:  # noqa: BLE001 — không chụp được luồng chính thì thôi nhìn mặt
+            logger.info({"event": "trong_xe_anh_ro_loi", "loi": str(exc)[:120]})
+            ten = ""
         if ten:
             with _khoa:
                 _moc["nha"] = (ten, time.time())
-        return "co_nguoi"
+    if lech_ca and lech_lien == 1:
+        ten = _nguoi_nha(cam, anh, vat)
+        if ten:
+            dung("nguoi_nha")
+            _bao(d, f"🏠 {ten} vừa lấy xe ở {cam} — em dừng trông xe.", "")
+            return "nguoi_nha"
+        if time.time() - float(_moc.get("bao_som_luc") or 0) >= BAO_SOM_CACH:
+            with _khoa:
+                _moc["bao_som_luc"] = time.time()
+            _bao(d, f"⚠️ Xe ở {cam} vừa bị động tới lúc {time.strftime('%H:%M:%S')}"
+                    + (" — có người ở chỗ xe" if _che_xe(d["xe"], vat) else "")
+                    + ", em chưa nhận ra người nhà. Em đang theo dõi tiếp.", _ve_xe(anh, d["xe"]))
+    if lech_lien < LAN_XAC_NHAN:
+        return "lech" if lech_ca else ""
     ten = _nguoi_nha(cam, anh, vat)
     if ten:
         dung("nguoi_nha")
@@ -465,7 +534,12 @@ def _chay() -> None:
 
 def khoi_phuc() -> bool:
     """Lúc khởi động: đang trông dở thì trông tiếp (mốc dựng lại từ khung đầu tiên)."""
-    if _nap().get("bat"):
+    d = _nap()
+    if d.get("bat") and d.get("luong") not in LUONG:
+        # Lượt bật trước 27/09/2026: hộp xe theo toạ độ luồng chính, nay khung lấy từ luồng phụ.
+        dung("phien_cu")
+        return False
+    if d.get("bat"):
         _chay()
         return True
     return False

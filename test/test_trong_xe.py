@@ -41,7 +41,8 @@ def tx(tmp_path, monkeypatch):
     canh = {"anh": _khung(), "vat": [XE], "mat": []}
     gui: list[tuple] = []
     loa: list[str] = []
-    monkeypatch.setattr(trong_xe, "_khung", lambda cam: canh["anh"])
+    monkeypatch.setattr(trong_xe, "_khung", lambda cam, luong="phu": canh["anh"])
+    monkeypatch.setattr(trong_xe, "_anh_ro", lambda cam: canh["anh"])
     monkeypatch.setattr(trong_xe, "_ve_xe", lambda anh, xe: "http://anh")
     monkeypatch.setattr(trong_xe, "_chay", lambda: None)
     monkeypatch.setattr(trong_xe, "_phat", lambda announce, ten, cau: loa.append(ten))
@@ -88,9 +89,9 @@ def test_xe_bi_dat_di_thi_bao_dong_mot_lan_moi_kenh(tx):
     kq = [trong_xe.kiem_mot_lan() for _ in range(trong_xe.LAN_XAC_NHAN)]
     assert kq == ["lech"] * (trong_xe.LAN_XAC_NHAN - 1) + ["bao_dong"]
     assert tx["loa"] == ["Loa khách"]
-    assert len(tx["gui"]) == 1, "kênh người nhờ trùng kênh đã chọn: chỉ gửi MỘT lần"
+    assert len(tx["gui"]) == 2, "báo SỚM ở lượt lệch đầu + báo động — mỗi lần MỘT tin mỗi kênh"
     assert tx["gui"][0][0] == ["zalop:acc:nhom", "tg:b:1"]
-    assert "BÁO ĐỘNG" in tx["gui"][0][1]
+    assert "vừa bị động tới" in tx["gui"][0][1] and "BÁO ĐỘNG" in tx["gui"][1][1]
     assert not trong_xe.trang_thai()["bat"], "báo động xong thì dừng, nhắn lại mới trông tiếp"
 
 
@@ -103,30 +104,26 @@ def test_mot_khung_yolo_mat_xe_khong_bao_dong(tx):
     assert tx["loa"] == []
 
 
-def test_nguoi_dung_che_xe_thi_chua_dem_nguoi_nha_lay_xe_thi_thoi(tx):
-    """Người đứng che xe: chưa đếm (mặt người đang đi thì mờ, không nhận ra được). Nhận ra mặt
-    người nhà lúc họ còn đứng đó → xe đi thì dừng trông, không báo động."""
+def test_nguoi_nha_o_cho_xe_thi_thoi_khong_bao(tx):
+    """Có người ở chỗ xe, nhìn mặt trên ảnh luồng chính ra người nhà → dừng trông, không báo."""
     _bat(tx)
     tx["anh"], tx["vat"] = _khung(xe_con=False), [NGUOI_CHE]
-    for _ in range(trong_xe.LAN_XAC_NHAN + 2):
-        assert trong_xe.kiem_mot_lan() == "co_nguoi"
     tx["mat"] = [{"nguoi_id": "p1", "loai": "quen", "ten": "Con trai Trí Anh"}]
-    assert trong_xe.kiem_mot_lan() == "co_nguoi"
-    tx["vat"], tx["mat"] = [], []
-    kq = [trong_xe.kiem_mot_lan() for _ in range(trong_xe.LAN_XAC_NHAN)]
-    assert kq[-1] == "nguoi_nha"
-    assert tx["loa"] == []
+    assert trong_xe.kiem_mot_lan() == "nguoi_nha"
+    assert tx["loa"] == [] and len(tx["gui"]) == 1
     assert "Con trai Trí Anh vừa lấy xe" in tx["gui"][0][1]
 
 
-def test_nguoi_che_xe_roi_di_mat_ca_xe_thi_bao_dong(tx):
-    """Kẻ dắt xe: lúc đứng che thì chưa đếm, đi khuất cùng xe thì đếm và báo động."""
+def test_ke_dat_xe_con_trong_khung_van_bao_ngay(tx):
+    """23:07 ngày 27/09/2026: người vào 23:07:35, rời khung 23:07:58, bot báo 23:07:58 vì chờ người
+    rời khung — "lấy trộm đi xa rồi mới báo". Nay người còn đứng đó: lượt lệch đầu BÁO SỚM, đủ
+    LAN_XAC_NHAN lượt → báo động."""
     _bat(tx)
     tx["anh"], tx["vat"] = _khung(xe_con=False), [NGUOI_CHE]
-    trong_xe.kiem_mot_lan()
-    tx["vat"] = []
     kq = [trong_xe.kiem_mot_lan() for _ in range(trong_xe.LAN_XAC_NHAN)]
-    assert kq[-1] == "bao_dong" and tx["loa"] == ["Loa khách"]
+    assert kq == ["lech"] * (trong_xe.LAN_XAC_NHAN - 1) + ["bao_dong"]
+    assert "có người ở chỗ xe" in tx["gui"][0][1] and "BÁO ĐỘNG" in tx["gui"][-1][1]
+    assert tx["loa"] == ["Loa khách"]
 
 
 def test_khoi_dong_lai_van_phan_bang_moc_tren_dia(tx):
@@ -153,6 +150,15 @@ def test_khong_co_moc_thi_cho_nhieu_luot_moi_ket_luan_xe_da_di(tx):
     assert tx["loa"] == [], "không chắc có trộm — chỉ nhắn, không hú loa"
     assert "khởi động lại" in tx["gui"][0][1]
     assert not trong_xe.trang_thai()["bat"] and not trong_xe._tep_moc().exists()
+
+
+def test_luot_cu_theo_luong_chinh_thi_tat_khi_khoi_dong(tx, monkeypatch):
+    """Lượt bật trước khi đổi sang luồng phụ: hộp xe theo toạ độ luồng chính — so với khung luồng
+    phụ là lệch hẳn, báo nhầm. Khởi động lại thì tắt lượt đó."""
+    trong_xe._luu({"bat": True, "camera": "Cam cửa", "xe": [{"nhan": "car", "hop": HOP}]})
+    assert trong_xe.khoi_phuc() is False and not trong_xe.trang_thai()["bat"]
+    trong_xe._luu({"bat": True, "camera": "Cam cửa", "xe": [{"nhan": "car", "hop": HOP}], "luong": "chinh"})
+    assert trong_xe.khoi_phuc() is True
 
 
 def test_dung_theo_yeu_cau(tx):
@@ -197,7 +203,7 @@ def test_luc_bat_co_nguoi_di_lai_thi_cho_yen_roi_moi_do(tx):
     anh = _khung(); anh[50:100, 50:100] = 130        # xe đi: vùng xe chỉ lệch 30
     tx["anh"], tx["vat"] = anh, []
     kq = [trong_xe.kiem_mot_lan() for _ in range(trong_xe.LAN_XAC_NHAN)]
-    assert kq[-1] == "bao_dong" and "BÁO ĐỘNG" in tx["gui"][0][1]
+    assert kq[-1] == "bao_dong" and "BÁO ĐỘNG" in tx["gui"][-1][1]
 
 
 def test_tat_den_ca_phong_khong_bao_dong(tx):
@@ -216,16 +222,27 @@ def test_mac_dinh_khong_hu_loa_chi_nhan_tin(tx, monkeypatch):
     from services.config import config
     from services.voice import speakers
     monkeypatch.setattr(speakers, "list_speakers", lambda: [{"name": "Loa khách"}])
-    monkeypatch.setitem(config.data, "trong_xe", {})
+    monkeypatch.setitem(config.data, "nhin_nha", {})
     assert trong_xe.bat("cửa", dich="zalop:acc:nhom")["loa"] == []
     trong_xe.kiem_mot_lan()
     for _ in range(trong_xe.LAN_DO_NHIEU):
         trong_xe.kiem_mot_lan()
     tx["anh"], tx["vat"] = _khung(xe_con=False), []
     kq = [trong_xe.kiem_mot_lan() for _ in range(trong_xe.LAN_XAC_NHAN)]
-    assert kq[-1] == "bao_dong" and tx["loa"] == [] and "BÁO ĐỘNG" in tx["gui"][0][1]
-    monkeypatch.setitem(config.data, "trong_xe", {"bao_loa": True})
+    assert kq[-1] == "bao_dong" and tx["loa"] == [] and "BÁO ĐỘNG" in tx["gui"][-1][1]
+    monkeypatch.setitem(config.data, "nhin_nha", {"trong_xe": {"bao_loa": True}})
     assert trong_xe._loa_bao_dong() == ["Loa khách"]
+
+
+def test_cai_dat_luong_trong_xe(monkeypatch):
+    """Chủ máy 27/09/2026: "cài đặt luồng trông xe riêng, có thể chọn main hay sub như khuôn mặt"."""
+    from services.config import config
+    monkeypatch.setitem(config.data, "nhin_nha", {})
+    assert trong_xe.cai_dat() == {"luong": "phu", "bao_loa": False}
+    monkeypatch.setitem(config.data, "nhin_nha", {"trong_xe": {"luong": "khoa", "bao_loa": True}})
+    assert trong_xe.cai_dat() == {"luong": "khoa", "bao_loa": True}
+    monkeypatch.setitem(config.data, "nhin_nha", {"trong_xe": {"luong": "linh tinh"}})
+    assert trong_xe.cai_dat()["luong"] == "phu"
 
 
 def test_tool_trong_xe_gui_ve_dung_chat(tx, monkeypatch):

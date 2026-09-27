@@ -28,10 +28,12 @@ type Canh = {
   giu_luong_chinh?: boolean; giu_luong_phu?: boolean; giu_khung_khoa?: boolean;
   yolo_luong?: Luong; chup_luong?: Luong;
 };
+type TrongXe = { luong?: Luong; bao_loa?: boolean };
 type NhinNha = {
   yolo?: { model?: string; nguong?: number; luong?: number };
   khuon_mat?: { bo?: string; nguong_co_the?: number; nguong_chac?: number; luong?: number };
   canh?: Canh;
+  trong_xe?: TrongXe;
 };
 type ModelTT = { ma: string; mb: number; mo_ta: string; da_tai: boolean };
 type TrangThai = {
@@ -118,6 +120,8 @@ export function NhinNhaCard() {
 
   const canh: Canh = nn.canh || {};
   const datCanh = (p: Partial<Canh>) => setNn({ ...nn, canh: { ...canh, ...p } });
+  const trongXe = nn.trong_xe || {};
+  const datTrongXe = (p: Partial<TrongXe>) => setNn({ ...nn, trong_xe: { ...trongXe, ...p } });
   const batTat = (ds: string[] | undefined, t: string) =>
     (ds || []).includes(t) ? (ds || []).filter((x) => x !== t) : [...(ds || []), t];
 
@@ -317,6 +321,28 @@ export function NhinNhaCard() {
               Luồng không giữ thì đọc bằng cách chụp một khung mỗi lần (chậm hơn, không tốn CPU thường trực).
               Khung khoá: camera nén đầy đủ ~1 ảnh mỗi giây — mặt người đang đi không bị nhoè như khung thường;
               đặt I Interval bằng FPS và tắt Smart Codec trên camera để khung khoá đều.
+            </p>
+          </div>
+          <div className="space-y-2 rounded border p-3">
+            <div className="text-sm font-medium">Trông xe (chỉ khi được nhờ: «trông xe ở camera …»)</div>
+            <div className="flex flex-wrap gap-4 text-sm">
+              <label className="flex items-center gap-2">
+                Trông trên
+                <select className="rounded border bg-background px-1 py-0.5"
+                  value={trongXe.luong === "chinh" || trongXe.luong === "khoa" ? trongXe.luong : "phu"}
+                  onChange={(e) => datTrongXe({ luong: e.target.value as Luong })}>
+                  <option value="phu">luồng phụ (nhẹ, ~1 lượt kiểm mỗi giây)</option>
+                  <option value="chinh">luồng chính (nét, tốn CPU suốt lúc trông)</option>
+                  <option value="khoa">khung khoá luồng chính (~1 ảnh nét mỗi giây)</option>
+                </select>
+              </label>
+              {oTich("Báo động hú loa (tắt = chỉ nhắn tin)", !!trongXe.bao_loa,
+                (v) => datTrongXe({ bao_loa: v }))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Giữ luồng đã chọn mở suốt lúc trông. YOLO luôn thu ảnh về 640 điểm ngang nên luồng phụ
+              dò xe gần như bằng luồng chính; nhận mặt người nhà thì chụp riêng một ảnh luồng chính.
+              Đổi luồng chỉ áp cho lượt trông bật SAU đó.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
