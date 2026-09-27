@@ -1109,6 +1109,23 @@ def _ha_confirm_text(messages: list[dict[str, Any]]) -> str | None:
 # matched against the live HA registry (different HA = different devices/areas).
 _LOCAL_ON_VERBS = {"bat", "mo", "len", "on", "khoi", "kich"}
 _LOCAL_OFF_VERBS = {"tat", "dong", "ngat", "off", "ngung", "cup"}
+#: Từ ĐỆM được đứng giữa động từ và tên thiết bị mà không đổi nghĩa lệnh: lịch sự, loại từ,
+#: đại từ, lượng từ ("bật giúp em cái đèn", "tắt hộ tôi hết đèn"). Chữ nào khác ở chỗ đó thì
+#: động từ có thể đang đi với tân ngữ khác — «mở TIẾP tv» là chuyển bài, «tắt TIẾNG tv» là tắt
+#: tiếng — nên nhường cả câu cho model (xem `_segment_controls`). Đây là tập ĐÓNG của từ loại
+#: hư từ, không phải danh sách ý định: thiếu một từ thì câu chỉ đi đường model (chậm hơn),
+#: không bao giờ thành bấm nhầm. Đo 27/09/2026 bộ vi.json (assist-canonicalizer): «mở tiếp tv»
+#: (HassMediaNext) bị bật TV.
+_TU_DEM_LENH = {
+    "giup", "ho", "dum", "gium", "cho", "cai", "chiec", "con", "bo", "may",
+    "em", "anh", "chi", "toi", "minh", "tao", "con", "me", "ba", "ong",
+    "het", "tat", "ca", "toan", "moi", "cac", "nhung",
+    "hay", "xin", "lam", "on", "vui", "long", "voi", "nhe", "nha", "di", "a", "ngay", "luon",
+    # Bổ ngữ về NGUỒN ĐIỆN / ÁNH SÁNG — cùng nghĩa với chính lệnh bật/tắt, không đổi hành động:
+    # «bật sáng đèn», «bật sáng bóng đèn», «ngắt nguồn / ngắt điện bình nóng lạnh» (vi.json).
+    # «mở HÉ cửa sổ» thì KHÔNG (mở một phần — việc của model).
+    "sang", "bong", "nguon", "dien",
+}
 # Domain điều khiển được bằng bật/tắt qua fast-path.
 #
 # `media_player` thêm 09/09 sau khi soi entity THẬT của nhà: 7 loa/tivi đã
@@ -1319,6 +1336,17 @@ def _ha_local_intent(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | N
                 return _d
         return None
 
+    nghi_ngo: list[str] = []
+
+    def _khoang_giai_thich_duoc(seg: list[str], dau: int) -> bool:
+        """Mọi chữ giữa động từ và vị trí ``dau`` (đầu tên thiết bị / loại thiết bị đầu tiên)
+        đều là từ nối hoặc từ đệm. Không thì ghi lại để nhường cả câu cho model."""
+        # `_fold_diacritics` giữ nguyên «đ» («điện» → "đien") — tập từ đệm viết bằng "d".
+        la = [t for t in seg[:dau] if t not in _CONN and t.replace("đ", "d") not in _TU_DEM_LENH]
+        if la:
+            nghi_ngo.extend(la)
+        return not la
+
     def _segment_controls(service: str, seg: list[str]) -> list[tuple[str, dict]]:
         """All controls in one verb-segment → [(service, args)…]."""
         # Non-overlapping entity-name matches, longest first.
@@ -1339,6 +1367,8 @@ def _ha_local_intent(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | N
         out: list[tuple[str, dict]] = []
         if chosen:
             chosen.sort(key=lambda x: x[0])
+            if not _khoang_giai_thich_duoc(seg, chosen[0][0]):
+                return []
             for j, (st, en, nf) in enumerate(chosen):
                 nxt = chosen[j + 1][0] if j + 1 < len(chosen) else len(seg)
                 area = _area_in(seg[en:nxt])  # area between this device and next
@@ -1396,6 +1426,8 @@ def _ha_local_intent(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | N
             ct = phrase.split()
             poss = _find_all_sub(seg, ct)
             if poss:
+                if not _khoang_giai_thich_duoc(seg, poss[0]):
+                    return []
                 area = _area_in(seg[poss[0] + len(ct):])
                 if area:
                     eids = [s.get("entity_id") for s in states if s.get("entity_id", "").startswith(dom+".") and entity_area.get(s.get("entity_id")) == area]
@@ -1440,6 +1472,9 @@ def _ha_local_intent(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | N
                    if loai in (a.get("domain") or [loai]) or "switch" in (a.get("domain") or [])]
         results.extend(got)
 
+    if nghi_ngo:
+        # Một cụm có chữ lạ giữa động từ và thiết bị: nhường CẢ câu — làm nửa lệnh còn tệ hơn.
+        return None
     if not results:
         return None
     return [
