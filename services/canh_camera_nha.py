@@ -77,6 +77,12 @@ _MAC_DINH: dict[str, Any] = {
     # "chinh" / "khoa" CHỈ có hiệu lực khi giữ đúng luồng ấy — khoá chéo
     "yolo_luong": "phu",
     "chup_luong": "chinh", # luồng dùng để nhận mặt: "chinh" | "phu" | "khoa"
+    # ĐỢT THỬ xem dày (chủ máy 28/09/2026: "Thử với cam cửa … đánh giá sau 2 3 ngày"). Bật thì
+    # mỗi lượt nhận mặt có thêm một lượt BÓNG đọc luồng chính ~2,5 khung/giây, chỉ ghi nhật ký
+    # `canh_camera_bong` — không ghi sổ, không báo. Cần `giu_luong_chinh` (mở luồng giữa lượt
+    # mất 2,3–8,6 giây, dài hơn cả lượt). Xem `_chay_bong`.
+    "thu_video_day": False,
+    "thu_video_day_moi_giay": 2.5,
 }
 
 _hang: "queue.Queue[tuple[str, str]]" = queue.Queue(maxsize=32)
@@ -661,11 +667,11 @@ _CHO_KHUNG_SAU = 4.0
 _CHO_KHUNG_KHOA_SAU = 8.0
 
 
-def _video_truc_tiep(camera: str, toi_da_giay: float, luong: str = "chinh"):
+def _video_truc_tiep(camera: str, toi_da_giay: float, luong: str = "chinh", buoc: float = 0.0):
     """Khung từ luồng CHÍNH của camera, khung mới nhất sau khung vừa xử lý.
 
     Thời gian xem ``toi_da_giay`` tính từ KHUNG ĐẦU, không từ lúc mở: mở chậm không được ăn
-    vào thời gian nhìn mặt."""
+    vào thời gian nhìn mặt. ``buoc`` > 0: hai khung cách nhau ít nhất ngần ấy giây."""
     from services import camera_nha
 
     d = camera_nha.mo_video(camera, luong)
@@ -674,7 +680,8 @@ def _video_truc_tiep(camera: str, toi_da_giay: float, luong: str = "chinh"):
         sau = 0.0
         het = None
         while het is None or time.time() < het:
-            kq = d.khung_moi(sau, cho=_CHO_KHUNG_DAU if het is None else cho_sau)
+            kq = d.khung_moi(sau + buoc if sau else sau,
+                             cho=_CHO_KHUNG_DAU if het is None else cho_sau + buoc)
             if kq is None:
                 return
             if het is None:
@@ -683,6 +690,48 @@ def _video_truc_tiep(camera: str, toi_da_giay: float, luong: str = "chinh"):
             yield sau, anh
     finally:
         d.dong()
+
+
+def _ket_qua_log(dai_dien: list[tuple[dict[str, Any], Any]]) -> list[dict[str, Any]]:
+    return [{"nguoi_id": m.get("nguoi_id"), "ten": m.get("ten"), "loai": m.get("loai"),
+             "do_giong": m.get("do_giong"), "so_khung": m.get("_so_khung", 1)}
+            for m, _a in dai_dien]
+
+
+def _chay_bong(camera: str, c: dict[str, Any], toi_da: float) -> dict[str, Any]:
+    """Lượt BÓNG của đợt thử xem dày: luồng chính ~``thu_video_day_moi_giay`` khung/giây, cùng
+    cách gộp vector với lượt thật, rồi CHỈ ghi nhật ký — không ghi sổ, không báo.
+
+    Đo 28/09/2026 trên 113 lượt Cam cửa có ghi hình (26 lượt người nhà, 43 lượt lạ, nhãn xem
+    bằng mắt): trung bình vector 1 khung/giây nhận đúng 21/26, 2,5 khung/giây 24/26, người lạ
+    không cách nào vượt ngưỡng. Nhưng đó là video ĐÃ GHI; ngày 27/09 khung thường của luồng
+    trực tiếp nhận kém khung khoá (0/3 so với 3/3). Chạy song song để so từng cặp trên cùng
+    người trước khi đổi đường thật."""
+    t_bat = time.time()
+    fps = _so(c.get("thu_video_day_moi_giay"), 2.5, 0.5, 10.0)
+    ung_vien, anh, _k, so = _xem_video(
+        _video_truc_tiep(camera, toi_da, "chinh", buoc=1.0 / fps), camera, None, toi_da_giay=toi_da)
+    dai_dien = _chon_dai_dien(ung_vien, int(_so(c["dong_thuan"], 2, 1, 10))) if ung_vien else []
+    anh_mat = []
+    for m, a in dai_dien:
+        try:
+            anh_mat.append(_luu_anh_bao(a, m["hop"], m.get("moc")))
+        except Exception as exc:  # noqa: BLE001 — thiếu ảnh vẫn giữ kết quả
+            anh_mat.append(f"loi: {str(exc)[:80]}")
+    ra = {"event": "canh_camera_bong", "camera": camera, "so_khung": so, "so_mat": len(ung_vien),
+          "giay": round(time.time() - t_bat, 1), "ket_qua": _ket_qua_log(dai_dien), "anh": anh_mat}
+    logger.info(ra)
+    return ra
+
+
+def _bat_bong(camera: str, c: dict[str, Any], toi_da: float) -> None:
+    def _chay() -> None:
+        try:
+            _chay_bong(camera, c, toi_da)
+        except Exception as exc:  # noqa: BLE001 — lượt bóng hỏng không được đụng lượt thật
+            logger.info({"event": "canh_camera_bong_hong", "camera": camera, "loi": str(exc)[:160]})
+
+    threading.Thread(target=_chay, name="canh-bong", daemon=True).start()
 
 
 def _chon_dai_dien(ung_vien: list[tuple[float, dict[str, Any], Any]],
@@ -813,6 +862,8 @@ def xu_ly(camera: str, nguon: str) -> dict[str, Any]:
     if c.get("theo_video", True):
         toi_da = _so(c.get("video_toi_da_giay"), 8.0, 1.0, 30.0)
         t_bat = time.time()
+        if c.get("thu_video_day") and c.get("giu_luong_chinh") and luong_chup(c) != "chinh":
+            _bat_bong(camera, c, toi_da)
         try:
             ung_vien, anh, k, so_khung_xem = _xem_video(
                 _video_truc_tiep(camera, toi_da, luong_chup(c)), camera, goi_y, toi_da_giay=toi_da)
@@ -867,6 +918,10 @@ def xu_ly(camera: str, nguon: str) -> dict[str, Any]:
     now = time.time()
     phien = _so(c["phien_phut"], 10.0, 0.5, 24 * 60) * 60
     dai_dien = _chon_dai_dien(ung_vien, int(_so(c["dong_thuan"], 2, 1, 10)))
+    if c.get("thu_video_day"):
+        # Cặp của lượt bóng: ghi CẢ khi trùng phiên (phiên trùng thì không có sự kiện nào).
+        logger.info({"event": "canh_camera_ket_qua", "camera": camera,
+                     "so_mat": len(ung_vien), "ket_qua": _ket_qua_log(dai_dien)})
     ra: dict[str, Any] = {"nguoi": sum(v.nhan == "person" for v in k.vat_the),
                           "mat": len(dai_dien), "su_kien": []}
     for m, anh in dai_dien:

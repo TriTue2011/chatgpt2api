@@ -484,6 +484,44 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class DotThuXemDayTests(_Nen):
+    """Đợt thử xem dày (28/09/2026): lượt BÓNG đọc luồng chính song song, chỉ ghi nhật ký."""
+
+    def _khung(self, *a, **kw):
+        self.goi.append((a, kw))
+        return iter([(1_000_000.0 + i * 0.4, np.full((720, 1280, 3), 90, np.uint8)) for i in range(6)])
+
+    def test_bong_chi_ghi_nhat_ky_khong_ghi_so_khong_bao(self):
+        self.goi = []
+        self.mat = [self._m("quen", _vec(1), ten="Việt", nguoi_id="n1", do_giong=77)]
+        kq = {"nguoi_id": "n1", "ten": "Việt", "do_giong": 77.0, "loai": "quen"}
+        with mock.patch.object(cc, "_video_truc_tiep", self._khung), \
+             mock.patch.object(self.sm, "khop", return_value=kq):
+            ra = cc._chay_bong("Cam cửa", cc.cfg(), 8.0)
+        self.assertEqual(ra["event"], "canh_camera_bong")
+        self.assertEqual([(x["nguoi_id"], x["loai"]) for x in ra["ket_qua"]], [("n1", "quen")])
+        self.assertEqual(self.goi[0][0][2], "chinh")
+        self.assertAlmostEqual(self.goi[0][1]["buoc"], 0.4)
+        self.assertEqual(self.sm.su_kien_gan(24), [])
+        self.assertEqual(self.gui, [])
+
+    def test_xu_ly_chi_bat_bong_khi_bat_thu_VA_giu_luong_chinh(self):
+        self.goi = []
+        self.mat = []
+        ca = [({"thu_video_day": True, "giu_luong_chinh": True, "chup_luong": "khoa"}, 1),
+              ({"thu_video_day": True, "giu_luong_chinh": False, "chup_luong": "khoa"}, 0),
+              ({"thu_video_day": False, "giu_luong_chinh": True, "chup_luong": "khoa"}, 0),
+              # đường thật đã đọc luồng chính thì bóng trùng hệt — không chạy
+              ({"thu_video_day": True, "giu_luong_chinh": True, "chup_luong": "chinh"}, 0)]
+        for them, so_lan in ca:
+            with self.subTest(them=them), \
+                 mock.patch.dict(self.cfg["canh"], them), \
+                 mock.patch.object(cc, "_video_truc_tiep", self._khung), \
+                 mock.patch.object(cc, "_bat_bong") as bat:
+                cc.xu_ly("Cam cửa", "frigate")
+                self.assertEqual(bat.call_count, so_lan)
+
+
 class ToolKhuonMatTests(_Nen):
     def _goi(self, **args):
         from services.agent import capabilities as C
