@@ -505,6 +505,22 @@ class DotThuXemDayTests(_Nen):
         self.assertEqual(self.sm.su_kien_gan(24), [])
         self.assertEqual(self.gui, [])
 
+    def test_bong_va_luot_that_ghi_so_tren_dia(self):
+        """Nhật ký Docker mất mỗi lần cập nhật — đánh giá 2–3 ngày phải đọc được từ đĩa."""
+        import json
+        self.goi = []
+        self.mat = [self._m("quen", _vec(1), ten="Việt", nguoi_id="n1", do_giong=77)]
+        kq = {"nguoi_id": "n1", "ten": "Việt", "do_giong": 77.0, "loai": "quen"}
+        with mock.patch("services.config.DATA_DIR", self._tmp.name), \
+             mock.patch.object(cc, "_video_truc_tiep", self._khung), \
+             mock.patch.object(self.sm, "khop", return_value=kq), \
+             mock.patch.dict(self.cfg["canh"], {"thu_video_day": True}):
+            cc._chay_bong("Cam cửa", cc.cfg(), 8.0)
+            cc.xu_ly("Cam cửa", "frigate")
+        dong = [json.loads(x) for x in
+                (Path(self._tmp.name) / "agent" / "thu_video_day.jsonl").read_text().splitlines()]
+        self.assertEqual([d["event"] for d in dong], ["canh_camera_bong", "canh_camera_ket_qua"])
+
     def test_xu_ly_chi_bat_bong_khi_bat_thu_VA_giu_luong_chinh(self):
         self.goi = []
         self.mat = []

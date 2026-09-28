@@ -698,6 +698,22 @@ def _ket_qua_log(dai_dien: list[tuple[dict[str, Any], Any]]) -> list[dict[str, A
             for m, _a in dai_dien]
 
 
+def _ghi_thu(muc: dict[str, Any]) -> None:
+    """Sổ đợt thử xem dày trên đĩa — nhật ký Docker MẤT mỗi lần Watchtower thay container (đo
+    28/09/2026: mất các lượt 09:15–12:52 sau một lần cập nhật), mà đánh giá cần đủ 2–3 ngày."""
+    import json
+    from pathlib import Path
+
+    from services.config import DATA_DIR
+    try:
+        p = Path(DATA_DIR) / "agent" / "thu_video_day.jsonl"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": round(time.time(), 1), **muc}, ensure_ascii=False, default=str) + "\n")
+    except OSError as exc:
+        logger.info({"event": "thu_video_day_khong_ghi", "loi": str(exc)[:120]})
+
+
 def _chay_bong(camera: str, c: dict[str, Any], toi_da: float) -> dict[str, Any]:
     """Lượt BÓNG của đợt thử xem dày: luồng chính ~``thu_video_day_moi_giay`` khung/giây, cùng
     cách gộp vector với lượt thật, rồi CHỈ ghi nhật ký — không ghi sổ, không báo.
@@ -721,6 +737,7 @@ def _chay_bong(camera: str, c: dict[str, Any], toi_da: float) -> dict[str, Any]:
     ra = {"event": "canh_camera_bong", "camera": camera, "so_khung": so, "so_mat": len(ung_vien),
           "giay": round(time.time() - t_bat, 1), "ket_qua": _ket_qua_log(dai_dien), "anh": anh_mat}
     logger.info(ra)
+    _ghi_thu(ra)
     return ra
 
 
@@ -920,8 +937,10 @@ def xu_ly(camera: str, nguon: str) -> dict[str, Any]:
     dai_dien = _chon_dai_dien(ung_vien, int(_so(c["dong_thuan"], 2, 1, 10)))
     if c.get("thu_video_day"):
         # Cặp của lượt bóng: ghi CẢ khi trùng phiên (phiên trùng thì không có sự kiện nào).
-        logger.info({"event": "canh_camera_ket_qua", "camera": camera,
-                     "so_mat": len(ung_vien), "ket_qua": _ket_qua_log(dai_dien)})
+        kq = {"event": "canh_camera_ket_qua", "camera": camera,
+              "so_mat": len(ung_vien), "ket_qua": _ket_qua_log(dai_dien)}
+        logger.info(kq)
+        _ghi_thu(kq)
     ra: dict[str, Any] = {"nguoi": sum(v.nhan == "person" for v in k.vat_the),
                           "mat": len(dai_dien), "su_kien": []}
     for m, anh in dai_dien:
