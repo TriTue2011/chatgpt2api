@@ -92,7 +92,7 @@ class XetKhungTests(unittest.TestCase):
         with mock.patch.object(bn.threading, "Thread",
                                lambda target, args, **kw: mock.Mock(start=lambda: target(*args))):
             for t, goc in chuoi:
-                bn.xet_khung(self.cam, t, self.anh, [_nguoi(goc)], "",
+                bn.xet_khung(self.cam, t, self.anh, [_nguoi(goc)], [],
                              chot_fn=lambda cam, lan, model: self.chot.append(lan))
 
     def test_nga_roi_nam_im_ghi_mot_lan_sau_20_giay(self):
@@ -138,11 +138,30 @@ class GhiSoTests(unittest.TestCase):
                 mock.patch("services.thong_bao.gui") as gui:
             lan = {"t": time.time(), "khung": [np.zeros((360, 640, 3), np.uint8)] * 6,
                    "nam_giay": 12.0, "dung_day_sau": None, "goc": 88.0}
-            muc = bn.chot("Cam bếp", lan, "gemini_free/gemini-3.5-flash")
+            muc = bn.chot("Cam bếp", lan, ["gemini_free/gemini-3.5-flash"])
             self.assertTrue((Path(tmp) / muc["anh"]).is_file())
             with mock.patch.object(bn, "THU_MUC", Path(tmp)):
                 self.assertEqual(bn.nhat_ky()[-1]["model"]["chac"], 80)
             gui.assert_not_called()
+
+
+class HoiModelTests(unittest.TestCase):
+    def test_model_dau_loi_hoac_rong_thi_sang_model_sau(self):
+        """Đo 28/09/2026: Gemini miễn phí trả 503 hoặc chuỗi rỗng — gom mẫu phải có câu trả lời."""
+        tra = {"a": {"error": "HTTP 502: Gemini error 503 high demand"},
+               "b": {"choices": [{"message": {"content": ""}}]},
+               "c": {"choices": [{"message": {"content": "nga false, chac 70, ly do nằm nghỉ"}}]}}
+        with mock.patch("services.agent.runtime.call_model", lambda m, msg, **kw: tra[m]):
+            kq = bn.hoi_model(["a", "b", "c"], b"jpeg")
+        self.assertEqual((kq["model"], kq["nga"], kq["chac"]), ("c", False, 70))
+        self.assertEqual(len(kq["loi_truoc"]), 2)
+        with mock.patch("services.agent.runtime.call_model", lambda m, msg, **kw: tra["a"]):
+            self.assertEqual(len(bn.hoi_model(["a", "a"], b"jpeg")["loi"]), 2)
+
+    def test_cai_dat_model_nhan_chuoi_danh_sach_hoac_trong(self):
+        self.assertEqual(bn._ds_model(None), list(bn.MODEL_HOI))
+        self.assertEqual(bn._ds_model("AI vision"), ["AI vision"])
+        self.assertEqual(bn._ds_model(""), [], "chuỗi rỗng = không hỏi model")
 
 
 if __name__ == "__main__":

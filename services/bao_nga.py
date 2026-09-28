@@ -36,7 +36,10 @@ _TZ = timezone(timedelta(hours=7))
 THU_MUC = Path(DATA_DIR) / "agent" / "bao_nga"
 LUONG = ("phu", "chinh", "khoa")
 CHE_DO = ("nep", "24", "khung")
-MODEL_HOI = "gemini_free/gemini-3.5-flash"
+#: Hỏi lần lượt, model đầu lỗi/trả rỗng thì sang model sau. Đo 28/09/2026: Gemini 3.5 Flash bắt
+#: ngã khá hơn (13/18) nhưng bản miễn phí hay trả 503 "high demand" hoặc chuỗi rỗng; «AI vision»
+#: trả lời đủ 40/40 lần (bắt 7/20) — để gom mẫu thì thà có câu trả lời kém hơn còn hơn lỗ trống.
+MODEL_HOI = ("gemini_free/gemini-3.5-flash", "AI vision")
 
 #: Thân lệch khỏi phương đứng: ≤ THANG là đứng/ngồi thẳng, ≥ NAM là nằm (độ).
 THANG, NAM = 35.0, 60.0
@@ -72,7 +75,15 @@ def cai_dat() -> dict[str, Any]:
             "che_do": che_do if che_do in CHE_DO else "nep",
             "khung": [x for x in (c.get("khung") or []) if isinstance(x, dict)],
             "moi_giay": _so(c.get("moi_giay"), 2.0, 0.5, 5.0),
-            "model": str(c.get("model") if c.get("model") is not None else MODEL_HOI)}
+            "model": _ds_model(c.get("model"))}
+
+
+def _ds_model(v: Any) -> list[str]:
+    if v is None:
+        return list(MODEL_HOI)
+    if isinstance(v, str):
+        return [v] if v.strip() else []
+    return [str(x) for x in v if str(x).strip()] if isinstance(v, list) else list(MODEL_HOI)
 
 
 def _so(v: Any, mac_dinh: float, thap: float, cao: float) -> float:
@@ -245,18 +256,26 @@ def doc_tra_loi(s: str) -> dict[str, Any]:
             "ly_do": (m3.group(1).strip() if m3 else s.strip())[:200]}
 
 
-def hoi_model(model: str, anh: bytes) -> dict[str, Any]:
+def hoi_model(models: list[str], anh: bytes) -> dict[str, Any]:
+    """Hỏi lần lượt từng model; model lỗi hoặc trả rỗng thì sang model sau. Ghi cả lỗi đã gặp."""
     import base64
 
     from services.agent.runtime import call_model, content_of
     msg = [{"role": "user", "content": [
         {"type": "text", "text": HOI},
         {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(anh).decode()}}]}]
-    t = time.time()
-    r = call_model(model, msg, timeout=120, max_tokens=300)
-    if r.get("error"):
-        return {"loi": str(r["error"])[:200], "model": model}
-    return {**doc_tra_loi(content_of(r)), "model": model, "giay": round(time.time() - t, 1)}
+    loi = []
+    for model in models:
+        t = time.time()
+        # 1.500 token: Gemini tiêu phần lớn vào bước nghĩ — 300 thì câu trả lời cụt (đo 28/09/2026)
+        r = call_model(model, msg, timeout=120, max_tokens=1500)
+        noi_dung = "" if r.get("error") else (content_of(r) or "").strip()
+        if noi_dung:
+            kq = doc_tra_loi(noi_dung)
+            if kq["nga"] is not None:
+                return {**kq, "model": model, "giay": round(time.time() - t, 1), **({"loi_truoc": loi} if loi else {})}
+        loi.append(f"{model}: {str(r.get('error') or 'trả rỗng/không đọc được')[:120]}")
+    return {"loi": loi}
 
 
 def _ghi(muc: dict[str, Any]) -> None:
@@ -275,7 +294,7 @@ def _don_cu() -> None:
             pass
 
 
-def chot(camera: str, lan: dict[str, Any], model: str) -> dict[str, Any]:
+def chot(camera: str, lan: dict[str, Any], model: list[str]) -> dict[str, Any]:
     """Lần nằm đã theo dõi đủ: lưu ảnh ghép, hỏi model, ghi sổ. Trả mục vừa ghi."""
     anh = ghep_anh(lan["khung"])
     ten = datetime.fromtimestamp(lan["t"], _TZ).strftime("%Y%m%d_%H%M%S") + "_" + re.sub(r"\W+", "_", camera) + ".jpg"
@@ -288,7 +307,7 @@ def chot(camera: str, lan: dict[str, Any], model: str) -> dict[str, Any]:
         try:
             muc["model"] = hoi_model(model, anh)
         except Exception as exc:  # noqa: BLE001 — model lỗi vẫn giữ mẫu
-            muc["model"] = {"loi": str(exc)[:200], "model": model}
+            muc["model"] = {"loi": [str(exc)[:200]]}
     _ghi(muc)
     _stats["nghi"] += 1
     logger.info({"event": "bao_nga_nghi", **{k: v for k, v in muc.items() if k != "model"},
@@ -331,7 +350,7 @@ def _khung_gan(cam: _Camera, t: float):
     return min(cam.gan, key=lambda x: abs(x[0] - t))[1] if cam.gan else None
 
 
-def xet_khung(cam: _Camera, t: float, anh, nguoi: list, model: str, chot_fn=chot) -> None:
+def xet_khung(cam: _Camera, t: float, anh, nguoi: list, model: list[str], chot_fn=chot) -> None:
     """Một khung: cập nhật vết, mở lần theo dõi mới, cập nhật/chốt các lần đang theo dõi."""
     import cv2
     nho = cv2.resize(anh, (640, max(1, int(640 * anh.shape[0] / anh.shape[1]))))
