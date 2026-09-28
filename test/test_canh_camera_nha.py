@@ -621,6 +621,34 @@ class ApiNhinNhaTests(_Nen):
         self.assertFalse(d["ok"])
         self.assertIn("Không có mặt lạ", d["error"])
 
+    def test_mat_la_THEO_TRANG_gan_nhat_truoc(self):
+        """Đo 28/09/2026: 228 cụm trả một lượt = 7,4 MB ảnh nhúng — web xin 30 cụm một lần."""
+        ds = [{"id": f"m{i}", "anh": "", "so_lan": 1, "lan_cuoi": 100 - i, "camera": "Cam cửa"}
+              for i in range(75)]
+        with mock.patch.object(self.sm, "danh_sach_mat_la", return_value=ds), \
+             mock.patch.object(self.sm, "anh_su_kien_cua", return_value=[]):
+            a = self.client.get("/api/nhin-nha/mat-la?toi_da=30").json()
+            b = self.client.get("/api/nhin-nha/mat-la?toi_da=30&bo_qua=60").json()
+        self.assertEqual((a["tong"], [x["id"] for x in a["mat_la"]][:2], len(a["mat_la"])), (75, ["m0", "m1"], 30))
+        self.assertEqual([x["id"] for x in b["mat_la"]], [f"m{i}" for i in range(60, 75)])
+
+    def test_anh_thu_nho_DUNG_BO_DEM_toi_khi_tep_doi(self):
+        """Đo 28/09/2026: mở tab thu nhỏ lại 32 ảnh người nhà mỗi lần, 2,2 s."""
+        import time as _t
+
+        from api import nhin_nha as api_nn
+        p = Path(self._tmp.name) / "mat.jpg"
+        p.write_bytes(b"a")
+        api_nn._DEM_NHO.clear()
+        with mock.patch.object(api_nn, "_thu_nho", side_effect=lambda b: f"data:{b.decode()}") as tn:
+            self.assertEqual(api_nn._thu_nho_tep(p), "data:a")
+            self.assertEqual(api_nn._thu_nho_tep(p), "data:a")
+            self.assertEqual(tn.call_count, 1)
+            _t.sleep(0.01)
+            p.write_bytes(b"bb")
+            self.assertEqual(api_nn._thu_nho_tep(p), "data:bb")
+            self.assertEqual(tn.call_count, 2)
+
     def test_tran_anh_lich_su_tinh_theo_TUNG_TAB_khong_phai_toan_cuc(self):
         """Lượt của người quen KHÔNG được mất ảnh chỉ vì người lạ đi qua nhiều.
 

@@ -81,6 +81,8 @@ export function NhinNhaCard() {
   const [tt, setTt] = useState<TrangThai | null>(null);
   const [nguoi, setNguoi] = useState<Nguoi[]>([]);
   const [matLa, setMatLa] = useState<MatLa[]>([]);
+  const [matLaTong, setMatLaTong] = useState(0);
+  const [dangTai, setDangTai] = useState({ nguoi: true, matLa: true, suKien: true });
   const [suKien, setSuKien] = useState<SuKien[]>([]);
   const [msg, setMsg] = useState("");
   const [saved, setSaved] = useState(false);
@@ -106,22 +108,33 @@ export function NhinNhaCard() {
     setNn(((config as any)?.nhin_nha as NhinNha) || {});
   }, [(config as any)?.nhin_nha]);
 
+  // Mỗi phần hiện NGAY khi dữ liệu của nó về, không chờ cả bốn (chủ máy 28/09/2026: "tải khuôn mặt
+  // và lịch sử lâu, không hiển thị ngay" — đo: người nhà 2,2 s, mặt lạ 2,2 s + 7,4 MB ảnh nhúng).
   const tai = useCallback(async () => {
+    const loi = (e: unknown) => setMsg(`❌ ${loiCua(e)}`);
+    const xong = (k: "nguoi" | "matLa" | "suKien") => setDangTai((x) => ({ ...x, [k]: false }));
+    await Promise.all([
+      request.get("/api/nhin-nha/trang-thai").then((a) => setTt(a.data as TrangThai)).catch(loi),
+      request.get("/api/nhin-nha/nguoi")
+        .then((b) => setNguoi(((b.data as any)?.nguoi as Nguoi[]) || [])).catch(loi).finally(() => xong("nguoi")),
+      request.get("/api/nhin-nha/mat-la?toi_da=30")
+        .then((c) => { setMatLa(((c.data as any)?.mat_la as MatLa[]) || []); setMatLaTong((c.data as any)?.tong ?? 0); })
+        .catch(loi).finally(() => xong("matLa")),
+      // 7 ngày chứ không phải 24 giờ: soi nhận nhầm cần đủ lượt để nhìn ra,
+      // mà cả tuần ở nhà này mới có khoảng trăm lượt.
+      request.get("/api/nhin-nha/su-kien?so_gio=168")
+        .then((d) => setSuKien(((d.data as any)?.su_kien as SuKien[]) || [])).catch(loi).finally(() => xong("suKien")),
+    ]);
+  }, []);
+  const xemThemMatLa = async () => {
     try {
-      const [a, b, c, d] = await Promise.all([
-        request.get("/api/nhin-nha/trang-thai"), request.get("/api/nhin-nha/nguoi"),
-        // 7 ngày chứ không phải 24 giờ: soi nhận nhầm cần đủ lượt để nhìn ra,
-        // mà cả tuần ở nhà này mới có khoảng trăm lượt.
-        request.get("/api/nhin-nha/mat-la"), request.get("/api/nhin-nha/su-kien?so_gio=168"),
-      ]);
-      setTt(a.data as TrangThai);
-      setNguoi(((b.data as any)?.nguoi as Nguoi[]) || []);
-      setMatLa(((c.data as any)?.mat_la as MatLa[]) || []);
-      setSuKien(((d.data as any)?.su_kien as SuKien[]) || []);
+      const c = await request.get(`/api/nhin-nha/mat-la?toi_da=30&bo_qua=${matLa.length}`);
+      setMatLa([...matLa, ...(((c.data as any)?.mat_la as MatLa[]) || [])]);
+      setMatLaTong((c.data as any)?.tong ?? matLaTong);
     } catch (e) {
       setMsg(`❌ ${loiCua(e)}`);
     }
-  }, []);
+  };
 
   useEffect(() => { void tai(); }, [tai]);
 
@@ -468,6 +481,7 @@ export function NhinNhaCard() {
             Chỉ những ảnh ở đây được dùng để nhận người. Ảnh camera chụp được nằm ở
             lịch sử bên dưới, không tự vào sổ mẫu.
           </p>
+          {dangTai.nguoi ? <p className="text-xs text-muted-foreground">Đang tải người nhà…</p> : null}
           <div className="flex flex-wrap gap-1">
             {nguoi.map((n) => (
               <Button key={n.id} size="sm" variant={tabHt === n.id ? "default" : "outline"}
@@ -477,7 +491,7 @@ export function NhinNhaCard() {
             ))}
             <Button size="sm" variant={tabHt === "la" ? "default" : "outline"}
               onClick={() => setTab("la")}>
-              Mặt khác ({matLa.length})
+              Mặt khác ({matLaTong || matLa.length})
             </Button>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -610,8 +624,8 @@ export function NhinNhaCard() {
         {/* ── Tab «Mặt khác»: cụm camera gom được nhưng chưa biết là ai ── */}
         {tabHt === "la" ? (
         <div className="space-y-2">
-          <p className="text-sm font-medium">Mặt khác camera gặp ({matLa.length})</p>
-          {matLa.length === 0 ? (
+          <p className="text-sm font-medium">Mặt khác camera gặp ({matLaTong || matLa.length})</p>
+          {dangTai.matLa ? <p className="text-xs text-muted-foreground">Đang tải ảnh…</p> : matLa.length === 0 ? (
             <p className="text-xs text-muted-foreground">Chưa có — bật «Tự canh camera» thì em mới gom.</p>
           ) : null}
           <div className="flex flex-wrap gap-2">
@@ -679,6 +693,11 @@ export function NhinNhaCard() {
               </div>
             ))}
           </div>
+          {matLa.length < matLaTong ? (
+            <Button size="sm" variant="outline" onClick={() => void xemThemMatLa()}>
+              Xem thêm ({matLaTong - matLa.length} nhóm cũ hơn)
+            </Button>
+          ) : null}
         </div>
         ) : null}
 
@@ -687,7 +706,7 @@ export function NhinNhaCard() {
           <div className="flex items-center gap-2">
             <p className="text-sm font-medium">
               Lịch sử ảnh chụp · {nguoiHt ? `giống «${nguoiHt.ten}»` : "chưa nhận ra"}
-              {" "}({lichSu.length} lượt)
+              {" "}({dangTai.suKien ? "đang tải…" : `${lichSu.length} lượt`})
             </p>
             <Button size="sm" variant="outline" onClick={() => void tai()}>Làm mới</Button>
           </div>

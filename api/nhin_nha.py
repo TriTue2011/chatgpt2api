@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import base64
 import logging
+import threading
+from collections import OrderedDict
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -73,12 +75,38 @@ def _thu_nho(du_lieu: bytes) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("ascii") if ok else ""
 
 
+#: Ảnh đã thu nhỏ, khoá (đường, lúc sửa, cỡ tệp) — tệp đổi là khoá đổi. Đo 28/09/2026: mở tab
+#: khuôn mặt tốn 2,2 s chỉ để thu nhỏ lại 32 ảnh người nhà (~70 ms/ảnh, ảnh dạy bằng điện
+#: thoại lưu to) và 2,2 s cho 662 ảnh mặt lạ — mỗi lần mở tab làm lại từ đầu. ~13 KB/ảnh.
+_DEM_NHO: "OrderedDict[tuple[str, int, int], str]" = OrderedDict()
+_DEM_TOI_DA = 3000
+_khoa_dem = threading.Lock()
+
+
+def _thu_nho_tep(p) -> str:
+    try:
+        st = p.stat()
+    except OSError:
+        return ""
+    khoa = (str(p), st.st_mtime_ns, st.st_size)
+    with _khoa_dem:
+        if khoa in _DEM_NHO:
+            _DEM_NHO.move_to_end(khoa)
+            return _DEM_NHO[khoa]
+    ra = _thu_nho(p.read_bytes())
+    with _khoa_dem:
+        _DEM_NHO[khoa] = ra
+        while len(_DEM_NHO) > _DEM_TOI_DA:
+            _DEM_NHO.popitem(last=False)
+    return ra
+
+
 def _anh_nho(rel: str) -> str:
     """Ảnh trong kho KHUÔN MẶT → data URL thu nhỏ. Mất ảnh thì chuỗi rỗng."""
     from services import so_mat_nha
 
     p = so_mat_nha.duong_anh(rel)
-    return _thu_nho(p.read_bytes()) if p is not None else ""
+    return _thu_nho_tep(p) if p is not None else ""
 
 
 def _goc_anh():
@@ -112,7 +140,7 @@ def _anh_su_kien(url: str) -> str:
         p = (goc / rel).resolve()
         if not p.is_file() or goc not in p.parents:
             return ""
-        return _thu_nho(p.read_bytes())
+        return _thu_nho_tep(p)
     except (OSError, ValueError):
         return ""
 
@@ -231,12 +259,18 @@ def create_router() -> APIRouter:
         return {"ok": await run_in_threadpool(so_mat_nha.xoa_nguoi, nguoi_id)}
 
     @router.get("/api/nhin-nha/mat-la")
-    async def mat_la(authorization: str | None = Header(default=None)):
+    async def mat_la(toi_da: int = 30, bo_qua: int = 0, authorization: str | None = Header(default=None)):
+        """Mặt lạ THEO TRANG, gặp gần nhất trước. Đo 28/09/2026: 228 cụm, trả hết một lượt là
+        7,4 MB ảnh nhúng — mở tab trên điện thoại chờ mãi. Web xin thêm bằng ``bo_qua``."""
         require_admin(authorization)
         from services import so_mat_nha
 
+        toi_da = max(1, min(200, int(toi_da)))
+        bo_qua = max(0, int(bo_qua))
+
         def _doc():
-            ds = so_mat_nha.danh_sach_mat_la()
+            tat_ca = so_mat_nha.danh_sach_mat_la()
+            ds = tat_ca[bo_qua:bo_qua + toi_da]
             for x in ds:
                 x["anh"] = _anh_nho(x["anh"])
                 # Ảnh TỪNG lượt gặp, không chỉ tấm đại diện lúc cụm ra đời: chỉ
@@ -244,8 +278,9 @@ def create_router() -> APIRouter:
                 x["anh_ds"] = [a for a in (_anh_su_kien(u) for u
                                            in so_mat_nha.anh_su_kien_cua(x["id"], TOI_DA_ANH))
                                if a]
-            return ds
-        return {"ok": True, "mat_la": await run_in_threadpool(_doc)}
+            return ds, len(tat_ca)
+        ds, tong = await run_in_threadpool(_doc)
+        return {"ok": True, "mat_la": ds, "tong": tong}
 
     @router.post("/api/nhin-nha/mat-la/{ma}/dat-ten")
     async def dat_ten_mat_la(ma: str, body: dict, authorization: str | None = Header(default=None)):
