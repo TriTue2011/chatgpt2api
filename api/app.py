@@ -232,6 +232,12 @@ def create_app() -> FastAPI:
             canh_camera_nha.start()
         except Exception as exc:
             _record_startup_failure("canh_camera_nha", str(exc))
+        # Báo ngã: luồng nền nằm im khi `nhin_nha.nga.bat` tắt hoặc ngoài giờ canh.
+        try:
+            from services import bao_nga
+            bao_nga.start()
+        except Exception as exc:
+            _record_startup_failure("bao_nga", str(exc))
         # Trông xe: chỉ chạy khi đang được nhờ trông dở từ trước khi khởi động lại.
         try:
             from services import trong_xe

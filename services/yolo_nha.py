@@ -73,6 +73,11 @@ MODELS: tuple[ModelYolo, ...] = (
               223.3, "2043 ms/khung, bắt 147/255 — hơn yolo26m một khung, tốn gấp 2,75 lần"),
 )
 MAC_DINH = "yolo26n"
+#: Nhận DÁNG người (17 điểm khớp) — cho báo ngã (`bao_nga`). Bản ONNX chính thức đã end-to-end:
+#: đầu ra (1, 300, 57) = hộp, điểm, lớp, 17×(x, y, tin). Băm = ``digest`` GitHub (đọc 28/09/2026).
+MODEL_DANG = ModelYolo("yolo26n-pose", "yolo26n-pose.onnx",
+                       "93fc5e1d6b7690f33b4e1d60d6e9aec1cea14bdbc361bfae11778969be662078",
+                       12.1, "dáng người 17 điểm khớp — cho báo ngã")
 CANH = 640
 
 

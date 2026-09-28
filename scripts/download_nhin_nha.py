@@ -143,6 +143,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--yolo", action="append", help=f"mã YOLO (mặc định {yn.MAC_DINH})")
     ap.add_argument("--mat", action="append", help=f"bộ mặt (mặc định {km.MAC_DINH})")
+    ap.add_argument("--dang", action="store_true", help="model dáng người cho báo ngã (yolo26n-pose)")
     ap.add_argument("--list", action="store_true", help="liệt kê danh mục")
     ap.add_argument("--check", action="store_true", help="chỉ kiểm tra, không tải")
     args = ap.parse_args()
@@ -155,6 +156,12 @@ def main() -> int:
             print(f"{'✓' if co else ' '} --mat  {b.ma:10} {b.zip_mb:6.1f} MB  {b.mo_ta}")
         return 0
 
+    if args.dang:
+        print(f"Thư mục: {DEST}")
+        DEST.mkdir(parents=True, exist_ok=True)
+        if args.check:
+            return 0 if (DEST / yn.MODEL_DANG.tep).is_file() else 1
+        return 0 if _tai_yolo(yn.MODEL_DANG) else 1
     # Chỉ nêu một loại thì chỉ tải loại đó; không nêu gì thì tải bộ mặc định.
     ma_yolo = args.yolo or ([] if args.mat else [yn.MAC_DINH])
     ma_mat = args.mat or ([] if args.yolo else [km.MAC_DINH])

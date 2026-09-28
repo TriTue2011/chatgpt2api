@@ -29,11 +29,15 @@ type Canh = {
   yolo_luong?: Luong; chup_luong?: Luong;
 };
 type TrongXe = { luong?: Luong; bao_loa?: boolean };
+type KhungGio = { tu: string; den: string };
+type Nga = { bat?: boolean; camera?: string[]; luong?: Luong; che_do?: "nep" | "24" | "khung";
+             khung?: KhungGio[] };
 type NhinNha = {
   yolo?: { model?: string; nguong?: number; luong?: number };
   khuon_mat?: { bo?: string; nguong_co_the?: number; nguong_chac?: number; luong?: number };
   canh?: Canh;
   trong_xe?: TrongXe;
+  nga?: Nga;
 };
 type ModelTT = { ma: string; mb: number; mo_ta: string; da_tai: boolean };
 type TrangThai = {
@@ -122,6 +126,13 @@ export function NhinNhaCard() {
   const datCanh = (p: Partial<Canh>) => setNn({ ...nn, canh: { ...canh, ...p } });
   const trongXe = nn.trong_xe || {};
   const datTrongXe = (p: Partial<TrongXe>) => setNn({ ...nn, trong_xe: { ...trongXe, ...p } });
+  const nga: Nga = nn.nga || {};
+  const camNga = nga.camera || ["Cam bếp"];
+  const datNga = (p: Partial<Nga>) => setNn({ ...nn, nga: { ...nga, ...p } });
+  const [khungNga, setKhungNga] = useState<string | null>(null);
+  const docKhung = (s: string): KhungGio[] =>
+    s.split(/[,\n]/).map((x) => x.trim().match(/^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$/))
+      .filter(Boolean).map((m) => ({ tu: m![1].padStart(5, "0"), den: m![2].padStart(5, "0") }));
   const batTat = (ds: string[] | undefined, t: string) =>
     (ds || []).includes(t) ? (ds || []).filter((x) => x !== t) : [...(ds || []), t];
 
@@ -343,6 +354,50 @@ export function NhinNhaCard() {
               Giữ luồng đã chọn mở suốt lúc trông. YOLO luôn thu ảnh về 640 điểm ngang nên luồng phụ
               dò xe gần như bằng luồng chính; nhận mặt người nhà thì chụp riêng một ảnh luồng chính.
               Đổi luồng chỉ áp cho lượt trông bật SAU đó.
+            </p>
+          </div>
+          <div className="space-y-2 rounded border p-3">
+            <div className="text-sm font-medium">Báo ngã — đang THU DỮ LIỆU (chưa nhắn tin, chưa hú loa)</div>
+            <div className="flex flex-wrap gap-4 text-sm">
+              {oTich("Bật", !!nga.bat, (v) => datNga({ bat: v }))}
+              <label className="flex items-center gap-2">
+                Luồng
+                <select className="rounded border bg-background px-1 py-0.5"
+                  value={nga.luong === "chinh" || nga.luong === "khoa" ? nga.luong : "phu"}
+                  onChange={(e) => datNga({ luong: e.target.value as Luong })}>
+                  <option value="phu">luồng phụ (nhẹ — mặc định)</option>
+                  <option value="chinh">luồng chính (nét, tốn CPU hơn)</option>
+                  <option value="khoa">khung khoá luồng chính (~1 ảnh mỗi giây)</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2">
+                Canh lúc
+                <select className="rounded border bg-background px-1 py-0.5"
+                  value={nga.che_do === "24" || nga.che_do === "khung" ? nga.che_do : "nep"}
+                  onChange={(e) => datNga({ che_do: e.target.value as Nga["che_do"] })}>
+                  <option value="nep">theo nếp sinh hoạt (bỏ lúc cả nhà vắng)</option>
+                  <option value="24">24/24</option>
+                  <option value="khung">theo khung giờ</option>
+                </select>
+              </label>
+            </div>
+            {nga.che_do === "khung" ? (
+              <label className="flex flex-col gap-1 text-sm">
+                Khung giờ (vd «06:00-22:00, 13:00-14:30»)
+                <input className="rounded border bg-background px-2 py-1"
+                  value={khungNga ?? (nga.khung || []).map((x) => `${x.tu}-${x.den}`).join(", ")}
+                  onChange={(e) => { setKhungNga(e.target.value); datNga({ khung: docKhung(e.target.value) }); }} />
+              </label>
+            ) : null}
+            <div className="flex flex-wrap gap-3 text-sm">
+              {cams.map((cam) => (
+                <span key={cam}>{oTich(cam, camNga.includes(cam), () => datNga({ camera: batTat(camNga, cam) }))}</span>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Mỗi lần có người đang đứng/ngồi thẳng chuyển sang nằm, em theo dõi thêm 20 giây, lưu ảnh 6 khung và
+              hỏi model nhìn ảnh có phải ngã không — chỉ GHI SỔ để đo trước khi bật báo thật. Đặt 24/24 hoặc khung
+              giờ thì thắng nếp sinh hoạt. Cần model dáng người: xem «Model cần tải».
             </p>
           </div>
           <div className="flex flex-wrap gap-3">

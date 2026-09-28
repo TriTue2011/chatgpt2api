@@ -274,6 +274,7 @@ docker exec c2a /app/.venv/bin/python scripts/download_nhin_nha.py
 | Đọc | Trung / Nhật / Hàn | Tab Dịch đọc kết quả | ~260 MB | `download_tts_da_ngu.py` |
 | Camera | YOLO26 (mặc định `yolo26n`) | Canh camera, tìm người, trông xe | ~10 MB | `download_nhin_nha.py --yolo yolo26n` |
 | Camera | Khuôn mặt InsightFace (mặc định `buffalo_s`) | Nhận người nhà, hỏi tên người lạ | ~128 MB | `download_nhin_nha.py --mat buffalo_s` |
+| Camera | Dáng người YOLO26-pose | Báo ngã — thấy người chuyển sang nằm | ~12 MB | `download_nhin_nha.py --dang` |
 | Dịch | Từ điển Anh/Trung/Nhật/Hàn → Việt | Tra nghĩa từng từ trong tab Dịch | ~44 MB | `tai_tu_dien.py` |
 
 Ghi chú:

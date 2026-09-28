@@ -123,7 +123,7 @@ def create_router() -> APIRouter:
     @router.get("/api/nhin-nha/trang-thai")
     async def trang_thai(authorization: str | None = Header(default=None)):
         require_admin(authorization)
-        from services import canh_camera_nha, nhin_nha, so_mat_nha
+        from services import bao_nga, canh_camera_nha, nhin_nha, so_mat_nha
 
         from services import yolo_nha
 
@@ -134,7 +134,8 @@ def create_router() -> APIRouter:
         return {"ok": True, "model": {**nhin_nha.trang_thai(), "nhan": nhan},
                 "canh": {k: v for k, v in tt.items() if k != "cau_hinh"},
                 "so_nguoi": len(so_mat_nha.danh_sach_nguoi()),
-                "so_mat_la": len(so_mat_nha.danh_sach_mat_la())}
+                "so_mat_la": len(so_mat_nha.danh_sach_mat_la()),
+                "nga": {**bao_nga.trang_thai(), "gan_day": bao_nga.nhat_ky(10)}}
 
     @router.get("/api/nhin-nha/nguoi")
     async def nguoi(authorization: str | None = Header(default=None)):

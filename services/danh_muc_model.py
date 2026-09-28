@@ -44,7 +44,7 @@ def _co(p) -> bool:
 
 
 def _muc() -> list[Muc]:
-    from services import nhin_nha
+    from services import nhin_nha, yolo_nha
     from services.voice import config as v
 
     m, b = nhin_nha.model_yolo(), nhin_nha.bo_mat()
@@ -96,6 +96,10 @@ def _muc() -> list[Muc]:
             f"~{b.zip_mb:g} MB tải (giữ 2 tệp)".replace(".", ","), f"download_nhin_nha.py --mat {b.ma}",
             nhin_nha.co_mat,
             ghi_chu="Chỉ dùng phi thương mại (giấy phép InsightFace)."),
+        Muc("dang_nguoi", "Nhìn nhà (camera)", "Nhận dáng người YOLO26-pose",
+            "Báo ngã — thấy người chuyển sang nằm (17 điểm khớp)", "~12 MB",
+            "download_nhin_nha.py --dang",
+            lambda: (nhin_nha.THU_MUC / yolo_nha.MODEL_DANG.tep).is_file()),
         Muc("tu_dien", "Dịch", "Từ điển Anh/Trung/Nhật/Hàn → Việt",
             "Tra nghĩa từng từ trong tab Dịch (không tốn lượt AI)", "~44 MB", "tai_tu_dien.py",
             lambda: _co(Path(v.DATA_DIR) / "tudien")),
@@ -121,6 +125,9 @@ def _muc_do(m: Muc, ho: set[str]) -> str:
         return "can" if (v._sub("stt") or {}).get("en_enabled") else "tuy_chon"
     if m.ma == "vad":
         return "nen" if v.is_stt_enabled() else "tuy_chon"
+    if m.ma == "dang_nguoi":
+        from services import bao_nga
+        return "can" if bao_nga.cai_dat()["bat"] else "tuy_chon"
     if m.ma in ("yolo", "khuon_mat"):
         try:
             return "can" if canh_camera_nha.cfg().get("bat") else "tuy_chon"
