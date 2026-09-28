@@ -13,7 +13,7 @@ def create_router() -> APIRouter:
     async def danh_muc(authorization: str | None = Header(default=None)):
         require_admin(authorization)
         from services import danh_muc_model
-        return {"ok": True, "items": danh_muc_model.danh_muc()}
+        return {"ok": True, "items": danh_muc_model.danh_muc(), "giong": danh_muc_model.lenh_giong()}
 
     @router.get("/api/models/tai")
     async def viec_tai(authorization: str | None = Header(default=None)):

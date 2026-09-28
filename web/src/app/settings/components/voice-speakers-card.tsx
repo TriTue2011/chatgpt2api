@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { request } from "@/lib/request";
+import { NutTaiModel } from "./nut-tai-model";
 import { useSettingsStore } from "../store";
 
 type Speaker = {
@@ -102,6 +103,9 @@ export function VoiceSpeakersCard() {
   const [dubGiong, setDubGiong] = useState<Record<string, GiongDub[]>>({});
   const [dubChon, setDubChon] = useState<Record<string, string>>({});
   const [dubGoc, setDubGoc] = useState<Record<string, string>>({});
+  // Lệnh tải (danh mục model): theo từng giọng và theo mã mục (stt_vi, kokoro…) — cho nút «Tải xuống».
+  const [lenhGiong, setLenhGiong] = useState<Record<string, string>>({});
+  const [lenhMuc, setLenhMuc] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     try {
@@ -131,6 +135,12 @@ export function VoiceSpeakersCard() {
       setDubChon(chon);
       setDubGoc(chon);
     } catch { /* chưa có giọng lồng tiếng nào thì bỏ qua */ }
+    try {
+      const dm = (await request.get("/api/models/danh-muc")).data as
+        { items?: { ma: string; lenh: string }[]; giong?: Record<string, string> };
+      setLenhGiong(dm.giong || {});
+      setLenhMuc(Object.fromEntries((dm.items || []).map((x) => [x.ma, x.lenh])));
+    } catch { /* không đọc được danh mục thì chỉ thiếu nút tải */ }
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -531,6 +541,21 @@ export function VoiceSpeakersCard() {
                     đọc {r.doc ? "✓" : "✗"} · nghe {r.nghe ? "✓" : "✗"}
                   </span>
                 </summary>
+                {(() => {
+                  // Tiếng nào thiếu model thì nút tải ngay đây — không bắt đi tìm lệnh.
+                  const doc = { vi: "piper", en: "kokoro" }[r.ma as string] || "tts_da_ngu";
+                  const nghe = { vi: "stt_vi", en: "stt_en" }[r.ma as string] || "stt_sense";
+                  const giongVi = String(ttsCfg.voice || tts?.voice || "");
+                  const giongChuaCo = r.ma === "vi" && catalog.some((v) => v.id === giongVi && !v.downloaded);
+                  return (!r.doc || !r.nghe || giongChuaCo) ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px]">
+                      {!r.doc && lenhMuc[doc] ? <span className="inline-flex items-center gap-1">Đọc: <NutTaiModel lenh={lenhMuc[doc]} onXong={() => void load()} /></span> : null}
+                      {giongChuaCo && lenhGiong[giongVi] ? <span className="inline-flex items-center gap-1">Giọng «{giongVi}»: <NutTaiModel lenh={lenhGiong[giongVi]} onXong={() => void load()} /></span> : null}
+                      {!r.nghe && lenhMuc[nghe] ? <span className="inline-flex items-center gap-1">Nghe: <NutTaiModel lenh={lenhMuc[nghe]} onXong={() => void load()} /></span> : null}
+                      <span className="text-muted-foreground">Tải xong model tiếng mới: khởi động lại c2a một lần để mở cổng Wyoming.</span>
+                    </div>
+                  ) : null;
+                })()}
                 <div className="mt-2 grid gap-2 sm:grid-cols-4">
                   <div className="sm:col-span-2">
                     <label className="text-xs text-muted-foreground">Giọng đọc</label>
@@ -844,8 +869,9 @@ export function VoiceSpeakersCard() {
                   onClick={() => setTryText(SAMPLE_VI)}>Dùng câu mẫu</button>
                 <span className="text-[10px] text-muted-foreground">{tryText.length}/600</span>
                 {!ready && pick ? (
-                  <span className="text-[10px] text-amber-500">
-                    Giọng này chưa tải — lệnh tải ở mục «Model cần tải» trong trang Cài đặt
+                  <span className="inline-flex flex-wrap items-center gap-2 text-[10px] text-amber-500">
+                    Giọng này chưa tải
+                    {lenhGiong[pick] ? <NutTaiModel lenh={lenhGiong[pick]} onXong={() => void load()} /> : null}
                   </span>
                 ) : null}
               </div>

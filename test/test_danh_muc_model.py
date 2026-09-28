@@ -82,3 +82,24 @@ def test_nut_tai_chi_chay_dung_lenh_trong_danh_muc(gia):
             dm.argv_cua(dm.LENH + xau)
     with pytest.raises(ValueError):
         dm.argv_cua("python scripts/download_stt_model.py")      # không đúng tiền tố danh mục
+
+
+def test_lenh_tai_tung_giong_va_goi():
+    assert dm._script_giong("banmai") == "download_piper_voices.py --voice banmai"
+    assert dm._script_giong("nghi:ban-mai") == "download_nghitts_voices.py ban-mai"
+    assert dm._script_giong("kokorovi:hung_thinh") == "download_kokoro_vi.py hung_thinh"
+    assert dm._script_giong("zerotts:maichi") == "download_zerotts.py"
+    assert dm._script_giong("vieneu:Trúc Ly") == "download_vieneu_model.py", "gói liền — tên có dấu cách vẫn được"
+    assert dm._script_giong("nghi:x; rm -r /") is None, "mã lạ ký tự không được ghép vào dòng lệnh"
+    assert dm._script_giong("la:giong") is None
+
+
+def test_nut_tai_nhan_lenh_giong_trong_danh_muc(gia, monkeypatch):
+    from services.voice import config as v
+    monkeypatch.setattr(v, "voice_catalog", lambda: [{"id": "banmai"}, {"id": "nghi:ban-mai"},
+                                                     {"id": "nghi:x;y"}])
+    assert dm.lenh_giong() == {"banmai": dm.LENH + "download_piper_voices.py --voice banmai",
+                               "nghi:ban-mai": dm.LENH + "download_nghitts_voices.py ban-mai"}
+    assert dm.argv_cua(dm.LENH + "download_nghitts_voices.py ban-mai")[-1] == "ban-mai"
+    with pytest.raises(ValueError):
+        dm.argv_cua(dm.LENH + "download_nghitts_voices.py chieu-thanh")   # không có trong danh mục giọng

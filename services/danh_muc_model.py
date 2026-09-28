@@ -15,6 +15,7 @@ Mức độ tính THEO CẤU HÌNH đang chạy:
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -166,6 +167,35 @@ def danh_muc() -> list[dict[str, Any]]:
     return ra
 
 
+#: Họ giọng tải cả gói (một lệnh cho mọi giọng trong họ).
+_GOI_GIONG = {"zerotts": "download_zerotts.py", "vieneu": "download_vieneu_model.py",
+              "vieneunano": "download_vieneu_nano.py", "kokoro": "download_kokoro_model.py"}
+_MA_GIONG_AN_TOAN = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _script_giong(ma: str) -> str | None:
+    """Lệnh tải ĐÚNG giọng ``ma`` (id trong danh mục giọng) — Piper, NghiTTS, Kokoro Việt tải lẻ
+    từng giọng; họ còn lại tải cả gói. Mã lạ ký tự thì không có lệnh (không ghép vào dòng lệnh)."""
+    ho, _, ten = ma.partition(":") if ":" in ma else ("piper", "", ma)
+    if ho in _GOI_GIONG:
+        return _GOI_GIONG[ho]
+    if not _MA_GIONG_AN_TOAN.match(ten):
+        return None
+    return {"piper": f"download_piper_voices.py --voice {ten}", "nghi": f"download_nghitts_voices.py {ten}",
+            "kokorovi": f"download_kokoro_vi.py {ten}"}.get(ho)
+
+
+def lenh_giong() -> dict[str, str]:
+    """Mỗi giọng trong danh mục giọng → lệnh tải (cho nút tải ở thẻ Giọng nói & Loa)."""
+    from services.voice import config as v
+    ra = {}
+    for g in v.voice_catalog():
+        sc = _script_giong(str(g.get("id") or ""))
+        if sc:
+            ra[g["id"]] = LENH + sc
+    return ra
+
+
 def _cac_script() -> set[str]:
     """Mọi lệnh tải hợp lệ (phần sau ``scripts/``) — nút «Tải xuống» chỉ chạy được lệnh trong tập này."""
     ra = set()
@@ -173,6 +203,7 @@ def _cac_script() -> set[str]:
         ra.add(m.script)
         ra.update(l for l, _t in m.them)
         ra.update(x["script"] for x in m.bien_the)
+    ra.update(l[len(LENH):] for l in lenh_giong().values())
     return ra
 
 
