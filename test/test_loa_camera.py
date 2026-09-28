@@ -1,4 +1,4 @@
-"""Loa camera Dahua/Imou qua cổng 37777 (24/09/2026).
+"""Loa camera Dahua/Imou qua cổng 37777 (24/09/2026) và cổng 8086 (28/09/2026).
 
 Camera giả nói đúng trình tự khung byte của giao thức: thách đăng nhập, đăng
 nhập, AddObject, kênh phụ, bật/tắt nói. Phần băm mật khẩu thì đo trên máy thật:
@@ -127,7 +127,7 @@ def test_luong_go2rtc_khong_tro_vao_camera_thi_bao_ro():
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="cần ffmpeg")
-def test_doi_am_thanh_ve_pcm_8k():
+def test_doi_am_thanh_ve_pcm_mono():
     import io
     import wave
     b = io.BytesIO()
@@ -135,7 +135,8 @@ def test_doi_am_thanh_ve_pcm_8k():
     w.setnchannels(2); w.setsampwidth(2); w.setframerate(48000)
     w.writeframes(b"\x00\x00" * 2 * 48000)                  # 1 giây stereo 48 kHz
     w.close()
-    assert len(lc.pcm_8k(b.getvalue())) == 16000             # 1 giây mono 8 kHz
+    assert len(lc.pcm_mono(b.getvalue(), 8000)) == 16000      # 1 giây mono 8 kHz
+    assert len(lc.pcm_mono(b.getvalue(), 16000)) == 32000     # 1 giây mono 16 kHz
 
 
 def test_noi_cau_rong_bao_loi():
@@ -147,8 +148,112 @@ def test_phat_luong_camera_rot_mang_bao_loi_loa() -> None:
     """Người gọi (vệ tinh, bộ đàm) chỉ bắt LoiLoa: lỗi mạng phải đổi thành LoiLoa."""
     with mock.patch.object(lc, "_lay_cho_phat", lambda ten: (ten, {})), \
             mock.patch.object(lc, "dia_chi", lambda cam: ("127.0.0.1", "u", "p")), \
+            mock.patch.object(lc.KenhNoi8086, "_mo", side_effect=ConnectionRefusedError("từ chối")), \
             mock.patch.object(lc.KenhNoi, "_mo", side_effect=ConnectionRefusedError("từ chối")):
         with pytest.raises(lc.LoiLoa, match="không nói được"):
             lc.PhatLuong("cửa", 8000)
     # Khoá camera được nhả: lần sau không kẹt.
     assert not lc._khoa["127.0.0.1"].locked()
+
+
+# ── Cổng 8086 (AAC 16 kHz) ──────────────────────────────────────────────────
+
+class Camera8086Gia:
+    """Máy chủ 8086 giả: trả 200 cho các PLAY (hay 401 kèm realm lần đầu), gom khung tiếng."""
+
+    def __init__(self, doi_realm: bool = False, ma: int = 200) -> None:
+        self.doi_realm, self.ma = doi_realm, ma
+        self.ln = socket.create_server(("127.0.0.1", 0))
+        self.cong = self.ln.getsockname()[1]
+        self.yeu_cau: list[str] = []
+        self.khung: list[bytes] = []
+        threading.Thread(target=self._nghe, daemon=True).start()
+
+    def _nghe(self):
+        c, _ = self.ln.accept()
+        du = b""
+        try:
+            while True:
+                b = c.recv(65536)
+                if not b:
+                    return
+                du += b
+                while True:
+                    if du.startswith(b"$") and len(du) >= 6:
+                        dai = 6 + struct.unpack_from(">I", du, 2)[0]
+                        if len(du) < dai:
+                            break
+                        self.khung.append(du[:dai])
+                        du = du[dai:]
+                    elif b"\r\n\r\n" in du:
+                        dau, _, du = du.partition(b"\r\n\r\n")
+                        chu = dau.decode()
+                        m = [x for x in chu.split("\r\n") if x.startswith("Private-Length: ")]
+                        du = du[int(m[0].split(": ")[1]):] if m else du
+                        self.yeu_cau.append(chu)
+                        if self.doi_realm and len(self.yeu_cau) == 1:
+                            c.sendall(b'HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Digest realm="Login to X", '
+                                      b'nonce="1"\r\nContent-Length: 0\r\n\r\n')
+                        else:
+                            c.sendall(f"HTTP/1.1 {self.ma} OK\r\nContent-Length: 0\r\n\r\n".encode())
+                    else:
+                        break
+        except OSError:
+            pass
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="cần ffmpeg")
+def test_kenh_8086_bat_tay_va_gui_aac_16k_dung_nhip():
+    import time
+    cam = Camera8086Gia()
+    t0 = time.monotonic()
+    with lc.KenhNoi8086("127.0.0.1", "admin", "mk", cong=cam.cong) as k:
+        assert k.tan_so == 16000
+        k.phat_pcm(b"\x10\x00" * 16000)                      # 1 giây
+    mat = time.monotonic() - t0
+    assert [y.split(" ")[1].split("trackID=")[1].split("&")[0] for y in cam.yeu_cau] == ["31", "6", "64"]
+    assert "talktype=talk" in cam.yeu_cau[2] and 'Username="admin"' in cam.yeu_cau[0]
+    assert "Private-Type: application/sdp" in cam.yeu_cau[0]
+    assert 14 <= len(cam.khung) <= 20                          # ~1 giây / 64 ms mỗi khung
+    k0 = cam.khung[0]
+    assert k0[:2] == b"$\x0a" and k0[6:10] == b"DHAV" and k0[0x1E:0x22] == b"\x83\x01\x1a\x04"
+    assert k0[6 + 0x17] == sum(k0[6:6 + 0x17]) & 0xFF        # tổng kiểm đầu DHAV
+    assert k0[6 + 28] == 0xFF and k0[-8:-4] == b"dhav"         # thân là khung ADTS
+    assert mat >= 0.9                                          # gửi đúng nhịp, không dồn
+
+
+def test_kenh_8086_doi_realm_thi_bam_lai_mot_lan():
+    cam = Camera8086Gia(doi_realm=True)
+    with mock.patch.object(lc.subprocess, "Popen"), mock.patch.object(lc.threading, "Thread"):
+        k = lc.KenhNoi8086("127.0.0.1", "admin", "mk", cong=cam.cong)
+        k._mo()
+    assert len(cam.yeu_cau) == 4                                # 31 (401) → 31 → 6 → 64
+    so = [x.split('PasswordDigest="')[1].split('"')[0] for x in cam.yeu_cau[:2]]
+    assert so[0] != so[1]
+
+
+def test_camera_tu_choi_8086_thi_lui_37777_va_nho():
+    lc._lui_37777.clear()
+    goi = []
+
+    class K37777:
+        tan_so = 8000
+
+        def __init__(self, *a, **k):
+            goi.append("37777")
+
+        def __enter__(self):
+            return self
+
+    with mock.patch.object(lc.KenhNoi8086, "_mo", side_effect=ConnectionRefusedError("đóng")) as mo, \
+            mock.patch.object(lc, "KenhNoi", K37777):
+        assert lc.mo_kenh("10.0.0.9", "u", "p").tan_so == 8000
+        assert lc.mo_kenh("10.0.0.9", "u", "p").tan_so == 8000
+    assert mo.call_count == 1 and goi == ["37777", "37777"]    # lần hai khỏi thử lại 8086
+    lc._lui_37777.clear()
+
+
+def test_cat_adts_giu_phan_do():
+    k = bytes([0xFF, 0xF1, 0x50, 0x80, 0x01, 0x5F, 0xFC]) + b"x" * 3   # khung dài 10
+    ra, con = lc.cat_adts(k + k + k[:4])
+    assert ra == [k, k] and con == k[:4]

@@ -13,11 +13,20 @@ tiếng mình.
 
 Địa chỉ và mật khẩu lấy từ luồng go2rtc mà camera ấy đã khai (hoặc URL RTSP):
 c2a không giữ thêm một bản mật khẩu nào.
+
+Đường CHÍNH từ 28/09/2026 là cổng 8086 (``KenhNoi8086``): kênh nói HTTP riêng của Imou,
+tiếng AAC 16 kHz — chính camera khai định dạng này cho kênh nói (SDP ``trackID=5 sendonly
+MPEG4-GENERIC/16000``). Chủ máy nghe so sánh trên Cam phòng khách cùng ngày: "16 rõ hơn 8".
+Cổng 37777 chỉ nhận PCM 8 kHz — cắt mất dải trên 4 kHz, đúng dải phụ âm s/x/ch. Camera nào
+không mở 8086 (hay từ chối) thì ``mo_kenh`` tự lùi về 37777.
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import os
+import re
 import socket
 import struct
 import subprocess
@@ -143,6 +152,9 @@ def _gen1(mk: str) -> str:
 class KenhNoi:
     """Một phiên nói: đăng nhập, mở kênh, phát, đóng. Dùng với ``with``."""
 
+    #: ``phat_pcm`` nhận PCM16 mono ở tần số này.
+    tan_so = _TAN_SO
+
     def __init__(self, ip: str, user: str, mk: str, *, cong: int = CONG_NOI,
                  het_gio: float = HET_GIO) -> None:
         self.ip, self.user, self.mk, self.cong, self.het_gio = ip, user, mk, cong, het_gio
@@ -259,6 +271,256 @@ class KenhNoi:
                 t.join(2)
 
 
+# ── Cổng 8086: kênh nói HTTP riêng của Imou, AAC 16 kHz ──────────────────────
+#
+# Trình tự byte theo ha-imou-talkback (vnp1978, MIT, 28/09/2026), viết lại ở đây: yêu cầu
+# ``PLAY /live/visualtalk.xav…`` kiểu HTTP, xác thực WSSE (UsernameToken), rồi tiếng đi
+# trên CHÍNH kết nối ấy dạng xen kẽ ``$<kênh><dài>`` bọc khung DHAV. Đo trên cả bốn camera
+# nhà: bắt tay 200 OK trong 0,03 giây (cổng 37777 cần ~1,5 giây mở/đóng mỗi lần phát).
+
+CONG_HTTP = 8086
+_TAN_SO_HTTP = 16000
+#: Một khung AAC = 1024 mẫu = 64 ms ở 16 kHz.
+_KHUNG_AAC_GIAY = 1024 / _TAN_SO_HTTP
+#: Camera từ chối 8086 thì ngần này giây sau mới thử lại — khỏi mỗi lần phát lại chờ hỏng.
+_LUI_37777_GIAY = 3600.0
+#: Sau khung cuối chờ ngần này giây cho camera phát nốt phần đang đệm rồi mới đóng.
+_DUOI_GIAY = 0.5
+_KENH_NOI_HTTP = 5            # trackID của kênh nói trong SDP camera trả về
+_DUONG_HTTP = ("/live/visualtalk.xav?channel=1&subtype=0&encrypt=3&imagesize=18&audioType=1"
+               "&trackID={track}&method=0")
+_SDP_HTTP = ("v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=Talk\r\nc=IN IP4 0.0.0.0\r\nt=0 0\r\n"
+             "m=video 0 RTP/AVP 96\r\na=control:trackID=31\r\n"
+             "m=audio 0 RTP/AVP 8 96\r\na=rtpmap:8 PCMA/8000\r\n"
+             "a=rtpmap:96 MPEG4-GENERIC/16000/1\r\na=control:trackID=5\r\na=sendrecv\r\n").encode()
+_CHU_NONCE = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+_lui_37777: dict[str, float] = {}        # ip → lúc được thử lại 8086 (monotonic)
+
+
+def _wsse(user: str, bi_mat: str, nonce: str, tao: str) -> str:
+    # SHA-1 do giao thức camera quy định (WSSE UsernameToken), không phải lựa chọn của ta.
+    so = base64.b64encode(hashlib.sha1(f"{nonce}{tao}{bi_mat}".encode(),
+                                       usedforsecurity=False).digest()).decode()
+    return (f'UsernameToken Username="{user}", PasswordDigest="{so}", '
+            f'Nonce="{nonce}", Created="{tao}"')
+
+
+def khung_dhav(aac: bytes, seq: int, tick_ms: int, giay: int) -> bytes:
+    """Một khung AAC → khung DHAV (tiếng, 16 kHz) bọc xen kẽ trên kênh nói."""
+    dai = len(aac) + 36
+    dau = bytearray(28)
+    struct.pack_into("<4sB3xII", dau, 0, b"DHAV", 0xF0, seq & 0xFFFFFFFF, dai)
+    struct.pack_into("<IH", dau, 0x10, giay & 0xFFFFFFFF, tick_ms & 0xFFFF)
+    dau[0x16] = 0x04
+    dau[0x17] = sum(dau[:0x17]) & 0xFF
+    dau[0x18:0x1C] = b"\x83\x01\x1a\x04"          # tiếng; mã tần số 4 = 16 kHz
+    khung = bytes(dau) + aac + b"dhav" + struct.pack("<I", dai)
+    return b"$" + bytes([_KENH_NOI_HTTP * 2]) + struct.pack(">I", len(khung)) + khung
+
+
+def cat_adts(du: bytes) -> tuple[list[bytes], bytes]:
+    """Tách các khung ADTS trọn vẹn khỏi đầu ``du``; trả (khung, phần còn dở)."""
+    ra = []
+    while len(du) >= 7:
+        if du[0] != 0xFF or du[1] & 0xF0 != 0xF0:
+            i = du.find(b"\xff", 1)
+            du = du[i:] if i > 0 else b""
+            continue
+        dai = ((du[3] & 0x03) << 11) | (du[4] << 3) | (du[5] >> 5)
+        if dai < 7 or len(du) < dai:
+            break
+        ra.append(du[:dai])
+        du = du[dai:]
+    return ra, du
+
+
+class KenhNoi8086:
+    """Phiên nói qua cổng 8086 — cùng giao diện với ``KenhNoi`` (``with``, ``tan_so``,
+    ``phat_pcm``, ``dong``). ffmpeg mã hoá AAC 16 kHz; một luồng gửi từng khung đúng nhịp."""
+
+    tan_so = _TAN_SO_HTTP
+
+    def __init__(self, ip: str, user: str, mk: str, *, cong: int = CONG_HTTP,
+                 het_gio: float = HET_GIO) -> None:
+        self.ip, self.user, self.mk, self.cong, self.het_gio = ip, user, mk, cong, het_gio
+        self.s: socket.socket | None = None
+        self._ff: subprocess.Popen | None = None
+        self._cseq = 0
+        self._realm = ""
+        self._dung = threading.Event()
+        self._luong: list[threading.Thread] = []
+        self._khoa_gui = threading.Lock()
+
+    def __enter__(self) -> "KenhNoi8086":
+        try:
+            self._mo()
+        except BaseException:
+            self.dong(cho=False)
+            raise
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.dong()
+
+    # bắt tay -------------------------------------------------------------------
+    def _play(self, track: int, *, sdp: bytes = b"", them: str = "") -> int:
+        nonce = "".join(_CHU_NONCE[b % len(_CHU_NONCE)] for b in os.urandom(32))
+        tao = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        bi_mat = self.mk
+        if self._realm:
+            # Camera đòi "Digest realm": bí mật là MD5 hoa của user:realm:mật khẩu.
+            bi_mat = _md5(f"{self.user}:{self._realm}:{self.mk}").upper()
+        dong = [f"PLAY {_DUONG_HTTP.format(track=track)}{them} HTTP/1.1",
+                f"Host: {self.ip}:{self.cong}", "Connect-Type: P2P", "Connection: keep-alive",
+                f"Cseq: {self._cseq}", "Speed: 1.000000", "User-Agent: Http Stream Client/1.0",
+                'Authorization: WSSE profile="UsernameToken"',
+                "WSSE: " + _wsse(self.user, bi_mat, nonce, tao)]
+        if sdp:
+            dong += ["Accpet-Sdp: Private", "Private-Type: application/sdp",
+                     f"Private-Length: {len(sdp)}"]
+        self._cseq += 1
+        self.s.sendall(("\r\n".join(dong) + "\r\n\r\n").encode() + sdp)
+        return self._doc_tra_loi()
+
+    def _doc_tra_loi(self) -> int:
+        du = b""
+        while b"\r\n\r\n" not in du:
+            b = self.s.recv(4096)
+            if not b:
+                raise LoiLoa("camera đóng kết nối cổng 8086 giữa chừng")
+            du += b
+            while du.startswith(b"$") and len(du) >= 6:      # khung media xen kẽ: bỏ
+                dai = 6 + struct.unpack_from(">I", du, 2)[0]
+                while len(du) < dai:
+                    b = self.s.recv(dai - len(du))
+                    if not b:
+                        raise LoiLoa("camera đóng kết nối cổng 8086 giữa chừng")
+                    du += b
+                du = du[dai:]
+        dau, _, con = du.partition(b"\r\n\r\n")
+        chu = dau.decode("latin1", "replace")
+        m = re.match(r"\S+ (\d+)", chu)
+        ma = int(m.group(1)) if m else 0
+        tt = {k.lower(): v for k, _, v in (x.partition(": ") for x in chu.split("\r\n")[1:])}
+        dai = int(tt.get("private-length") or tt.get("content-length") or 0)
+        while len(con) < dai:
+            b = self.s.recv(dai - len(con))
+            if not b:
+                break
+            con += b
+        if ma == 401 and not self._realm:
+            m = re.search(r'realm="([^"]+)"', tt.get("www-authenticate", ""), re.IGNORECASE)
+            self._realm = m.group(1) if m else ""
+        return ma
+
+    def _mo(self) -> None:
+        self.s = socket.create_connection((self.ip, self.cong), timeout=self.het_gio)
+        ma = self._play(31, sdp=_SDP_HTTP)
+        if ma == 401 and self._realm:
+            ma = self._play(31, sdp=_SDP_HTTP)             # một lần theo realm — không thử mãi
+        for track, them in ((None, ""), (6, ""), (64, "&talktype=talk")):
+            if track is not None:
+                ma = self._play(track, them=them)
+            if ma != 200:
+                raise LoiLoa(f"camera từ chối kênh nói cổng 8086 (mã {ma})")
+        self._ff = subprocess.Popen(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", *FFMPEG_TRUC_TIEP,
+             "-f", "s16le", "-ar", str(_TAN_SO_HTTP), "-ac", "1", "-i", "pipe:0",
+             "-c:a", "aac", "-b:a", "48k", "-f", "adts", "-flush_packets", "1", "pipe:1"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self.s.settimeout(1.0)
+        self._luong = [threading.Thread(target=self._xa, name="loa-cam-8086-doc", daemon=True),
+                       threading.Thread(target=self._gui, args=(self._ff,), name="loa-cam-8086-gui",
+                                        daemon=True)]
+        for t in self._luong:
+            t.start()
+
+    # tiếng ---------------------------------------------------------------------
+    def _xa(self) -> None:
+        """Đọc bỏ tiếng/hình camera gửi về trên cùng kết nối, cho bộ đệm khỏi đầy."""
+        while not self._dung.is_set():
+            try:
+                if not self.s.recv(65536):
+                    return
+            except TimeoutError:
+                continue
+            except OSError:
+                return
+
+    def _gui(self, ff: subprocess.Popen) -> None:
+        # Giữ ``ff`` riêng: ``dong`` gỡ ``self._ff`` ngay khi hết tiếng, luồng này còn gửi nốt.
+        du, seq, t0 = b"", 0, None
+        tick, giay = int(time.monotonic() * 1000), int(time.time())
+        try:
+            while True:
+                b = ff.stdout.read1(4096)
+                if not b:
+                    break
+                khung, du = cat_adts(du + b)
+                for k in khung:
+                    if t0 is None:
+                        t0 = time.monotonic()
+                    cho = t0 + seq * _KHUNG_AAC_GIAY - time.monotonic()
+                    if cho > 0:
+                        time.sleep(cho)
+                    with self._khoa_gui:
+                        self.s.sendall(khung_dhav(k, seq, tick + int(seq * 64), giay))
+                    seq += 1
+        except (OSError, ValueError, AttributeError) as exc:
+            logger.warning({"event": "loa_camera_8086_gui_hong", "ip": self.ip,
+                            "loi": str(exc)[:120]})
+
+    def phat_pcm(self, pcm: bytes) -> None:
+        """PCM16 LE mono 16 kHz. Ghi vào bộ mã hoá; nhịp thời gian thực do luồng gửi giữ
+        (ống đầy thì lệnh ghi tự chờ)."""
+        try:
+            self._ff.stdin.write(pcm)
+            self._ff.stdin.flush()
+        except (BrokenPipeError, ValueError) as exc:
+            raise LoiLoa(f"bộ mã hoá tiếng dừng giữa chừng ({str(exc)[:80]})") from exc
+
+    def dong(self, cho: bool = True) -> None:
+        """Hết tiếng: chờ gửi nốt các khung (đúng nhịp) rồi đóng kết nối."""
+        ff, self._ff = self._ff, None
+        if ff is not None:
+            try:
+                ff.stdin.close()
+            except OSError:
+                pass
+            for t in self._luong:
+                if t.name == "loa-cam-8086-gui" and cho:
+                    t.join(TOI_DA_GIAY)
+            if cho:
+                time.sleep(_DUOI_GIAY)
+            if ff.poll() is None:
+                ff.kill()
+            ff.wait()
+        self._dung.set()
+        if self.s is not None:
+            try:
+                self.s.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            self.s.close()
+            self.s = None
+        for t in self._luong:
+            if t is not threading.current_thread():
+                t.join(2)
+
+
+def mo_kenh(ip: str, user: str, mk: str) -> KenhNoi | KenhNoi8086:
+    """Mở kênh nói: cổng 8086 (16 kHz) trước; camera không có / từ chối thì 37777 (8 kHz) và
+    nhớ ``_LUI_37777_GIAY`` để lần sau khỏi chờ hỏng. Người gọi phải ``dong()``."""
+    if _lui_37777.get(ip, 0.0) <= time.monotonic():
+        try:
+            return KenhNoi8086(ip, user, mk).__enter__()
+        except (LoiLoa, OSError) as exc:
+            _lui_37777[ip] = time.monotonic() + _LUI_37777_GIAY
+            logger.warning({"event": "loa_camera_lui_37777", "ip": ip, "loi": str(exc)[:160]})
+    return KenhNoi(ip, user, mk).__enter__()
+
+
 # ── Camera trong sổ → địa chỉ nói ─────────────────────────────────────────────
 
 def _tu_url(url: str) -> tuple[str, str, str] | None:
@@ -295,12 +557,12 @@ def dia_chi(cam: dict[str, Any]) -> tuple[str, str, str]:
 
 # ── Chuyển âm thanh ──────────────────────────────────────────────────────────
 
-def pcm_8k(am_thanh: bytes) -> bytes:
-    """Âm thanh bất kỳ (WAV, MP3…) → PCM16 mono 8 kHz, bằng ffmpeg."""
+def pcm_mono(am_thanh: bytes, tan_so: int) -> bytes:
+    """Âm thanh bất kỳ (WAV, MP3…) → PCM16 mono ``tan_so``, bằng ffmpeg."""
     try:
         p = subprocess.run(
             ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
-             "-ac", "1", "-ar", str(_TAN_SO), "-f", "s16le", "-t", str(TOI_DA_GIAY), "pipe:1"],
+             "-ac", "1", "-ar", str(int(tan_so)), "-f", "s16le", "-t", str(TOI_DA_GIAY), "pipe:1"],
             input=am_thanh, capture_output=True, timeout=60)
     except FileNotFoundError as exc:
         raise LoiLoa("máy chủ thiếu ffmpeg nên chưa đổi được âm thanh") from exc
@@ -332,37 +594,43 @@ def phat(ten: str, am_thanh: bytes) -> dict[str, Any]:
     """
     ten_that, cam = _lay_cho_phat(ten)
     ip, user, mk = dia_chi(cam)
-    pcm = pcm_8k(am_thanh)
+    pcm = pcm_mono(am_thanh, _TAN_SO_HTTP)
     with _khoa_chung:
         khoa = _khoa.setdefault(ip, threading.Lock())
     t0 = time.monotonic()
     with khoa:
         try:
-            with KenhNoi(ip, user, mk) as kenh:
+            kenh = mo_kenh(ip, user, mk)
+            try:
+                if kenh.tan_so != _TAN_SO_HTTP:
+                    pcm = pcm_mono(am_thanh, kenh.tan_so)
                 kenh.phat_pcm(pcm)
+            finally:
+                kenh.dong()
         except LoiLoa:
             raise
         except OSError as exc:
             raise LoiLoa(f"không nói được với camera ({str(exc)[:100]})") from exc
-    giay = len(pcm) / (2 * _TAN_SO)
+    giay = len(pcm) / (2 * kenh.tan_so)
     logger.info({"event": "loa_camera_phat", "camera": ten_that, "giay": round(giay, 1),
-                 "mat": round(time.monotonic() - t0, 1)})
+                 "tan_so": kenh.tan_so, "mat": round(time.monotonic() - t0, 1)})
     return {"ten": ten_that, "giay": round(giay, 1)}
 
 
-def lenh_doi_luong(rate: int, channels: int = 1) -> list[str]:
-    """ffmpeg đổi PCM16 ``rate``/``channels`` → PCM16 mono 8 kHz, nhả ngay từng khúc."""
+def lenh_doi_luong(rate: int, channels: int = 1, ra: int = _TAN_SO) -> list[str]:
+    """ffmpeg đổi PCM16 ``rate``/``channels`` → PCM16 mono ``ra`` Hz, nhả ngay từng khúc."""
     return ["ffmpeg", "-hide_banner", "-loglevel", "error", *FFMPEG_TRUC_TIEP,
             "-f", "s16le", "-ar", str(int(rate)), "-ac", str(int(channels)), "-i", "pipe:0",
-            "-ac", "1", "-ar", str(_TAN_SO), "-f", "s16le", "-flush_packets", "1", "pipe:1"]
+            "-ac", "1", "-ar", str(int(ra)), "-f", "s16le", "-flush_packets", "1", "pipe:1"]
 
 
 class PhatLuong:
     """Phát ra loa camera theo luồng: tiếng tới khúc nào phát khúc đó.
 
     Dùng cho vệ tinh (Home Assistant đẩy tiếng TTS thành từng khúc PCM). ffmpeg
-    đổi định dạng nguồn sang PCM16 8 kHz ngay khi nhận; một luồng nền rút ra và
-    gửi camera đúng nhịp. Giữ khoá của camera suốt phiên như ``phat``.
+    đổi định dạng nguồn sang PCM16 mono đúng tần số của kênh (16 kHz qua 8086, 8 kHz
+    qua 37777) ngay khi nhận; một luồng nền rút ra và gửi camera. Giữ khoá của camera
+    suốt phiên như ``phat``.
     """
 
     def __init__(self, ten: str, rate: int, width: int = 2, channels: int = 1) -> None:
@@ -376,13 +644,13 @@ class PhatLuong:
         self._giu_khoa = True
         try:
             try:
-                self._kenh = KenhNoi(ip, user, mk).__enter__()
+                self._kenh = mo_kenh(ip, user, mk)
             except OSError as exc:
                 # Như ``phat``: người gọi (vệ tinh, bộ đàm) chỉ bắt LoiLoa — lỗi mạng
                 # lọt ra là đứt luôn kết nối HA / phiên bộ đàm vì camera rớt mạng.
                 raise LoiLoa(f"không nói được với camera ({str(exc)[:100]})") from exc
             self._ff = subprocess.Popen(
-                lenh_doi_luong(rate, channels),
+                lenh_doi_luong(rate, channels, self._kenh.tan_so),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         except BaseException:
             self._dong()
@@ -393,20 +661,22 @@ class PhatLuong:
 
     def _rut(self) -> None:
         du = b""
+        tan_so = self._kenh.tan_so
+        khoi = tan_so * 2 * 40 // 1000                 # 40 ms
         try:
             while True:
-                b = self._ff.stdout.read(_KHOI)
+                b = self._ff.stdout.read(khoi)
                 if not b:
                     break
                 du += b
-                while len(du) >= _KHOI:
-                    self._kenh.phat_pcm(du[:_KHOI])
-                    self.giay += _KHOI / (2 * _TAN_SO)
-                    du = du[_KHOI:]
+                while len(du) >= khoi:
+                    self._kenh.phat_pcm(du[:khoi])
+                    self.giay += khoi / (2 * tan_so)
+                    du = du[khoi:]
             if du:
                 self._kenh.phat_pcm(du)
-                self.giay += len(du) / (2 * _TAN_SO)
-        except (OSError, ValueError) as exc:
+                self.giay += len(du) / (2 * tan_so)
+        except (OSError, ValueError, LoiLoa) as exc:
             logger.warning({"event": "loa_camera_luong_hong", "camera": self.ten,
                             "loi": str(exc)[:120]})
 
