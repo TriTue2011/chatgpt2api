@@ -58,3 +58,27 @@ def test_huong_dan_co_du_moi_lenh_tai(gia):
             continue
         for lenh in [x["lenh"], *(t["lenh"] for t in x["them"])]:
             assert lenh.split("scripts/", 1)[1] in doc, lenh
+
+
+def test_moi_ban_yolo_va_bo_mat_co_lenh_tai(gia):
+    from services import khuon_mat_nha, yolo_nha
+    bt = {b["lenh"].split("scripts/", 1)[1] for x in gia.values() for b in x["bien_the"]}
+    for m in yolo_nha.MODELS:
+        assert f"download_nhin_nha.py --yolo {m.ma}" in bt
+    for b in khuon_mat_nha.BO:
+        assert f"download_nhin_nha.py --mat {b.ma}" in bt
+
+
+def test_nut_tai_chi_chay_dung_lenh_trong_danh_muc(gia):
+    import sys
+    argv = dm.argv_cua(dm.LENH + "download_nhin_nha.py --yolo yolo26x")
+    assert argv == [sys.executable, "scripts/download_nhin_nha.py", "--yolo", "yolo26x"]
+    assert dm.argv_cua(dm.LENH + "download_piper_voices.py --pack full")[-2:] == ["--pack", "full"]
+    for xau in ("download_stt_model.py; rm -r /app/data",       # ghép lệnh
+                "download_nhin_nha.py --yolo yolo26n --dest /etc",  # thêm tham số
+                "../../bin/sh",                                   # script lạ
+                ""):
+        with pytest.raises(ValueError):
+            dm.argv_cua(dm.LENH + xau)
+    with pytest.raises(ValueError):
+        dm.argv_cua("python scripts/download_stt_model.py")      # không đúng tiền tố danh mục

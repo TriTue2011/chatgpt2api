@@ -275,5 +275,6 @@ def trang_thai() -> dict[str, Any]:
                                   "da_tai": (thu_muc_mat(x) / x.tep_do).is_file()
                                   and (thu_muc_mat(x) / x.tep_vector).is_file()}
                                  for x in khuon_mat_nha.BO]},
+        "dang": {"da_tai": (THU_MUC / yolo_nha.MODEL_DANG.tep).is_file(), "mb": yolo_nha.MODEL_DANG.mb},
         "lenh_tai": LENH_TAI,
     }

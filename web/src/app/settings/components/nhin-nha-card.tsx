@@ -14,6 +14,8 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+
+import { NutTaiModel } from "./nut-tai-model";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -44,6 +46,7 @@ type TrangThai = {
   model: {
     yolo: { model: string; da_tai: boolean; cac_model: ModelTT[] };
     khuon_mat: { bo: string; da_tai: boolean; cac_bo: ModelTT[] };
+    dang?: { da_tai: boolean; mb: number };
     lenh_tai: string;
     nhan?: { ma: string; ten: string }[];
   };
@@ -248,6 +251,12 @@ export function NhinNhaCard() {
                   <option key={x.ma} value={x.ma}>{x.ma} · {x.mb} MB{x.da_tai ? " ✓" : " (chưa tải)"}</option>
                 ))}
               </select>
+              {(() => {
+                const ma = nn.yolo?.model || m?.yolo.model || "yolo26n";
+                const x = m?.yolo.cac_model.find((y) => y.ma === ma);
+                return m && x && !x.da_tai
+                  ? <> <NutTaiModel lenh={`${m.lenh_tai} --yolo ${ma}`} onXong={() => void tai()} /></> : null;
+              })()}
             </label>
             <label className="text-xs text-muted-foreground">Nhận mặt{" "}
               <select className="h-9 rounded border border-input bg-background px-2 text-sm"
@@ -257,6 +266,12 @@ export function NhinNhaCard() {
                   <option key={x.ma} value={x.ma}>{x.ma}{x.da_tai ? " ✓" : " (chưa tải)"}</option>
                 ))}
               </select>
+              {(() => {
+                const ma = nn.khuon_mat?.bo || m?.khuon_mat.bo || "buffalo_s";
+                const x = m?.khuon_mat.cac_bo.find((y) => y.ma === ma);
+                return m && x && !x.da_tai
+                  ? <> <NutTaiModel lenh={`${m.lenh_tai} --mat ${ma}`} onXong={() => void tai()} /></> : null;
+              })()}
             </label>
             {oSo("Ngưỡng vật thể", nn.yolo?.nguong, 0.35,
                  (v) => setNn({ ...nn, yolo: { ...nn.yolo, nguong: v } }))}
@@ -358,6 +373,12 @@ export function NhinNhaCard() {
           </div>
           <div className="space-y-2 rounded border p-3">
             <div className="text-sm font-medium">Báo ngã — đang THU DỮ LIỆU (chưa nhắn tin, chưa hú loa)</div>
+            {m && m.dang && !m.dang.da_tai ? (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-amber-600">
+                Chưa có model dáng người (~{m.dang.mb} MB).
+                <NutTaiModel lenh={`${m.lenh_tai} --dang`} onXong={() => void tai()} />
+              </div>
+            ) : null}
             <div className="flex flex-wrap gap-4 text-sm">
               {oTich("Bật", !!nga.bat, (v) => datNga({ bat: v }))}
               <label className="flex items-center gap-2">

@@ -34,6 +34,7 @@ class Muc:
     ho: tuple[str, ...] = ()          # họ giọng (``engines._ho_engine``) mà mục này phục vụ
     ghi_chu: str = ""
     them: list[tuple[str, str]] = field(default_factory=list)   # (lệnh tải thêm, mô tả)
+    bien_the: list[dict[str, Any]] = field(default_factory=list)  # từng bản cụ thể (YOLO n/s/m…)
 
 
 def _co(p) -> bool:
@@ -48,6 +49,13 @@ def _muc() -> list[Muc]:
     from services.voice import config as v
 
     m, b = nhin_nha.model_yolo(), nhin_nha.bo_mat()
+    tt = nhin_nha.trang_thai()
+    bt_yolo = [{"ma": x["ma"], "ten": f"{x['ma']} · {x['mb']:g} MB".replace(".", ","), "da_tai": x["da_tai"],
+                "mo_ta": x["mo_ta"], "script": f"download_nhin_nha.py --yolo {x['ma']}"}
+               for x in tt["yolo"]["cac_model"]]
+    bt_mat = [{"ma": x["ma"], "ten": f"{x['ma']} · {x['mb']:g} MB".replace(".", ","), "da_tai": x["da_tai"],
+               "mo_ta": x["mo_ta"], "script": f"download_nhin_nha.py --mat {x['ma']}"}
+              for x in tt["khuon_mat"]["cac_bo"]]
     return [
         Muc("stt_vi", "Giọng nói — nghe", "Nghe tiếng Việt (Zipformer)",
             "Nhận giọng nói tiếng Việt: Home Assistant Assist, tin thoại Zalo/Telegram, mic camera",
@@ -90,12 +98,13 @@ def _muc() -> list[Muc]:
             "~260 MB", "download_tts_da_ngu.py", lambda: _co(v.KOKORO_ZH_DIR) and _co(v.SUPERTONIC_DIR)),
         Muc("yolo", "Nhìn nhà (camera)", f"Nhận vật thể YOLO26 ({m.ma})",
             "Canh camera, tìm người, trông xe — thấy người/xe/vật",
-            f"~{m.mb:g} MB".replace(".", ","), f"download_nhin_nha.py --yolo {m.ma}", nhin_nha.co_yolo),
+            f"~{m.mb:g} MB".replace(".", ","), f"download_nhin_nha.py --yolo {m.ma}", nhin_nha.co_yolo,
+            bien_the=bt_yolo),
         Muc("khuon_mat", "Nhìn nhà (camera)", f"Nhận khuôn mặt InsightFace ({b.ma})",
             "Nhận người nhà, hỏi tên người lạ, trông xe biết người nhà lấy xe",
             f"~{b.zip_mb:g} MB tải (giữ 2 tệp)".replace(".", ","), f"download_nhin_nha.py --mat {b.ma}",
             nhin_nha.co_mat,
-            ghi_chu="Chỉ dùng phi thương mại (giấy phép InsightFace)."),
+            ghi_chu="Chỉ dùng phi thương mại (giấy phép InsightFace).", bien_the=bt_mat),
         Muc("dang_nguoi", "Nhìn nhà (camera)", "Nhận dáng người YOLO26-pose",
             "Báo ngã — thấy người chuyển sang nằm (17 điểm khớp)", "~12 MB",
             "download_nhin_nha.py --dang",
@@ -151,5 +160,33 @@ def danh_muc() -> list[dict[str, Any]]:
                    "dung_luong": m.dung_luong, "muc_do": _muc_do(m, ho), "da_tai": da_tai,
                    "lenh": LENH + m.script,
                    "them": [{"lenh": LENH + l, "mo_ta": t} for l, t in m.them],
+                   "bien_the": [{**{k: v for k, v in x.items() if k != "script"}, "lenh": LENH + x["script"]}
+                                for x in m.bien_the],
                    "ghi_chu": m.ghi_chu})
     return ra
+
+
+def _cac_script() -> set[str]:
+    """Mọi lệnh tải hợp lệ (phần sau ``scripts/``) — nút «Tải xuống» chỉ chạy được lệnh trong tập này."""
+    ra = set()
+    for m in _muc():
+        ra.add(m.script)
+        ra.update(l for l, _t in m.them)
+        ra.update(x["script"] for x in m.bien_the)
+    return ra
+
+
+def argv_cua(lenh: str) -> list[str]:
+    """Lệnh hiển thị trên web → lệnh chạy thật trong tiến trình c2a.
+
+    Chỉ nhận ĐÚNG một lệnh có trong danh mục (so nguyên chuỗi) — không ghép tham số người dùng
+    gửi lên, nên nút tải không thành đường chạy lệnh tuỳ ý. ``ValueError`` khi không hợp lệ."""
+    import shlex
+    import sys
+    if not isinstance(lenh, str) or not lenh.startswith(LENH):
+        raise ValueError("lệnh không thuộc danh mục model")
+    duoi = lenh[len(LENH):]
+    if duoi not in _cac_script():
+        raise ValueError("lệnh không thuộc danh mục model")
+    script, *thamso = shlex.split(duoi)
+    return [sys.executable, f"scripts/{script}", *thamso]
