@@ -82,6 +82,23 @@ class ProtocolTests(unittest.TestCase):
                     self.assertEqual(caught.exception.status, expected)
                     self.assertIn(f"HTTP {expected}", str(caught.exception))
 
+    def test_loi_giu_ly_do_google_nhung_khong_lo_token(self):
+        """23–28/09/2026 Flow bị 403 mã 7 sáu ngày mà nhật ký chỉ có con số. Lý do nằm trong
+        khối chi tiết (ErrorInfo) — phải giữ; chuỗi giống token/cookie thì không."""
+        chi = [7, None, [["type.googleapis.com/google.rpc.ErrorInfo",
+                          ["PUBLIC_ERROR_UNUSUAL_ACTIVITY", "aisandbox.googleapis.com"]],
+                         ["type.googleapis.com/google.rpc.LocalizedMessage",
+                          ["en-US", "The caller does not have permission"]],
+                         "ya29." + "A1b2" * 20, "AbCdEfGh" * 6]]
+        with self.assertRaises(FR.LoiFlowRest) as caught:
+            RPC.rpc_result(json.dumps([["wrb.fr", "ogiZ0b", None, None, None, chi]]), "ogiZ0b")
+        loi = str(caught.exception)
+        self.assertEqual(caught.exception.status, 403)
+        self.assertIn("PUBLIC_ERROR_UNUSUAL_ACTIVITY", loi)
+        self.assertIn("The caller does not have permission", loi)
+        self.assertNotIn("ya29", loi)
+        self.assertNotIn("AbCdEfGh", loi)
+
     def test_missing_or_malformed_result_never_succeeds(self):
         for text in ("<html>sign in</html>", wire({}, "ogiZ0b"), wire([], "other"),
                      '[["er","ogiZ0b",{}]]'):

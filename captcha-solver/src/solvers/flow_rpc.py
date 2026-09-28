@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import json
 import random
+import re
 import time
 import uuid
 from urllib.parse import quote, urlsplit
@@ -76,6 +77,30 @@ def upload_body(project_id: str, raw: bytes, recaptcha: str) -> list:
             mime, True, None, None, None, False]
 
 
+def ly_do_loi(chi_tiet: list) -> str:
+    """Chuỗi mô tả trong khối chi tiết lỗi batchexecute (lý do ErrorInfo, thông điệp),
+    tối đa 300 ký tự. Bỏ chuỗi dài hay liền một khối (giống token, id) — nhật ký không được
+    mang bí mật."""
+    ra: list[str] = []
+
+    def _di(x) -> None:
+        if isinstance(x, str):
+            ten_loi = re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", x)        # PUBLIC_ERROR_…
+            khoi = re.search(r"[^\s]{30,}", x) and not ten_loi         # token, id, cookie
+            if 2 < len(x) <= 160 and (ten_loi or " " in x or "." in x) and not khoi \
+                    and x not in ra:
+                ra.append(x)
+        elif isinstance(x, list):
+            for y in x:
+                _di(y)
+        elif isinstance(x, dict):
+            for y in x.values():
+                _di(y)
+
+    _di(chi_tiet)
+    return "; ".join(ra)[:300]
+
+
 def rpc_result(text: str, rpc: str) -> list:
     # XSSI + từng khối [độ dài, JSON]; JSON nằm trên một dòng, không cắt theo
     # số ký tự vì độ dài trên dây tính byte UTF-8.
@@ -97,12 +122,17 @@ def rpc_result(text: str, rpc: str) -> list:
                 if isinstance(result, list):
                     return result
             code = row[2] if row[0] == "er" else None
+            chi_tiet = ""
             if len(row) > 5 and isinstance(row[5], list) and row[5]:
                 code = row[5][0]
+                chi_tiet = ly_do_loi(row[5][1:])
             if not isinstance(code, int):
                 code = None
             status = {3: 400, 7: 403, 8: 429, 16: 401}.get(code, 502)
-            raise LoiFlowRest(status, f"Flow RPC {rpc}: HTTP {status} (mã {code})")
+            # Giữ LÝ DO Google trả (ErrorInfo reason, thông điệp): 23/09/2026 Flow bị 403 mã 7
+            # sáu ngày liền mà không ai biết vì sao — nhật ký chỉ có con số.
+            raise LoiFlowRest(status, f"Flow RPC {rpc}: HTTP {status} (mã {code}"
+                                      f"{': ' + chi_tiet if chi_tiet else ''})")
     raise LoiFlowRest(502, f"Flow RPC {rpc} không trả kết quả hợp lệ")
 
 

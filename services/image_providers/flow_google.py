@@ -346,6 +346,25 @@ def _mark_quota_exhausted(account: dict[str, Any]) -> None:
                     "cooldown_s": cooldown_s})
 
 
+#: Google gắn cờ "hoạt động bất thường" thì cả nhóm Flow nghỉ ngần này giây (mặc định 6 giờ;
+#: đổi bằng providers.flow.unusual_activity_pause_seconds).
+_NGHI_KHI_BI_GAN_CO_S = 6 * 3600
+
+
+def _tam_nghi_ca_nhom(ly_do: str) -> None:
+    """Cho MỌI tài khoản Flow nghỉ — lỗi thuộc cả nhóm (IP / cờ Google), không riêng ai."""
+    try:
+        giay = float(_pool_config().get("unusual_activity_pause_seconds") or _NGHI_KHI_BI_GAN_CO_S)
+    except (TypeError, ValueError):
+        giay = _NGHI_KHI_BI_GAN_CO_S
+    den = time.time() + giay
+    with _pool_lock:
+        for acc in _accounts():
+            st = _account_state.setdefault(_account_key(acc), {})
+            st["cooldown_until"] = max(float(st.get("cooldown_until") or 0), den)
+    logger.warning({"event": "flow_ca_nhom_tam_nghi", "ly_do": ly_do, "giay": giay})
+
+
 def _reorder_flow_account(account: dict[str, Any], to_front: bool) -> None:
     """Persistently move a Flow account to the FRONT (healthy) or BACK (dead)
     of config.providers.flow.accounts — same rotation as ChatGPT's
@@ -664,6 +683,14 @@ class FlowImageAdapter(BaseImageAdapter):
         # request/argument — not the account's fault) so a malformed call
         # doesn't reshuffle the pool.
         if status == 400:
+            return
+        if "unusual_activity" in low:
+            # Google gắn cờ "hoạt động bất thường" (ErrorInfo PUBLIC_ERROR_UNUSUAL_ACTIVITY):
+            # không phải mất đăng nhập nên đăng nhập lại vô ích — bước khôi phục chỉ thấy phiên
+            # còn sống rồi báo "khôi phục xong" giả. Đo 23–28/09/2026: chặn CẢ 4 tài khoản cùng
+            # lúc (cờ theo IP / cả nhóm), mọi đường gọi (API ẩn, có màn hình, bấm giao diện).
+            # Nghỉ cả nhóm một quãng thay vì gõ cửa mỗi giờ — gõ tiếp dễ giữ cờ lâu hơn.
+            _tam_nghi_ca_nhom("unusual_activity")
             return
         _reorder_flow_account(account, to_front=False)
         # Logout / hydration-timeout → tự khôi phục phiên ở nền + báo Telegram
