@@ -38,7 +38,33 @@ type Cam = {
   // Khuếch đại mic trước khi gửi HA (dB). Mic camera nhỏ; ô "Mic volume" của
   // thiết bị Wyoming trong HA 2026.9 không áp vào tiếng nên tăng ở đây.
   mic_tang_db?: number;
+  // AI NGHE MIC camera — đúng một đường (services/ve_tinh_camera.py). Bản ghi cũ
+  // chưa có trường này: cho_nghe=true coi là "ha".
+  tro_ly_che_do?: CheDo;
+  tu_goi?: string;                 // "" = để HA bắt từ gọi (chỉ ở chế độ "ha")
+  do_nhay?: "thap" | "vua" | "cao";
 };
+
+type CheDo = "tat" | "ha" | "c2a";
+type TroLy = {
+  co_thu_vien: boolean;
+  tu_goi: { id: string; ten: string }[];
+  ha_khac: { entity_id: string; tich_hop: string }[];
+  tai: Record<string, { che_do: CheDo; mic: boolean; ha_noi: boolean;
+                        lan_goi: number | null; nghe_duoc: string }>;
+};
+
+const CHE_DO: { id: CheDo; nhan: string; giai: string }[] = [
+  { id: "tat", nhan: "Tắt", giai: "c2a không nghe mic camera này" },
+  { id: "ha", nhan: "Qua Home Assistant",
+    giai: "gửi mic cho HA qua vệ tinh Wyoming (HA thêm IP c2a + cổng vệ tinh)" },
+  { id: "c2a", nhan: "c2a tự nghe, tự trả lời",
+    giai: "không cần HA: gọi từ gọi → ting → nói lệnh → c2a trả lời ra loa camera" },
+];
+
+const cheDo = (c: Cam): CheDo =>
+  c.tro_ly_che_do === "tat" || c.tro_ly_che_do === "ha" || c.tro_ly_che_do === "c2a"
+    ? c.tro_ly_che_do : (c.cho_nghe === true ? "ha" : "tat");
 
 const RONG: Cam = { kind: "go2rtc", base: "", src: "", url: "", src_ai: "", url_ai: "",
                     username: "", password: "", note: "", ve_tinh_cong: "" };
@@ -62,6 +88,7 @@ export function CameraCard() {
   const [modelAnh, setModelAnh] = useState("");
   const [boDam, setBoDam] = useState("");        // camera đang mở bộ đàm
   const [dongHa, setDongHa] = useState<{ ten: string; nguon: string } | null>(null);
+  const [troLy, setTroLy] = useState<TroLy | null>(null);
 
   useEffect(() => {
     const c = ((config as any)?.cameras as Record<string, Cam>) || {};
@@ -71,6 +98,13 @@ export function CameraCard() {
   useEffect(() => {
     setModelAnh(String((config as any)?.agent_branches?.vision || ""));
   }, [(config as any)?.agent_branches]);
+
+  // Từ gọi chọn được, trợ lý khác đang có trong HA, tai đang chạy — hỏi lại sau mỗi lần lưu.
+  useEffect(() => {
+    request.get("/api/camera/tro_ly")
+      .then((r) => setTroLy(r.data as TroLy))
+      .catch(() => setTroLy(null));
+  }, [saved]);
 
   useEffect(() => {
     request.get("/api/v1/available-models")
@@ -116,9 +150,11 @@ export function CameraCard() {
                                             && Number(c.ve_tinh_cong || 0) === cong);
     if (trung) { setMsg(`❌ Cổng ${cong} đang dùng cho camera «${trung[0]}».`); return; }
     // Công tắc nghe/loa bật tắt ở danh sách — sửa địa chỉ không được làm mất chúng.
-    const veTinh = { ve_tinh_cong: cong ? cong : ("" as const), cho_nghe: cams[dangSua]?.cho_nghe === true,
-                     cho_loa: cams[dangSua]?.cho_loa !== false,
-                     mic_tang_db: Number(cams[dangSua]?.mic_tang_db || 0) };
+    const cu = cams[dangSua] || ({} as Cam);
+    const veTinh = { ve_tinh_cong: cong ? cong : ("" as const), cho_nghe: cu.cho_nghe === true,
+                     cho_loa: cu.cho_loa !== false,
+                     mic_tang_db: Number(cu.mic_tang_db || 0),
+                     tro_ly_che_do: cheDo(cu), tu_goi: cu.tu_goi || "", do_nhay: cu.do_nhay || "vua" };
     const ban: Cam = moi.kind === "go2rtc"
       ? { kind: "go2rtc", base: moi.base!.trim().replace(/\/+$/, ""), src: moi.src!.trim(),
           src_ai: moi.src_ai?.trim() || "",
@@ -150,12 +186,25 @@ export function CameraCard() {
     await luu(tiep);
   };
 
-  // Bật/tắt nghe hoặc loa của một camera — lưu ngay, c2a áp trong vài giây.
-  const doi = async (t: string, khoa: "cho_nghe" | "cho_loa") => {
-    const c = cams[t];
-    const bat = khoa === "cho_nghe" ? c.cho_nghe !== true : c.cho_loa === false;
-    const tiep = { ...cams, [t]: { ...c, [khoa]: bat } };
+  // Bật/tắt loa của một camera — lưu ngay, c2a áp trong vài giây.
+  const doiLoa = async (t: string) => {
+    const tiep = { ...cams, [t]: { ...cams[t], cho_loa: cams[t].cho_loa === false } };
     setCams(tiep);
+    await luu(tiep);
+  };
+
+  // Đổi trợ lý (ai nghe mic, từ gọi, độ nhạy). Viết luôn `cho_nghe` cho khớp để bản ghi
+  // không còn hai công tắc nói hai điều khác nhau.
+  const doiTroLy = async (t: string, sua: Partial<Cam>) => {
+    const c = { ...cams[t], ...sua };
+    const m = cheDo(c);
+    if (m === "ha" && !c.ve_tinh_cong) {
+      setMsg(`❌ «${t}» chưa có cổng vệ tinh — bấm Sửa, điền Cổng vệ tinh rồi mới chọn Qua Home Assistant.`);
+      return;
+    }
+    if (m === "c2a" && !c.tu_goi) c.tu_goi = "tro_ly";
+    const tiep = { ...cams, [t]: { ...c, tro_ly_che_do: m, cho_nghe: m === "ha" } };
+    setCams(tiep); setMsg("");
     await luu(tiep);
   };
 
@@ -230,32 +279,70 @@ export function CameraCard() {
                 : null}
               {c.note ? <span className="text-xs text-muted-foreground">— {c.note}</span> : null}
               {c.ve_tinh_cong ? (
-                <span className="flex flex-wrap items-center gap-1">
-                  <span className="text-[11px] rounded bg-muted px-1.5 py-0.5"
-                    title="Cổng vệ tinh Assist — thêm vào HA: Wyoming Protocol → IP máy c2a + cổng này">
-                    🛰️ {c.ve_tinh_cong}
-                  </span>
-                  <Button size="sm" variant={c.cho_nghe === true ? "default" : "outline"}
-                    title="Cho Home Assistant nghe mic camera này (ra lệnh bằng giọng nói)"
-                    onClick={() => void doi(t, "cho_nghe")}>
-                    🎙️ Nghe: {c.cho_nghe === true ? "Bật" : "Tắt"}
-                  </Button>
-                  <Button size="sm" variant={c.cho_loa !== false ? "default" : "outline"}
-                    title="Cho phát ra loa camera (trả lời, thông báo, cảnh báo)"
-                    onClick={() => void doi(t, "cho_loa")}>
-                    🔊 Loa: {c.cho_loa !== false ? "Bật" : "Tắt"}
-                  </Button>
-                  <select
-                    className="h-8 rounded border border-input bg-background px-1 text-xs"
-                    title="Khuếch đại mic trước khi gửi Home Assistant — phải nói to thì tăng lên"
-                    value={String(c.mic_tang_db || 0)}
-                    onChange={(e) => void doiMic(t, Number(e.target.value))}>
-                    {[0, 6, 12, 18, 24, 30].map((db) => (
-                      <option key={db} value={db}>🎚️ Mic {db ? `+${db}` : "±0"} dB</option>
-                    ))}
-                  </select>
+                <span className="text-[11px] rounded bg-muted px-1.5 py-0.5"
+                  title="Cổng vệ tinh Assist — thêm vào HA: Wyoming Protocol → IP máy c2a + cổng này">
+                  🛰️ {c.ve_tinh_cong}
                 </span>
               ) : null}
+              <span className="flex w-full flex-wrap items-center gap-1">
+                <select
+                  className="h-8 rounded border border-input bg-background px-1 text-xs"
+                  title="Ai nghe mic camera này — chỉ MỘT đường"
+                  value={cheDo(c)}
+                  onChange={(e) => void doiTroLy(t, { tro_ly_che_do: e.target.value as CheDo })}>
+                  {CHE_DO.map((m) => (
+                    <option key={m.id} value={m.id}>🎙️ Trợ lý: {m.nhan}</option>
+                  ))}
+                </select>
+                {cheDo(c) !== "tat" ? (
+                  <>
+                    <select
+                      className="h-8 rounded border border-input bg-background px-1 text-xs"
+                      title="Từ gọi. «HA bắt» = dùng từ gọi trong pipeline của HA"
+                      value={c.tu_goi || (cheDo(c) === "c2a" ? "tro_ly" : "")}
+                      onChange={(e) => void doiTroLy(t, { tu_goi: e.target.value })}>
+                      {cheDo(c) === "ha" ? <option value="">🗣️ Từ gọi: HA bắt (theo pipeline)</option> : null}
+                      {(troLy?.tu_goi || [{ id: "tro_ly", ten: "Trợ lý" }]).map((w) => (
+                        <option key={w.id} value={w.id}>🗣️ Từ gọi: {w.ten} (c2a bắt)</option>
+                      ))}
+                    </select>
+                    {c.tu_goi || cheDo(c) === "c2a" ? (
+                      <select
+                        className="h-8 rounded border border-input bg-background px-1 text-xs"
+                        title="Độ nhạy từ gọi — tự dậy khi không ai gọi thì hạ xuống, gọi mãi không dậy thì nâng lên"
+                        value={c.do_nhay || "vua"}
+                        onChange={(e) => void doiTroLy(t, { do_nhay: e.target.value as Cam["do_nhay"] })}>
+                        <option value="thap">Độ nhạy: Thấp (ít dậy nhầm)</option>
+                        <option value="vua">Độ nhạy: Vừa</option>
+                        <option value="cao">Độ nhạy: Cao (gọi xa)</option>
+                      </select>
+                    ) : null}
+                  </>
+                ) : null}
+                <Button size="sm" variant={c.cho_loa !== false ? "default" : "outline"}
+                  title="Cho phát ra loa camera (trả lời, thông báo, cảnh báo)"
+                  onClick={() => void doiLoa(t)}>
+                  🔊 Loa: {c.cho_loa !== false ? "Bật" : "Tắt"}
+                </Button>
+                <select
+                  className="h-8 rounded border border-input bg-background px-1 text-xs"
+                  title="Khuếch đại mic camera — phải nói to mới nhận thì tăng lên"
+                  value={String(c.mic_tang_db || 0)}
+                  onChange={(e) => void doiMic(t, Number(e.target.value))}>
+                  {[0, 6, 12, 18, 24, 30].map((db) => (
+                    <option key={db} value={db}>🎚️ Mic {db ? `+${db}` : "±0"} dB</option>
+                  ))}
+                </select>
+                {troLy?.tai?.[t] ? (
+                  <span className="text-[11px] text-muted-foreground">
+                    {troLy.tai[t].mic ? "mic đang nghe" : "mic chưa mở"}
+                    {cheDo(c) === "ha" ? (troLy.tai[t].ha_noi ? " · HA đã nối" : " · HA chưa nối") : ""}
+                    {troLy.tai[t].lan_goi
+                      ? ` · gọi lúc ${new Date(troLy.tai[t].lan_goi! * 1000).toLocaleTimeString("vi-VN")}` : ""}
+                    {troLy.tai[t].nghe_duoc ? ` · nghe: «${troLy.tai[t].nghe_duoc}»` : ""}
+                  </span>
+                ) : null}
+              </span>
               <div className="ml-auto flex flex-wrap gap-1">
                 {c.ve_tinh_cong ? (
                   <>
@@ -432,7 +519,30 @@ export function CameraCard() {
 
         {/* ── Vệ tinh Assist ───────────────────────────────────────────── */}
         <div className="rounded border border-dashed border-border/70 p-3 space-y-1">
-          <p className="text-sm font-medium">🛰️ Nói chuyện với nhà qua camera (Home Assistant)</p>
+          <p className="text-sm font-medium">🎙️ Nói chuyện với nhà qua camera</p>
+          <p className="text-xs text-muted-foreground">
+            Ô <b>🎙️ Trợ lý</b> ở từng camera quyết định <b>ai nghe mic</b> — chỉ một đường:{" "}
+            <b>Tắt</b> · <b>Qua Home Assistant</b> (c2a làm vệ tinh Wyoming, HA hiểu lệnh) ·{" "}
+            <b>c2a tự nghe, tự trả lời</b> (không cần HA). Từ gọi «c2a bắt» nghe ngay trên máy
+            c2a như loa R1; độ nhạy chỉnh ngay cạnh đó.
+          </p>
+          <p className="text-xs text-amber-600">
+            ⚠️ Nếu camera đã được thêm vào HA bằng tích hợp khác có trợ lý (vd <b>dahua_talk</b>)
+            thì chỉ bật MỘT bên: bật ở đây thì tắt vệ tinh bên kia (xoá hoặc vô hiệu thực thể
+            assist_satellite của nó), không thì một câu gọi được trả lời hai lần.
+          </p>
+          {troLy && troLy.ha_khac.length > 0 ? (
+            <p className="text-xs text-amber-600">
+              Trong HA đang có trợ lý khác:{" "}
+              {troLy.ha_khac.map((x) => `${x.entity_id} (${x.tich_hop})`).join(", ")}.
+            </p>
+          ) : null}
+          {troLy && !troLy.co_thu_vien ? (
+            <p className="text-xs text-destructive">
+              Máy chủ chưa có thư viện nghe từ gọi (pyopen-wakeword) — cập nhật ảnh c2a mới.
+            </p>
+          ) : null}
+          <p className="text-sm font-medium pt-1">🛰️ Qua Home Assistant</p>
           <p className="text-xs text-muted-foreground">
             Camera Dahua/Imou có mic và loa thành một <b>vệ tinh Assist</b>: gọi «ok nabu»
             rồi ra lệnh, trả lời phát ra loa camera; thông báo và cảnh báo của HA cũng phát
@@ -441,15 +551,15 @@ export function CameraCard() {
             <b>Wyoming Protocol</b> với IP máy c2a và cổng đó → chọn pipeline có từ gọi.
           </p>
           <p className="text-xs text-muted-foreground">
-            <b>🎙️ Nghe</b> — cho HA nghe mic (mặc định Tắt). <b>🔊 Loa</b> — cho phát ra
+            <b>🔊 Loa</b> — cho phát ra
             loa (trả lời, thông báo, cảnh báo, «đọc ra camera»). <b>🎚️ Mic</b> — phải nói
             to mới nhận thì tăng lên (+12 dB là mức bắt đầu hợp lý); ô «Mic volume» trong
             trang thiết bị HA không có tác dụng với loại vệ tinh này. Bấm là áp ngay; c2a
             chặn ở phía mình nên HA đòi cũng không được.
           </p>
           <p className="text-xs text-amber-600">
-            ⚠️ <b>Đừng bật Nghe ở camera hướng ra ngoài</b> (cổng, cửa, ban công): ai đứng
-            ngoài nói «ok nabu, …» là ra lệnh được cho nhà bạn — kể cả mở khoá, tắt báo động
+            ⚠️ <b>Đừng bật Trợ lý ở camera hướng ra ngoài</b> (cổng, cửa, ban công): ai đứng
+            ngoài gọi từ gọi là ra lệnh được cho nhà bạn — kể cả mở khoá, tắt báo động
             nếu trợ lý được phép. Camera ngoài chỉ nên bật Loa.
           </p>
         </div>

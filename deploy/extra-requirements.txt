@@ -133,3 +133,10 @@ websockets>=13.0
 # Lần sau treo, chạy trong container:
 #     py-spy dump --pid $(pgrep -f "uvicorn main:app")
 py-spy>=0.4.0
+
+# pyopen-wakeword — nghe TỪ GỌI ngay trong c2a (services/tu_goi.py): camera tự thức
+# khi gọi «Trợ lý» như loa R1, cả khi không nối Home Assistant. Đúng thư viện mà
+# container wyoming-openwakeword 2.x dùng, nên điểm và độ nhạy khớp bên HA. Chỉ có
+# bánh xe manylinux_2_35 (không cài được trên HA Alpine) — ảnh c2a là Debian nên được.
+# Kèm sẵn mô hình okay_nabu, hey_jarvis… (~11 MB), chỉ phụ thuộc numpy.
+pyopen-wakeword==1.1.0

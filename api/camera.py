@@ -9,6 +9,7 @@ Hai việc web không tự làm được:
 
 ``POST /api/camera/test``        chụp thử một camera, trả ảnh xem trước
 ``POST /api/camera/noi``         đọc một câu ra loa camera (Dahua/Imou, cổng 37777)
+``GET  /api/camera/tro_ly``      trợ lý giọng nói qua camera: từ gọi, trợ lý khác trong HA
 
 Bộ đàm (mic điện thoại qua thẻ WebRTC Camera của HA → loa camera):
 
@@ -70,6 +71,14 @@ def create_router() -> APIRouter:
             "bytes": len(jpeg),
             "anh": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii"),
         }
+
+    @router.get("/api/camera/tro_ly")
+    async def tro_ly(authorization: str | None = Header(default=None)):
+        """Trợ lý giọng nói qua camera: từ gọi chọn được, trợ lý khác trong HA, tai đang chạy."""
+        require_admin(authorization)
+        from services import ve_tinh_camera
+
+        return await asyncio.to_thread(ve_tinh_camera.trang_thai)
 
     @router.post("/api/camera/noi")
     async def noi(body: dict, authorization: str | None = Header(default=None)):
