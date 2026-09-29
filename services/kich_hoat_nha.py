@@ -1802,13 +1802,32 @@ def _tat_vi_vang(tb: str) -> None:
 
 def _nhin_lai(camera: list[str]) -> str | None:
     """Chủ máy 29/09/2026: laptop của vợ "là ngoại vi … để kiểm tra lại xem có ở phòng khách
-    không" — không phải lý do giữ đèn. Chụp từng camera bot chọn, đếm NGƯỜI bằng YOLO tại chỗ.
+    không" — không phải lý do giữ đèn. Nhìn lại từng camera bot chọn:
+
+    * Có Frigate cho camera đó thì dùng SỐ NGƯỜI Frigate đã đếm sẵn (chủ máy: "nếu có frigate thì
+      tận dụng, không thì mới phải chụp") — camera c2a ứng với camera Frigate trùng ĐÚNG tên luồng
+      (`src`), số đếm phải còn mới (`mqtt_nha.dem_nguoi` tự từ chối số đóng băng).
+    * Không có thì chụp một khung, đếm NGƯỜI bằng YOLO tại chỗ.
+
     Trả tên camera thấy người, "" nếu không camera nào thấy, None nếu không nhìn được camera nào
     (không đoán là vắng)."""
-    from services import camera_nha, nhin_nha, yolo_nha
+    from services import camera_nha, mqtt_nha, nhin_nha, yolo_nha
 
+    try:
+        frigate = mqtt_nha.dem_nguoi()
+    except Exception:  # noqa: BLE001 — không có MQTT thì chụp
+        frigate = {}
+    if frigate.get("_cu"):
+        frigate = {}
+    luong = {str(c.get("name")): str(c.get("src") or "") for c in camera_nha.danh_sach()}
     nhin_duoc = False
     for c in camera:
+        dem = frigate.get(luong.get(c, ""))
+        if dem is not None:
+            nhin_duoc = True
+            if int(dem.get("nguoi") or 0) > 0:
+                return c
+            continue
         try:
             _ten, jpeg = camera_nha.chup(c, cho_ai=True, timeout=15.0)
             anh = yolo_nha.doc_anh(jpeg)

@@ -1008,3 +1008,24 @@ def test_ngoai_vi_chi_de_nhin_lai_khong_giu(kh, monkeypatch):
     tt[LAP]["state"] = "off"
     kh._tat_vi_vang(DEN)
     assert len(nhin) == 3 and kh.goi, "ngoại vi không báo thì tắt, không cần nhìn"
+
+
+def test_nhin_lai_dung_frigate_truoc_khong_co_moi_chup(kh, monkeypatch):
+    """Chủ máy 29/09/2026: "nếu có frigate thì tận dụng, không thì mới phải chụp, không có frigate
+    thì yolo". Camera c2a ứng với Frigate theo ĐÚNG tên luồng `src`."""
+    from services import camera_nha, mqtt_nha
+    monkeypatch.setattr(camera_nha, "danh_sach", lambda: [{"name": "Cam phòng khách", "src": "phong-khach"},
+                                                           {"name": "Cam cổng", "src": "cong"}])
+    chup: list = []
+    monkeypatch.setattr(camera_nha, "chup", lambda c, **k: chup.append(c) or ("", b"x"))
+    from services import nhin_nha, yolo_nha
+    monkeypatch.setattr(yolo_nha, "doc_anh", lambda b: "anh")
+    monkeypatch.setattr(nhin_nha, "vat_the", lambda anh, **k: [])
+    monkeypatch.setattr(mqtt_nha, "dem_nguoi", lambda: {"phong-khach": {"nguoi": 2}})
+    assert kh._nhin_lai(["Cam phòng khách"]) == "Cam phòng khách" and chup == [], "Frigate thấy: khỏi chụp"
+    monkeypatch.setattr(mqtt_nha, "dem_nguoi", lambda: {"phong-khach": {"nguoi": 0}})
+    assert kh._nhin_lai(["Cam phòng khách"]) == "" and chup == []
+    assert kh._nhin_lai(["Cam cổng"]) == "" and chup == ["Cam cổng"], "không có Frigate: chụp + YOLO"
+    monkeypatch.setattr(mqtt_nha, "dem_nguoi", lambda: {"_cu": True})
+    kh._nhin_lai(["Cam phòng khách"])
+    assert chup[-1] == "Cam phòng khách", "số Frigate đóng băng thì không tin — chụp"

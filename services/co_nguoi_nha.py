@@ -262,11 +262,15 @@ def ung_vien(tb: str, ro: sqlite3.Connection, tu: float, den: float, *,
     # laptop của vợ (đổi 2 lần/14 ngày) rơi khỏi đề đèn trần dù chủ nhà nêu đích danh nó.
     nv.sort(key=lambda d: (-d["lech"], -d["doi_ngay"]))
     try:
-        from services import camera_nha
-        camera = [str(c["name"]) for c in camera_nha.danh_sach()]
+        from services import camera_nha, mqtt_nha
+        ds_cam = camera_nha.danh_sach()
+        dem = mqtt_nha.dem_nguoi()
+        camera = [str(c["name"]) for c in ds_cam]
+        # Camera Frigate đếm sẵn người (trùng ĐÚNG tên luồng) — nhìn lại khỏi phải chụp.
+        frigate = [str(c["name"]) for c in ds_cam if not dem.get("_cu") and str(c.get("src") or "") in dem]
     except Exception:  # noqa: BLE001 — không đọc được sổ camera thì bot không có camera để nhìn lại
-        camera = []
-    return {"ma": tb, "camera": camera, "khu": khu_tb, "so_ngay": so_ngay, "gio_bat": dai_bat / 3600,
+        camera, frigate = [], []
+    return {"ma": tb, "camera": camera, "camera_frigate": frigate, "khu": khu_tb, "so_ngay": so_ngay, "gio_bat": dai_bat / 3600,
             "hien_dien": {m: {k: v for k, v in x.items() if k not in ("ts", "gt", "bat")}
                           for m, x in hien_dien.items()},
             "trong": trong, "ket": ket, "cap": cap, "sang_khac": sang_khac[:_TOI_DA_LAY],
@@ -308,7 +312,8 @@ def de(uv: dict[str, Any], ten_tb: str, dan: list[str]) -> str:
     if not uv["ngoai_vi"]:
         dong.append("(không có)")
     dong += ["\nE. CAMERA — c2a chụp được ảnh rồi tự đếm người:"]
-    dong += [f"- {c}" for c in uv.get("camera") or []] or ["(không có)"]
+    dong += [f"- {c}" + (" (Frigate đếm sẵn — khỏi chụp)" if c in (uv.get("camera_frigate") or []) else "")
+             for c in uv.get("camera") or []] or ["(không có)"]
     return "\n".join(dong)
 
 
