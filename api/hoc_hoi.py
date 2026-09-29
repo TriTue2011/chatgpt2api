@@ -424,6 +424,8 @@ def create_router() -> APIRouter:
             ok = hieu_thiet_bi_nha.sua_cham(
                 int(body.get("id") or 0), bool(body.get("dung")),
                 cham_boi="chu_may", ghi_chu=str(body.get("ghi_chu") or ""))
+            if ok:
+                await asyncio.to_thread(hieu_thiet_bi_nha.ap_ket_luan)
             return {"ok": ok} if ok else {"ok": False, "error": "Không có kết luận đó."}
         except Exception as exc:
             return _loi(exc, "chấm kết luận")

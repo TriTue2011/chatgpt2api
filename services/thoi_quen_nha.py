@@ -741,6 +741,14 @@ def chay_mot_lan() -> dict[str, Any]:
                                "lap_lai": len(ghi2["lap_lai"]), "loai": len(kq2["loi"])}
             if ghi2["moi"] or ghi2["lap_lai"] or kq2["loi"]:
                 phan.append(_bao_so("đọc thói quen bật/tắt", kq2, ghi2))
+
+        # Chọn "có người thật" cho việc tắt khi vắng — dùng khu vực vừa chọn ở trên.
+        from services import co_nguoi_nha
+        kq3, bao3 = co_nguoi_nha.chay(ht)
+        if not kq3.get("bo_qua"):
+            ra["co_nguoi"] = kq3
+        if bao3:
+            phan.append(bao3)
         if not phan:
             return ra
         tin = "🧠 Bot học hỏi vừa " + ";\nvừa ".join(phan)

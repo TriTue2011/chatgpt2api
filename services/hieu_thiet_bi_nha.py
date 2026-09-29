@@ -108,7 +108,7 @@ _LOAI_DOC = {"rac": "đổi đồng loạt, không phải người bật",
 
 #: Loại câu hỏi được chấm và lên cấp RIÊNG: bot giỏi nhận ra thiết bị trùng
 #: chưa chắc đã giỏi chọn nguồn nhanh, càng chưa chắc giỏi chọn điều kiện.
-LOAI_CAU_HOI = ("cung_thiet_bi", "nguon_nhanh", "hoc", "ngoai_vi", "thoi_quen")
+LOAI_CAU_HOI = ("cung_thiet_bi", "nguon_nhanh", "hoc", "ngoai_vi", "thoi_quen", "co_nguoi")
 
 #: Các loại câu do LƯỢT HIỂU THIẾT BỊ (`giai`) sinh ra. `ghi_ket_qua` chỉ được vô
 #: hiệu những loại này khi một mã đổi nhóm; câu `ngoai_vi` và `thoi_quen` do tầng
@@ -785,6 +785,34 @@ def ghi_thoi_quen(lan: int, ket_luan: list[dict[str, Any]]) -> dict[str, list[di
     return {"moi": moi, "lap_lai": lap_lai}
 
 
+def ghi_co_nguoi(lan: int, ket_luan: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Lưu kết luận CÓ NGƯỜI THẬT (`services/co_nguoi_nha.py`) — mỗi thiết bị một câu `co_nguoi`.
+    `gia_tri` là hai biểu thức; `nhom.ten` giữ tên cảm biến để câu hỏi đọc được."""
+    now = time.time()
+    moi: list[dict[str, Any]] = []
+    lap_lai: list[dict[str, Any]] = []
+    with _khoa:
+        conn = _db()
+        for k in ket_luan:
+            g = {"ma": [k["ma_hoc"]], "ma_hoc": k["ma_hoc"], "chac": k["chac"],
+                 "vi_sao": k["vi_sao"], "khu_vuc": k["khu_vuc"], "ten": k["ten"], "giai_luc": now}
+            gt = {"co_nguoi": k["co_nguoi"], "giu": k["giu"]}
+            _ghi_mot_cau(conn, lan, now, "co_nguoi", k["ma_hoc"], gt, g, moi, lap_lai)
+        conn.commit()
+    return {"moi": moi, "lap_lai": lap_lai}
+
+
+def ghi_chu_cham(loai: str, khoa: str, toi_da: int = 5) -> list[str]:
+    """Lời chủ nhà ghi khi chấm các câu trước của CHÍNH câu này (mới nhất trước) — đề của lượt
+    sau chỉ mang những lời đó, không mang cả sổ dữ kiện chung."""
+    with _khoa:
+        rows = _db().execute(
+            "SELECT ket_qua, ghi_chu FROM quyet_dinh WHERE loai_cau_hoi=? AND khoa=?"
+            " AND cham_boi='chu_may' AND TRIM(COALESCE(ghi_chu, ''))<>''"
+            " ORDER BY cham_luc DESC LIMIT ?", (loai, khoa, toi_da)).fetchall()
+    return [f"(chấm {'đúng' if r['ket_qua'] == 'dung' else 'sai'}) {r['ghi_chu']}" for r in rows]
+
+
 # ── Chủ máy sửa sơ đồ kích hoạt ─────────────────────────────────────────────
 # Chủ máy 26/09/2026: "Sơ đồ kích hoạt là nơi chứa các điều kiện và ngoại vi … có thể
 # thêm hoặc xoá điều kiện". Phần sửa lưu RIÊNG, áp ngay tại `thoi_quen_hoc` /
@@ -1199,10 +1227,29 @@ def _cau_doc(d: dict[str, Any], ten: dict[str, str]) -> str:
             loi = g.get(f"thoi_quen_{chieu}") or ""
             phan.append(f"{chu}: {loi}" + (f" (khi {', '.join(dk)})" if dk else " (không điều kiện)"))
         return f"{_nhan(d['khoa'], ten)} — " + "; ".join(phan)
+    if d["loai_cau_hoi"] == "co_nguoi":
+        ten_cb = g.get("ten") or {}
+        loi = f"{_nhan(d['khoa'], ten)} — tắt khi vắng theo: {_bieu_thuc_doc(gt['co_nguoi'], ten_cb)}"
+        if gt.get("giu"):
+            loi += f"; giữ khỏi tắt nhầm khi: {_bieu_thuc_doc(gt['giu'], ten_cb)}"
+        return loi
     if gt.get("hoc"):
         return f"Học thói quen {_nhan(d['khoa'], ten)}"
     return (f"Không học {_nhan(d['khoa'], ten)} "
             f"({_LOAI_DOC.get(gt.get('loai'), 'chưa rõ là gì')})")
+
+
+def _bieu_thuc_doc(bt: dict[str, Any], ten: dict[str, str], trong: bool = False) -> str:
+    """Biểu thức cảm biến ghép thành chữ: "Camera PK hoặc (Radar PK và không Radar bếp)"."""
+    if "ma" in bt:
+        la = [str(x) for x in bt.get("la", ["on"])]
+        nhan = ten.get(str(bt["ma"])) or str(bt["ma"])
+        return nhan if la == ["on"] else f"{nhan} là {'/'.join(la)}"
+    if "khong" in bt:
+        return f"không {_bieu_thuc_doc(bt['khong'], ten, True)}"
+    noi = " và " if "va" in bt else " hoặc "
+    s = noi.join(_bieu_thuc_doc(x, ten, True) for x in next(iter(bt.values())))
+    return f"({s})" if trong else s
 
 
 def _dieu_kien_doc(x: dict[str, Any], ten_nv: dict[str, str], ten: dict[str, str]) -> str:
@@ -1375,6 +1422,8 @@ def tra_loi(text: str, *, nguoi: str = "") -> Optional[str]:
     so, dung, con = cau["so"], cau["dung"], cau["con"]
     duoc = [x for x in so if sua_cham(x, dung, cham_boi="chu_may", ghi_chu=con)]
     khong = [x for x in so if x not in duoc]
+    if duoc:
+        ap_ket_luan()
     id_dk = ghi_du_kien(con, nguoi=nguoi, nguon="hh") if con else 0
     dong = []
     if duoc:
@@ -1395,6 +1444,17 @@ def tra_loi(text: str, *, nguoi: str = "") -> Optional[str]:
         danh_dau_da_hoi(id_hoi)
         tra += "\n\n" + cau
     return tra
+
+
+def ap_ket_luan() -> None:
+    """Chấm xong thì áp ngay những kết luận CÓ tác động ra nhà (`co_nguoi_nha.ap_dung`): chấm đúng
+    là áp, chấm sai là trả lại cài đặt cũ — chủ máy không phải chờ lượt học sau."""
+    from services import co_nguoi_nha
+
+    try:
+        co_nguoi_nha.ap_dung()
+    except Exception as exc:  # noqa: BLE001 — chấm đã lưu; áp lỗi thì lượt học sau áp lại
+        logger.warning({"event": "co_nguoi_ap_loi", "error": str(exc)[:200]})
 
 
 # ── Vòng chạy ───────────────────────────────────────────────────────────────
