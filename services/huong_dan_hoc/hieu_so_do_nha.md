@@ -75,7 +75,7 @@ trả lời được bằng có/không hoặc một tên).
 ## Trả lời
 
 ```json
-{"kieu": "chung_cu" | "nha_dat" | "khong_ro", "so_tang": 1 hoặc null,
+{"kieu": "chung_cu" | "nha_pho" | "biet_thu" | "van_phong" | "xuong" | "khong_ro", "so_tang": 1 hoặc null,
  "phong": [{"ten": "<tên mục A>", "loai": "phong_khach|bep|phong_ngu|wc|ban_cong|phong_hoc|khac",
             "tang": 1, "thong_voi": ["<phòng>"], "vach_voi": ["<phòng>"]}],
  "cua_chinh": {"vao": "<phòng>"} hoặc null,
@@ -83,5 +83,5 @@ trả lời được bằng có/không hoặc một tên).
  "hoi_chu_nha": ["..."], "chac": 0.7, "vi_sao": "..."}
 ```
 
-`thong_voi` / `vach_voi` chỉ nhắc phòng có trong `phong`. Ô viết dạng `A1`–`H6`.
+`thong_voi` / `vach_voi` chỉ nhắc phòng có trong `phong`. Ô viết đúng tên như trong đề (chữ cột + số hàng, vd `C4`).
 `vi_sao`: tiếng Việt, tối đa 4 câu, nêu số đo đã dựa vào.

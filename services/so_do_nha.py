@@ -29,6 +29,7 @@ from __future__ import annotations
 import base64
 import bisect
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -45,7 +46,10 @@ _PATH = Path(DATA_DIR) / "agent" / "so_do_nha.json"
 _khoa = threading.RLock()
 NGAY = 30
 #: Lưới trên khung hình camera: cột A–H, hàng 1–6 (1 = mép trên).
-COT, HANG = 8, 6
+#: Chủ máy 30/09/2026: "chia ô dày hơn hôm qua thì mới chính xác, càng dày càng tốt nhưng trong giới hạn cho
+#: phép". Đo trên ảnh thật (Cam bếp, ban ngày): 16×12 bot tách được ban công / bếp / phòng khách; 24×18 chữ tên ô
+#: chìm trên nền sáng và bot gộp thành khối chữ nhật lớn — quá giới hạn đọc của model thị giác.
+COT, HANG = 16, 12
 #: Ô có ít hơn ngần này mẫu thì không bày — một hai lần trùng không nói lên phòng nào.
 O_TOI_THIEU = 20
 #: Mỗi camera bày tối đa ngần này cặp đường đi (ô đầu → ô cuối) hay gặp nhất.
@@ -104,6 +108,17 @@ def ap() -> dict[str, Any] | None:
 
 
 # ── Đo ──────────────────────────────────────────────────────────────────────
+def la_o(x: Any) -> bool:
+    """Tên ô hợp lệ của lưới hiện tại: chữ cột A.. + số hàng 1..HANG (vd "C4", "P12")."""
+    m = re.fullmatch(r"([A-Z])(\d{1,2})", str(x)) if isinstance(x, str) else None
+    return bool(m) and ord(m.group(1)) - ord("A") < COT and 1 <= int(m.group(2)) <= HANG
+
+
+def mau_o() -> str:
+    """Câu mô tả cách gọi tên ô cho đề và lời báo lỗi."""
+    return f"A1–{chr(ord('A') + COT - 1)}{HANG} (cột A–{chr(ord('A') + COT - 1)} trái→phải, hàng 1–{HANG} trên→dưới)"
+
+
 def o_cua(x: float, y: float) -> str:
     """Điểm (0–1) → tên ô "A1".."H6"."""
     c = min(COT - 1, max(0, int(x * COT)))
@@ -290,13 +305,13 @@ def de(uv: dict[str, Any], mo_ta: list[str], dan: list[str]) -> str:
     dong += ["\nB. CÙNG BÁO — phòng A có người thì phòng B cũng có người bao nhiêu phần thời gian:",
              "phòng A | phòng B | cùng báo"]
     dong += [f"{d['a']} | {d['b']} | {round(100 * d['ty_le'])}%" for d in uv["cung_bao"][:20]] or ["(không)"]
-    dong += [f"\nC. CAMERA — lưới {COT}×{HANG} trên khung hình (cột A–H trái→phải, hàng 1–6 trên→dưới); mỗi ô là "
+    dong += [f"\nC. CAMERA — lưới {COT}×{HANG} trên khung hình, ô {mau_o()}; mỗi ô là "
              "chỗ CHÂN người đứng, kèm phòng nào có radar báo MỘT MÌNH lúc đó (tỉ lệ, số lần):"]
     if uv.get("loi_camera"):
         dong.append(f"(không đo được: {uv['loi_camera']})")
     for c, luoi in sorted(uv["camera"].items()):
         dong.append(f"- {c}:")
-        for o in sorted(luoi, key=lambda o: (o[1], o[0])):
+        for o in sorted(luoi, key=lambda o: (int(o[1:]), o[0])):
             n = sum(luoi[o].values())
             dong.append(f"  {o}: " + ", ".join(f"{k} {round(100 * v / n)}%" for k, v in
                                                 sorted(luoi[o].items(), key=lambda i: -i[1])) + f" ({n})")
@@ -322,7 +337,9 @@ def de(uv: dict[str, Any], mo_ta: list[str], dan: list[str]) -> str:
 
 
 # ── Kiểm bài ở biên ─────────────────────────────────────────────────────────
-KIEU = ("chung_cu", "nha_dat", "khong_ro")
+#: Kiểu nơi — cũng quyết định phần hướng dẫn RIÊNG khi dựng tình huống (`kich_ban_nha.noi_cua`). "nha_dat" là
+#: tên cũ (trước 30/09/2026), giữ để bài cũ còn đọc được — coi như nhà phố.
+KIEU = ("chung_cu", "nha_pho", "biet_thu", "van_phong", "xuong", "nha_dat", "khong_ro")
 
 
 def kiem(data: Any, uv: dict[str, Any]) -> dict[str, Any] | str:
@@ -353,9 +370,8 @@ def kiem(data: Any, uv: dict[str, Any]) -> dict[str, Any] | str:
         for k, o in (c.get("thay") or {}).items():
             if k not in ten_p:
                 return f"camera {c['ten']} nhắc phòng không có: {k!r}"
-            if not all(isinstance(x, str) and len(x) == 2 and "A" <= x[0] <= chr(ord("A") + COT - 1)
-                       and "1" <= x[1] <= str(HANG) for x in o):
-                return f"camera {c['ten']}: ô phải dạng A1–{chr(ord('A') + COT - 1)}{HANG}"
+            if not all(la_o(x) for x in o):
+                return f"camera {c['ten']}: ô phải dạng {mau_o()}"
     try:
         chac = min(1.0, max(0.0, float(data.get("chac"))))
     except (TypeError, ValueError):
@@ -407,7 +423,8 @@ def cham(id_: int, dung: bool, *, cham_boi: str, ghi_chu: str = "") -> bool:
 
 def doc(g: dict[str, Any]) -> str:
     """Sơ đồ → mấy dòng tiếng Việt cho chủ nhà đọc và chấm."""
-    ten_kieu = {"chung_cu": "chung cư", "nha_dat": "nhà đất", "khong_ro": "chưa rõ kiểu nhà"}
+    ten_kieu = {"chung_cu": "chung cư", "nha_pho": "nhà phố", "biet_thu": "nhà vườn / biệt thự",
+                "van_phong": "văn phòng", "xuong": "xưởng", "nha_dat": "nhà đất", "khong_ro": "chưa rõ kiểu nhà"}
     dong = [ten_kieu.get(g.get("kieu"), str(g.get("kieu"))) + (f", {g['so_tang']} tầng" if g.get("so_tang") else "")]
     for p in g.get("phong") or []:
         x = p["ten"]
@@ -459,7 +476,8 @@ def ve_luoi(anh: Any, vat: list[Any]) -> bytes:
     rong, cao = ra.size
     ve = ImageDraw.Draw(ra)
     try:
-        chu = ImageFont.load_default(size=max(12, cao // 45))
+        # Chữ theo cỡ Ô (không theo cỡ ảnh): lưới dày thì chữ nhỏ lại cho khỏi che ảnh, nhưng không dưới 11 px.
+        chu = ImageFont.load_default(size=max(11, min(cao // HANG, rong // COT) // 4))
     except TypeError:          # Pillow cũ: không có cỡ chữ
         chu = ImageFont.load_default()
     vang, do_ = (255, 255, 0), (255, 0, 0)
@@ -469,7 +487,9 @@ def ve_luoi(anh: Any, vat: list[Any]) -> bytes:
         ve.line([(0, int(h * cao / HANG)), (rong, int(h * cao / HANG))], fill=vang, width=1)
     for c in range(COT):
         for h in range(HANG):
-            ve.text((int(c * rong / COT) + 4, int(h * cao / HANG) + 2), ten_o(c, h), fill=vang, font=chu)
+            # Viền đen: chữ vàng đọc được cả trên sàn gỗ sáng, cửa sổ chói (đo 30/09 — lưới dày chữ nhỏ bị chìm).
+            ve.text((int(c * rong / COT) + 3, int(h * cao / HANG) + 2), ten_o(c, h), fill=vang, font=chu,
+                    stroke_width=2, stroke_fill=(0, 0, 0))
     for v in vat:
         x1, y1, x2, y2 = (int(t) for t in v.hop)
         ve.rectangle([x1, y1, x2, y2], outline=do_, width=2)
@@ -526,11 +546,10 @@ def kiem_anh(data: Any, phong: list[str]) -> dict[str, Any] | str:
     for k, o in data["thay"].items():
         if k not in phong:
             return f"phòng không có trong nhà: {k!r}"
-        if not isinstance(o, list) or not all(isinstance(x, str) and len(x) == 2 and "A" <= x[0] <= chr(ord("A") + COT - 1)
-                                              and "1" <= x[1] <= str(HANG) for x in o):
-            return f"{k}: ô phải dạng A1–{chr(ord('A') + COT - 1)}{HANG}"
+        if not isinstance(o, list) or not all(la_o(x) for x in o):
+            return f"{k}: ô phải dạng {mau_o()}"
         if o:
-            thay[k] = sorted(set(o), key=lambda x: (x[1], x[0]))
+            thay[k] = sorted(set(o), key=lambda x: (int(x[1:]), x[0]))
     try:
         chac = min(1.0, max(0.0, float(data.get("chac"))))
     except (TypeError, ValueError):
@@ -557,8 +576,8 @@ def doc_anh_camera(ten: str) -> dict[str, Any]:
     huong, ban = ht.huong_dan("doc_anh_camera")
     de = "\n".join([f"CAMERA: {ten_that}",
                     f"PHÒNG trong nhà (chỉ dùng đúng các tên này): {', '.join(phong)}",
-                    f"ẢNH: khung hình đã kẻ lưới {COT}×{HANG} — cột A–{chr(ord('A') + COT - 1)} trái→phải, "
-                    f"hàng 1–{HANG} trên→dưới, tên ô ghi ở góc trên-trái mỗi ô; hộp đỏ là đồ vật YOLO thấy."
+                    f"ẢNH: khung hình đã kẻ lưới {COT}×{HANG} — ô {mau_o()}, tên ô ghi ở góc trên-trái mỗi ô; "
+                    "hộp đỏ là đồ vật YOLO thấy."
                     + (" ẢNH ĐÊM (hồng ngoại, đen trắng — không thấy màu)." if dem else ""),
                     "YOLO thấy:"] + [f"- {mo_ta_vat(v, rong, cao)}" for v in vat[:25]] + (["- (không thấy gì)"] if not vat else [])
                    + ["CHỦ NHÀ MÔ TẢ:"] + ([f"- {x}" for x in mo_ta] or ["- (chưa có)"]))

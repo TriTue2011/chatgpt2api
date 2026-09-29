@@ -19,7 +19,8 @@ def so(tmp_path, monkeypatch):
 
 
 def test_o_va_diem_chan():
-    assert sd.o_cua(0.0, 0.0) == "A1" and sd.o_cua(0.99, 0.99) == "H6" and sd.o_cua(1.2, -1) == "H1"
+    assert sd.o_cua(0.0, 0.0) == "A1" and sd.o_cua(0.99, 0.99) == "P12" and sd.o_cua(1.2, -1) == "P1"
+    assert sd.la_o("P12") and sd.la_o("C4") and not sd.la_o("Q1") and not sd.la_o("A13") and not sd.la_o("A0")
     assert sd.diem_chan([0.2, 0.4, 0.1, 0.5]) == pytest.approx((0.25, 0.9))
 
 
@@ -60,15 +61,15 @@ def test_nhin_lai_chi_dem_nguoi_trong_vung_phong(so, monkeypatch):
     with so._khoa:
         d = so._nap()
         d["ap"] = {"kieu": "chung_cu", "phong": [], "camera": [
-            {"ten": "Cam bếp", "thay": {"Phòng khách": ["A6", "B6"], "Bếp": ["E2", "F2"]}}]}
+            {"ten": "Cam bếp", "thay": {"Phòng khách": ["A12", "B12"], "Bếp": ["K4", "L4"]}}]}
         so._luu(d)
     monkeypatch.setattr(camera_nha, "danh_sach", lambda: [{"name": "Cam bếp", "src": "bep"}])
     monkeypatch.setattr(mqtt_nha, "dem_nguoi", lambda: {"bep": {"nguoi": 1}})
-    ev = {"box": [0.6, 0.1, 0.1, 0.2]}                      # chân ở F2 — trong bếp
+    ev = {"box": [0.6, 0.1, 0.1, 0.2]}                      # chân ở K4 — trong bếp
     monkeypatch.setattr(so, "_frigate", lambda duong, timeout=60: [{"data": ev}])
     assert kh._nhin_lai(["Cam bếp"], "Phòng khách") == "", "người nấu ăn ở bếp: phòng khách vẫn vắng"
     assert kh._nhin_lai(["Cam bếp"], "") == "Cam bếp", "không biết khu thì đếm cả khung"
-    ev["box"] = [0.05, 0.6, 0.1, 0.35]                      # chân ở A6 — phần phòng khách
+    ev["box"] = [0.05, 0.6, 0.1, 0.35]                      # chân ở B12 — phần phòng khách
     assert kh._nhin_lai(["Cam bếp"], "Phòng khách") == "Cam bếp"
 
 
@@ -86,7 +87,7 @@ def test_doc_anh_camera_ke_luoi_yolo_bot_chia_o_roi_vao_so(so, tmp_path, monkeyp
 
     class Vat:
         nhan, diem, hop, ten = "refrigerator", 0.9, (0, 100, 200, 500), "tủ lạnh"
-    assert so.mo_ta_vat(Vat(), 800, 600) == "tủ lạnh (refrigerator, 90%) — chân ô B6, trải A2–C6"
+    assert so.mo_ta_vat(Vat(), 800, 600) == "tủ lạnh (refrigerator, 90%) — chân ô C11, trải A3–E11"
     assert so.ve_luoi(anh, [Vat()])[:2] == b"\xff\xd8"
 
     monkeypatch.setattr(so, "_ANH_DIR", tmp_path / "anh")
