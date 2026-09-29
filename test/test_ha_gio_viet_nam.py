@@ -24,3 +24,14 @@ def test_gio_dat_truoc_tin_nguoi_dung_cuoi():
 def test_khong_co_tin_nguoi_dung_thi_them_cuoi():
     ra = _chen_gio_vn([{"role": "system", "content": "x"}])
     assert ra[-1]["role"] == "system" and "UTC+7" in ra[-1]["content"]
+
+
+def test_yeu_cau_tu_ha_duoc_dan_viet_cho_tai_nghe():
+    """29/09/2026: model viết «BTMC», giọng đọc đánh vần — yêu cầu từ HA mang lời nhắc viết như lời
+    nói (tên viết tắt thường gọi đầy đủ thì viết đầy đủ), đứng sau persona, trước hội thoại."""
+    from api import ai
+    ms = [{"role": "system", "content": "HA"}, {"role": "user", "content": "giá vàng BTMC"}]
+    ra = ai._loi_nhac_ha(ms, "PERSONA")
+    assert [m["content"] for m in ra[:2]] == ["PERSONA", ai.VIET_CHO_TAI] and ra[2:] == ms
+    assert "Bảo Tín Minh Châu" in ai.VIET_CHO_TAI
+    assert ai._loi_nhac_ha(ms)[0]["content"] == ai.VIET_CHO_TAI, "chưa cài persona vẫn dặn"

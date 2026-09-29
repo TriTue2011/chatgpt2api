@@ -30,6 +30,23 @@ from services.protocol import (
 _THU = ("Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật")
 
 
+#: Yêu cầu từ trợ lý giọng nói Home Assistant: câu trả lời được ĐỌC THÀNH TIẾNG. Chủ máy 29/09/2026
+#: hỏi giá vàng, model viết «BTMC», giọng đọc đánh vần "bê tê em xê" — "sao nó lại đọc tắt", "nó đọc
+#: chữ cái". Bộ đọc không biết BTMC là tên gì; model VIẾT câu trả lời thì biết. Nguyên tắc cho model
+#: tự áp bằng hiểu biết của nó — không phải danh sách chữ.
+VIET_CHO_TAI = (
+    "Câu trả lời sẽ được ĐỌC THÀNH TIẾNG qua loa, người nghe không nhìn thấy chữ. Viết như lời NÓI: "
+    "chữ viết tắt tên riêng, thương hiệu, tổ chức mà người Việt thường gọi bằng TÊN ĐẦY ĐỦ thì viết đầy "
+    "đủ (vd «BTMC» → «Bảo Tín Minh Châu»); cái người ta vẫn gọi bằng chữ cái (SJC, VTV) thì giữ nguyên. "
+    "Không gạch đầu dòng, không bảng; số lớn nói gọn (13,85 triệu đồng).")
+
+
+def _loi_nhac_ha(messages: list, persona: str = "") -> list:
+    """Lời nhắc c2a thêm cho yêu cầu từ HA: persona (chủ máy cài trên web) rồi «viết cho tai nghe»."""
+    dau = ([{"role": "system", "content": persona}] if persona else []) + [{"role": "system", "content": VIET_CHO_TAI}]
+    return [*dau, *messages]
+
+
 def _chen_gio_vn(messages: list, now=None) -> list:
     """Chèn giờ Việt Nam thật ngay TRƯỚC tin người dùng cuối (yêu cầu từ HA).
 
@@ -355,11 +372,7 @@ def create_router() -> APIRouter:
         try:
             if source_kind == "ha" and isinstance(payload.get("messages"), list):
                 from services.agent import persona as _P
-                _pb = _P.prompt_for("ha")
-                if _pb:
-                    payload["messages"] = [{"role": "system", "content": _pb},
-                                           *payload["messages"]]
-                payload["messages"] = _chen_gio_vn(payload["messages"])
+                payload["messages"] = _chen_gio_vn(_loi_nhac_ha(payload["messages"], _P.prompt_for("ha") or ""))
         except Exception:
             pass
         model = str(payload.get("model") or "auto")
