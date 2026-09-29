@@ -85,6 +85,10 @@ type ThietBi = {
   /** Chưa đủ tin thì hỏi để học — lúc có người Ở LẠI đủ `o_lai.phut` phút (bot tự rút). */
   hoi_de_hoc?: boolean;
   o_lai?: { phut: number | null; lan: number; cam_bien: { ma: string; ten: string }[] } | null;
+  /** Mức khi bật bot tự học theo nhiệt độ cùng khu (rỗng = chưa đủ mẫu → bật như cũ). */
+  muc?: { truong?: string; cam_bien?: string; n?: number; moc?: [number, string, number][] } | null;
+  /** Nghi nhiễu: sóng báo có mà camera cùng khu không thấy ai quá `phut` phút → chụp lại bằng YOLO. */
+  nhieu?: { phut?: number | null; mau?: number } | null;
 };
 type ThucThe = { ma: string; ten: string; lop: string };
 const CONG_TAC = "cong_tac";
@@ -393,8 +397,20 @@ function MotThietBi({ tb, taiLai, doiMa, lich }: {
                 ) : tb.hoi_de_hoc ? (
                   <div className="text-muted-foreground">Sơ đồ chưa có cảm biến có người nào (radar, camera) — thêm ở Sơ đồ kích hoạt.</div>
                 ) : null}
+                {tb.muc?.moc?.length ? (
+                  <div className="text-muted-foreground">
+                    {`Mức khi bật (bot học từ ${tb.muc.n} lần anh tự chỉnh): ` +
+                      tb.muc.moc.map(([n, g, k]) => `${g} quanh ${n}°C (${k} lần)`).join(", ")}
+                  </div>
+                ) : null}
               </div>
-            ) : null}
+            ) : (
+              tb.nhieu?.phut ? (
+                <div className="text-xs text-muted-foreground">
+                  {`Nghi nhiễu: sóng báo có người mà camera cùng khu không thấy ai quá ${tb.nhieu.phut} phút thì em chụp lại (YOLO) — không ai mới tắt. Số phút tự rút từ ${tb.nhieu.mau} lần người khuất tầm camera rồi hiện lại.`}
+                </div>
+              ) : null
+            )}
             <TheoGio ds={h.theo_gio || []} />
             {h.nguon.length > 0 && (
               <div className="flex flex-wrap gap-1">

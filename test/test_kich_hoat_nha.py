@@ -1253,3 +1253,38 @@ def test_dinh_vi_toa_do_theo_so_do_da_cham(kh, monkeypatch):
                        "dinh_vi_sai": ["Đèn phòng ngủ (khu Phòng ngủ), nguồn Hiện diện phòng ngủ, lúc 30/09 21:00"]},
                       [], [])
     assert "G. ĐỊNH VỊ CHẶN NHẦM" in de
+
+
+def test_muc_khi_bat_hoc_theo_nhiet_do(kh, monkeypatch):
+    """Chủ máy 29/09/2026: bật theo bậc, "mức quạt theo nóng/mát" — số phải TỰ HỌC. Học từ lần NGƯỜI chỉnh
+    mức (bỏ lần bot làm), gắn nhiệt độ cùng khu; bot bật thì kèm mức ứng với nhiệt độ lúc đó."""
+    from services import boi_canh_nha, ha_client
+    QUAT, NHIET = "fan.quat", "sensor.nhiet_do_phong"
+    tt = {x["entity_id"]: dict(x) for x in TT}
+    tt[NHIET] = {"entity_id": NHIET, "state": "33", "attributes": {"device_class": "temperature"}}
+    tt[QUAT] = {"entity_id": QUAT, "state": "off", "attributes": {}}
+    monkeypatch.setattr(kh, "_trang_thai_ha", lambda: list(tt.values()))
+    monkeypatch.setattr(boi_canh_nha, "phong_cua", lambda ma: "Phòng khách" if ma in (QUAT, NHIET) else "")
+    monkeypatch.setattr(ha_client, "get_service_catalog", lambda: {"fan": {"turn_on": {"fields": {
+        "percentage": {}, "advanced_fields": {"fields": {"preset_mode": {}}}}}}})
+    t0 = time.time() - 3 * 86400
+    for i, (nhiet, muc, ai) in enumerate([(28, "low", 0)] * 4 + [(29, "low", 0)] + [(33, "high", 0)] * 4
+                                         + [(26, "high", 1)] * 5):      # 5 lần BOT đặt high lúc mát: bỏ
+        _sk(NHIET, str(nhiet), t0 + i * 3600)
+        from services import lich_su_nha as ls
+        with ls._khoa_db:
+            ls._db().execute("INSERT INTO su_kien (ts, nguon, thiet_bi, truong, gia_tri, gia_tri_cu, do_ai, gio, thu)"
+                             " VALUES (?,?,?,?,?,?,?,0,0)", (t0 + i * 3600 + 60, "ha", QUAT, "preset_mode", muc, "", ai))
+            ls._db().commit()
+    import sqlite3
+    with sqlite3.connect(f"file:{ls._DB_PATH}?mode=ro", uri=True) as ro:
+        m = kh._hoc_muc(ro, QUAT, t0 - 10, time.time())
+    assert m["truong"] == "preset_mode" and m["n"] == 9
+    assert [x[1] for x in m["moc"]] == ["low", "high"] and m["moc"][0][0] == 28.0 and m["moc"][1][0] == 33.0
+    kh._nap()["mo_hinh"][QUAT] = {"muc": m}
+    assert kh._chon_muc(QUAT) == ("preset_mode", "high")
+    tt[NHIET]["state"] = "27.5"
+    kh._lam(QUAT, "on", tu_lam=True)
+    assert kh.goi[-1] == ("fan", "turn_on", {"entity_id": QUAT, "preset_mode": "low"})
+    kh._lam(QUAT, "off", tu_lam=True)
+    assert kh.goi[-1] == ("fan", "turn_off", {"entity_id": QUAT})

@@ -968,6 +968,7 @@ def hoc(tb: str) -> dict[str, Any]:
         lux = {m: tq._tuyen(ro, m, "state", tu, den) for m in ma_lux}
         cho_vang = _hoc_cho_vang(ro, cd, ts_tb, gt_tb, tu, den)
         nhieu = _hoc_nhieu(ro, tb, tu, den) if (cd.get("tat_khi_vang") or {}).get("bat") else {}
+        muc = _hoc_muc(ro, tb, tu, den)
         hay_bat = {d["cam_bien"]: _hoc_hay_bat(ro, tb, d["cam_bien"], d["co_mat"], den - NGAY_HAY_BAT * 86400, den)
                    for l in cd.get("luat_chu") or [] for d in l.get("neu") or [] if d["loai"] == "muc_hay_bat"}
         hien = sorted(nhi_phan & _lop(_LOP_HIEN_DIEN)) if cd.get("hoi_de_hoc") else []
@@ -983,7 +984,7 @@ def hoc(tb: str) -> dict[str, Any]:
                           "den_gop": _den_gop_hoc(ts_tb, gt_tb, lux),
                           "vang_quay_lai": _vang_quay_lai(sk_toan_nha, nhi_phan, den - tu),
                           "goi_y_them": _goi_y_them(sk_toan_nha, bat, ts_tb, gt_tb, nhi_phan),
-                          "cho_vang": cho_vang.get("do") or {}, "hay_bat": hay_bat, "nhieu": nhieu,
+                          "cho_vang": cho_vang.get("do") or {}, "hay_bat": hay_bat, "nhieu": nhieu, "muc": muc,
                           "o_lai": {"phut": phut_ol, "lan": lan_ol, "cam_bien": hien,
                                     "dac_trung": sorted(dong_ol)} if hien else {}}
     for hd, dich in (("on", bat), ("off", tat)):
@@ -1325,7 +1326,8 @@ def _vua_lam(tb: str, hd: str, *, ca_chieu_nguoc: bool = True) -> bool:
 
 
 def _lam(tb: str, hd: str, *, tu_lam: bool) -> bool:
-    """Gọi HA. ``tu_lam``: bot tự quyết → đánh dấu để thay đổi sắp tới ghi do_ai=1."""
+    """Gọi HA. ``tu_lam``: bot tự quyết → đánh dấu để thay đổi sắp tới ghi do_ai=1. Bật thì kèm MỨC bot
+    đã học theo nhiệt độ (`_chon_muc`), nếu đã đủ mẫu."""
     from services import ha_client, lich_su_nha
     if tu_lam:
         # Đánh dấu cả thực thể GƯƠNG: đo 26/09/2026 19:45 bot bật switch.phong_ngu_l1
@@ -1333,8 +1335,84 @@ def _lam(tb: str, hd: str, *, tu_lam: bool) -> bool:
         # hẹn tắt khi vắng bị chặn, và lượt học sau tưởng người bật.
         for ma in {tb, ha_client.thuc_the_guong(tb)} - {None}:
             lich_su_nha.bot_tu_lam(ma, hd)
-    return ha_client.call_service(tb.split(".")[0], "turn_on" if hd == "on" else "turn_off",
-                                  {"entity_id": tb})
+    data: dict[str, Any] = {"entity_id": tb}
+    if hd == "on":
+        try:
+            muc = _chon_muc(tb)
+        except Exception:  # noqa: BLE001 — chọn mức hỏng thì bật như cũ
+            muc = None
+        if muc:
+            data[muc[0]] = muc[1]
+    return ha_client.call_service(tb.split(".")[0], "turn_on" if hd == "on" else "turn_off", data)
+
+
+# ── MỨC khi bật — bot tự học theo nhiệt độ ─────────────────────────────────
+# Chủ máy 29/09/2026: bật theo bậc, "mức quạt theo nóng/mát" (số là VÍ DỤ, phải tự học). Học từ những lần
+# NGƯỜI tự chỉnh mức (do_ai=0 — bỏ việc bot làm, khỏi tự khẳng định vòng quanh), mỗi lần gắn nhiệt độ lúc
+# đó của cảm biến nhiệt CÙNG KHU. Trường dùng được = tham số của dịch vụ turn_on của miền (danh mục HA).
+MUC_MAU = 8
+MUC_MOI_GIA_TRI = 3
+
+
+def _nhiet_khu(tb: str) -> list[str]:
+    from services import boi_canh_nha
+    khu = boi_canh_nha.phong_cua(tb)
+    return sorted(str(s["entity_id"]) for s in _trang_thai_ha()
+                  if khu and str(s["entity_id"]).startswith("sensor.")
+                  and (s.get("attributes") or {}).get("device_class") == "temperature"
+                  and boi_canh_nha.phong_cua(str(s["entity_id"])) == khu)
+
+
+def _truong_bat(mien: str) -> set[str]:
+    from services import ha_client, ha_live
+    meta = ((ha_client.get_service_catalog() or {}).get(mien) or {}).get("turn_on") or {}
+    ra: set[str] = set()
+    ha_live._gom_truong(meta.get("fields"), ra)
+    return ra - {"entity_id", "device_id", "area_id"}
+
+
+def _hoc_muc(ro: sqlite3.Connection, tb: str, tu: float, den: float) -> dict[str, Any]:
+    """{truong, cam_bien, moc: [[nhiệt trung vị, giá trị, số lần], …]} — chưa đủ mẫu thì {} (bật như cũ)."""
+    from services import thoi_quen_nha as tq
+    cb = _nhiet_khu(tb)
+    truong = _truong_bat(tb.split(".")[0])
+    if not cb or not truong:
+        return {}
+    ts_n, gt_n = tq._tuyen(ro, cb[0], "state", tu, den)
+    tot: dict[str, Any] = {}
+    for f in sorted(truong):
+        nhom: dict[str, list[float]] = {}
+        for t, g in ro.execute("SELECT ts, gia_tri FROM su_kien WHERE thiet_bi=? AND truong=? AND do_ai=0"
+                               " AND ts>=? AND ts<?", (tb, f, tu, den)):
+            v = tq._truoc(ts_n, gt_n, float(t))
+            try:
+                nhom.setdefault(str(g), []).append(float(v))
+            except (TypeError, ValueError):
+                continue
+        du = {g: sorted(x) for g, x in nhom.items() if len(x) >= MUC_MOI_GIA_TRI}
+        n = sum(len(x) for x in nhom.values())
+        if n >= MUC_MAU and len(du) >= 2 and n > tot.get("n", 0):
+            tot = {"truong": f, "cam_bien": cb[0], "n": n,
+                   "moc": sorted([round(x[len(x) // 2], 1), g, len(x)] for g, x in du.items())}
+    return tot
+
+
+def _chon_muc(tb: str) -> tuple[str, Any] | None:
+    """Mức ứng với nhiệt độ lúc này: giá trị có nhiệt trung vị GẦN nhất."""
+    m = ((_nap()["mo_hinh"].get(tb) or {}).get("muc")) or {}
+    if not m.get("moc"):
+        return None
+    tt = {str(s["entity_id"]): s.get("state") for s in _trang_thai_ha()}
+    try:
+        nhiet = float(tt.get(m["cam_bien"]))
+    except (TypeError, ValueError):
+        return None
+    _, g, _n = min(m["moc"], key=lambda x: abs(float(x[0]) - nhiet))
+    try:
+        v: Any = int(g) if str(g).lstrip("-").isdigit() else float(g)
+    except ValueError:
+        v = g
+    return str(m["truong"]), v
 
 
 def _bao_tu_lam(tb: str, noi_dung: str) -> None:
@@ -2507,6 +2585,7 @@ def tong_quan() -> list[dict[str, Any]]:
                    "luat_chu": cd.get("luat_chu") or [], "hay_bat": mh.get("hay_bat") or {},
                    "im_lang": bool(cd.get("im_lang")),
                    "hoi_de_hoc": bool(cd.get("hoi_de_hoc")),
+                   "muc": mh.get("muc") or None, "nhieu": mh.get("nhieu") or None,
                    "o_lai": ({"phut": mh["o_lai"].get("phut"), "lan": mh["o_lai"].get("lan", 0),
                               "cam_bien": [{"ma": m, "ten": ten_ha.get(m, m)} for m in mh["o_lai"].get("cam_bien") or []]}
                              if mh.get("o_lai") else None),
