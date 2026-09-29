@@ -702,7 +702,7 @@ def create_router() -> APIRouter:
     @router.post("/api/hoc-hoi/kich-hoat/dat")
     async def kich_hoat_dat(body: dict, authorization: str | None = Header(default=None)):
         """Chủ máy sửa một thiết bị. body: {thiet_bi, bat?, tu_lam?, bo_nguon?, ngoai_le?, kiem_ao?,
-        tat_khi_vang?, tat_khi_sang?} —
+        tat_khi_vang?, tat_khi_sang?, luat_chu?} —
         khoá nào không gửi thì giữ nguyên."""
         require_admin(authorization)
         try:
@@ -715,7 +715,9 @@ def create_router() -> APIRouter:
                 tu_lam=bool(body["tu_lam"]) if "tu_lam" in body else None,
                 kiem_ao=body["kiem_ao"] if isinstance(body.get("kiem_ao"), dict) else None,
                 tat_khi_vang=body["tat_khi_vang"] if isinstance(body.get("tat_khi_vang"), dict) else None,
-                tat_khi_sang=body["tat_khi_sang"] if isinstance(body.get("tat_khi_sang"), dict) else None)
+                tat_khi_sang=body["tat_khi_sang"] if isinstance(body.get("tat_khi_sang"), dict) else None,
+                luat_chu=list(body["luat_chu"]) if isinstance(body.get("luat_chu"), list) else None,
+                im_lang=bool(body["im_lang"]) if "im_lang" in body else None)
             return {"ok": True, "cai_dat": cd}
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
@@ -735,6 +737,45 @@ def create_router() -> APIRouter:
             return {"ok": True, "kiem": {hd: ra[hd]["kiem"] for hd in kich_hoat_nha.HANH_DONG}}
         except Exception as exc:
             return _loi(exc, "học kích hoạt")
+
+    # ── Cảm biến ghép: bot tự tính từ cảm biến gốc (`cam_bien_ghep`) ──
+    @router.get("/api/hoc-hoi/cam-bien-ghep")
+    async def cam_bien_ghep_ds(authorization: str | None = Header(default=None)):
+        """Cảm biến ghép đang có, kèm trạng thái hiện tại."""
+        require_admin(authorization)
+        try:
+            from services import cam_bien_ghep
+            hien = {s["entity_id"]: s["state"] for s in await asyncio.to_thread(cam_bien_ghep.hien_tai)}
+            return {"ok": True, "danh_sach": [{"ma": ma, **c, "trang_thai": hien.get(ma, "")}
+                                              for ma, c in cam_bien_ghep.ds().items()]}
+        except Exception as exc:
+            return _loi(exc, "cảm biến ghép")
+
+    @router.post("/api/hoc-hoi/cam-bien-ghep")
+    async def cam_bien_ghep_dat(body: dict, authorization: str | None = Header(default=None)):
+        """Thêm / sửa. body: {ma: "binary_sensor.c2a_…", ten, loai?, bieu_thuc}. Thiết bị có cảm
+        biến này trong sơ đồ học lại ngay (chạy nền) — lịch sử của nó dựng lại theo biểu thức mới."""
+        require_admin(authorization)
+        try:
+            from services import cam_bien_ghep, kich_hoat_nha
+            c = cam_bien_ghep.dat(str(body.get("ma") or ""), str(body.get("ten") or ""),
+                                  body.get("bieu_thuc") or {}, str(body.get("loai", "occupancy")))
+            for tb in kich_hoat_nha._nap()["thiet_bi"]:
+                kich_hoat_nha._hoc_nen(tb)
+            return {"ok": True, "cam_bien": c}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            return _loi(exc, "đặt cảm biến ghép")
+
+    @router.post("/api/hoc-hoi/cam-bien-ghep/xoa")
+    async def cam_bien_ghep_xoa(body: dict, authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        try:
+            from services import cam_bien_ghep
+            return {"ok": cam_bien_ghep.xoa(str(body.get("ma") or ""))}
+        except Exception as exc:
+            return _loi(exc, "xoá cảm biến ghép")
 
     @router.get("/api/hoc-hoi/lich")
     async def lich(authorization: str | None = Header(default=None)):

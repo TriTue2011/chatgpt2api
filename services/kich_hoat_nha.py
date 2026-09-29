@@ -57,6 +57,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from services import cam_bien_ghep as _cbg
 from services.config import DATA_DIR
 from utils.log import logger
 
@@ -247,7 +248,9 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
                  tu_lam: bool | None = None,
                  kiem_ao: dict[str, Any] | None = None,
                  tat_khi_vang: dict[str, Any] | None = None,
-                 tat_khi_sang: dict[str, Any] | None = None) -> dict[str, Any]:
+                 tat_khi_sang: dict[str, Any] | None = None,
+                 luat_chu: list[dict[str, Any]] | None = None,
+                 im_lang: bool | None = None) -> dict[str, Any]:
     """Chủ máy sửa sơ đồ: bật/tắt, cho TỰ LÀM ngay, BỎ nguồn, đặt khung giờ NGOẠI LỆ
     (``{"hanh_dong": "on"|"off", "tu": "HH:MM", "den": "HH:MM", "thu"?: [0..6]}`` hoặc
     ĐI THEO LỊCH SINH HOẠT ``{"hanh_dong", "lich": "<mã mục lịch>"}`` — trong khung đó
@@ -274,6 +277,8 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
         tat_khi_vang = _kiem_tat_khi_vang(tat_khi_vang)
     if tat_khi_sang is not None:
         tat_khi_sang = _kiem_tat_khi_sang(tat_khi_sang)
+    if luat_chu is not None:
+        luat_chu = _kiem_luat_chu(luat_chu)
     _gop_guong()
     tb = _chinh(tb)          # tích công tắc gốc hay đèn bọc thì cũng là một thiết bị
     with _khoa:
@@ -287,6 +292,10 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
         if tat_khi_sang is not None:
             cu["tat_khi_sang"] = tat_khi_sang
             _huy_sang(tb)
+        if luat_chu is not None:
+            cu["luat_chu"] = luat_chu
+        if im_lang is not None:
+            cu["im_lang"] = bool(im_lang)
         if bat is not None:
             cu["bat"] = bool(bat)
             if bat and "tat_khi_vang" not in cu and tat_khi_vang is None:
@@ -349,6 +358,157 @@ def _kiem_tat_khi_sang(x: Any) -> dict[str, Any]:
     if x.get("bat") and not cb:
         raise ValueError("Tắt khi đủ sáng: bật thì phải chọn cảm biến độ sáng.")
     return {"bat": bool(x.get("bat")), "cam_bien": cb, "lux": round(lux, 1), "phut": phut, "giay": giay}
+
+
+# ── Luật ANH ĐẶT: KHI … NẾU … THÌ bật/tắt ─────────────────────────────────
+# Chủ máy 29/09/2026: quạt phòng khách "khi mở cửa chính căn cứ vào nhiệt độ, độ ẩm, mùa để xem
+# có bật quạt hay không, nhưng nếu có người trong nhà thì không bật nữa … khi người ra lại bật
+# lại"; đèn cửa sổ, đèn tủ lạnh "khi … xem tivi … thì bật lên". Đo 30 ngày: bot KHÔNG học ra được
+# các luật ấy — automation HA cũ bật quạt bằng nút hồng ngoại mà không đổi trạng thái quạt (lịch
+# sử không có lần nào), còn đèn cửa sổ / tủ lạnh chỉ 6–7 lần bật. Nên chủ máy ĐẶT luật; ngưỡng
+# nhiệt thì bot TỰ RÚT từ lịch sử quạt đang bật theo nhiệt độ (``muc_hay_bat``) — đúng dần theo mùa.
+# Luật anh đặt THẮNG luật bot học: hướng nào có luật anh đặt thì bot không tự xét hướng ấy nữa.
+#
+# Điều kiện:
+#   {"loai": "nha_trong", "tru": [...]}  mọi cảm biến hiện diện (trừ ``tru``) đang vắng — "nếu có
+#       người trong nhà thì không bật".
+#   {"loai": "muc_hay_bat", "cam_bien": "sensor.…", "co_mat": "binary_sensor.…", "nguong": 0.5}
+#       60 ngày qua, lúc ``co_mat`` có người mà ``cam_bien`` ở mức bây giờ (±1 đơn vị nếu thiếu mẫu)
+#       thì thiết bị đang bật ≥ ``nguong`` thời gian (bỏ quãng BOT bật — không tự khẳng định).
+NGAY_HAY_BAT = 60
+#: Mẫu (ô 5 phút) tối thiểu của một mức — ít hơn thì gộp hai mức lân cận; vẫn thiếu thì không làm.
+MAU_HAY_BAT = 12
+_NGUON_RE = re.compile(r"^binary_sensor\.[a-z0-9_]+ (có người vào|vắng)$")
+
+
+def _kiem_luat_chu(x: Any) -> list[dict[str, Any]]:
+    if not isinstance(x, list):
+        raise ValueError("luat_chu phải là danh sách luật.")
+    ra = []
+    for l in x:
+        if not isinstance(l, dict) or l.get("hanh_dong") not in HANH_DONG:
+            raise ValueError("Luật phải có hanh_dong on/off.")
+        khi = l.get("khi")
+        if not isinstance(khi, list) or not khi or not all(_NGUON_RE.fullmatch(str(n)) for n in khi):
+            raise ValueError("«khi» là danh sách nguồn dạng «binary_sensor.… có người vào|vắng».")
+        neu = []
+        for d in l.get("neu") or []:
+            loai = (d or {}).get("loai")
+            if loai == "nha_trong":
+                neu.append({"loai": loai, "tru": [str(m) for m in d.get("tru") or []]})
+            elif loai == "muc_hay_bat":
+                cb, cm = str(d.get("cam_bien") or ""), str(d.get("co_mat") or "")
+                ng = float(d.get("nguong", 0.5))
+                if not cb.startswith("sensor.") or not cm.startswith("binary_sensor.") or not 0 < ng <= 1:
+                    raise ValueError("muc_hay_bat cần cam_bien sensor.…, co_mat binary_sensor.…, nguong 0–1.")
+                neu.append({"loai": loai, "cam_bien": cb, "co_mat": cm, "nguong": ng})
+            else:
+                raise ValueError("Điều kiện: nha_trong | muc_hay_bat.")
+        ra.append({"hanh_dong": l["hanh_dong"], "khi": [str(n) for n in khi], "neu": neu,
+                   "ten": str(l.get("ten") or "")[:60]})
+    return ra
+
+
+def _hoc_hay_bat(ro: sqlite3.Connection, tb: str, cam_bien: str, co_mat: str,
+                 tu: float, den: float) -> dict[str, list[int]]:
+    """{mức (làm tròn xuống): [số ô 5 phút có người, số ô thiết bị đang bật]}. Ô thiết bị đang
+    bật do BOT bật (do_ai=1) thì bỏ — không để việc bot làm tự dạy lại bot."""
+    from services import ha_client
+
+    ma_tb = [m for m in {tb, ha_client.thuc_the_guong(tb)} if m]
+    dau = ",".join("?" * len(ma_tb))
+    tb_ts, tb_gt = [], []
+    for ts, gt, ai in ro.execute(
+            f"SELECT ts, gia_tri, do_ai FROM su_kien WHERE truong='state' AND ts>=? AND ts<?"
+            f" AND thiet_bi IN ({dau}) ORDER BY ts", (tu - 86400, den, *ma_tb)):
+        tb_ts.append(float(ts))
+        tb_gt.append("bot" if str(gt).lower() == "on" and ai else str(gt).lower())
+    if _cbg.la_ghep(co_mat):
+        cm = _cbg.chuoi(ro, co_mat, tu, den)
+    else:
+        cm = [(float(t), str(g).lower()) for t, g in ro.execute(
+            "SELECT ts, gia_tri FROM su_kien WHERE thiet_bi=? AND truong='state' AND ts>=? AND ts<? ORDER BY ts",
+            (co_mat, tu - 86400, den))]
+    cm_ts = [t for t, _ in cm]
+    ra: dict[str, list[int]] = {}
+    for o, v in ro.execute("SELECT o_5p, tb FROM so_do WHERE thiet_bi=? AND truong='state'"
+                           " AND o_5p>=? AND o_5p<? ORDER BY o_5p", (cam_bien, int(tu // 300), int(den // 300))):
+        t = int(o) * 300 + 150
+        i = bisect.bisect_right(cm_ts, t) - 1
+        if i < 0 or cm[i][1] != "on":
+            continue
+        j = bisect.bisect_right(tb_ts, t) - 1
+        gt = tb_gt[j] if j >= 0 else "off"
+        if gt == "bot":
+            continue
+        o_ = ra.setdefault(str(math.floor(float(v))), [0, 0])
+        o_[0] += 1
+        o_[1] += gt == "on"
+    return ra
+
+
+def _muc_hay_bat(tb: str, d: dict[str, Any]) -> tuple[bool, str]:
+    bang = (((_nap()["mo_hinh"].get(tb) or {}).get("hay_bat") or {}).get(d["cam_bien"]) or {})
+    try:
+        v = float(_trang_thai_mot(d["cam_bien"]))
+    except ValueError:
+        return False, f"không đọc được {d['cam_bien']}"
+    m = math.floor(v)
+    for lan in (0, 1):
+        n = sum((bang.get(str(k)) or [0, 0])[0] for k in range(m - lan, m + lan + 1))
+        k = sum((bang.get(str(k)) or [0, 0])[1] for k in range(m - lan, m + lan + 1))
+        if n >= MAU_HAY_BAT:
+            return k / n >= d["nguong"], f"ở {v:g} thường bật {k / n:.0%} ({k}/{n} ô 5 phút)"
+    return False, f"chưa đủ dữ liệu ở mức {v:g} ({n} ô 5 phút)"
+
+
+def _nha_trong(d: dict[str, Any]) -> tuple[bool, str]:
+    tru = set(d.get("tru") or [])
+    co = [str(s["entity_id"]) for s in _trang_thai_ha()
+          if (s.get("attributes") or {}).get("device_class") in _LOP_HIEN_DIEN
+          and not _cbg.la_ghep(str(s["entity_id"])) and str(s["entity_id"]) not in tru
+          and str(s.get("state") or "").lower() == "on"]
+    return (not co), ("nhà trống" if not co else f"trong nhà đang có người ({co[0]})")
+
+
+def _dieu_kien_chu(tb: str, luat: dict[str, Any]) -> tuple[bool, list[str]]:
+    ly_do = []
+    for d in luat.get("neu") or []:
+        ok, ld = _nha_trong(d) if d["loai"] == "nha_trong" else _muc_hay_bat(tb, d)
+        ly_do.append(ld)
+        if not ok:
+            return False, ly_do
+    return True, ly_do
+
+
+def _xu_ly_chu(tb: str, luat: dict[str, Any], nguon: str, luc: float) -> None:
+    """Một nguồn khớp luật anh đặt: kiểm rồi TỰ LÀM (chủ máy đặt luật tức là cho làm)."""
+    from services import du_doan_nha as dd, thong_bao
+
+    hd = luat["hanh_dong"]
+    try:
+        with _khoa_xet:
+            if _trang_thai_mot(tb) in (hd, *_KHONG_RO):
+                return
+            if _vua_lam(tb, hd) or _nguoi_vua_cham(tb, luc):
+                return
+            if nguon.endswith(" vắng") and _trang_thai_mot(nguon.split(" ")[0]) != "off":
+                return
+            if any(x.get("hanh_dong") == hd and x.get("cach", "khong") == "khong" and _khung_dang(x, luc)
+                   for x in (_nap()["thiet_bi"].get(tb) or {}).get("ngoai_le") or []):
+                return
+            ok, ly_do = _dieu_kien_chu(tb, luat)
+            logger.info({"event": "kich_hoat_luat_chu", "thiet_bi": tb, "hanh_dong": hd, "nguon": nguon,
+                         "lam": ok, "ly_do": ly_do})
+            if not ok or not _lam(tb, hd, tu_lam=True):
+                return
+        vi = "; ".join([f"{_ten_nguon(nguon, _ten_ha())}", *ly_do])
+        id_ = dd.ghi_nhan(_ten_tt(tb, hd), hd, 1.0, {"nguon": vi, BEN_VUNG: 1, "luat_chu": 1}, "tu_lam")
+        _bao_tu_lam(tb, f"🤖 #{id_} Em đã {_TEN_HD[hd].lower()} {_ten_tb(tb)} ({vi}).\nĐúng hay sai "
+                        f"ạ? Anh trả lời «đúng» hoặc «sai» — sai thì em làm ngược lại ngay. Không trả "
+                        f"lời trong {CHAM_TU_LAM // 60} phút là em tính đúng.")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning({"event": "kich_hoat_luat_chu_loi", "thiet_bi": tb, "error": str(exc)[:200]})
 
 
 def _kiem_tat_khi_vang(x: Any) -> dict[str, Any]:
@@ -479,10 +639,16 @@ def _su_kien_nguon(ro: sqlite3.Connection, tu: float, den: float, bo: set[str],
     ấy mới biết, đặt ở đầu là rò rỉ tương lai)."""
     ra: list[tuple[float, str]] = []
     tat_tu: dict[str, float] = {}
-    for ts, ma, gt in ro.execute(
-            "SELECT ts, thiet_bi, gia_tri FROM su_kien WHERE ts>=? AND ts<? AND truong='state'"
-            " AND thiet_bi LIKE 'binary_sensor.%' ORDER BY ts", (tu, den)):
-        ts, ma, gt = float(ts), str(ma), str(gt).lower()
+    hang = [(float(ts), str(ma), str(gt)) for ts, ma, gt in ro.execute(
+        "SELECT ts, thiet_bi, gia_tri FROM su_kien WHERE ts>=? AND ts<? AND truong='state'"
+        " AND thiet_bi LIKE 'binary_sensor.%' ORDER BY ts", (tu, den))]
+    # Cảm biến ghép: dựng từ lịch sử cảm biến gốc (không nằm trong kho). Bỏ mốc đầu (giá trị lúc
+    # ``tu``) cho cùng luật với cảm biến thật — chúng cũng chỉ có mốc khi ĐỔI.
+    hang += [(t, ma, g) for ma in _cbg.ds() if ma not in bo and (chi is None or ma in chi)
+             for t, g in _cbg.chuoi(ro, ma, tu, den)[1:]]
+    hang.sort()
+    for ts, ma, gt in hang:
+        gt = gt.lower()
         if ma in bo or (chi is not None and ma not in chi):
             continue
         if gt == "on":
@@ -500,11 +666,22 @@ def _su_kien_nguon(ro: sqlite3.Connection, tu: float, den: float, bo: set[str],
 
 
 def _trang_thai_ha() -> list[dict[str, Any]]:
+    """Trạng thái HA + cảm biến ghép bot tự tính (``cam_bien_ghep``) — cùng một dạng."""
     try:
         from services import ha_client
-        return list(ha_client.get_states() or [])
+        st = list(ha_client.get_states() or [])
     except Exception:  # noqa: BLE001
         return []
+    tt = {str(s["entity_id"]): str(s.get("state") or "").lower() for s in st}
+    return st + _cbg.hien_tai(tt)
+
+
+def _trang_thai_mot(ma: str) -> str:
+    """Trạng thái hiện tại (chữ thường) của một thực thể HA hoặc cảm biến ghép."""
+    if _cbg.la_ghep(ma):
+        return next((str(s["state"]) for s in _cbg.hien_tai() if s["entity_id"] == ma), "")
+    from services import ha_client
+    return str((ha_client.get_state(ma) or {}).get("state") or "").lower()
 
 
 def _ten_ha() -> dict[str, str]:
@@ -570,6 +747,8 @@ def hoc(tb: str) -> dict[str, Any]:
         sk = [x for x in sk_toan_nha if x[1].split(" ")[0] in nhi_phan] if nhi_phan else sk_toan_nha
         lux = {m: tq._tuyen(ro, m, "state", tu, den) for m in ma_lux}
         cho_vang = _hoc_cho_vang(ro, cd, ts_tb, gt_tb, tu, den)
+        hay_bat = {d["cam_bien"]: _hoc_hay_bat(ro, tb, d["cam_bien"], d["co_mat"], den - NGAY_HAY_BAT * 86400, den)
+                   for l in cd.get("luat_chu") or [] for d in l.get("neu") or [] if d["loai"] == "muc_hay_bat"}
     finally:
         ro.close()
     ts_sk = [t for t, _ in sk]
@@ -578,7 +757,7 @@ def hoc(tb: str) -> dict[str, Any]:
                           "den_gop": _den_gop_hoc(ts_tb, gt_tb, lux),
                           "vang_quay_lai": _vang_quay_lai(sk_toan_nha, nhi_phan, den - tu),
                           "goi_y_them": _goi_y_them(sk_toan_nha, bat, ts_tb, gt_tb, nhi_phan),
-                          "cho_vang": cho_vang.get("do") or {}}
+                          "cho_vang": cho_vang.get("do") or {}, "hay_bat": hay_bat}
     for hd, dich in (("on", bat), ("off", tat)):
         truoc: Counter = Counter()
         for t in dich:
@@ -906,6 +1085,15 @@ def _lam(tb: str, hd: str, *, tu_lam: bool) -> bool:
                                   {"entity_id": tb})
 
 
+def _bao_tu_lam(tb: str, noi_dung: str) -> None:
+    """Báo một việc bot ĐÃ tự làm — trừ thiết bị chủ máy đặt «im lặng». Đo 29/09/2026: quạt phòng
+    khách theo "phòng khách có người thật" đổi ~22 lần/ngày mỗi chiều → ~44 tin "đúng hay sai"
+    mỗi ngày. Im lặng vẫn chấm được: người làm ngược lại trong ``CHAM_TU_LAM`` là bot ghi sai."""
+    from services import thong_bao
+    if not (_nap()["thiet_bi"].get(tb) or {}).get("im_lang"):
+        thong_bao.gui("nha.goi_y", noi_dung)
+
+
 def _ten_tb(tb: str) -> str:
     return _ten_ha().get(tb, tb)
 
@@ -986,8 +1174,7 @@ def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
             # Cảm biến hay báo mất người 1–2 phút dù người vẫn ở đó (chủ máy 26/09/2026;
             # đo phòng ngủ 30 ngày: 270/605 lần tắt-rồi-bật-lại ngắn dưới 3 phút). "Vắng"
             # đã chờ VANG giây; tới lúc làm mà cảm biến đã thấy người lại thì thôi.
-            if nguon.endswith(" vắng") and str((ha_client.get_state(nguon.split(" ")[0]) or {})
-                                               .get("state") or "").lower() != "off":
+            if nguon.endswith(" vắng") and _trang_thai_mot(nguon.split(" ")[0]) != "off":
                 return
             q = xet(tb, hd, nguon, luc)
             if q["lam"] == "im":
@@ -1009,11 +1196,11 @@ def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
                 id_ = dd.ghi_nhan(_ten_tt(tb, hd), hd, q["p"], nhan, "hoi")
         if q["lam"] == "tu_lam":
             # Chủ máy 26/09/2026: "Đáng lẽ đưa ra lựa chọn đúng hay sai chứ".
-            thong_bao.gui("nha.goi_y",
-                          f"🤖 #{id_} Em đã {_TEN_HD[hd].lower()} {_ten_tb(tb)} (vì {vi}, em chắc "
-                          f"{q['p']:.0%}).\nĐúng hay sai ạ? Anh trả lời «đúng» hoặc «sai» — sai thì em "
-                          f"{_TEN_HD[_NGUOC[hd]].lower()} lại ngay. Không trả lời trong "
-                          f"{CHAM_TU_LAM // 60} phút là em tính đúng.")
+            _bao_tu_lam(tb,
+                        f"🤖 #{id_} Em đã {_TEN_HD[hd].lower()} {_ten_tb(tb)} (vì {vi}, em chắc "
+                        f"{q['p']:.0%}).\nĐúng hay sai ạ? Anh trả lời «đúng» hoặc «sai» — sai thì em "
+                        f"{_TEN_HD[_NGUOC[hd]].lower()} lại ngay. Không trả lời trong "
+                        f"{CHAM_TU_LAM // 60} phút là em tính đúng.")
         elif not thong_bao.gui("nha.goi_y",
                              f"💡 #{id_} {_TEN_HD[hd]} {_ten_tb(tb)} không ạ? (vì {vi}, em chắc "
                              f"{q['p']:.0%}{'; ' + q['ly_do'] if q.get('ly_do') else ''}) — anh trả lời «có» hoặc «không»."):
@@ -1054,8 +1241,12 @@ def _lan_off_kho(ma: str, luc: float) -> float | None:
     from services import lich_su_nha
     ro = sqlite3.connect(f"file:{lich_su_nha._DB_PATH}?mode=ro", uri=True, timeout=10.0)
     try:
-        r = ro.execute("SELECT ts, gia_tri FROM su_kien WHERE thiet_bi=? AND truong='state' AND ts<?"
-                       " ORDER BY ts DESC LIMIT 1", (ma, luc - 0.5)).fetchone()
+        if _cbg.la_ghep(ma):
+            ch = _cbg.chuoi(ro, ma, luc - 2 * 86400, luc - 0.5)
+            r = ch[-1] if ch else None
+        else:
+            r = ro.execute("SELECT ts, gia_tri FROM su_kien WHERE thiet_bi=? AND truong='state' AND ts<?"
+                           " ORDER BY ts DESC LIMIT 1", (ma, luc - 0.5)).fetchone()
     finally:
         ro.close()
     return float(r[0]) if r and str(r[1]).lower() == "off" else None
@@ -1091,8 +1282,16 @@ def _bao_vang(ma: str) -> None:
 
 def _phat(nguon: str, luc: float) -> None:
     mh = _nap()["mo_hinh"]
-    for tb in ds_thiet_bi():
+    for tb, cd in ds_thiet_bi().items():
+        chu = cd.get("luat_chu") or []
+        for l in chu:
+            if nguon in l["khi"]:
+                threading.Thread(target=_xu_ly_chu, args=(tb, l, nguon, luc),
+                                 name="kich-hoat-luat-chu", daemon=True).start()
+        co_chu = {l["hanh_dong"] for l in chu}
         for hd in HANH_DONG:
+            if hd in co_chu:
+                continue                     # luật anh đặt thắng luật bot học ở hướng này
             if nguon in ((mh.get(tb) or {}).get(hd) or {}).get("nguon", []):
                 threading.Thread(target=_xu_ly, args=(tb, hd, nguon, luc),
                                  name="kich-hoat-xu-ly", daemon=True).start()
@@ -1203,14 +1402,19 @@ def _quang_vang(ro: sqlite3.Connection, cam_bien: list[str], tu: float, den: flo
     `_deu_vang` lúc sống. Quãng chưa kết thúc thì bỏ (chưa biết người có quay lại không)."""
     if not cam_bien:
         return []
-    dau = ",".join("?" * len(cam_bien))
+    that = [m for m in cam_bien if not _cbg.la_ghep(m)]
+    dau = ",".join("?" * len(that))
     tt: dict[str, str] = {}
     ra: list[tuple[float, float]] = []
     bat_dau: float | None = None
-    for t, ma, gt in ro.execute(
-            f"SELECT ts, thiet_bi, gia_tri FROM su_kien WHERE truong='state' AND ts>=? AND ts<?"
-            f" AND thiet_bi IN ({dau}) ORDER BY ts", (tu, den, *cam_bien)):
-        tt[str(ma)] = str(gt).lower()
+    hang = [(float(t), str(ma), str(gt)) for t, ma, gt in ro.execute(
+        f"SELECT ts, thiet_bi, gia_tri FROM su_kien WHERE truong='state' AND ts>=? AND ts<?"
+        f" AND thiet_bi IN ({dau}) ORDER BY ts", (tu, den, *that))] if that else []
+    # Cảm biến ghép: dựng từ cảm biến gốc, kể cả giá trị lúc ``tu``.
+    hang += [(t, ma, g) for ma in cam_bien if _cbg.la_ghep(ma) for t, g in _cbg.chuoi(ro, ma, tu, den)]
+    hang.sort()
+    for t, ma, gt in hang:
+        tt[ma] = gt.lower()
         deu = len(tt) == len(cam_bien) and all(v == "off" for v in tt.values())
         if deu and bat_dau is None:
             bat_dau = float(t)
@@ -1328,9 +1532,9 @@ def _tat_vi_vang(tb: str) -> None:
         phut = round(phut_vang(cd, float(nhan.get("vang_tu") or luc)))
         vi = f"phòng trống, trời đã sáng ~{troi:.0f} lux" if troi is not None else f"vắng {phut} phút"
         id_ = dd.ghi_nhan(_ten_tt(tb, "off"), "off", 1.0, {"nguon": vi, BEN_VUNG: 1, **nhan}, "tu_lam")
-        thong_bao.gui("nha.goi_y", f"🤖 #{id_} Em đã tắt {_ten_tb(tb)} ({vi}).\nĐúng hay sai ạ? Anh trả "
-                                   f"lời «đúng» hoặc «sai» — sai thì em bật lại ngay. Không trả lời trong "
-                                   f"{CHAM_TU_LAM // 60} phút là em tính đúng.")
+        _bao_tu_lam(tb, f"🤖 #{id_} Em đã tắt {_ten_tb(tb)} ({vi}).\nĐúng hay sai ạ? Anh trả "
+                        f"lời «đúng» hoặc «sai» — sai thì em bật lại ngay. Không trả lời trong "
+                        f"{CHAM_TU_LAM // 60} phút là em tính đúng.")
     except Exception as exc:  # noqa: BLE001
         logger.warning({"event": "kich_hoat_tat_vang_loi", "thiet_bi": tb, "error": str(exc)[:200]})
 
@@ -1466,10 +1670,10 @@ def _hoi_sang(tb: str) -> None:
             if not _lam(tb, "off", tu_lam=True):
                 return
             id_ = dd.ghi_nhan(ten, "off", 1.0, nhan, "tu_lam")
-            thong_bao.gui("nha.goi_y",
-                          f"🤖 #{id_} Trời sáng rồi (~{troi:.0f} lux, ngưỡng anh đặt {lux:g}) nên em đã tắt "
-                          f"{_ten_tb(tb)}.\nĐúng hay sai ạ? Anh trả lời «đúng» hoặc «sai» — sai thì em bật lại "
-                          f"ngay và nâng ngưỡng. Không trả lời trong {CHAM_TU_LAM // 60} phút là em tính đúng.")
+            _bao_tu_lam(tb,
+                        f"🤖 #{id_} Trời sáng rồi (~{troi:.0f} lux, ngưỡng anh đặt {lux:g}) nên em đã tắt "
+                        f"{_ten_tb(tb)}.\nĐúng hay sai ạ? Anh trả lời «đúng» hoặc «sai» — sai thì em bật lại "
+                        f"ngay và nâng ngưỡng. Không trả lời trong {CHAM_TU_LAM // 60} phút là em tính đúng.")
             return
         id_ = dd.ghi_nhan(ten, "off", 1.0, nhan, "hoi")
         if not thong_bao.gui("nha.goi_y",
@@ -1626,6 +1830,8 @@ def tong_quan() -> list[dict[str, Any]]:
                    "tu_lam": bool(cd.get("tu_lam")),
                    "bo_nguon": [{"ma": n, "ten": _ten_nguon(n, ten_ha)} for n in cd.get("bo_nguon") or []],
                    "ngoai_le": cd.get("ngoai_le") or [], "hoc_luc": mh.get("luc"), "huong": huong,
+                   "luat_chu": cd.get("luat_chu") or [], "hay_bat": mh.get("hay_bat") or {},
+                   "im_lang": bool(cd.get("im_lang")),
                    # Kiểm báo ảo TÁCH khỏi điều khiển: chỉ áp khi BẬT theo cảm biến hiện diện,
                    # và dựa vào thứ KHÁC hẳn — bấm công tắc, mở cửa (xem `nha_co_nguoi`).
                    "kiem_ao": {

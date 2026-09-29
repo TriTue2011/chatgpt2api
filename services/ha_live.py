@@ -251,10 +251,13 @@ def _ghi_lich_su(new_state: dict[str, Any] | None, entity_id: str) -> None:
     gt = new_state.get("state")
     if gt is None or str(gt).lower() in ("unavailable", "unknown", ""):
         return
-    from services import kich_hoat_nha, lich_su_nha
+    from services import cam_bien_ghep, kich_hoat_nha, lich_su_nha
     do_ai = lich_su_nha.la_bot_tu_lam(entity_id, gt)
     lich_su_nha.ghi("ha", entity_id, "state", gt, do_ai=do_ai)
     kich_hoat_nha.su_kien(entity_id, gt, do_ai=do_ai)
+    # Cảm biến ghép dùng thực thể này (vd "phòng khách có người thật") → tính lại, đổi thì báo
+    # bộ kích hoạt như một cảm biến HA (services/cam_bien_ghep.py).
+    cam_bien_ghep.khi_doi(entity_id)
 
     if entity_id.lower().startswith("event."):
         tt = new_state.get("attributes") or {}
@@ -275,6 +278,8 @@ def _resync(index: dict[str, int]) -> None:
             if eid:
                 index[eid] = i
     logger.info({"event": "ha_live_resync", "entities": len(data)})
+    from services import cam_bien_ghep
+    cam_bien_ghep.khoi_tao()
 
 
 def _run_once(index: dict[str, int]) -> None:
