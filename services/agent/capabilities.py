@@ -1104,6 +1104,36 @@ def _h_youtube_transcript(args: dict, ctx: dict) -> dict:
     return {"text": text[:8000]}
 
 
+def _h_so_do_nha(args: dict, ctx: dict) -> dict:
+    """Sơ đồ nhà (`services/so_do_nha.py`): chủ nhà mô tả nhà / trả lời câu bot hỏi → ghi rồi bot vẽ
+    lại (chạy nền, báo nhóm học hỏi); chấm sơ đồ bot vẽ; xem sơ đồ đang dùng."""
+    import threading
+
+    from services import so_do_nha
+
+    viec = str(args.get("viec") or "xem").strip().lower()
+    if viec == "mo_ta":
+        noi = str(args.get("noi_dung") or "").strip()
+        if not noi:
+            return {"text": "Anh mô tả giúp em nhà mình: chung cư hay nhà đất, mấy tầng, những phòng nào…"}
+        so = so_do_nha.them_mo_ta(noi, nguon="chat")
+        threading.Thread(target=so_do_nha.giai_va_bao, name="so-do-nha", daemon=True).start()
+        return {"text": f"Em đã ghi lời mô tả #{so}. Em đang vẽ lại sơ đồ nhà, xong em gửi vào nhóm học hỏi để anh xem."}
+    if viec == "cham":
+        bai = [b for b in so_do_nha.so()["bai"] if b.get("ket_qua") == "cho"]
+        id_ = int(args.get("so") or (bai[-1]["id"] if bai else 0))
+        if not id_ or not so_do_nha.cham(id_, bool(args.get("dung")), cham_boi="chu_may",
+                                         ghi_chu=str(args.get("ghi_chu") or "")):
+            return {"text": "Em không thấy bài sơ đồ nào đang chờ anh chấm ạ."}
+        if args.get("dung"):
+            return {"text": f"Dạ, em dùng sơ đồ #{id_} từ bây giờ."}
+        threading.Thread(target=so_do_nha.giai_va_bao, name="so-do-nha", daemon=True).start()
+        return {"text": f"Dạ, em ghi sơ đồ #{id_} sai và vẽ lại theo lời anh."}
+    s = so_do_nha.ap()
+    return {"text": ("Sơ đồ nhà em đang dùng:\n" + so_do_nha.doc(s)) if s else
+            "Em chưa có sơ đồ nhà nào được anh xác nhận. Anh mô tả giúp em nhé."}
+
+
 def _h_ghi_du_kien(args: dict, ctx: dict) -> dict:
     """Lời chủ máy DẠY bot về nhà (thiết bị nào nối với nào, cảm biến nào là gì, vân tay của ai)
     → sổ học của `hieu_thiet_bi_nha`, lượt hiểu thiết bị kế tiếp đọc nó.
@@ -7306,6 +7336,20 @@ CAPABILITIES: dict[str, Capability] = {
             "tra_loi": {"type": "string", "enum": ["dung", "sai", "co", "khong"]},
             "so": {"type": "integer", "description": "Số #N trong tin của bot nếu người dùng nêu."}},
             "required": ["tra_loi"]}),
+    "so_do_nha": Capability(
+        name="so_do_nha", risk=READ, handler=_h_so_do_nha,
+        emoji="🏠", label="Sơ đồ nhà — bot hiểu nhà mình",
+        description=("Chủ nhà MÔ TẢ nhà (chung cư/nhà đất, mấy tầng, phòng nào, bếp mở hay có vách, cửa chính "
+                     "mở vào đâu, camera nhìn thấy gì) hoặc TRẢ LỜI câu bot hỏi về sơ đồ nhà → viec='mo_ta'. "
+                     "Chấm sơ đồ bot vẽ («sơ đồ đúng rồi», «sai, bếp có vách kính») → viec='cham'. "
+                     "Hỏi sơ đồ nhà → viec='xem'."),
+        parameters={"type": "object", "properties": {
+            "viec": {"type": "string", "enum": ["mo_ta", "cham", "xem"]},
+            "noi_dung": {"type": "string", "description": "Lời chủ nhà mô tả/trả lời, giữ đúng ý."},
+            "dung": {"type": "boolean", "description": "viec='cham': sơ đồ đúng hay sai."},
+            "ghi_chu": {"type": "string", "description": "viec='cham': chỗ sai chủ nhà chỉ ra."},
+            "so": {"type": "integer", "description": "Số #N của bài sơ đồ nếu chủ nhà nêu."}},
+            "required": ["viec"]}),
     "ghi_du_kien": Capability(
         name="ghi_du_kien", risk=READ, handler=_h_ghi_du_kien,
         emoji="📝", label="Dạy bot về nhà — sổ học",
@@ -8300,7 +8344,7 @@ _CAP_GROUP: dict[str, str] = {
     "chi_duong": "web",
     "write_code": "code",
     "home_status": "homeassistant", "control_home": "homeassistant",
-    "ghi_du_kien": "homeassistant", "tra_loi_bot_nha": "homeassistant",
+    "ghi_du_kien": "homeassistant", "tra_loi_bot_nha": "homeassistant", "so_do_nha": "homeassistant",
     "describe_device": "homeassistant",
     # MQTT cùng nhóm quyền với Home Assistant: ai được điều khiển nhà thì được
     # điều khiển qua cả hai đường, không phải tích thêm ô riêng.

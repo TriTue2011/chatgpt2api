@@ -1705,7 +1705,9 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
     ("homeassistant", _KW_NHATHONGMINH,
      "- Trả lời tin bot «#N Em đã bật/tắt … Đúng hay sai ạ?» / «#N … bật không ạ?» bằng lời "
      "tự nhiên → tra_loi_bot_nha (dung/sai/co/khong). Người dùng DẠY bot về nhà (thiết bị nào "
-     "nối với nào, cảm biến nào là gì) → ghi_du_kien. Còn LỆNH «tắt đèn đi» → control_home."),
+     "nối với nào, cảm biến nào là gì) → ghi_du_kien. Mô tả NHÀ (chung cư/nhà đất, phòng, bếp mở, "
+     "cửa, camera nhìn đâu) hoặc trả lời/chấm «🏠 #N … sơ đồ nhà» → so_do_nha. Còn LỆNH «tắt đèn "
+     "đi» → control_home."),
     ("homeassistant", _KW_NHATHONGMINH,
      "- Nếp sinh hoạt bot học được (giờ ăn, buổi sáng, trước khi ngủ) → "
      "tinh_huong_nha. Người dùng đồng ý với tên bot đề xuất thì gọi "
@@ -1713,7 +1715,8 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
     ("homeassistant", _KW_NHATHONGMINH,
      "- Cảm biến/thiết bị hỏng, đơ, mất tín hiệu → canh_bao_nha. Người dùng "
      "nói «tôi biết rồi», «thôi đừng nhắc nữa» NGAY SAU tin cảnh báo cũng "
-     "gọi tool này với viec='im'."),
+     "gọi tool này với viec='im'; nói điều bị báo KHÔNG PHẢI LỖI («tôi không tắt chứ "
+     "không phải đơ») thì viec='khong_phai_loi' cho từng mã trong tin."),
     ("homeassistant", _KW_NHATHONGMINH,
      "- Cần thao tác HA ở mức thấp (khi control_home không đủ): ha_get_state "
      "đọc một entity, ha_search_entities tìm entity theo tên, ha_call_service "

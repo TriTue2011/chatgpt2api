@@ -82,10 +82,12 @@ def luyen(ten: str, huong: str, *, lan: int = 1, chi: list[str] | None = None) -
     for d in bo.DE:
         if chi and d["ten"] not in chi:
             continue
-        de = tang.de(d["uv"], d["ten_tb"], d["dan"])
+        # Bộ nào có khuôn đề / cách chấm riêng thì tự khai `de_cho` / `cham_cho`.
+        de = bo.de_cho(d) if hasattr(bo, "de_cho") else tang.de(d["uv"], d["ten_tb"], d["dan"])
+        chm = getattr(bo, "cham_cho", cham)
         for i in range(lan):
             b = _hoi_bot(ht, model, huong, de)
             k = tang.kiem(b, d["uv"]) if not isinstance(b, str) else b
-            ra.append({"de": d["ten"], "lan": i, "loi": cham(k, d["dap_an"]),
+            ra.append({"de": d["ten"], "lan": i, "loi": chm(k, d["dap_an"]),
                        "vi_sao": k.get("vi_sao") if isinstance(k, dict) else ""})
     return ra

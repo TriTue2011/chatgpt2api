@@ -988,7 +988,7 @@ def test_ngoai_vi_chi_de_nhin_lai_khong_giu(kh, monkeypatch):
     monkeypatch.setattr(kh.threading, "Timer", HenGia)
     nhin: list = []
     thay = {"kq": "Cam phòng khách"}
-    monkeypatch.setattr(kh, "_nhin_lai", lambda cams: nhin.append(cams) or thay["kq"])
+    monkeypatch.setattr(kh, "_nhin_lai", lambda cams, khu="": nhin.append(cams) or thay["kq"])
     kh.dat_thiet_bi(DEN, bat=True, tat_khi_vang={"bat": True, "cam_bien": [NGU], "phut": 3,
                                                   "giu": LAP, "nhin": ["Cam phòng khách"]})
     kh.dat_thiet_bi(DEN, tat_khi_vang={"bat": True, "cam_bien": [NGU], "phut": 3})
@@ -1019,7 +1019,9 @@ def test_nhin_lai_dung_frigate_truoc_khong_co_moi_chup(kh, monkeypatch):
     chup: list = []
     monkeypatch.setattr(camera_nha, "chup", lambda c, **k: chup.append(c) or ("", b"x"))
     from services import nhin_nha, yolo_nha
-    monkeypatch.setattr(yolo_nha, "doc_anh", lambda b: "anh")
+    class Anh:
+        shape = (480, 640, 3)
+    monkeypatch.setattr(yolo_nha, "doc_anh", lambda b: Anh())
     monkeypatch.setattr(nhin_nha, "vat_the", lambda anh, **k: [])
     monkeypatch.setattr(mqtt_nha, "dem_nguoi", lambda: {"phong-khach": {"nguoi": 2}})
     assert kh._nhin_lai(["Cam phòng khách"]) == "Cam phòng khách" and chup == [], "Frigate thấy: khỏi chụp"

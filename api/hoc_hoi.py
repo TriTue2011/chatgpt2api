@@ -746,6 +746,46 @@ def create_router() -> APIRouter:
         except Exception as exc:
             return _loi(exc, "học kích hoạt")
 
+    # ── Sơ đồ nhà: bot vẽ từ camera/cảm biến/lời chủ nhà, người chấm rồi mới áp (`so_do_nha`) ──
+    @router.get("/api/hoc-hoi/so-do-nha")
+    async def so_do_nha_xem(authorization: str | None = Header(default=None)):
+        """Sổ sơ đồ nhà: lời chủ nhà mô tả, các bài bot vẽ, sơ đồ đang dùng."""
+        require_admin(authorization)
+        from services import so_do_nha
+        return {"ok": True, **so_do_nha.so()}
+
+    @router.post("/api/hoc-hoi/so-do-nha/mo-ta")
+    async def so_do_nha_mo_ta(body: dict, authorization: str | None = Header(default=None)):
+        """Chủ nhà mô tả nhà (chung cư/nhà đất, tầng, phòng, bếp mở…). body: {noi_dung}."""
+        require_admin(authorization)
+        from services import so_do_nha
+        try:
+            return {"ok": True, "so": so_do_nha.them_mo_ta(str(body.get("noi_dung") or ""))}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+
+    @router.post("/api/hoc-hoi/so-do-nha/giai")
+    async def so_do_nha_giai(authorization: str | None = Header(default=None)):
+        """Cho bot vẽ lại sơ đồ ngay (đo 30 ngày + gọi model — vài chục giây)."""
+        require_admin(authorization)
+        from services import so_do_nha
+        try:
+            return await asyncio.to_thread(so_do_nha.giai)
+        except Exception as exc:
+            return _loi(exc, "vẽ sơ đồ nhà")
+
+    @router.post("/api/hoc-hoi/so-do-nha/cham")
+    async def so_do_nha_cham(body: dict, authorization: str | None = Header(default=None)):
+        """Chấm một bài vẽ sơ đồ; đúng thì áp. body: {id, dung, ghi_chu, cham_boi?}."""
+        require_admin(authorization)
+        from services import so_do_nha
+        cham_boi = str(body.get("cham_boi") or "chu_may")
+        if cham_boi not in ("chu_may", "claude"):
+            return {"ok": False, "error": "cham_boi là chu_may hoặc claude."}
+        ok = so_do_nha.cham(int(body.get("id") or 0), bool(body.get("dung")), cham_boi=cham_boi,
+                            ghi_chu=str(body.get("ghi_chu") or ""))
+        return {"ok": ok} if ok else {"ok": False, "error": "Không có bài đó."}
+
     # ── Cảm biến ghép: bot tự tính từ cảm biến gốc (`cam_bien_ghep`) ──
     @router.get("/api/hoc-hoi/cam-bien-ghep")
     async def cam_bien_ghep_ds(authorization: str | None = Header(default=None)):

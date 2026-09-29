@@ -1818,7 +1818,8 @@ def _tat_vi_vang(tb: str) -> None:
             return
         nhin_lai = ""
         if tv.get("giu") and tv.get("nhin") and _trang_thai_mot(str(tv["giu"])) == "on":
-            thay = _nhin_lai(list(tv["nhin"]))
+            from services import boi_canh_nha
+            thay = _nhin_lai(list(tv["nhin"]), boi_canh_nha.phong_cua(tb))
             logger.info({"event": "kich_hoat_nhin_lai", "thiet_bi": tb, "camera": tv["nhin"], "thay": thay})
             if thay is None or thay:
                 _hen_tat_luc(tb, HEN_LAI)   # thấy người, hoặc không nhìn được — lát nữa xét lại
@@ -1851,7 +1852,7 @@ def _tat_vi_vang(tb: str) -> None:
         logger.warning({"event": "kich_hoat_tat_vang_loi", "thiet_bi": tb, "error": str(exc)[:200]})
 
 
-def _nhin_lai(camera: list[str]) -> str | None:
+def _nhin_lai(camera: list[str], khu: str = "") -> str | None:
     """Chủ máy 29/09/2026: laptop của vợ "là ngoại vi … để kiểm tra lại xem có ở phòng khách
     không" — không phải lý do giữ đèn. Nhìn lại từng camera bot chọn:
 
@@ -1860,9 +1861,13 @@ def _nhin_lai(camera: list[str]) -> str | None:
       (`src`), số đếm phải còn mới (`mqtt_nha.dem_nguoi` tự từ chối số đóng băng).
     * Không có thì chụp một khung, đếm NGƯỜI bằng YOLO tại chỗ.
 
+    Sơ đồ nhà (`so_do_nha`) đã biết ô nào của khung hình là phòng ``khu`` thì CHỈ đếm người đứng
+    trong các ô đó — camera bếp thấy cả phòng khách thì người nấu ăn không giữ đèn phòng khách
+    (chủ máy: "danh giới phòng khách và bếp"). Chưa có sơ đồ cho camera đó thì đếm cả khung.
+
     Trả tên camera thấy người, "" nếu không camera nào thấy, None nếu không nhìn được camera nào
     (không đoán là vắng)."""
-    from services import camera_nha, mqtt_nha, nhin_nha, yolo_nha
+    from services import camera_nha, mqtt_nha, nhin_nha, so_do_nha, yolo_nha
 
     try:
         frigate = mqtt_nha.dem_nguoi()
@@ -1873,8 +1878,21 @@ def _nhin_lai(camera: list[str]) -> str | None:
     luong = {str(c.get("name")): str(c.get("src") or "") for c in camera_nha.danh_sach()}
     nhin_duoc = False
     for c in camera:
+        o = so_do_nha.o_cua_phong(c, khu) if khu else set()
         dem = frigate.get(luong.get(c, ""))
-        if dem is not None:
+        if dem is not None and o:
+            # Frigate chỉ cho SỐ ĐẾM cả khung; biết vùng phòng thì hỏi các sự kiện đang diễn ra
+            # (có hộp toạ độ) rồi lọc theo ô.
+            try:
+                ev = so_do_nha._frigate(f"/api/events?camera={luong[c]}&label=person&in_progress=1", timeout=10)
+                nhin_duoc = True
+                if any(so_do_nha.o_cua(*so_do_nha.diem_chan((e.get("data") or {}).get("box") or [0, 0, 0, 0])) in o
+                       for e in ev if (e.get("data") or {}).get("box")):
+                    return c
+                continue
+            except Exception:  # noqa: BLE001 — không hỏi được sự kiện thì chụp như chưa có Frigate
+                pass
+        elif dem is not None:
             nhin_duoc = True
             if int(dem.get("nguoi") or 0) > 0:
                 return c
@@ -1883,8 +1901,11 @@ def _nhin_lai(camera: list[str]) -> str | None:
             _ten, jpeg = camera_nha.chup(c, cho_ai=True, timeout=15.0)
             anh = yolo_nha.doc_anh(jpeg)
             nhin_duoc = True
-            if nhin_nha.vat_the(anh, chi_nhan={"person"}):
-                return c
+            cao, rong = anh.shape[:2]
+            for v in nhin_nha.vat_the(anh, chi_nhan={"person"}):
+                x1, y1, x2, y2 = v.hop
+                if not o or so_do_nha.o_cua((x1 + x2) / 2 / rong, y2 / cao) in o:
+                    return c
         except Exception as exc:  # noqa: BLE001 — một camera hỏng không làm hỏng lượt tắt
             logger.warning({"event": "kich_hoat_nhin_lai_loi", "camera": c, "error": str(exc)[:160]})
     return "" if nhin_duoc else None

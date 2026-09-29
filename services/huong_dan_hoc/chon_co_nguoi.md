@@ -27,6 +27,10 @@ hay quay lại sau bao lâu)? AI (một người hay nhiều người ở nhà)?
 - Cùng một lần tắt nhầm, giá trị khác nhau theo giờ: tối và đêm (đọc sách, trẻ
   học bài, đang ngủ) nặng hơn ban ngày có ánh sáng trời.
 
+Đề có mục SƠ ĐỒ NHÀ (đã chấm) thì dùng nó: khu THÔNG với khu này → cảm biến
+khu đó hay báo lây và "sang khu đó" chưa chắc đã rời; khu có VÁCH → báo ở đó
+nhiều khả năng là người đã rời; camera thấy khu này là camera nhìn lại được.
+
 ## 1. `co_nguoi` — khu của thiết bị đang có người
 
 Dùng cảm biến mục A (trong khu); cảm biến khu khác ở mục B chỉ để loại lây.

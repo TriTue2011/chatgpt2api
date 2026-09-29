@@ -321,7 +321,12 @@ def ung_vien(tb: str, ro: sqlite3.Connection, tu: float, den: float, *,
         frigate = [str(c["name"]) for c in ds_cam if not dem.get("_cu") and str(c.get("src") or "") in dem]
     except Exception:  # noqa: BLE001 — không đọc được sổ camera thì bot không có camera để nhìn lại
         camera, frigate = [], []
-    return {"ma": tb, "camera": camera, "camera_frigate": frigate, "khu": khu_tb, "so_ngay": so_ngay, "gio_bat": dai_bat / 3600,
+    try:
+        from services import so_do_nha
+        so_do = so_do_nha.doan_de(khu_tb)
+    except Exception:  # noqa: BLE001 — chưa có sơ đồ thì thôi
+        so_do = []
+    return {"ma": tb, "camera": camera, "camera_frigate": frigate, "so_do": so_do, "khu": khu_tb, "so_ngay": so_ngay, "gio_bat": dai_bat / 3600,
             "hien_dien": {m: {k: v for k, v in x.items() if k not in ("ts", "gt", "bat")}
                           for m, x in hien_dien.items()},
             "trong": trong, "ket": ket, "cap": cap, "sang_khac": sang_khac[:_TOI_DA_LAY],
@@ -338,6 +343,8 @@ def de(uv: dict[str, Any], ten_tb: str, dan: list[str]) -> str:
     hd = uv["hien_dien"]
     dong = [f"THIẾT BỊ: {uv['ma']} | {ten_tb} | khu: {uv['khu']} | "
             f"bật {uv['gio_bat']:.0f} giờ trong {uv['so_ngay']:.0f} ngày"]
+    if uv.get("so_do"):
+        dong += [""] + list(uv["so_do"])
     if dan:
         dong.append("\nCHỦ NHÀ DẶN (khi chấm các lần chọn trước của thiết bị này):")
         dong += [f"- {x}" for x in dan]
