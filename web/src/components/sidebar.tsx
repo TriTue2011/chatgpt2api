@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Users, Cpu, Combine, ImageIcon, Search, Archive, Settings,
   LogOut, ChevronRight, Sparkles, PanelLeftClose, Languages,
   Video, Film, Plug, MessageSquare, MessageCircle, Activity, GraduationCap,
-  ScrollText, BookOpen, Youtube, ScanFace,
+  ScrollText, BookOpen, Youtube, ScanFace, Cctv,
 } from "lucide-react";
 import webConfig from "@/constants/common-env";
 import { getValidatedAuthSession } from "@/lib/auth-session";
@@ -52,6 +52,8 @@ export const navGroups: NavGroup[] = [
       { href: "/dich", labelKey: "nav_dich" as TranslationKey, icon: Languages },
       // Chỉ quản trị (điều khiển loa/tivi trong nhà) — không nằm trong studioPaths.
       { href: "/youtube", labelKey: "nav_youtube" as TranslationKey, icon: Youtube },
+      // Chỉ quản trị: xem trực tiếp + bộ đàm (nói ra loa camera trong nhà). Khai camera ở Cài đặt.
+      { href: "/camera", labelKey: "nav_camera" as TranslationKey, icon: Cctv },
     ],
   },
   {
@@ -104,6 +106,7 @@ export const adminOnlyPaths = [
   "/hoc-hoi",
   "/khuon-mat",
   "/youtube",
+  "/camera",
   "/zalo",
   "/register",
 ];

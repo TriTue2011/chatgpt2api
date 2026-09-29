@@ -37,6 +37,7 @@ const pageTitles: Record<string, string> = {
   "/hoc-hoi": "Học hỏi",
   "/khuon-mat": "Khuôn mặt",
   "/youtube": "YouTube",
+  "/camera": "Camera",
 };
 
 // Mục "hot" bottom-nav mobile. User thường chỉ studio (app-shell lọc thêm).
