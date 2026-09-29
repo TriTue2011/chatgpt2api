@@ -89,7 +89,14 @@ class DigestKemAnhTest(unittest.TestCase):
     def test_khong_co_anh_giu_nguyen_duong_chu(self) -> None:
         from services import digest
         with mock.patch("services.zalo_bot.send_photo") as anh, \
-             mock.patch("services.zalo_bot.send_message", return_value=True) as chu:
+             mock.patch("services.zalo_bot.send_message", return_value={"ok": True}) as chu:
             self.assertTrue(digest.send_target("zalo:9", "chào"))
         anh.assert_not_called()
         chu.assert_called_once()
+
+    def test_bot_zalo_gui_hong_thi_bao_hong(self) -> None:
+        """send_message trả dict — `bool(dict)` luôn đúng, kể cả {"ok": False}. Báo hỏng thì
+        mail còn ở lại để lượt poll sau gửi lại, thay vì tưởng đã tới."""
+        from services import digest
+        with mock.patch("services.zalo_bot.send_message", return_value={"ok": False, "error": "x"}):
+            self.assertFalse(digest.send_target("zalo:9", "chào"))

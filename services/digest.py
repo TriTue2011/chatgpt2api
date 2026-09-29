@@ -273,7 +273,7 @@ def send_target(target: str, text: str, anh_url: str = "") -> bool:
                 body, _chon = _lua_chon(zb._skey_zalo(chat, chat, False), body)
                 if anh_url and zb.send_photo(chat, anh_url, body).get("ok"):
                     return True
-                return bool(zb.send_message(chat, body))
+                return bool(zb.send_message(chat, body).get("ok"))
             finally:
                 zb._current.bot = prev
         if plat == "zalop":
@@ -285,6 +285,82 @@ def send_target(target: str, text: str, anh_url: str = "") -> bool:
             return bool(zp.send_message(chat, body, loai, account=bot_id))
     except Exception as exc:
         logger.warning("digest: gửi %s lỗi: %s", target, str(exc)[:160])
+    return False
+
+
+#: Tệp gửi qua kênh không nhận tệp (bot Zalo) đi bằng link tải; tệp nằm trong thư mục phục vụ
+#: ngần này giây rồi tự xoá. Chủ máy 29/09/2026 chọn 24 giờ.
+TEP_SONG_GIAY = 24 * 3600
+
+
+def _luu_tep_phuc_vu(du_lieu: bytes, ten: str) -> str:
+    """Ghi tệp vào thư mục phục vụ ``/images/docs/<12 hex>/`` (cùng chỗ tệp kết quả Dịch, có dấu
+    ``.expire-24h`` để lượt dọn chung xoá), hẹn xoá đúng hạn. Trả đường dẫn tương đối."""
+    import shutil
+    import uuid
+
+    from services import dich_jobs
+    from services.config import config
+    from services.zalo_personal import _ten_tep_phuc_vu
+
+    goc = config.images_dir / "docs"
+    dich_jobs.don_thu_muc_ket_qua(goc, cu_hon=time.time() - TEP_SONG_GIAY)
+    thu_muc = goc / uuid.uuid4().hex[:12]
+    thu_muc.mkdir(parents=True, exist_ok=True)
+    (thu_muc / ".expire-24h").touch()
+    fn = _ten_tep_phuc_vu(ten, ten[ten.rfind("."):] if "." in ten else ".bin")
+    (thu_muc / fn).write_bytes(du_lieu)
+    hen = threading.Timer(TEP_SONG_GIAY, shutil.rmtree, args=(thu_muc,), kwargs={"ignore_errors": True})
+    hen.daemon = True
+    hen.start()
+    return f"/images/docs/{thu_muc.name}/{fn}"
+
+
+def send_file_target(target: str, du_lieu: bytes, ten: str, ghi_chu: str = "") -> bool:
+    """Gửi MỘT tệp tới MỘT kênh. Telegram và Zalo cá nhân nhận tệp thật; bot Zalo chỉ gửi được
+    chữ/ảnh/tiếng (không có sendFile) nên nhận LINK TẢI có chữ ký, tệp tự xoá sau TEP_SONG_GIAY.
+    Không raise."""
+    parsed = parse_target(target)
+    if not parsed or not du_lieu:
+        return False
+    plat, bot_id, chat, topic = parsed
+    try:
+        if plat == "tg":
+            from services import telegram_bot as tg
+            bot = tg._find_bot_by_id(bot_id) if bot_id else None
+            prev_bot, prev_topic = tg._cur_bot(), getattr(tg._current, "topic", None)
+            try:
+                if bot is not None:
+                    tg._current.bot = bot
+                tg._current.topic = topic
+                return bool(tg.send_document(chat, du_lieu, ten, ghi_chu[:1000]).get("ok"))
+            finally:
+                tg._current.bot = prev_bot
+                tg._current.topic = prev_topic
+        rel = _luu_tep_phuc_vu(du_lieu, ten)
+        if plat == "zalop":
+            from services import zalo_personal as zp
+            return zp._send_file_robust(chat, rel, ghi_chu or ten, _zalop_thread_type(bot_id, chat),
+                                        account=bot_id)
+        if plat == "zalo":
+            from services import signed_url, zalo_bot as zb
+            base = zb._public_base()
+            if not base:
+                logger.warning("digest: bot Zalo chưa có địa chỉ công khai — không gửi được link tệp %s", ten)
+                return False
+            url = signed_url.ky_url(f"{base}{rel}", pham_vi="images", song_giay=TEP_SONG_GIAY)
+            bot = zb._find_bot_by_id(bot_id) if bot_id else None
+            prev = zb._cur_bot()
+            try:
+                if bot is not None:
+                    zb._current.bot = bot
+                return bool(zb.send_message(chat, f"📎 {ten}{' — ' + ghi_chu if ghi_chu else ''}\n"
+                                                  f"Tải về (tệp tự xoá sau {TEP_SONG_GIAY // 3600} giờ): {url}"
+                                            ).get("ok"))
+            finally:
+                zb._current.bot = prev
+    except Exception as exc:
+        logger.warning("digest: gửi tệp %s tới %s lỗi: %s", ten, target, str(exc)[:160])
     return False
 
 

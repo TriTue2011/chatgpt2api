@@ -369,6 +369,10 @@ _PLAIN_EXT = {".txt", ".md", ".csv", ".log", ".json", ".yml", ".yaml", ".ini"}
 _DOC_EXT = {".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt", ".html", ".htm", ".epub"}
 _ATTACH_MAX = 8 * 1024 * 1024   # bỏ qua tệp > 8MB (tránh treo vòng poll)
 _ATTACH_CHARS = 4000            # text lấy ra mỗi tệp
+#: Tệp GỬI KÈM bản tóm tắt tới kênh nhận — chủ máy 29/09/2026 chọn "chỉ tài liệu" (PDF, Word,
+#: Excel, PowerPoint): ảnh chữ ký, logo nhúng trong thư không gửi.
+_TAI_LIEU_GUI = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"}
+_TEP_GUI_MAX = 20 * 1024 * 1024
 
 
 def _attachment_text(filename: str, payload: bytes) -> str:
@@ -435,6 +439,8 @@ def _attachments(msg: email.message.Message, *, read_text: bool) -> list[dict[st
             payload = b""
         item: dict[str, Any] = {"name": fname or "(không tên)",
                                 "size": len(payload), "text": ""}
+        if os.path.splitext(fname)[1].lower() in _TAI_LIEU_GUI and 0 < len(payload) <= _TEP_GUI_MAX:
+            item["du_lieu"] = payload
         if read_text and payload:
             item["text"] = _attachment_text(fname, payload)
         out.append(item)
@@ -577,6 +583,8 @@ def _process_message(acc: dict[str, Any], raw: bytes) -> str:
                 logger.warning("email_channel: chưa chuyển được thông báo cho %s", from_addr)
                 return "error"
             digest.mark_seen(src, moc_bao)
+            if res.get("sent_now"):
+                _gui_tai_lieu(acc, subject, atts)
 
     # Trả lời thẳng vào email bằng AI — CHỈ khi hộp này bật (mặc định TẮT để hộp
     # chỉ-tóm-tắt không tự đi trả lời người ta).
@@ -613,6 +621,18 @@ def _process_message(acc: dict[str, Any], raw: bytes) -> str:
         return "processed"
     digest.mark_seen(src, uid)
     return "processed" if sent_any else "skipped"
+
+
+def _gui_tai_lieu(acc: dict[str, Any], subject: str, atts: list[dict[str, Any]]) -> None:
+    """Gửi tệp tài liệu của thư tới mọi kênh nhận, ngay sau bản tóm tắt. Hỏng một tệp chỉ ghi
+    log — bản tóm tắt đã tới, không gửi lại cả thư."""
+    from services import digest
+    for a in atts:
+        if not a.get("du_lieu"):
+            continue
+        for t in acc.get("notify_targets") or []:
+            if not digest.send_file_target(str(t), a["du_lieu"], a["name"], subject or ""):
+                logger.warning("email_channel: gửi tệp %s tới %s không được", a["name"], t)
 
 
 # ── IMAP ─────────────────────────────────────────────────────────────────────
