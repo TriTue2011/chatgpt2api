@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import logging
 import queue
+import re
 import sqlite3
 import threading
 import time
@@ -1102,13 +1103,39 @@ def nap_tu_ha(so_ngay: int = 10, thuc_the: list[str] | None = None) -> dict[str,
 # nó đã đổi đủ mọi ngày trong ``so_ngay`` ngày, mà giờ đứng yên trọn một ngày. Cùng kho đó chỉ còn
 # 2 lỗi, cả hai thật: radar phòng khách im 14 ngày (trước đó đổi hàng trăm lần mỗi ngày), pin một
 # thiết bị im 11 ngày.
+#
+# Hai chốt để "không đổi" không bị hiểu nhầm là "hỏng":
+# * Thực thể HA chỉ xét thứ QUAN SÁT (``sensor``, ``binary_sensor``). Đèn, công tắc, quạt, nút, người,
+#   máy phát đổi vì NGƯỜI dùng — cả ngày không ai bấm (dịp lễ 30/08–02/09 không ai bấm gì 61,7 giờ)
+#   không phải hỏng; chúng hỏng thì lộ ra ở ``unavailable`` (chập chờn). Chia theo MIỀN của HA — tập
+#   đóng, nghĩa của nó — không theo chữ trong tên.
+# * Lần im này phải dài hơn MỌI lần im của chính nó trong ``so_ngay`` ngày trước — cảm biến đổi vài
+#   lần mỗi ngày thì một đêm im là chuyện thường.
 _IM_HONG_GIAY = 86400
+_MIEN_QUAN_SAT = ("sensor", "binary_sensor")
+_MA_HA = re.compile(r"[a-z_]+\.[a-z0-9_]+")
 _TY_LE_CHAP_CHON = 20.0
 
 
 def _ngay(ts: float) -> int:
     """Số ngày theo giờ Việt Nam — "hôm nay", "hôm trước" của chủ máy."""
     return int((ts + 7 * 3600) // 86400)
+
+
+def _im_lau_nhat(conn: sqlite3.Connection, k: tuple[str, str], tu: float, den: float) -> float:
+    """Khoảng lâu nhất giữa hai lần ĐỔI của trường ``k`` trong [tu, den] (giây)."""
+    g = _o_gop_giay()
+    moc = [float(r[0]) for r in conn.execute(
+        "SELECT ts FROM su_kien WHERE thiet_bi=? AND truong=? AND ts>=? AND ts<=?", (*k, tu, den))]
+    truoc = None
+    for o, nho, lon in conn.execute(
+            "SELECT o_5p, nho, lon FROM so_do WHERE thiet_bi=? AND truong=? AND o_5p>=? AND o_5p<=?"
+            " ORDER BY o_5p", (*k, int(tu // g), int(den // g))):
+        if nho < lon or (truoc is not None and truoc != (nho, lon)):
+            moc.append(float(o) * g)
+        truoc = (nho, lon)
+    moc.sort()
+    return max((b - a for a, b in zip(moc, moc[1:])), default=0.0)
 
 
 def soi_hong(so_ngay: int = 7) -> list[dict[str, Any]]:
@@ -1160,13 +1187,22 @@ def soi_hong(so_ngay: int = 7) -> list[dict[str, Any]]:
         moi_nhat = {(r["thiet_bi"], r["truong"]): (r["gia_tri"], float(r["ts"]))
                     for r in conn.execute("SELECT thiet_bi, truong, gia_tri, ts FROM tuoi")}
 
+    ung_vien = []
     for k, lan_doi in cuoi.items():
-        im = now - lan_doi
-        if im < _IM_HONG_GIAY:
-            continue
+        if _MA_HA.fullmatch(k[0]) and k[0].split(".")[0] not in _MIEN_QUAN_SAT:
+            continue                    # đổi vì người dùng — im là không ai dùng
         d = _ngay(lan_doi)
-        if not all(x in doi[k] for x in range(d - so_ngay + 1, d + 1)):
-            continue                    # trước đó không đổi đều mỗi ngày — không phải hỏng
+        if now - lan_doi >= _IM_HONG_GIAY and all(x in doi[k] for x in range(d - so_ngay + 1, d + 1)):
+            ung_vien.append(k)
+    with _khoa_db:
+        conn = _db()
+        im_lau: dict[tuple[str, str], float] = {k: _im_lau_nhat(conn, k, cuoi[k] - so_ngay * 86400, cuoi[k])
+                                                for k in ung_vien}
+    for k in ung_vien:
+        lan_doi = cuoi[k]
+        im = now - lan_doi
+        if im <= im_lau[k]:
+            continue                    # từng im lâu như vậy rồi — chưa phải bất thường
         gt_cuoi, ts_tin = moi_nhat.get(k, (None, lan_doi))
         con_gui = now - ts_tin < _IM_HONG_GIAY
         ra.append({

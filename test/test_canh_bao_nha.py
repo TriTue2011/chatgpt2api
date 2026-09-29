@@ -47,6 +47,28 @@ class CanhBaoTest(unittest.TestCase):
         self.assertEqual(sorted(h["thiet_bi"] for h in kq["can_bao"]),
                          ["light.bep", "zigbee2mqtt/Nhiệt ẩm bếp"])
 
+    def test_chu_de_MQTT_da_doi_ten_thi_KHONG_BAO(self) -> None:
+        """Chủ máy 29/09/2026: "tôi đổi tên rồi sao trên c2a không theo" — Zigbee2MQTT đổi tên là
+        xoá bản khai tên cũ; chủ đề cũ không còn ai khai thì không phải thiết bị chết."""
+        import json
+        from services import mqtt_nha
+
+        mqtt_nha._reset_for_tests()
+        self.addCleanup(mqtt_nha._reset_for_tests)
+        khai = "homeassistant/binary_sensor/0xa4c1/presence/config"
+        ban = {"name": "Presence", "state_topic": "zigbee2mqtt/Cảm biến phòng khách",
+               "device": {"name": "Cảm biến phòng khách"}}
+        mqtt_nha._nap_tin(khai, json.dumps(ban).encode(), None)
+        hong = (self._hong("zigbee2mqtt/Cảm biến phòng khách", "chet", "presence")
+                + self._hong("cmnd/X_SMART_LINK/irhvac", "chet", "Power"))
+        self.assertEqual(len(self._quet(hong)["can_bao"]), 2, "còn khai thì vẫn báo")
+        mqtt_nha._nap_tin(khai, b"", None)                        # đổi tên: xoá bản khai cũ
+        ban.update(state_topic="zigbee2mqtt/Hiện diện phòng khách", device={"name": "Hiện diện phòng khách"})
+        mqtt_nha._nap_tin(khai.replace("presence", "presence2"), json.dumps(ban).encode(), None)
+        self.m._reset_for_tests()
+        self.assertEqual([h["thiet_bi"] for h in self._quet(hong)["can_bao"]], ["cmnd/X_SMART_LINK/irhvac"],
+                         "nhánh không tự khai báo (Tasmota) thì không biết — vẫn báo")
+
     # ── nhịp báo lại ───────────────────────────────────────────────────────
     def test_lan_dau_bao_ngay(self) -> None:
         kq = self._quet(self._hong())

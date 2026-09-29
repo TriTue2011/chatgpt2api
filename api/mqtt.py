@@ -145,10 +145,10 @@ def create_router() -> APIRouter:
         """
         require_admin(authorization)
 
-        from services import lich_su_nha
+        from services import canh_bao_nha, lich_su_nha
 
         try:
-            ds = await asyncio.to_thread(lich_su_nha.soi_hong, so_ngay)
+            ds = await asyncio.to_thread(lambda: canh_bao_nha.con_ton_tai(lich_su_nha.soi_hong(so_ngay)))
             return {"ok": True, "hong": ds, "so_luong": len(ds)}
         except Exception as exc:
             logger.warning("mqtt soi hỏng lỗi: %s", exc)

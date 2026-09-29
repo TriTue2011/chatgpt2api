@@ -340,6 +340,29 @@ class LichSuNhaTest(unittest.TestCase):
         self.assertFalse(ten & {"button.ir_quat_tat", "zigbee2mqtt/Cảm biến phòng khách",
                                 "zigbee2mqtt/Báo khói bếp"}, ten)
 
+    def test_soi_hong_den_cong_tac_khong_ai_bam_khong_phai_hong(self) -> None:
+        """Đèn, công tắc đổi vì NGƯỜI bấm: dịp lễ cả ngày không ai bấm không phải hỏng. Cảm biến
+        (``sensor``/``binary_sensor``) cùng nhịp thì vẫn bị bắt."""
+        for tb in ("light.phong_hoc_l1", "switch.bep_left", "binary_sensor.cua_chinh_contact"):
+            self._doi_moi_ngay(tb, "state", 10, 2)
+        ten = {x["thiet_bi"] for x in self.m.soi_hong(7)}
+        self.assertEqual(ten, {"binary_sensor.cua_chinh_contact"})
+
+    def test_soi_hong_im_chua_lau_hon_lan_im_cu_thi_chua_bao(self) -> None:
+        """Ngày nào cũng đổi nhưng từng im tới 47 giờ (23:30 hôm trước → 00:30 hôm kia) — im 36
+        giờ lúc này là chuyện thường của nó. Im lâu hơn mọi lần cũ thì mới là hỏng."""
+        tz = timezone(timedelta(hours=7))
+        trua = datetime.now(tz).replace(hour=12, minute=0, second=0, microsecond=0)
+        for n in range(2, 12):
+            ngay = trua.replace(hour=0) - timedelta(days=n)
+            t = ngay + (timedelta(hours=23, minutes=30) if n % 2 == 0 else timedelta(minutes=30))
+            self._ghi("mqtt", "cb_thua_thot", "illuminance", 10 + n, False, t.timestamp())
+        with mock.patch("time.time", return_value=trua.timestamp()):
+            self.assertNotIn("cb_thua_thot", [x["thiet_bi"] for x in self.m.soi_hong(7)])
+        with mock.patch("time.time", return_value=trua.timestamp() + 12 * 3600):
+            self.assertIn("cb_thua_thot", [x["thiet_bi"] for x in self.m.soi_hong(7)],
+                          "im 48,5 giờ — lâu hơn mọi lần im cũ")
+
     def test_soi_hong_nghi_mot_ngay_giua_chung_khong_phai_lien_tuc(self) -> None:
         """Có một ngày không đổi trong 7 ngày trước lần đổi cuối thì chưa gọi là "đổi liên tục"."""
         self._doi_moi_ngay("cb_thua", "illuminance", 10, 7)   # im 48 giờ: trọn một ngày lịch

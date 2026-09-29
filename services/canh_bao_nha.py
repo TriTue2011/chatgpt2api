@@ -259,6 +259,33 @@ def _den_han(ban_ghi: dict[str, Any], now: float) -> bool:
     return now - lan_cuoi >= _NHIP[bac]
 
 
+def con_ton_tai(hong: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Bỏ những lỗi của thiết bị KHÔNG CÒN trong nguồn của nó (đã xoá hay đổi tên) — cho cả tin
+    cảnh báo lẫn thẻ «soi hỏng» trên web. Chủ máy 29/09/2026: "giảm thiểu tối đa các thiết bị không
+    còn mà vẫn theo dõi". Đối chiếu MỖI lần gọi với danh sách hiện tại của HA và bản tự khai báo MQTT
+    — không có sổ nào phải dọn tay."""
+    # Mã dạng Home Assistant mà HA hiện KHÔNG có thì không báo: thiết bị đã xoá
+    # hay đổi tên thì báo "chết" là báo nhầm, mà tin cảnh báo in thẳng mã
+    # (`_mo_ta`). Đo 11/09/2026: mã 4 camera go2rtc của nhà mang mật khẩu dạng
+    # slug; `ha_client.get_states` đã ẩn chúng, lọc theo đó thì mã không ra tin.
+    from services import ha_client
+
+    con_trong_ha = {str(s.get("entity_id") or "") for s in (ha_client.get_states() or [])}
+    if con_trong_ha:
+        hong = [h for h in hong if not _MA_HA.fullmatch(str(h.get("thiet_bi") or ""))
+                or h.get("thiet_bi") in con_trong_ha]
+    # Chủ đề MQTT: cùng lẽ ấy với bản TỰ KHAI BÁO — nhánh có khai (Zigbee2MQTT) mà chủ đề không
+    # còn ai khai là thiết bị đã đổi tên hoặc bị gỡ. Chưa nhận bản khai nào (MQTT chưa nối) thì
+    # giữ nguyên, không đoán.
+    from services import mqtt_nha
+
+    con_khai, goc_khai = mqtt_nha.chu_de_con_khai()
+    hong = [h for h in hong if "/" not in str(h.get("thiet_bi") or "")
+            or str(h.get("thiet_bi")).split("/")[0] not in goc_khai or h.get("thiet_bi") in con_khai]
+
+    return hong
+
+
 def quet(so_ngay: int = 7) -> dict[str, Any]:
     """Soi thiết bị hỏng, cập nhật sổ, trả về những lỗi ĐẾN HẠN báo.
 
@@ -274,16 +301,7 @@ def quet(so_ngay: int = 7) -> dict[str, Any]:
         logger.warning({"event": "canh_bao_soi_loi", "error": str(exc)[:200]})
         return {"can_bao": [], "tong_hong": 0, "dang_im": 0, "loi": str(exc)[:200]}
 
-    # Mã dạng Home Assistant mà HA hiện KHÔNG có thì không báo: thiết bị đã xoá
-    # hay đổi tên thì báo "chết" là báo nhầm, mà tin cảnh báo in thẳng mã
-    # (`_mo_ta`). Đo 11/09/2026: mã 4 camera go2rtc của nhà mang mật khẩu dạng
-    # slug; `ha_client.get_states` đã ẩn chúng, lọc theo đó thì mã không ra tin.
-    from services import ha_client
-
-    con_trong_ha = {str(s.get("entity_id") or "") for s in (ha_client.get_states() or [])}
-    if con_trong_ha:
-        hong = [h for h in hong if not _MA_HA.fullmatch(str(h.get("thiet_bi") or ""))
-                or h.get("thiet_bi") in con_trong_ha]
+    hong = con_ton_tai(hong)
 
     with _khoa:
         so = _doc()

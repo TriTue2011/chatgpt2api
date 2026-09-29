@@ -60,6 +60,9 @@ _stop = threading.Event()
 _gia_tri: dict[str, tuple[Any, float]] = {}
 #: Bản khai đã đọc: tên thiết bị → {thực thể → mô tả}.
 _so_thiet_bi: dict[str, dict[str, dict[str, Any]]] = {}
+#: Chủ đề bản khai → (tên thiết bị, tên thực thể) — để gỡ đúng mục khi bản khai bị XOÁ (payload
+#: rỗng). Zigbee2MQTT đổi tên thiết bị là xoá bản khai tên cũ rồi đăng bản khai tên mới.
+_khai_theo_chu_de: dict[str, tuple[str, str]] = {}
 #: Nhánh gốc đã dò ra, để không đăng ký lại và để báo cho người dùng.
 _nhanh_goc: set[str] = set()
 _khoa_du_lieu = threading.Lock()
@@ -369,11 +372,17 @@ def _nap_tin(chu_de: str, payload: bytes, dang_ky) -> None:
     # Bản tự khai báo → dựng sổ thiết bị.
     if goc == "homeassistant" and chu_de.endswith("/config"):
         kq = doc_ban_khai(chu_de, payload)
-        if kq:
-            ten_tb, ten_tt, mo_ta = kq
-            with _khoa_du_lieu:
+        with _khoa_du_lieu:
+            cu = _khai_theo_chu_de.pop(chu_de, None)
+            if cu and cu[0] in _so_thiet_bi:
+                _so_thiet_bi[cu[0]].pop(cu[1], None)
+                if not _so_thiet_bi[cu[0]]:
+                    del _so_thiet_bi[cu[0]]
+            if kq:
+                ten_tb, ten_tt, mo_ta = kq
                 _so_thiet_bi.setdefault(ten_tb, {})[ten_tt] = mo_ta
-                _stats["thiet_bi"] = len(_so_thiet_bi)
+                _khai_theo_chu_de[chu_de] = (ten_tb, ten_tt)
+            _stats["thiet_bi"] = len(_so_thiet_bi)
 
 
 def _tao_client(cid: str = "c2a-mqtt"):
@@ -500,6 +509,18 @@ def stop() -> None:
 def _tu(s: str) -> set[str]:
     from services.agent.vi_text import fold
     return {t for t in re.split(r"[^0-9a-z]+", fold(s)) if t}
+
+
+def chu_de_con_khai() -> tuple[set[str], set[str]]:
+    """(chủ đề trạng thái đang được tự khai báo, nhánh gốc có tự khai báo).
+
+    Một chủ đề thuộc nhánh có tự khai báo mà không còn ai khai = thiết bị đã ĐỔI TÊN hoặc bị gỡ,
+    không phải thiết bị chết. Chủ máy 29/09/2026: "tôi đổi tên rồi sao trên c2a không theo" — tin
+    cảnh báo vẫn báo «zigbee2mqtt/Cảm biến phòng khách» chết 14 ngày dù radar vẫn chạy dưới tên
+    mới «Hiện diện phòng khách»."""
+    with _khoa_du_lieu:
+        doc = {str(m.get("doc") or "") for ents in _so_thiet_bi.values() for m in ents.values()} - {""}
+    return doc, {c.split("/")[0] for c in doc}
 
 
 def danh_sach_thiet_bi() -> list[dict[str, Any]]:
@@ -834,6 +855,7 @@ def _reset_for_tests() -> None:
     with _khoa_du_lieu:
         _gia_tri.clear()
         _so_thiet_bi.clear()
+        _khai_theo_chu_de.clear()
         _nhanh_goc.clear()
     _stats.update({"connected": False, "tin": 0, "thiet_bi": 0, "nhanh": 0,
                    "last_error": "", "reconnects": 0, "last_tin_ts": 0.0})
