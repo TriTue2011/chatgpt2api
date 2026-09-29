@@ -5180,6 +5180,18 @@ def _h_canh_bao_nha(args: dict, ctx: dict) -> dict:
             return {"text": f"Dạ, em thôi nhắc {n} lỗi đang báo. "
                             "Cái nào sửa xong hỏng lại thì em báo tiếp ạ."}
 
+        if viec in ("khong_phai_loi", "binh_thuong"):
+            if not ten:
+                return {"text": "Anh nói giúp em thiết bị nào không phải lỗi ạ?"}
+            kq = canh_bao_nha.khong_phai_loi(ten, str(args.get("truong") or "").strip(),
+                                             str(args.get("ly_do") or ""))
+            if not kq.get("ok"):
+                return {"text": f"Em chưa ghi được: {kq.get('error')}"}
+            return {"text": f"Dạ, em đã ghi vào sổ: {', '.join(kq['thiet_bi'])}"
+                            + (f" · {args.get('truong')}" if args.get("truong") else "")
+                            + " không phải lỗi — từ nay em không báo nữa. Anh muốn nhận lại thì "
+                              "bảo em «bật lại cảnh báo»."}
+
         if viec in ("bat_lai", "bo_im", "nhan_lai"):
             kq = canh_bao_nha.bo_im(ten)
             return {"text": f"Em bật lại {kq['da_bo_im']} cảnh báo rồi ạ."}
@@ -7246,19 +7258,28 @@ CAPABILITIES: dict[str, Capability] = {
     "canh_bao_nha": Capability(
         name="canh_bao_nha", risk=READ, handler=_h_canh_bao_nha,
         emoji="⚠️", label="Cảnh báo thiết bị nhà hỏng",
-        description=("Xem thiết bị nhà đang hỏng/đơ, hoặc TẮT nhắc khi người dùng "
-                     "nói «tôi biết rồi», «biết rồi», «thôi đừng nhắc nữa»."),
+        description=("Xem thiết bị nhà đang hỏng/đơ; TẮT nhắc khi người dùng nói «tôi biết "
+                     "rồi»; hoặc GHI NHỚ khi người dùng nói điều bị báo KHÔNG PHẢI LỖI («tôi "
+                     "không tắt chứ không phải đơ», «cái đó bình thường»)."),
         parameters={"type": "object", "properties": {
             "viec": {"type": "string",
-                     "description": "'xem' (mặc định) | 'im' khi người dùng bảo đã biết "
-                                    "| 'bat_lai' để nhận cảnh báo trở lại"},
+                     "description": "'xem' (mặc định) | 'im' khi người dùng bảo đã biết (chỉ im "
+                                    "lượt hỏng này) | 'khong_phai_loi' khi họ nói đó không phải "
+                                    "lỗi (từ nay không báo nữa) | 'bat_lai' để nhận cảnh báo trở lại"},
             "thiet_bi": {"type": "string",
-                         "description": "Tên thiết bị. Bỏ trống khi người dùng nói "
-                                        "chung chung ('biết rồi') — sẽ áp cho tất cả."}}},
+                         "description": "MÃ thiết bị chép đúng như trong tin cảnh báo (vd "
+                                        "'zigbee2mqtt/Phòng ngủ'). Bỏ trống khi người dùng nói "
+                                        "chung chung ('biết rồi') — chỉ dùng với 'im'."},
+            "truong": {"type": "string",
+                       "description": "Trường sau dấu «·» trong tin cảnh báo (vd 'state_l2'); "
+                                      "trống = cả thiết bị."},
+            "ly_do": {"type": "string", "description": "Lời người dùng giải thích, giữ nguyên ý."}}},
         workflow=("Người dùng nói «tôi biết rồi» ngay sau tin cảnh báo thì gọi với "
                   "viec='im'. Nói rõ tên thiết bị thì truyền thiet_bi, nói chung "
                   "chung thì bỏ trống. Nhớ nói lại cho họ yên tâm: sửa xong mà hỏng "
-                  "lại thì bot VẪN báo.")),
+                  "lại thì bot VẪN báo. Họ nói KHÔNG PHẢI LỖI thì gọi viec='khong_phai_loi' "
+                  "cho TỪNG mã trong tin — chỉ nói «em sẽ không coi là lỗi nữa» khi tool đã "
+                  "ghi xong.")),
     "create_automation": Capability(
         name="create_automation", risk=CHANGE, handler=_h_create_automation,
         emoji="⚙️", label="Tạo automation Home Assistant (tự viết + nạp + sửa lỗi)",

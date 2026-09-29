@@ -349,3 +349,33 @@ class CanhBaoTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KhongPhaiLoiTest(unittest.TestCase):
+    """Chủ máy 29/09/2026: "Tôi không tắt chứ không phải đơ" — bot phải GHI được, lần quét sau
+    không báo nữa; «bật lại cảnh báo» thì báo lại."""
+
+    def setUp(self) -> None:
+        import services.canh_bao_nha as m
+        self._tmp = TemporaryDirectory()
+        self.m = m
+        m._FILE = Path(self._tmp.name) / "canh_bao.json"
+        m.config.data.setdefault("mqtt", {})["canh_bao"] = {"bat": True}
+
+    def tearDown(self) -> None:
+        self.m._reset_for_tests()
+        self._tmp.cleanup()
+
+    def _quet(self, hong):
+        from services import lich_su_nha
+        with mock.patch.object(lich_su_nha, "soi_hong", return_value=hong):
+            return self.m.quet(7)
+
+    def test_ghi_khong_phai_loi_roi_bat_lai(self) -> None:
+        hong = [{"thiet_bi": "zigbee2mqtt/Phòng ngủ", "truong": "state_l2", "loai": "do", "chi_tiet": "x"},
+                {"thiet_bi": "zigbee2mqtt/Nhiệt ẩm bếp", "truong": "temperature", "loai": "do", "chi_tiet": "y"}]
+        self.assertEqual(len(self._quet(hong)["can_bao"]), 2)
+        self.assertTrue(self.m.khong_phai_loi("zigbee2mqtt/Phòng ngủ", "state_l2", "tôi không tắt")["ok"])
+        self.assertEqual(self._quet(hong)["tong_hong"], 1, "đã ghi không phải lỗi: không tính nữa")
+        self.m.bo_im("zigbee2mqtt/Phòng ngủ")
+        self.assertEqual(self._quet(hong)["tong_hong"], 2, "bật lại cảnh báo: báo lại")

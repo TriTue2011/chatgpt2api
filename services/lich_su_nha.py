@@ -1174,11 +1174,13 @@ def soi_hong(so_ngay: int = 7) -> list[dict[str, Any]]:
             so_ban_ghi[k] = so_ban_ghi.get(k, 0) + int(r["n"])
         g = _o_gop_giay()
         truoc: dict[tuple[str, str], tuple[float, float]] = {}
+        lien_tuc: set[tuple[str, str]] = set()
         for r in conn.execute("SELECT thiet_bi, truong, o_5p, nho, lon, n FROM so_do"
                               " ORDER BY thiet_bi, truong, o_5p"):
             k = (r["thiet_bi"], r["truong"])
             o = (float(r["nho"]), float(r["lon"]))
             so_ban_ghi[k] = so_ban_ghi.get(k, 0) + int(r["n"])
+            lien_tuc.add(k)
             if o[0] < o[1] or (k in truoc and truoc[k] != o):
                 t = float(r["o_5p"]) * g
                 doi.setdefault(k, set()).add(_ngay(t))
@@ -1205,6 +1207,12 @@ def soi_hong(so_ngay: int = 7) -> list[dict[str, Any]]:
             continue                    # từng im lâu như vậy rồi — chưa phải bất thường
         gt_cuoi, ts_tin = moi_nhat.get(k, (None, lan_doi))
         con_gui = now - ts_tin < _IM_HONG_GIAY
+        if con_gui and k not in lien_tuc:
+            # Trạng thái rời rạc (bật/tắt, ON/OFF) đứng yên mà thiết bị VẪN GỬI TIN là bình thường —
+            # không ai bấm. Chủ máy 29/09/2026 với "Aptomat điều hòa phòng ngủ", "Phòng ngủ ·
+            # state_l2" bị báo đơ: "Tôi không tắt chứ không phải đơ", "khi nào thiết bị không khả
+            # dụng, mất kết nối mới là đơ". Đơ chỉ còn cho SỐ ĐO liên tục (lux, nhiệt độ đứng im).
+            continue
         ra.append({
             "thiet_bi": k[0], "truong": k[1], "loai": "do" if con_gui else "chet",
             "chi_tiet": (f"vẫn gửi tin nhưng đứng yên ở \"{gt_cuoi}\" {im / 86400:.1f} ngày"

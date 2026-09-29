@@ -363,6 +363,18 @@ class LichSuNhaTest(unittest.TestCase):
             self.assertIn("cb_thua_thot", [x["thiet_bi"] for x in self.m.soi_hong(7)],
                           "im 48,5 giờ — lâu hơn mọi lần im cũ")
 
+    def test_soi_hong_trang_thai_dung_yen_ma_van_gui_tin_khong_phai_do(self) -> None:
+        """Chủ máy 29/09/2026: "Tôi không tắt chứ không phải đơ" — công tắc zigbee (trạng thái
+        ON/OFF) ngày nào cũng bật tắt, hôm nay không ai tắt mà thiết bị VẪN gửi tin: bình thường.
+        Im hẳn (mất kết nối) thì vẫn là chết."""
+        now = time.time()
+        for n in range(10, 1, -1):
+            self._ghi("mqtt", "zigbee2mqtt/Phòng ngủ", "state_l2", "ON", False, now - n * 86400)
+            self._ghi("mqtt", "zigbee2mqtt/Phòng ngủ", "state_l2", "OFF", False, now - n * 86400 + 3600)
+        self._ghi("mqtt", "zigbee2mqtt/Phòng ngủ", "state_l2", "ON", False, now - 86400 - 3000)
+        self._ghi("mqtt", "zigbee2mqtt/Phòng ngủ", "state_l2", "ON", False, now - 60)   # vẫn gửi tin
+        self.assertNotIn("zigbee2mqtt/Phòng ngủ", [x["thiet_bi"] for x in self.m.soi_hong(7)])
+
     def test_soi_hong_nghi_mot_ngay_giua_chung_khong_phai_lien_tuc(self) -> None:
         """Có một ngày không đổi trong 7 ngày trước lần đổi cuối thì chưa gọi là "đổi liên tục"."""
         self._doi_moi_ngay("cb_thua", "illuminance", 10, 7)   # im 48 giờ: trọn một ngày lịch

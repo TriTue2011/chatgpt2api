@@ -302,6 +302,10 @@ def quet(so_ngay: int = 7) -> dict[str, Any]:
         return {"can_bao": [], "tong_hong": 0, "dang_im": 0, "loi": str(exc)[:200]}
 
     hong = con_ton_tai(hong)
+    with _khoa:
+        khong = (_doc().get("khong_phai_loi") or {})
+    hong = [h for h in hong if f"{h.get('thiet_bi')}\x00{h.get('truong')}" not in khong
+            and f"{h.get('thiet_bi')}\x00" not in khong]
 
     with _khoa:
         so = _doc()
@@ -393,11 +397,37 @@ def im_di(thiet_bi: str, truong: str = "", loai: str = "") -> dict[str, Any]:
     return {"ok": True, "da_im": n}
 
 
+def khong_phai_loi(thiet_bi: str, truong: str = "", ly_do: str = "") -> dict[str, Any]:
+    """Chủ nhà nói điều bộ soi báo KHÔNG PHẢI LỖI (vd "tôi không tắt chứ không phải đơ") → ghi vào
+    sổ, từ nay không báo trường đó nữa (không truyền ``truong`` = cả thiết bị) cho tới khi chủ nhà
+    bảo bật lại (`bo_im`). Khác «tôi biết rồi» (`im_di`): cái kia chỉ im LƯỢT hỏng đang có.
+
+    Chủ máy 29/09/2026 hỏi bot "có hiểu và đưa vào học hỏi không" — trước đây bot trả lời «em sẽ
+    không coi đó là lỗi nữa» mà không có chỗ nào ghi, lần quét sau vẫn báo y nguyên."""
+    thiet_bi = str(thiet_bi or "").strip()
+    if not thiet_bi:
+        return {"ok": False, "error": "thiếu thiết bị"}
+    with _khoa:
+        so = _doc()
+        ds = so.setdefault("khong_phai_loi", {})
+        # Tên người dùng nói có thể là tên hiển thị — khớp với lỗi đang theo dõi theo mã hoặc đúng tên.
+        khop = sorted({k.split("\x00")[0] for k in (so.get("muc") or {}) if k.split("\x00")[0] == thiet_bi})
+        for tb in khop or [thiet_bi]:
+            ds[f"{tb}\x00{truong}"] = {"ly_do": str(ly_do or "")[:300], "luc": time.time()}
+        _ghi(so)
+    logger.info({"event": "canh_bao_khong_phai_loi", "thiet_bi": thiet_bi, "truong": truong})
+    return {"ok": True, "thiet_bi": khop or [thiet_bi]}
+
+
 def bo_im(thiet_bi: str = "") -> dict[str, Any]:
-    """Bật báo lại — cho nút «nhận lại cảnh báo» trên web."""
+    """Bật báo lại — cho nút «nhận lại cảnh báo» trên web. Gỡ cả dấu «không phải lỗi»."""
     n = 0
     with _khoa:
         so = _doc()
+        kpl = so.get("khong_phai_loi") or {}
+        for k in [k for k in kpl if not thiet_bi or k.split("\x00")[0] == thiet_bi]:
+            kpl.pop(k)
+            n += 1
         muc = so.get("muc") or {}
         for k, bg in muc.items():
             if thiet_bi and k.split("\x00")[0] != thiet_bi:
