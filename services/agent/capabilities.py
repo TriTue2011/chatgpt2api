@@ -1155,6 +1155,14 @@ def _h_kich_ban_nha(args: dict, ctx: dict) -> dict:
     if viec == "xem":
         lan = kich_ban_nha.so()["lan"]
         return {"text": lan[-1]["tom_tat"] if lan else "Em chưa dựng tình huống nào ạ."}
+    if viec == "cham":
+        lan = kich_ban_nha.so()["lan"]
+        if not lan or not args.get("so"):
+            return {"text": "Anh cho em số tình huống (số trong ngoặc [ ] ở tin TH) ạ."}
+        ok = kich_ban_nha.cham(int(args.get("lan") or lan[-1]["id"]), int(args["so"]), bool(args.get("dung")),
+                               cham_boi="chu_may", ghi_chu=str(args.get("noi_dung") or ""))
+        return {"text": "Dạ, em ghi lời anh làm bài học cho lần dựng sau." if ok
+                else "Em không thấy tình huống số đó ạ."}
     threading.Thread(target=kich_ban_nha.giai_va_bao, name="kich-ban-nha", daemon=True).start()
     return {"text": "Em đang dựng các tình huống đi lại trong nhà cho từng thiết bị theo sơ đồ nhà — xong em gửi "
                     "nhóm học hỏi, chỗ chưa chắc em hỏi anh từng câu ạ."}
@@ -7384,12 +7392,15 @@ CAPABILITIES: dict[str, Capability] = {
         emoji="🧭", label="Tình huống nhà — bot tự dựng và hỏi",
         description=("Bảo bot DỰNG / xét lại các TÌNH HUỐNG đi lại trong nhà cho các thiết bị theo sơ đồ nhà («tạo "
                      "tình huống», «xét các tình huống cho đèn trần») → viec='dung'. TRẢ LỜI câu hỏi «❓ KB<số> …» "
-                     "của bot → viec='tra_loi' (noi_dung = lời trả lời, so = số KB nếu nêu). Hỏi bot đã dựng "
-                     "được gì → viec='xem'."),
+                     "của bot → viec='tra_loi' (noi_dung = lời trả lời, so = số KB nếu nêu). Chấm một tình "
+                     "huống trong tin «🧭 TH<số>» («tình huống 3 sai, …») → viec='cham' (so = số tình huống, "
+                     "dung, noi_dung = lời chấm, lan = số TH nếu nêu). Hỏi bot đã dựng được gì → viec='xem'."),
         parameters={"type": "object", "properties": {
-            "viec": {"type": "string", "enum": ["dung", "tra_loi", "xem"]},
-            "noi_dung": {"type": "string", "description": "viec='tra_loi': lời chủ nhà, giữ đúng ý."},
-            "so": {"type": "integer", "description": "Số KB của câu hỏi nếu người dùng nêu."}},
+            "viec": {"type": "string", "enum": ["dung", "tra_loi", "cham", "xem"]},
+            "noi_dung": {"type": "string", "description": "Lời chủ nhà trả lời / chấm, giữ đúng ý."},
+            "so": {"type": "integer", "description": "Số KB của câu hỏi, hoặc số tình huống khi chấm."},
+            "dung": {"type": "boolean", "description": "viec='cham': nhận định của bot đúng hay sai."},
+            "lan": {"type": "integer", "description": "viec='cham': số TH của lần dựng nếu nêu."}},
             "required": ["viec"]}),
     "ghi_du_kien": Capability(
         name="ghi_du_kien", risk=READ, handler=_h_ghi_du_kien,

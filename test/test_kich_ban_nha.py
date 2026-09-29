@@ -52,7 +52,7 @@ def test_hoi_tung_cau_tra_loi_vao_so_do_roi_hoi_cau_ke(kb, monkeypatch):
                                                                               "Có bật khi đi vệ sinh đêm?", None]))
     kq = kb.giai_va_bao()
     assert kq["ok"] and len(kb.tin) == 2
-    assert "✗1" in kb.tin[0] and "✗ tình huống 0 → nên tắt" in kb.tin[0]
+    assert "✗1" in kb.tin[0] and "✗ [1] tình huống 0 → nên tắt" in kb.tin[0]
     assert kb.tin[1].startswith("❓ KB1 (Đèn phòng ngủ — tình huống 0)") and "còn 1 câu" in kb.tin[1]
     assert kb.tra_loi("Có, radar giữ được") == "Dạ, em ghi KB1."
     assert kb.tin[-1].startswith("❓ KB2")
@@ -67,3 +67,17 @@ def test_hoi_tung_cau_tra_loi_vao_so_do_roi_hoi_cau_ke(kb, monkeypatch):
     assert "Hết câu hỏi" in kb.tra_loi("Không bật")
     assert kb.tra_loi("gì đó") == "Em không có câu hỏi tình huống nào đang chờ ạ."
     json.dumps(kb.so())
+
+
+def test_cham_tinh_huong_vao_de_lan_sau(kb, monkeypatch):
+    from services import thoi_quen_nha
+    monkeypatch.setattr(thoi_quen_nha, "_hoi_bot", lambda ht, m, h, de: _bai([None, None]))
+    kq = kb.giai()
+    assert kb.cham(kq["id"], 1, False, cham_boi="claude", ghi_chu="số đo bác bỏ: 13% < 20%")
+    assert not kb.cham(kq["id"], 9, False, cham_boi="claude", ghi_chu="x")
+    with pytest.raises(ValueError):
+        kb.cham(kq["id"], 1, True, cham_boi="ai_do", ghi_chu="")
+    de: list[str] = []
+    monkeypatch.setattr(thoi_quen_nha, "_hoi_bot", lambda ht, m, h, d: de.append(d) or _bai([None]))
+    kb.giai()
+    assert "F. LỜI CHẤM" in de[0] and "(giáo viên chấm SAI)" in de[0] and "13% < 20%" in de[0]

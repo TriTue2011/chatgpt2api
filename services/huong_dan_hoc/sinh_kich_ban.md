@@ -83,6 +83,10 @@ khoá (giúp việc, người thân, thợ) → hỏi có những ai như vậy 
 đa 8 câu cả bài; ưu tiên câu ảnh hưởng nhiều thiết bị hoặc tình huống xảy ra
 hằng ngày. Tình huống `khong_ro` thì phải có `hoi`.
 
+Mục F (lời chấm lần trước) là bài học: tình huống bị chấm SAI thì đừng kết luận
+như cũ nữa — sửa đúng chỗ lời chấm chỉ ra (vd số đo bác bỏ nhận định, tên thiết
+bị hiểu nhầm).
+
 Sơ đồ ghi "CHƯA chấm": dùng nó nhưng điều gì trong sơ đồ quyết định tình huống
 mà em nghi ngờ thì hỏi.
 

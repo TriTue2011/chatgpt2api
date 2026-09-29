@@ -818,6 +818,19 @@ def create_router() -> APIRouter:
         except Exception as exc:
             return _loi(exc, "dựng tình huống")
 
+    @router.post("/api/hoc-hoi/kich-ban/cham")
+    async def kich_ban_cham(body: dict, authorization: str | None = Header(default=None)):
+        """Chấm một tình huống. body: {lan, stt, dung, ghi_chu, cham_boi?}."""
+        require_admin(authorization)
+        from services import kich_ban_nha
+        try:
+            ok = kich_ban_nha.cham(int(body.get("lan") or 0), int(body.get("stt") or 0), bool(body.get("dung")),
+                                   cham_boi=str(body.get("cham_boi") or "chu_may"),
+                                   ghi_chu=str(body.get("ghi_chu") or ""))
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": ok} if ok else {"ok": False, "error": "Không có tình huống đó."}
+
     # ── Cảm biến ghép: bot tự tính từ cảm biến gốc (`cam_bien_ghep`) ──
     @router.get("/api/hoc-hoi/cam-bien-ghep")
     async def cam_bien_ghep_ds(authorization: str | None = Header(default=None)):

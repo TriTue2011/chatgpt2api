@@ -147,7 +147,7 @@ def do() -> dict[str, Any]:
                 "viec": _viec_dang_cai(tb, cd, d["mo_hinh"].get(tb) or {}, ten)}
            for tb, cd in sorted(d["thiet_bi"].items()) if cd.get("bat")}
     return {"so_do": so_do_nha.doc(s) if s else "", "so_do_chac": bool(ap), "phong": phong, "nguoi": nguoi,
-            "thiet_bi": tbs,
+            "thiet_bi": tbs, "cham": so().get("cham") or [],
             "mo_ta": [x["noi_dung"] for x in so_do["mo_ta"]]}
 
 
@@ -167,7 +167,31 @@ def de(uv: dict[str, Any], da_hoi: list[dict[str, Any]]) -> str:
     if da_hoi:
         dong += ["\nE. ĐÃ HỎI CHỦ NHÀ (đừng hỏi lại câu đã có trả lời):"]
         dong += [f"- {x['cau']} → {x.get('tra_loi') or '(chưa trả lời)'}" for x in da_hoi[-20:]]
+    if uv.get("cham"):
+        dong += ["\nF. LỜI CHẤM các lần dựng trước (bài học — đừng lặp lại chỗ bị chấm sai):"]
+        dong += [f"- ({'chủ nhà' if x['cham_boi'] == 'chu_may' else 'giáo viên'} chấm "
+                 f"{'ĐÚNG' if x['dung'] else 'SAI'}) {x['thiet_bi']} — «{x['tinh_huong']}»: {x['ghi_chu']}"
+                 for x in uv["cham"][-15:]]
     return "\n".join(dong)
+
+
+def cham(lan_id: int, so_thu_tu: int, dung: bool, *, cham_boi: str, ghi_chu: str) -> bool:
+    """Chấm MỘT tình huống của một lần dựng (số thứ tự từ 1 như trong sổ). Lời chấm vào đề lần sau (mục F)."""
+    if cham_boi not in ("chu_may", "claude"):
+        raise ValueError("cham_boi là chu_may hoặc claude")
+    with _khoa:
+        d = _nap()
+        lan = next((x for x in d["lan"] if x["id"] == int(lan_id)), None)
+        if lan is None or not 1 <= int(so_thu_tu) <= len(lan["kich_ban"]):
+            return False
+        x = lan["kich_ban"][int(so_thu_tu) - 1]
+        d.setdefault("cham", []).append({"luc": time.time(), "lan": int(lan_id), "stt": int(so_thu_tu),
+                                         "thiet_bi": x["thiet_bi"], "tinh_huong": x["tinh_huong"],
+                                         "dung": bool(dung), "cham_boi": cham_boi,
+                                         "ghi_chu": str(ghi_chu or "")[:400]})
+        d["cham"] = d["cham"][-50:]
+        _luu(d)
+    return True
 
 
 def kiem(data: Any, uv: dict[str, Any]) -> dict[str, Any] | str:
@@ -244,14 +268,15 @@ def gui_cau_tiep() -> str:
 def bao(kq: dict[str, Any]) -> str:
     """Tin tóm tắt ngắn: mỗi thiết bị mấy tình huống đúng / sai / chưa rõ, và những chỗ sai."""
     ten = {tb: x["ten"] for tb, x in kq["uv"]["thiet_bi"].items()}
-    dong = [f"🧭 Em đã dựng {len(kq['kich_ban'])} tình huống từ sơ đồ nhà:"]
+    dong = [f"🧭 TH{kq['id']} — em đã dựng {len(kq['kich_ban'])} tình huống từ sơ đồ nhà:"]
     for tb in kq["uv"]["thiet_bi"]:
-        ds = [x for x in kq["kich_ban"] if x["thiet_bi"] == tb]
+        ds = [(i + 1, x) for i, x in enumerate(kq["kich_ban"]) if x["thiet_bi"] == tb]
         if not ds:
             continue
-        dem = {h: sum(1 for x in ds if x["hien_tai"] == h) for h in HIEN_TAI}
+        dem = {h: sum(1 for _, x in ds if x["hien_tai"] == h) for h in HIEN_TAI}
         dong.append(f"• {ten[tb]}: ✓{dem['dung']} ✗{dem['sai']} ?{dem['khong_ro']}")
-        dong += [f"   ✗ {x['tinh_huong']} → nên {_NEN_DOC[x['nen']]}" for x in ds if x["hien_tai"] == "sai"][:3]
+        dong += [f"   ✗ [{i}] {x['tinh_huong']} → nên {_NEN_DOC[x['nen']]}" for i, x in ds if x["hien_tai"] == "sai"][:3]
+    dong.append("Em nhận định sai chỗ nào anh nói, vd «tình huống 3 sai, quạt đó ...» — em ghi làm bài học.")
     return "\n".join(dong)
 
 
