@@ -792,6 +792,28 @@ def create_router() -> APIRouter:
         result = account_service.add_accounts_with_type(tokens, account_type)
         return {"items": result.get("items", []), "added": result.get("added", 0), "skipped": result.get("skipped", 0)}
 
+    @router.post("/api/accounts/openai-hang-loat")
+    async def openai_hang_loat_bat_dau(body: dict, authorization: str | None = Header(default=None)):
+        """Đăng nhập lần lượt danh sách tài khoản OpenAI gốc. body: {danh_sach: "email|mật khẩu|TOTP" mỗi dòng}."""
+        require_admin(authorization)
+        from services import openai_hang_loat
+        try:
+            return openai_hang_loat.bat_dau(str(body.get("danh_sach") or ""))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)})
+
+    @router.get("/api/accounts/openai-hang-loat")
+    async def openai_hang_loat_trang_thai(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        from services import openai_hang_loat
+        return openai_hang_loat.trang_thai()
+
+    @router.post("/api/accounts/openai-hang-loat/dung")
+    async def openai_hang_loat_dung(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        from services import openai_hang_loat
+        return openai_hang_loat.dung()
+
     @router.delete("/api/accounts")
     async def delete_accounts(body: AccountDeleteRequest, authorization: str | None = Header(default=None)):
         require_admin(authorization)

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { request } from "@/lib/request";
 import { SavedAccountsSelect } from "@/components/saved-accounts-select";
 
@@ -263,6 +264,8 @@ export function OpenAINativeCard() {
           )}
         </div>
 
+        <HangLoat />
+
         {tt && (
           <div className="rounded-lg bg-[var(--secondary)]/50 px-3 py-2 space-y-1">
             <p className="text-[11px] text-[var(--foreground)]">
@@ -291,5 +294,103 @@ export function OpenAINativeCard() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+type DongHangLoat = { email: string; state: string; message: string; luc: number };
+
+const NHAN_HANG_LOAT: Record<string, string> = {
+  cho: "chờ", dang_nhap: "đang đăng nhập", xong: "xong", da_co: "đã có",
+  loi: "lỗi", bo: "bỏ",
+};
+
+/**
+ * Đăng nhập HÀNG LOẠT: xong một tài khoản mới sang tài khoản kế (chủ máy 29/09/2026). Vòng lặp
+ * chạy trên máy chủ (`services/openai_hang_loat.py`) — đóng trang vẫn chạy tiếp; ở đây chỉ gửi
+ * danh sách và xem trạng thái. Mật khẩu không bao giờ quay về trình duyệt.
+ */
+function HangLoat() {
+  const [ds, setDs] = useState("");
+  const [tt, setTt] = useState<{ dang_chay: boolean; ds: DongHangLoat[] } | null>(null);
+
+  const tai = useCallback(async () => {
+    try {
+      const r = await request.get("/api/accounts/openai-hang-loat");
+      setTt(r.data);
+    } catch { /* mất mạng một nhịp — lần sau thử lại */ }
+  }, []);
+
+  useEffect(() => { tai(); }, [tai]);
+  useEffect(() => {
+    if (!tt?.dang_chay) return;
+    const id = window.setInterval(tai, 4000);
+    return () => window.clearInterval(id);
+  }, [tt?.dang_chay, tai]);
+
+  const batDau = async () => {
+    try {
+      const r = await request.post("/api/accounts/openai-hang-loat", { danh_sach: ds });
+      setTt(r.data);
+      setDs("");
+      toast.success(`Bắt đầu đăng nhập ${r.data?.ds?.length || 0} tài khoản`);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail?.error || e?.message || "Không bắt đầu được");
+    }
+  };
+
+  const dung = async () => {
+    try {
+      const r = await request.post("/api/accounts/openai-hang-loat/dung", {});
+      setTt(r.data);
+    } catch (e: any) {
+      toast.error(e?.message || "Không dừng được");
+    }
+  };
+
+  const xong = tt?.ds.filter((x) => x.state === "xong").length || 0;
+  return (
+    <div className="space-y-2 rounded-lg border border-[var(--border)] p-3">
+      <p className="text-[11px] font-semibold text-emerald-900">Đăng nhập hàng loạt</p>
+      <Textarea
+        value={ds}
+        onChange={(e) => setDs(e.target.value)}
+        placeholder={"email1@gmail.com|mật khẩu|hạt giống TOTP\nemail2@icloud.com|mật khẩu|hạt giống TOTP"}
+        className="min-h-[96px] rounded-lg font-mono text-base sm:text-xs"
+        disabled={!!tt?.dang_chay}
+      />
+      <p className="text-[10px] text-[var(--muted-foreground)]">
+        Mỗi dòng <code>email|mật khẩu|TOTP</code>. Máy chủ đăng nhập lần lượt: xong một tài khoản,
+        nghỉ 30 giây rồi sang tài khoản kế; tài khoản đã có trong pool và còn dùng được thì bỏ qua;
+        hai tài khoản liền nhau hỏng thì dừng cả hàng. Đóng trang vẫn chạy tiếp.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button onClick={batDau} disabled={!!tt?.dang_chay || !ds.trim()} className="h-8 rounded-lg text-xs">
+          {tt?.dang_chay ? <LoaderCircle className="mr-2 size-3.5 animate-spin" /> : null}
+          Đăng nhập lần lượt
+        </Button>
+        {tt?.dang_chay && (
+          <Button variant="secondary" onClick={dung} className="h-8 rounded-lg text-xs">
+            <X className="mr-1 size-3.5" /> Dừng
+          </Button>
+        )}
+        {!!tt?.ds.length && (
+          <span className="text-[11px] text-[var(--muted-foreground)]">
+            {xong}/{tt.ds.length} xong
+          </span>
+        )}
+      </div>
+      {!!tt?.ds.length && (
+        <ul className="space-y-0.5">
+          {tt.ds.map((x) => (
+            <li key={x.email} className="text-[11px] break-words">
+              <b className={x.state === "loi" ? "text-rose-600" : x.state === "xong" ? "text-emerald-700" : ""}>
+                {NHAN_HANG_LOAT[x.state] || x.state}
+              </b>{" "}
+              <span className="font-mono">{x.email}</span> — {x.message}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
