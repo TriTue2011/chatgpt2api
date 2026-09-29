@@ -257,3 +257,105 @@ def test_cat_adts_giu_phan_do():
     k = bytes([0xFF, 0xF1, 0x50, 0x80, 0x01, 0x5F, 0xFC]) + b"x" * 3   # khung dài 10
     ra, con = lc.cat_adts(k + k + k[:4])
     assert ra == [k, k] and con == k[:4]
+
+
+# ── EZVIZ / Hikvision qua HCNetSDK (29/09/2026) ──────────────────────────────
+#
+# Đo thật trên H6C: đăng nhập 0,6–1,3 s, mở kênh 0,02–0,27 s; vừa đóng kênh thì ~1,24 s sau mới
+# mở lại được, sớm hơn camera báo "(mã 29)". Tiến trình con giả dưới đây nói đúng giao thức của
+# ``services/hik_noi.py``; ffmpeg giả nhả một khung ADTS cho mỗi 2048 byte PCM.
+
+_ADTS = bytes([0xFF, 0xF1, 0x60, 0x40, 0x01, 0x5F, 0xFC]) + b"a" * 3      # một khung dài 10
+
+
+@pytest.fixture
+def hik_gia(tmp_path, monkeypatch):
+    import sys as _sys
+
+    nhat_ky = tmp_path / "nhat_ky.txt"
+    tro_giup = tmp_path / "hik_noi_gia.py"
+    tro_giup.write_text(f"""
+import os, struct, sys
+bao = os.fdopen(os.dup(1), "w", buffering=1)
+if os.environ.get("HIK_MK") == "sai":
+    bao.write("LOI đăng nhập cổng 8000 không được (mã 1)\\n"); sys.exit(3)
+nk = open({str(nhat_ky)!r}, "a", buffering=1)
+nk.write("dang_nhap\\n")
+bao.write("SAN AAC 16000\\n")
+ban = int(os.environ.get("HIK_BAN", "0"))
+mo, n = False, 0
+while len(d := sys.stdin.buffer.read(4)) == 4:
+    k = struct.unpack(">I", d)[0]
+    if k == 0xFFFFFFFF:
+        if ban:
+            ban -= 1; bao.write("LOI camera không mở kênh đàm thoại (mã 29)\\n"); continue
+        mo, n = True, 0; bao.write("OK\\n")
+    elif k == 0:
+        if mo: nk.write(f"luot {{n}}\\n")
+        mo = False; bao.write("DONG\\n")
+    else:
+        sys.stdin.buffer.read(k); n += 1
+nk.write("dang_xuat\\n")
+""")
+    ffmpeg = tmp_path / "bin" / "ffmpeg"
+    ffmpeg.parent.mkdir()
+    ffmpeg.write_text(f"#!{_sys.executable}\nimport sys\n"
+                      f"while d := sys.stdin.buffer.read(2048):\n"
+                      f"    sys.stdout.buffer.write({_ADTS!r}); sys.stdout.buffer.flush()\n")
+    ffmpeg.chmod(0o755)
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    (lib / "libhcnetsdk.so").write_bytes(b"")
+    monkeypatch.setenv("PATH", f"{ffmpeg.parent}:{os.environ['PATH']}")
+    monkeypatch.setattr(lc, "_HIK_NOI", tro_giup)
+    monkeypatch.setattr(lc, "thu_muc_hik", lambda: lib)
+    lc._hik.clear()
+    yield lambda: nhat_ky.read_text().split("\n")[:-1] if nhat_ky.exists() else []
+    for tg in list(lc._hik.values()):
+        tg.close()
+    lc._hik.clear()
+
+
+def _luot(ip="10.0.0.9", mk="MA"):
+    k = lc.mo_kenh(ip, "admin", mk, "hik")
+    assert k.tan_so == 16000
+    k.phat_pcm(b"\x00\x01" * 2048)           # 4096 byte → 2 khung
+    k.dong()
+
+
+def test_hik_giu_dang_nhap_giua_cac_luot(hik_gia):
+    for _ in range(3):
+        _luot()
+    lc._hik.pop("10.0.0.9").close()
+    assert hik_gia() == ["dang_nhap", "luot 2", "luot 2", "luot 2", "dang_xuat"]
+
+
+def test_hik_camera_chua_nha_kenh_thi_cho_roi_mo_lai(hik_gia, monkeypatch):
+    monkeypatch.setenv("HIK_BAN", "2")
+    _luot()
+    assert hik_gia() == ["dang_nhap", "luot 2"]
+
+
+def test_hik_tien_trinh_chet_thi_dang_nhap_lai(hik_gia):
+    _luot()
+    lc._hik["10.0.0.9"].p.kill()
+    lc._hik["10.0.0.9"].p.wait()
+    _luot()
+    assert hik_gia() == ["dang_nhap", "luot 2", "dang_nhap", "luot 2"]
+
+
+def test_hik_sai_mat_khau_bao_ro(hik_gia):
+    with pytest.raises(lc.LoiLoa, match="mã 1"):
+        lc.mo_kenh("10.0.0.9", "admin", "sai", "hik")
+
+
+def test_hik_chua_co_sdk_bao_cach_cai(tmp_path, monkeypatch):
+    monkeypatch.setattr(lc, "thu_muc_hik", lambda: tmp_path)
+    lc._hik.clear()
+    with pytest.raises(lc.LoiLoa, match="Device Network SDK"):
+        lc.mo_kenh("10.0.0.9", "admin", "MA", "hik")
+
+
+def test_kieu_loa_mac_dinh_la_imou():
+    assert lc.kieu_loa({}) == "" and lc.kieu_loa({"loa_kieu": "hik"}) == "hik"
+    assert lc.kieu_loa({"loa_kieu": "la"}) == ""

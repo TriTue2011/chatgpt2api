@@ -16,6 +16,11 @@ Bộ đàm (mic điện thoại qua thẻ WebRTC Camera của HA → loa camera)
 ``GET  /api/camera/bo_dam/{ten}/go2rtc``  dòng ``exec:`` để dán vào go2rtc.yaml
 ``POST /api/camera/bo_dam/{ten}``         go2rtc đẩy luồng A-law 8 kHz tới đây
 
+Xem trực tiếp trong web c2a (khung bộ đàm):
+
+``POST /api/camera/xem/{ten}/ve``         vé dùng một lần cho thẻ ``<img>`` (không gửi được header)
+``GET  /api/camera/xem/{ten}?ve=``        MJPEG ~8 khung/giây, rộng 640 — luồng phụ nếu có khai
+
 Bộ đàm ngay trong web c2a (không cần HA):
 
 ``POST /api/camera/bo_dam/{ten}/ve``      vé dùng một lần, sống 60 giây
@@ -35,6 +40,7 @@ import asyncio
 import base64
 
 from fastapi import APIRouter, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse
 
 from api.support import require_admin
 # Logger của dự án: ``logging.getLogger(__name__)`` không có handler, mọi dòng bị nuốt.
@@ -147,6 +153,55 @@ def create_router() -> APIRouter:
                          "muc_max_db": round(phien.muc_max_db, 1), "loi": phien.loi[:120]})
         return {"ok": True, "giay": round(phien.giay, 1)}
 
+    @router.post("/api/camera/xem/{ten}/ve")
+    async def xem_ve(ten: str, request: Request, authorization: str | None = Header(default=None)):
+        """Vé xem trực tiếp một camera — thẻ ``<img>`` không gửi được header."""
+        identity = require_admin(authorization)
+        from services.sse_ticket import kho_ve
+
+        ve, ttl = kho_ve.cap({**identity, "xem": ten}, _phien_bam(request))
+        return {"ok": True, "ticket": ve, "expires_in": ttl}
+
+    @router.get("/api/camera/xem/{ten}")
+    async def xem(ten: str, request: Request, ve: str = ""):
+        """MJPEG trực tiếp của camera ``ten`` (``multipart/x-mixed-replace``).
+
+        Trình duyệt mở c2a bằng https không gọi thẳng được go2rtc (http, mạng LAN), nên c2a
+        đọc luồng (qua go2rtc hoặc RTSP thẳng) và chuyển thành ảnh JPEG liên tục — thẻ
+        ``<img>`` nào cũng xem được. ffmpeg dừng ngay khi trình duyệt đóng.
+        """
+        from services import camera_nha
+        from services.sse_ticket import kho_ve
+
+        danh_tinh = kho_ve.dung(ve, _phien_bam(request))
+        if not danh_tinh or danh_tinh.get("xem") != ten:
+            raise HTTPException(401, "vé xem không hợp lệ hoặc đã dùng")
+        try:
+            _ten_that, cam = await asyncio.to_thread(camera_nha._lay, ten)
+            url = await asyncio.to_thread(camera_nha.url_luong, ten,
+                                          "phu" if camera_nha.co_luong_phu(cam) else "chinh")
+        except camera_nha.LoiCamera as exc:
+            raise HTTPException(404, str(exc)) from exc
+        proc = await asyncio.create_subprocess_exec(
+            *lenh_mjpeg(url), stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL, stdin=asyncio.subprocess.DEVNULL)
+
+        async def phat():
+            du = b""
+            try:
+                while b := await proc.stdout.read(65536):
+                    anh, du = cat_jpeg(du + b)
+                    for a in anh:
+                        yield (b"--khung\r\nContent-Type: image/jpeg\r\nContent-Length: "
+                               + str(len(a)).encode() + b"\r\n\r\n" + a + b"\r\n")
+            finally:
+                if proc.returncode is None:
+                    proc.kill()
+                    await proc.wait()
+
+        return StreamingResponse(phat(), media_type="multipart/x-mixed-replace; boundary=khung",
+                                 headers={"Cache-Control": "no-store"})
+
     @router.post("/api/camera/bo_dam/{ten}/ve")
     async def bo_dam_ve(ten: str, request: Request,
                         authorization: str | None = Header(default=None)):
@@ -220,6 +275,34 @@ def create_router() -> APIRouter:
                          "muc_max_db": round(phien.muc_max_db, 1), "loi": phien.loi[:120]})
 
     return router
+
+
+#: Xem trực tiếp: khung/giây và bề ngang ảnh — đủ nhìn người đứng trước camera, nhẹ máy chủ.
+_XEM_KHUNG_GIAY = 8
+_XEM_RONG = 640
+
+
+def lenh_mjpeg(url: str) -> list[str]:
+    """ffmpeg đọc luồng RTSP → chuỗi JPEG liền nhau (mỗi khung một ảnh trọn)."""
+    return ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+            "-rtsp_transport", "tcp", "-fflags", "nobuffer", "-flags", "low_delay", "-i", url,
+            "-an", "-vf", f"fps={_XEM_KHUNG_GIAY},scale={_XEM_RONG}:-2", "-q:v", "7",
+            "-f", "image2pipe", "-c:v", "mjpeg", "pipe:1"]
+
+
+def cat_jpeg(du: bytes) -> tuple[list[bytes], bytes]:
+    """Tách các ảnh JPEG trọn (FFD8…FFD9) khỏi dòng byte; phần dở trả lại. Trong dữ liệu ảnh
+    byte FF luôn được chèn 00 phía sau, nên FFD9 chỉ xuất hiện ở cuối ảnh."""
+    anh = []
+    while True:
+        a = du.find(b"\xff\xd8")
+        if a < 0:
+            return anh, b""
+        b = du.find(b"\xff\xd9", a + 2)
+        if b < 0:
+            return anh, du[a:]
+        anh.append(du[a:b + 2])
+        du = du[b + 2:]
 
 
 def _phien_bam(conn) -> str:

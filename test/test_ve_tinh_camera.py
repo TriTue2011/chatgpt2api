@@ -444,3 +444,12 @@ def test_tu_goi_khong_phai_tieng_nguoi_thi_bo():
     assert asyncio.run(chay([])) == 0                  # VAD không thấy tiếng người
     assert asyncio.run(chay([(0.2, 1.0)])) == 1
     assert asyncio.run(chay(None)) == 1                # chưa có model VAD: tin mô hình từ gọi
+
+
+def test_lenh_mic_camera_rtsp_doc_thang_luong_phu():
+    """Camera khai kiểu RTSP (vd EZVIZ không qua go2rtc): mic đọc thẳng URL, luồng phụ nếu có."""
+    lenh = vt._lenh_mic({"kind": "rtsp", "url": "rtsp://a:b@10.0.0.9:554/Streaming/Channels/101",
+                         "url_ai": "rtsp://a:b@10.0.0.9:554/Streaming/Channels/102"})
+    i = lenh.index("-i")
+    assert lenh[i - 2:i] == ["-rtsp_transport", "tcp"]
+    assert lenh[i + 1].endswith("/Channels/102")

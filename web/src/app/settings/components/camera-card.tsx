@@ -17,13 +17,13 @@
  * xem được camera và tắt một nơi thì nơi kia im lặng không báo gì.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useSettingsStore } from "../store";
 import { request } from "@/lib/request";
-import { BoDamCamera } from "./bo-dam-camera";
+import { BoDamCamera, noiDuoc } from "./bo-dam-camera";
 
 type Cam = {
   kind: "go2rtc" | "rtsp";
@@ -43,7 +43,11 @@ type Cam = {
   tro_ly_che_do?: CheDo;
   tu_goi?: string;                 // "" = để HA bắt từ gọi (chỉ ở chế độ "ha")
   do_nhay?: "thap" | "vua" | "cao";
+  // Cách nói ra loa: "" = Imou/Dahua (cổng 8086 → 37777), "hik" = EZVIZ/Hikvision qua HCNetSDK
+  // cổng 8000 (services/loa_camera.py — thư viện SDK chép vào data/hcnetsdk/lib).
+  loa_kieu?: "" | "hik";
 };
+
 
 type CheDo = "tat" | "ha" | "c2a";
 type TroLy = {
@@ -67,7 +71,7 @@ const cheDo = (c: Cam): CheDo =>
     ? c.tro_ly_che_do : (c.cho_nghe === true ? "ha" : "tat");
 
 const RONG: Cam = { kind: "go2rtc", base: "", src: "", url: "", src_ai: "", url_ai: "",
-                    username: "", password: "", note: "", ve_tinh_cong: "" };
+                    username: "", password: "", note: "", ve_tinh_cong: "", loa_kieu: "" };
 
 export function CameraCard() {
   const config = useSettingsStore((s) => s.config);
@@ -89,6 +93,8 @@ export function CameraCard() {
   const [boDam, setBoDam] = useState("");        // camera đang mở bộ đàm
   const [dongHa, setDongHa] = useState<{ ten: string; nguon: string } | null>(null);
   const [troLy, setTroLy] = useState<TroLy | null>(null);
+  // Ổn định qua các lần vẽ: khung bộ đàm gắn/gỡ bộ nghe «trang bị ẩn» theo hàm này.
+  const dongBoDam = useCallback(() => setBoDam(""), []);
 
   useEffect(() => {
     const c = ((config as any)?.cameras as Record<string, Cam>) || {};
@@ -154,7 +160,8 @@ export function CameraCard() {
     const veTinh = { ve_tinh_cong: cong ? cong : ("" as const), cho_nghe: cu.cho_nghe === true,
                      cho_loa: cu.cho_loa !== false,
                      mic_tang_db: Number(cu.mic_tang_db || 0),
-                     tro_ly_che_do: cheDo(cu), tu_goi: cu.tu_goi || "", do_nhay: cu.do_nhay || "vua" };
+                     tro_ly_che_do: cheDo(cu), tu_goi: cu.tu_goi || "", do_nhay: cu.do_nhay || "vua",
+                     loa_kieu: moi.loa_kieu === "hik" ? ("hik" as const) : ("" as const) };
     const ban: Cam = moi.kind === "go2rtc"
       ? { kind: "go2rtc", base: moi.base!.trim().replace(/\/+$/, ""), src: moi.src!.trim(),
           src_ai: moi.src_ai?.trim() || "",
@@ -259,6 +266,16 @@ export function CameraCard() {
       </CardHeader>
       <CardContent className="space-y-4">
 
+        {ds.some(([, c]) => noiDuoc(c)) && !boDam ? (
+          <Button size="sm" title="Xem trực tiếp và nói ra loa camera — chọn camera trong khung"
+            onClick={() => setBoDam(ds.find(([, c]) => noiDuoc(c))![0])}>
+            📞 Bộ đàm
+          </Button>
+        ) : null}
+        {boDam && cams[boDam] ? (
+          <BoDamCamera cams={cams} ten={boDam} doiTen={setBoDam} onClose={dongBoDam} />
+        ) : null}
+
         {/* ── Danh sách camera đã khai ─────────────────────────────────── */}
         <div className="space-y-2">
           {ds.length === 0 && (
@@ -344,10 +361,10 @@ export function CameraCard() {
                 ) : null}
               </span>
               <div className="ml-auto flex flex-wrap gap-1">
-                {c.ve_tinh_cong ? (
+                {noiDuoc(c) ? (
                   <>
                     <Button size="sm" variant={boDam === t ? "default" : "outline"}
-                      title="Nghe camera và giữ nút để nói ra loa camera"
+                      title="Xem trực tiếp, nghe camera và nói ra loa camera"
                       onClick={() => setBoDam(boDam === t ? "" : t)}>
                       📞 Bộ đàm
                     </Button>
@@ -370,10 +387,6 @@ export function CameraCard() {
             </div>
           ))}
         </div>
-
-        {boDam && cams[boDam] ? (
-          <BoDamCamera key={boDam} ten={boDam} onClose={() => setBoDam("")} />
-        ) : null}
 
         {dongHa ? (
           <div className="rounded border border-border/70 p-3 space-y-2">
@@ -499,6 +512,21 @@ export function CameraCard() {
 
           <Input value={moi.note || ""} onChange={(e) => setMoi({ ...moi, note: e.target.value })}
             placeholder="Ghi chú — cũng dùng để nhận tên, vd: cổng ngoài, chỗ để xe" />
+          <div className="flex flex-wrap items-center gap-2">
+            <select className="h-9 rounded border border-input bg-background px-2 text-base sm:text-sm"
+              value={moi.loa_kieu || ""}
+              onChange={(e) => setMoi({ ...moi, loa_kieu: e.target.value as Cam["loa_kieu"] })}>
+              <option value="">🔊 Loa: Imou / Dahua (cổng 8086 / 37777)</option>
+              <option value="hik">🔊 Loa: EZVIZ / Hikvision (HCNetSDK cổng 8000)</option>
+            </select>
+            {moi.loa_kieu === "hik" ? (
+              <span className="text-xs text-muted-foreground">
+                Cần thư viện «Device Network SDK (Linux 64-bit)» của Hikvision: chép thư mục{" "}
+                <code>lib</code> vào <code>data/hcnetsdk/lib</code> của c2a. Tài khoản{" "}
+                <code>admin</code> + mã xác minh lấy từ URL RTSP / luồng go2rtc của camera.
+              </span>
+            ) : null}
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <Input className="w-40" inputMode="numeric" value={String(moi.ve_tinh_cong ?? "")}
               onChange={(e) => setMoi({ ...moi, ve_tinh_cong: e.target.value.replace(/\D/g, "") as any })}

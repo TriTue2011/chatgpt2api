@@ -1,4 +1,4 @@
-"""Loa camera — phát âm thanh ra loa của camera Dahua/Imou.
+"""Loa camera — phát âm thanh ra loa của camera Dahua/Imou, và EZVIZ/Hikvision (HCNetSDK).
 
 Camera nhà (Imou, lõi Dahua) KHÔNG có kênh ngược RTSP/ONVIF: đo 24/09/2026 trên
 cả bốn camera, DESCRIBE kèm ``Require: www.onvif.org/ver20/backchannel`` chỉ trả
@@ -27,11 +27,14 @@ import base64
 import hashlib
 import os
 import re
+import select
 import socket
 import struct
 import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
@@ -509,9 +512,231 @@ class KenhNoi8086:
                 t.join(2)
 
 
-def mo_kenh(ip: str, user: str, mk: str) -> KenhNoi | KenhNoi8086:
-    """Mở kênh nói: cổng 8086 (16 kHz) trước; camera không có / từ chối thì 37777 (8 kHz) và
-    nhớ ``_LUI_37777_GIAY`` để lần sau khỏi chờ hỏng. Người gọi phải ``dong()``."""
+# ── EZVIZ / Hikvision: HCNetSDK cổng 8000 ─────────────────────────────────────
+#
+# EZVIZ H6C nhà (đo 28/09/2026) không có kênh ngược RTSP, không ONVIF, HTTP bị khoá — chỉ
+# HCNetSDK qua cổng thiết bị 8000 mở được kênh đàm thoại (AAC 16 kHz). SDK chạy trong tiến trình
+# con ``services/hik_noi.py`` (thư viện mã máy của hãng — sập thì c2a không sập theo) và SỐNG
+# GIỮA CÁC LƯỢT: đăng nhập 0,6–1,3 s, mở kênh 0,02–0,27 s (đo 29/09/2026). Cùng cách với tích
+# hợp dahua_talk của HA (``hik_talk.py``), đã chạy thật trên H6C.
+
+CONG_HIK = 8000
+#: Kênh đóng mà ngồi yên ngần này giây thì tiến trình con tự đăng xuất và thoát.
+HIK_NGHI_GIAY = 60
+#: Còn ngần này giây nữa là nó tự thoát thì thôi dùng lại — khỏi gửi lệnh đúng lúc nó thoát.
+_HIK_BIEN_NGHI = 5.0
+#: Chờ tiến trình con đăng nhập / mở kênh tối đa ngần này giây.
+_HIK_CHO_MO = 15.0
+#: Sau khi đóng kênh, H6C cần ~1,24 s mới cho mở lại — mở sớm hơn thì báo "(mã 29)" (thao tác
+#: thất bại). Đo 29/09/2026: nói "alo, alo" là câu sau mất hẳn. Chờ nó nhả tối đa ngần này giây.
+_HIK_CHO_NHA = 3.0
+_HIK_MO_KENH = struct.pack(">I", 0xFFFFFFFF)
+#: Chương trình tiến trình con (Python + ctypes).
+_HIK_NOI = Path(__file__).with_name("hik_noi.py")
+_HIK_DONG_KENH = struct.pack(">I", 0)
+KIEU_LOA = ("", "hik")
+
+
+def thu_muc_hik() -> Path:
+    """Thư mục ``lib`` của HCNetSDK người dùng chép vào (không nằm trong ảnh / git)."""
+    from services.config import DATA_DIR
+    return Path(DATA_DIR) / "hcnetsdk" / "lib"
+
+
+def kieu_loa(cam: dict[str, Any]) -> str:
+    """``"hik"`` = HCNetSDK cổng 8000 (EZVIZ / Hikvision); ``""`` = Imou/Dahua (8086 → 37777)."""
+    k = str(cam.get("loa_kieu") or "")
+    return k if k in KIEU_LOA else ""
+
+
+class _TroGiupHik:
+    """Một tiến trình ``hik_noi`` đang sống: đã đăng nhập camera, mở / đóng kênh theo lệnh."""
+
+    def __init__(self, ip: str, user: str, mk: str, cong: int = CONG_HIK) -> None:
+        lib = thu_muc_hik()
+        if not (lib / "libhcnetsdk.so").is_file():
+            raise LoiLoa(f"chưa có HCNetSDK — chép thư mục lib của «Device Network SDK (Linux "
+                         f"64-bit)» vào {lib}")
+        env = {**os.environ, "HIK_LIB": str(lib), "HIK_MK": mk, "HIK_NGHI": str(HIK_NGHI_GIAY),
+               "LD_LIBRARY_PATH": f"{lib}:{lib / 'HCNetSDKCom'}"}
+        self.p = subprocess.Popen(
+            [sys.executable, str(_HIK_NOI), ip, str(cong), user],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+        self._du = b""
+        self.ranh_tu = time.monotonic()
+        dong = self._doc(_HIK_CHO_MO)
+        if not dong.startswith("SAN "):
+            self.close()
+            raise LoiLoa(dong.removeprefix("LOI ") or "HCNetSDK không trả lời")
+        _san, self.ma, tan_so = dong.split()[:3]
+        self.tan_so = int(tan_so)
+
+    def _doc(self, cho: float) -> str:
+        """Một dòng từ kênh báo; hết giờ hoặc tiến trình đã thoát thì trả ""."""
+        het = time.monotonic() + cho
+        fd = self.p.stdout.fileno()
+        while b"\n" not in self._du:
+            con = het - time.monotonic()
+            if con <= 0 or not select.select([fd], [], [], con)[0]:
+                return ""
+            b = os.read(fd, 4096)
+            if not b:
+                return ""
+            self._du += b
+        dong, self._du = self._du.split(b"\n", 1)
+        return dong.decode("utf-8", "replace").strip()
+
+    def gui(self, b: bytes) -> None:
+        try:
+            self.p.stdin.write(b)
+            self.p.stdin.flush()
+        except (OSError, ValueError) as exc:
+            raise LoiLoa(f"HCNetSDK dừng giữa chừng ({str(exc)[:80]})") from exc
+
+    def dung_lai_duoc(self) -> bool:
+        return self.p.poll() is None and time.monotonic() - self.ranh_tu < HIK_NGHI_GIAY - _HIK_BIEN_NGHI
+
+    def mo_kenh(self) -> None:
+        het = time.monotonic() + _HIK_CHO_NHA
+        while True:
+            self.gui(_HIK_MO_KENH)
+            dong = self._doc(_HIK_CHO_MO)
+            if dong == "OK":
+                return
+            if not ("(mã 29)" in dong and time.monotonic() < het):
+                raise LoiLoa(dong.removeprefix("LOI ") or "HCNetSDK không trả lời")
+            time.sleep(0.3)
+
+    def dong_kenh(self, cho: float) -> bool:
+        """Báo hết tiếng; nó phát nốt phần đệm rồi đóng kênh. False = không đáp kịp."""
+        try:
+            self.gui(_HIK_DONG_KENH)
+        except LoiLoa:
+            return False
+        xong = self._doc(cho) == "DONG"
+        self.ranh_tu = time.monotonic()
+        return xong
+
+    def close(self) -> None:
+        try:
+            self.p.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.p.wait(3)
+        except subprocess.TimeoutExpired:
+            self.p.kill()
+            self.p.wait()
+
+
+_hik: dict[str, _TroGiupHik] = {}             # ip → tiến trình đang giữ đăng nhập
+
+
+def _tro_giup_hik(ip: str, user: str, mk: str) -> tuple[_TroGiupHik, bool]:
+    """Tiến trình đang sống của camera ``ip`` (mới dựng nếu chưa có / sắp tự thoát). Trả
+    ``(tiến trình, mới dựng)``. Gọi trong khoá của camera (``_khoa[ip]``)."""
+    tg = _hik.get(ip)
+    if tg is not None and tg.dung_lai_duoc():
+        return tg, False
+    if tg is not None:
+        _hik.pop(ip, None)
+        tg.close()
+    tg = _TroGiupHik(ip, user, mk)
+    _hik[ip] = tg
+    return tg, True
+
+
+class KenhHik:
+    """Một lượt nói qua HCNetSDK — cùng giao diện ``KenhNoi8086`` (``tan_so``, ``phat_pcm``,
+    ``dong``). ffmpeg mã hoá theo mã camera đòi; một luồng chuyển khung sang tiến trình con."""
+
+    def __init__(self, ip: str, tg: _TroGiupHik) -> None:
+        self.ip, self.tg, self.tan_so = ip, tg, tg.tan_so
+        self._t_dau: float | None = None
+        self._da_ghi = 0.0
+        ra = (["-c:a", "aac", "-b:a", "32k", "-f", "adts"] if tg.ma == "AAC" else
+              ["-c:a", "pcm_mulaw" if tg.ma == "G711U" else "pcm_alaw",
+               "-f", "mulaw" if tg.ma == "G711U" else "alaw"])
+        # ffmpeg khởi động song song lúc camera mở kênh (mã đã biết từ lúc đăng nhập).
+        self._ff = subprocess.Popen(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", *FFMPEG_TRUC_TIEP,
+             "-f", "s16le", "-ar", str(self.tan_so), "-ac", "1", "-i", "pipe:0",
+             *ra, "-flush_packets", "1", "pipe:1"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        try:
+            tg.mo_kenh()
+        except BaseException:
+            self._ff.kill()
+            self._ff.wait()
+            raise
+        self._luong = threading.Thread(target=self._chuyen, args=(self._ff,), name="loa-cam-hik",
+                                       daemon=True)
+        self._luong.start()
+
+    def _chuyen(self, ff: subprocess.Popen) -> None:
+        du = b""
+        try:
+            while b := ff.stdout.read1(4096):
+                if self.tg.ma == "AAC":
+                    khung, du = cat_adts(du + b)
+                else:
+                    du += b
+                    n = len(du) // 160 * 160
+                    khung, du = [du[i:i + 160] for i in range(0, n, 160)], du[n:]
+                if khung:
+                    self.tg.gui(b"".join(struct.pack(">I", len(k)) + k for k in khung))
+        except (OSError, ValueError, LoiLoa) as exc:
+            logger.warning({"event": "loa_camera_hik_gui_hong", "ip": self.ip, "loi": str(exc)[:120]})
+
+    def phat_pcm(self, pcm: bytes) -> None:
+        if self._t_dau is None:
+            self._t_dau = time.monotonic()
+        try:
+            self._ff.stdin.write(pcm)
+            self._ff.stdin.flush()
+        except (BrokenPipeError, ValueError) as exc:
+            raise LoiLoa(f"bộ mã hoá tiếng dừng giữa chừng ({str(exc)[:80]})") from exc
+        self._da_ghi += len(pcm) / (2 * self.tan_so)
+
+    def dong(self, cho: bool = True) -> None:
+        ff, self._ff = self._ff, None
+        if ff is None:
+            return
+        try:
+            ff.stdin.close()
+        except OSError:
+            pass
+        self._luong.join(TOI_DA_GIAY if cho else 2)
+        if ff.poll() is None:
+            ff.kill()
+        ff.wait()
+        con = (self._t_dau or 0.0) + self._da_ghi - time.monotonic()
+        if not self.tg.dong_kenh(max(0.0, con) + 5.0):
+            # Không đáp → bỏ tiến trình này, lượt sau đăng nhập lại.
+            if _hik.get(self.ip) is self.tg:
+                _hik.pop(self.ip, None)
+            self.tg.close()
+
+
+def _mo_hik(ip: str, user: str, mk: str) -> KenhHik:
+    tg, moi = _tro_giup_hik(ip, user, mk)
+    try:
+        return KenhHik(ip, tg)
+    except LoiLoa:
+        if moi or tg.p.poll() is None:
+            raise
+    # Tiến trình đang giữ đã chết (camera khởi động lại…) — đăng nhập lại một lần.
+    _hik.pop(ip, None)
+    tg.close()
+    return KenhHik(ip, _tro_giup_hik(ip, user, mk)[0])
+
+
+def mo_kenh(ip: str, user: str, mk: str, kieu: str = "") -> KenhNoi | KenhNoi8086 | KenhHik:
+    """Mở kênh nói. ``kieu="hik"``: HCNetSDK cổng 8000. Còn lại (Imou/Dahua): cổng 8086 (16 kHz)
+    trước; camera không có / từ chối thì 37777 (8 kHz) và nhớ ``_LUI_37777_GIAY`` để lần sau khỏi
+    chờ hỏng. Người gọi phải ``dong()``."""
+    if kieu == "hik":
+        return _mo_hik(ip, user, mk)
     if _lui_37777.get(ip, 0.0) <= time.monotonic():
         try:
             return KenhNoi8086(ip, user, mk).__enter__()
@@ -600,7 +825,7 @@ def phat(ten: str, am_thanh: bytes) -> dict[str, Any]:
     t0 = time.monotonic()
     with khoa:
         try:
-            kenh = mo_kenh(ip, user, mk)
+            kenh = mo_kenh(ip, user, mk, kieu_loa(cam))
             try:
                 if kenh.tan_so != _TAN_SO_HTTP:
                     pcm = pcm_mono(am_thanh, kenh.tan_so)
@@ -644,7 +869,7 @@ class PhatLuong:
         self._giu_khoa = True
         try:
             try:
-                self._kenh = mo_kenh(ip, user, mk)
+                self._kenh = mo_kenh(ip, user, mk, kieu_loa(cam))
             except OSError as exc:
                 # Như ``phat``: người gọi (vệ tinh, bộ đàm) chỉ bắt LoiLoa — lỗi mạng
                 # lọt ra là đứt luôn kết nối HA / phiên bộ đàm vì camera rớt mạng.

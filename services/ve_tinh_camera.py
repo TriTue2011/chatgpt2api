@@ -160,15 +160,19 @@ def mic_tang_db(cam: dict[str, Any]) -> float:
 
 
 def _lenh_mic(cam: dict[str, Any]) -> list[str]:
-    """Lệnh ffmpeg đọc tiếng mic camera qua go2rtc, ra PCM16 mono 16 kHz."""
-    base = str(cam.get("base") or "").rstrip("/")
-    if cam.get("username"):
-        # Mật khẩu có ký tự như "@" phải mã hoá mới nằm được trong URL.
-        dau, _, sau = base.partition("://")
-        base = f"{dau}://{quote(str(cam['username']), safe='')}:" \
-               f"{quote(str(cam.get('password') or ''), safe='')}@{sau}"
-    src = str(cam.get("src_ai") or cam.get("src") or "")
-    url = f"{base}/api/stream.mp4?src={quote(src, safe='')}&video=none&audio=all"
+    """Lệnh ffmpeg đọc tiếng mic camera, ra PCM16 mono 16 kHz — qua go2rtc (luồng phụ nếu có
+    khai), hoặc thẳng URL RTSP của camera khai kiểu RTSP (luồng phụ ``url_ai`` nếu có)."""
+    if cam.get("kind") == "rtsp":
+        vao = ["-rtsp_transport", "tcp", "-i", str(cam.get("url_ai") or cam.get("url") or "")]
+    else:
+        base = str(cam.get("base") or "").rstrip("/")
+        if cam.get("username"):
+            # Mật khẩu có ký tự như "@" phải mã hoá mới nằm được trong URL.
+            dau, _, sau = base.partition("://")
+            base = f"{dau}://{quote(str(cam['username']), safe='')}:" \
+                   f"{quote(str(cam.get('password') or ''), safe='')}@{sau}"
+        src = str(cam.get("src_ai") or cam.get("src") or "")
+        vao = ["-i", f"{base}/api/stream.mp4?src={quote(src, safe='')}&video=none&audio=all"]
     # Mic camera lệch một chiều (DC): đo 24/09/2026 phòng khách, DC +0,0038 trong
     # khi tiếng nền thật chỉ -63,6 dBFS — khuếch đại luôn cả DC là mất chỗ cho
     # tiếng. Lọc thông cao 80 Hz bỏ DC (không đụng dải tiếng nói) TRƯỚC khi tăng,
@@ -176,7 +180,7 @@ def _lenh_mic(cam: dict[str, Any]) -> list[str]:
     loc = "highpass=f=80"
     if (tang := mic_tang_db(cam)) > 0:
         loc += f",volume={tang:g}dB,alimiter=limit=0.9:attack=5:release=50:level=false"
-    return ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-i", url,
+    return ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", *vao,
             "-vn", "-af", loc, "-ac", "1", "-ar", str(_TAN_SO), "-f", "s16le", "pipe:1"]
 
 
