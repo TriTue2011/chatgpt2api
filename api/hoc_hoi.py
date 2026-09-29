@@ -786,6 +786,38 @@ def create_router() -> APIRouter:
                             ghi_chu=str(body.get("ghi_chu") or ""))
         return {"ok": ok} if ok else {"ok": False, "error": "Không có bài đó."}
 
+    @router.post("/api/hoc-hoi/so-do-nha/chup-camera")
+    async def so_do_nha_chup_camera(body: dict | None = None, authorization: str | None = Header(default=None)):
+        """Bot chụp camera, kẻ lưới + YOLO, chia ô theo phòng rồi vẽ lại sơ đồ và báo nhóm (vài phút).
+        body: {camera?} — bỏ trống là mọi camera."""
+        require_admin(authorization)
+        from services import so_do_nha
+        cam = str((body or {}).get("camera") or "").strip()
+        try:
+            kq = await asyncio.to_thread(so_do_nha.doc_anh_va_ve, [cam] if cam else None)
+            return {"ok": True, "anh": kq.get("anh"), "so_do": (kq.get("so_do") or {}).get("id")}
+        except Exception as exc:
+            return _loi(exc, "đọc ảnh camera")
+
+    # ── Kịch bản nhà: bot dựng tình huống cho từng thiết bị, hỏi chủ nhà từng câu (`kich_ban_nha`) ──
+    @router.get("/api/hoc-hoi/kich-ban")
+    async def kich_ban_xem(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        from services import kich_ban_nha
+        return {"ok": True, **kich_ban_nha.so()}
+
+    @router.post("/api/hoc-hoi/kich-ban/dung")
+    async def kich_ban_dung(authorization: str | None = Header(default=None)):
+        """Bot dựng tình huống, gửi tóm tắt + câu hỏi đầu tiên vào nhóm học hỏi."""
+        require_admin(authorization)
+        from services import kich_ban_nha
+        try:
+            kq = await asyncio.to_thread(kich_ban_nha.giai_va_bao)
+            return {"ok": bool(kq.get("ok")), "id": kq.get("id"), "so": len(kq.get("kich_ban") or []),
+                    "loi": kq.get("loi")}
+        except Exception as exc:
+            return _loi(exc, "dựng tình huống")
+
     # ── Cảm biến ghép: bot tự tính từ cảm biến gốc (`cam_bien_ghep`) ──
     @router.get("/api/hoc-hoi/cam-bien-ghep")
     async def cam_bien_ghep_ds(authorization: str | None = Header(default=None)):

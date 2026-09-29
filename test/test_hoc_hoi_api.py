@@ -300,3 +300,28 @@ class TinhHuongSuaEndpointTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SoDoVaKichBanEndpointTest(unittest.TestCase):
+    """30/09/2026: việc chủ máy giao (đọc ảnh camera, dựng tình huống) phải gọi được QUA tiến trình app —
+    `docker exec python` là tiến trình riêng, sổ ghi ở đó bị app đang chạy ghi đè."""
+
+    def setUp(self) -> None:
+        self.client, self._bo_qua = _app()
+        self.addCleanup(self._bo_qua.stop)
+
+    def test_chup_camera_goi_dung_ham_va_camera(self) -> None:
+        with mock.patch("services.so_do_nha.doc_anh_va_ve", return_value={"anh": [{"ok": True}], "so_do": {"id": 12}}) as f:
+            d = self.client.post("/api/hoc-hoi/so-do-nha/chup-camera", json={"camera": "Cam bếp"}).json()
+        f.assert_called_once_with(["Cam bếp"])
+        self.assertEqual(d, {"ok": True, "anh": [{"ok": True}], "so_do": 12})
+        with mock.patch("services.so_do_nha.doc_anh_va_ve", return_value={"anh": [], "so_do": {}}) as f:
+            self.client.post("/api/hoc-hoi/so-do-nha/chup-camera", json={})
+        f.assert_called_once_with(None)
+
+    def test_kich_ban_dung_va_xem(self) -> None:
+        with mock.patch("services.kich_ban_nha.giai_va_bao", return_value={"ok": True, "id": 3, "kich_ban": [1, 2]}):
+            d = self.client.post("/api/hoc-hoi/kich-ban/dung").json()
+        self.assertEqual(d, {"ok": True, "id": 3, "so": 2, "loi": None})
+        with mock.patch("services.kich_ban_nha.so", return_value={"lan": [], "hoi": []}):
+            self.assertEqual(self.client.get("/api/hoc-hoi/kich-ban").json(), {"ok": True, "lan": [], "hoi": []})
