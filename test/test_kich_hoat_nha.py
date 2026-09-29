@@ -843,3 +843,116 @@ def test_khoi_dong_lai_hen_lai_tat_khi_vang(kh, monkeypatch):
     _sk(NGU, "off", time.time() - 100)      # phòng trống từ 100 giây trước
     kh._khoi_phuc(kh.ds_thiet_bi())
     assert len(hen) == 1 and 60 <= hen[0].giay <= 81, "còn ~80 giây trong 3 phút"
+
+
+# ── Có người Ở LẠI: chưa đủ tin thì hỏi để học (quạt phòng khách, 29/09/2026) ──
+def test_luot_o_gop_khe_ngan_va_luot_dang_dien_ra(kh):
+    dong = {NGU: ([0.0, 100.0, 150.0, 400.0, 1000.0, 1010.0], ["on", "off", "on", "off", "on", "off"]),
+            BEP: ([0.0, 390.0, 395.0], ["off", "on", "off"])}
+    # 100→150 tắt 50 giây: cùng lượt; 400→1000 tắt 600 giây: hai lượt; tắt cuối chưa đủ VANG: còn đang ở.
+    assert kh._luot_o(dong, 1100.0) == [(0.0, 400.0), (1000.0, 1100.0)]
+    assert kh._luot_o(dong, 1300.0) == [(0.0, 400.0), (1000.0, 1010.0)]
+
+
+def _nep_o_lai() -> None:
+    """Mỗi ngày: người đi ngang 20 giây (không bật); ngồi lại 40 phút — ngày chẵn bật ở phút 8;
+    tối ngồi 40 phút không bật. Người bật lúc đã ở lâu, không phải lúc vừa vào."""
+    for n in range(29, 0, -1):
+        _sk(DEN, "off", _luc(n, 6))          # HA nhắc trạng thái mỗi ngày (quá 24 giờ là không biết)
+        a = _luc(n, 9)
+        _sk(NGU, "on", a)
+        _sk(NGU, "off", a + 20)
+        b = _luc(n, 14)
+        _sk(NGU, "on", b)
+        _sk(BEP, "on", b + 60)
+        if n % 2 == 0:
+            _sk(DEN, "on", b + 8 * 60)
+            _sk(DEN, "off", b + 50 * 60)
+        _sk(NGU, "off", b + 40 * 60)
+        _sk(BEP, "off", b + 40 * 60)
+        c = _luc(n, 20)
+        _sk(NGU, "on", c)
+        _sk(NGU, "off", c + 40 * 60)
+
+
+def test_o_lai_chi_khi_cho_hoi_de_hoc_va_hoi_mot_lan_moi_luot(kh, monkeypatch):
+    from services import du_doan_nha as dd
+    monkeypatch.setattr(kh, "_so_do", lambda tb: ({NGU, BEP}, set()))
+    _nep_o_lai()
+    _sk(DEN, "off", _luc(30, 23))
+    kh.dat_thiet_bi(DEN, bat=True)
+    ten_ol = f"{DEN} {kh.O_LAI}"
+    assert ten_ol not in kh.hoc(DEN)["on"]["nguon"], "chưa cho hỏi để học thì không có nguồn «ở lại»"
+    kh.dat_thiet_bi(DEN, hoi_de_hoc=True)
+    ra = kh.hoc(DEN)
+    assert ten_ol in ra["on"]["nguon"] and not ra["on"]["kiem"]["dat"]
+    assert ra["o_lai"]["phut"] == 8.0 and ra["o_lai"]["cam_bien"] == [BEP, NGU]
+    assert ra["on"]["ten"][ten_ol].startswith("có người ở lại chỗ")
+
+    luc = _luc(0, 14, 12)                   # ngồi lại buổi chiều — giờ người hay bật
+    _sk("switch.phong_hoc_l1", "on", luc - 3600)            # có người ở nhà — không phải báo ảo
+    _sk(NGU, "on", luc - 12 * 60)
+    q = kh.xet(DEN, "on", ten_ol, luc)
+    assert q["lam"] == "hoi" and "hỏi anh để học" in q["ly_do"], q
+    assert q["x"][kh.PHUT_DA_O] == pytest.approx(12, abs=0.1)
+    kh.dat_thiet_bi(DEN, hoi_de_hoc=False)
+    kh.hoc(DEN)
+    assert kh.xet(DEN, "on", ten_ol, luc)["lam"] == "im", "bỏ hỏi để học: không còn nguồn"
+
+    bay_gio = time.time()
+    assert not kh._da_xong_luot(DEN, bay_gio - 60)
+    dd.ghi_nhan(f"{DEN}#on", "on", 0.4, {}, "hoi")
+    assert kh._da_xong_luot(DEN, bay_gio - 60), "đã hỏi trong lượt thì thôi"
+    assert not kh._da_xong_luot(DEN, bay_gio + 1)
+    _sk(DEN, "on", bay_gio + 5)
+    assert kh._da_xong_luot(DEN, bay_gio + 1), "người tự chạm thiết bị trong lượt thì thôi"
+
+
+def test_o_lai_hen_gio_toi_moc_roi_phat(kh, monkeypatch):
+    monkeypatch.setattr(kh, "_so_do", lambda tb: ({NGU, BEP}, set()))
+    _nep_o_lai()
+    kh.dat_thiet_bi(DEN, bat=True, hoi_de_hoc=True)
+    kh.hoc(DEN)
+    hen: list = []
+
+    class HenGia:
+        def __init__(self, giay, ham, args=()):
+            self.giay = giay
+            hen.append(self)
+            self.daemon = True
+
+        def start(self):
+            pass
+
+        def cancel(self):
+            pass
+    monkeypatch.setattr(kh.threading, "Timer", HenGia)
+    phat: list = []
+    monkeypatch.setattr(kh, "_phat", lambda nguon, luc: phat.append(nguon))
+    luc = time.time()
+    _sk(NGU, "on", luc - 60)
+    kh._xet_o_lai(DEN)
+    assert len(hen) == 1 and 6 * 60 < hen[0].giay <= 7 * 60 + 1 and not phat, "mới ở 1 phút: hẹn tới phút 8"
+    _sk(NGU, "off", luc - 59)
+    _sk(NGU, "on", luc - 58)               # nhấp nháy ngắn — vẫn cùng lượt
+    monkeypatch.setattr(time, "time", lambda: luc + 8 * 60)
+    kh._xet_o_lai(DEN)
+    assert phat == [f"{DEN} {kh.O_LAI}"]
+
+
+def test_o_lai_nhan_la_cau_tra_loi_cua_chu_may(kh, monkeypatch):
+    """Lịch sử nói người hay bật lúc ngồi lâu buổi chiều; anh trả lời «không» thì mẫu đó là không."""
+    from services import du_doan_nha as dd
+    monkeypatch.setattr(kh, "_so_do", lambda tb: ({NGU, BEP}, set()))
+    _nep_o_lai()
+    kh.dat_thiet_bi(DEN, bat=True, hoi_de_hoc=True)
+    kh.hoc(DEN)
+    b = _luc(10, 14)
+    id_ = dd.ghi_nhan(f"{DEN}#on", "on", 0.5, {}, "hoi")
+    dd._db().execute("UPDATE du_doan SET ts=? WHERE id=?", (b + 8 * 60, id_))
+    dd._db().commit()
+    dd.ghi_sai(id_)
+    ra = kh.hoc(DEN)["on"]
+    ten_ol = f"{DEN} {kh.O_LAI}"
+    assert ra["dem_nguon"][ten_ol] == 11, "ngày chẵn 28 → 8: 11 lần tự bật trong phần học"
+    assert sum(r["k"] for r in ra["luat"]) == 10, "lượt anh nói «không» thành mẫu không"

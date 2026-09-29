@@ -80,6 +80,9 @@ type ThietBi = {
     goi_y: { ma: string; ten: string; den_gop: number; lux: number | null }[]; lux_bay_gio?: number | null;
   };
   co_so?: "so_do" | "tu_do";
+  /** Chưa đủ tin thì hỏi để học — lúc có người Ở LẠI đủ `o_lai.phut` phút (bot tự rút). */
+  hoi_de_hoc?: boolean;
+  o_lai?: { phut: number | null; lan: number; cam_bien: { ma: string; ten: string }[] } | null;
 };
 type ThucThe = { ma: string; ten: string; lop: string };
 const CONG_TAC = "cong_tac";
@@ -264,7 +267,15 @@ const TEN_HD = { on: "Bật", off: "Tắt" } as const;
 /** Cùng ngưỡng mở miệng `P_HOI` của backend — luật dưới ngưỡng này bot không hỏi. */
 const P_HOI = 0.75;
 
-function CapDo({ h, nguong }: { h: Huong; nguong: ThietBi["nguong"] }) {
+function CapDo({ h, nguong, hoiDeHoc }: { h: Huong; nguong: ThietBi["nguong"]; hoiDeHoc?: boolean }) {
+  if (!h.kiem.dat && hoiDeHoc) {
+    return (
+      <span className="text-amber-600">
+        Chưa đủ tin — thử {h.kiem.ngay ?? 7} ngày cuối: đoán {h.kiem.doan ?? 0}, đúng {h.kiem.trung ?? 0}
+        {" "}(cần ≥ 5 lần và ≥ 60%). Bot HỎI anh lúc có người ở lại để học; anh đã trả lời {h.so_luot} lượt.
+      </span>
+    );
+  }
   if (!h.kiem.dat) {
     return (
       <span className="text-amber-600">
@@ -356,8 +367,26 @@ function MotThietBi({ tb, taiLai, doiMa, lich }: {
                 ) : null}
               </div>
             ) : (
-              <div className="text-xs"><CapDo h={h} nguong={tb.nguong} /></div>
+              <div className="text-xs"><CapDo h={h} nguong={tb.nguong} hoiDeHoc={hd === "on" && tb.hoi_de_hoc} /></div>
             )}
+            {hd === "on" ? (
+              <div className="space-y-0.5 text-xs">
+                <label className="flex items-center gap-2"
+                  title="Lịch sử chưa đủ để bot tự quyết: lúc có người ở lại mà thiết bị đang tắt, bot hỏi anh một lần mỗi lượt ở; câu trả lời là bài học.">
+                  <input type="checkbox" checked={!!tb.hoi_de_hoc} onChange={(e) => void dat({ hoi_de_hoc: e.target.checked })} />
+                  Chưa đủ tin thì hỏi anh để học (lúc có người ở lại)
+                </label>
+                {tb.hoi_de_hoc && tb.o_lai ? (
+                  <div className="text-muted-foreground">
+                    {tb.o_lai.phut != null
+                      ? `Ở lại = ${tb.o_lai.cam_bien.map((x) => x.ten).join(" / ")} có người liền ${tb.o_lai.phut} phút — bot tự rút từ ${tb.o_lai.lan} lần anh tự bật (1/4 số lần anh bật sớm hơn mốc này). Mỗi lượt ở hỏi nhiều nhất một lần; anh tự bật/tắt trong lượt thì bot thôi.`
+                      : `Chưa rút được mốc «ở lại»: mới có ${tb.o_lai.lan} lần anh tự bật lúc có người (cần ≥ 5).`}
+                  </div>
+                ) : tb.hoi_de_hoc ? (
+                  <div className="text-muted-foreground">Sơ đồ chưa có cảm biến có người nào (radar, camera) — thêm ở Sơ đồ kích hoạt.</div>
+                ) : null}
+              </div>
+            ) : null}
             <TheoGio ds={h.theo_gio || []} />
             {h.nguon.length > 0 && (
               <div className="flex flex-wrap gap-1">
