@@ -19,8 +19,9 @@ Hết khổ: dòng trống giữa hai khổ đổi thành HAI dòng trống — 
 hết khổ (nghỉ gấp đôi hết dòng). Chỉ làm khi đã nhận ra là thơ (kể cả thơ tám chữ); một dòng
 trống trong văn xuôi là tách đoạn thường, giữ nguyên.
 
-Mức: ``"chinh"`` một chỗ ngắt mỗi dòng (câu 6: 2/4, câu 8: 4/4); ``"day_du"`` đủ nhịp sách giáo
-khoa (câu 6: 2/2/2, câu 8: 2/2/2/2); ``"tat"`` không chèn.
+Mức: ``"day_du"`` (mặc định — chủ máy nghe mẫu hai giọng 29/09/2026 rồi chọn) đủ nhịp sách giáo
+khoa (câu 6: 2/2/2, câu 8: 2/2/2/2); ``"chinh"`` một chỗ ngắt mỗi dòng (câu 6: 2/4, câu 8: 4/4);
+``"tat"`` không chèn.
 """
 
 from __future__ import annotations
@@ -89,7 +90,7 @@ def _ngat_dong(dong: str, sau: tuple[int, ...]) -> str:
     return "".join(ra)
 
 
-def danh_nhip(text: str, muc: str = "chinh") -> str:
+def danh_nhip(text: str, muc: str = "day_du") -> str:
     """Văn bản là thơ có khuôn → chèn dấu phẩy ở chỗ ngắt nhịp mỗi dòng; không thì trả nguyên."""
     if muc not in ("chinh", "day_du") or "\n" not in (text or ""):
         return text

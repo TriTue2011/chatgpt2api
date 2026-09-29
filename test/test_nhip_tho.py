@@ -51,10 +51,23 @@ def test_that_ngon_4_3_giu_dau_cuoi_dong():
 def test_song_that_cau_bay_3_4():
     cpn = ("Thuở trời đất nổi cơn gió bụi\nKhách má hồng nhiều nỗi truân chuyên\n"
            "Xanh kia thăm thẳm tầng trên\nVì ai gây dựng cho nên nỗi này")
-    ra = nhip_tho.danh_nhip(cpn).split("\n")
+    ra = nhip_tho.danh_nhip(cpn, "chinh").split("\n")
     assert ra[0] == "Thuở trời đất, nổi cơn gió bụi"
     assert ra[2] == "Xanh kia, thăm thẳm tầng trên"
     assert ra[3] == "Vì ai gây dựng, cho nên nỗi này"
+    du = nhip_tho.danh_nhip(cpn, "day_du").split("\n")
+    assert du[0] == "Thuở trời đất, nổi cơn gió bụi"          # câu bảy vẫn 3/4
+    assert du[2] == "Xanh kia, thăm thẳm, tầng trên"
+    assert du[3] == "Vì ai, gây dựng, cho nên, nỗi này"
+
+
+def test_mac_dinh_la_nhip_day_du():
+    """Chủ máy nghe mẫu hai giọng 29/09/2026 rồi chọn nhịp đầy đủ."""
+    from services.voice import config as vcfg
+
+    with mock.patch.object(vcfg, "_sub", lambda _k: {}):
+        assert vcfg.tts_nhip_tho() == "day_du"
+    assert nhip_tho.danh_nhip(KIEU) == nhip_tho.danh_nhip(KIEU, "day_du")
 
 
 def test_dong_da_co_dau_giua_thi_giu_nguyen():
