@@ -741,6 +741,17 @@ def tts_clause_silence_ms() -> int:
         return 0
 
 
+def tts_nhip_tho() -> str:
+    """Nhịp thơ (``services/voice/nhip_tho.py``): văn bản là thơ có khuôn (lục bát, song thất,
+    thất ngôn, ngũ ngôn, bốn chữ) thì chèn dấu phẩy ở chỗ ngắt nhịp mỗi dòng.
+
+    ``"chinh"`` (mặc định) một chỗ ngắt mỗi dòng — câu 6: 2/4, câu 8: 4/4, bảy chữ 4/3, song
+    thất 3/4; ``"day_du"`` đủ nhịp sách giáo khoa (câu 6: 2/2/2, câu 8: 2/2/2/2); ``"tat"``.
+    """
+    raw = str(_sub("tts").get("nhip_tho") or "").strip()
+    return raw if raw in ("chinh", "day_du", "tat") else "chinh"
+
+
 def tts_silence_jitter_percent() -> int:
     """Dao động ±% quanh khoảng lặng để nhịp nghỉ không đều tăm tắp như máy đếm.
 

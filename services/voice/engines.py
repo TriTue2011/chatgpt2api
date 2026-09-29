@@ -822,7 +822,7 @@ def _phat_cau(text: str, rate: int, lay_cau, *, chen_nghi: bool = True):
                 # ranh giới giữa hai mẩu đều nghỉ kiểu hết đoạn (600 ms thay vì
                 # 400 ms hết câu).
                 kind = (truoc or "sentence") if dau_manh else "sentence"
-                base = {"paragraph": para_ms, "clause": clause_ms}.get(kind, sent_ms)
+                base = _nghi_ms(kind, sent_ms, clause_ms, para_ms, 0)
                 gap = _silence_pcm(_jitter_ms(base, jitter), rate) if base > 0 else b""
                 if gap:
                     yield rate, gap
@@ -1452,6 +1452,13 @@ def _synthesize_one(text: str, voice: str = "", *, style: str = "") -> bytes:
     raise VoiceError("Không tổng hợp được giọng nói — " + "; ".join(errors))
 
 
+def _nhip_tho(text: str) -> str:
+    """Thơ có khuôn → chèn dấu phẩy ở chỗ ngắt nhịp (``nhip_tho``); văn xuôi giữ nguyên."""
+    from services.voice import nhip_tho
+
+    return nhip_tho.danh_nhip(text, vcfg.tts_nhip_tho())
+
+
 def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
     """Text → WAV bytes, có chèn khoảng lặng giữa câu / giữa mệnh đề.
 
@@ -1465,7 +1472,7 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
     Hàm cắt/ghép nằm ở khối "TTS streaming" bên dưới (dùng chung với
     `stream_synthesize`).
     """
-    text = (text or "").strip()
+    text = _nhip_tho((text or "").strip())
     if not text:
         raise VoiceError("Không có nội dung để đọc.")
     _nho_giong((voice or vcfg.tts_voice()).strip())
@@ -1637,7 +1644,7 @@ def _tach_doan(text: str) -> list[tuple[str, str]]:
             continue
         piece = s[pos:m.start()].strip()
         if piece:
-            out.append((piece, "paragraph" if "\n" in sep else "sentence"))
+            out.append((piece, _loai_ranh(sep)))
         pos = m.end()
     tail = s[pos:].strip()
     if tail:
@@ -1759,9 +1766,27 @@ def _silence_plan() -> tuple[int, int, int, int]:
             vcfg.tts_paragraph_silence_ms(), vcfg.tts_silence_jitter_percent())
 
 
+#: Hết khổ thơ nghỉ gấp ngần này lần hết đoạn — chủ máy 29/09/2026: khổ thơ phải nghe ra là
+#: khổ; trước đây dòng trống nghỉ bằng xuống dòng thường (~600 ms).
+KHO_GAP = 2
+
+
+def _loai_ranh(sep: str) -> str:
+    """Loại ranh giới theo chuỗi ngăn cách: ≥2 dòng trống = hết khổ thơ, xuống dòng = hết đoạn.
+
+    Hết khổ chỉ do ``nhip_tho.danh_nhip`` đánh dấu (đổi dòng trống giữa hai khổ thành hai dòng
+    trống) khi đã nhận ra văn bản là thơ. Một dòng trống thường là cách tách đoạn văn xuôi của
+    câu trả lời — không được nghỉ gấp đôi."""
+    if _re.search(r"\n[ \t]*\n[ \t]*\n", sep):
+        return "kho"
+    return "paragraph" if "\n" in sep else "sentence"
+
+
 def _nghi_ms(kind: str, sent_ms: int, clause_ms: int, para_ms: int, jitter: int) -> int:
     """Mili giây nghỉ sau một mẩu, đã rải ngẫu nhiên."""
-    if kind == "paragraph":
+    if kind == "kho":
+        base = KHO_GAP * (para_ms if para_ms > 0 else sent_ms)
+    elif kind == "paragraph":
         base = para_ms if para_ms > 0 else sent_ms
     elif kind == "clause":
         base = clause_ms
@@ -2086,7 +2111,7 @@ def noi_cau(nguon, truoc: str = ""):
 
 def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
     """Như `_stream_tao`, cộng cache và đệm đầu thông minh (xem `_dem_dau`)."""
-    text = (text or "").strip()
+    text = _nhip_tho((text or "").strip())
     v = (voice or vcfg.tts_voice()).strip()
     _nho_giong(v)
     if text and not v.startswith("dangu:"):

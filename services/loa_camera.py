@@ -938,7 +938,10 @@ def noi(ten: str, cau: str, giong: str = "") -> dict[str, Any]:
     """Đọc ``cau`` bằng giọng TTS của c2a rồi phát ra loa camera ``ten``."""
     from services.voice import engines
 
-    cau = " ".join(str(cau or "").split())
+    # Giữ xuống dòng: TTS nghỉ theo dòng / khổ và nhận ra thơ để ngắt nhịp (29/09/2026 — trước
+    # đây gộp cả bài thơ thành một dòng, chỉ còn ngắt ở dấu chấm).
+    dong = [" ".join(d.split()) for d in str(cau or "").splitlines()]
+    cau = re.sub(r"\n{3,}", "\n\n", "\n".join(dong)).strip()
     if not cau:
         raise LoiLoa("Chưa có câu nào để đọc.")
     try:

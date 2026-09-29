@@ -868,7 +868,7 @@ def _tach_cau_xong(dem: str) -> tuple[list[tuple[str, str]], str]:
             continue
         cau = dem[pos:m.start()].strip()
         if cau:
-            ra.append((cau, "paragraph" if "\n" in m.group(0) else "sentence"))
+            ra.append((cau, engines._loai_ranh(m.group(0))))
         pos = m.end()
     con = dem[pos:]
     if len(con) > _CAT_PHAY_KHI:
