@@ -35,3 +35,24 @@ def test_cham():
         "roi_khi_o_duoi phải là 3, bài viết None"]
     assert de_luyen.cham({**bai, "roi_khi_o_duoi": 1}, {"roi_khi_o_duoi_mot_trong": [1, 3]}) == []
     assert de_luyen.cham({**bai, "roi_khi_o_duoi": 10}, {"roi_khi_o_duoi_mot_trong": [1, 3]}) != []
+
+
+@pytest.mark.parametrize("d", __import__("services.de_luyen.sinh_kich_ban", fromlist=["DE"]).DE,
+                         ids=lambda d: d["ten"])
+def test_de_tinh_huong_dung_khuon(d):
+    """Bộ đề dựng tình huống (mọi kiểu nơi chốn): đề đúng khuôn tầng kịch bản, thiết bị trong đáp án có trong đề,
+    và bộ chấm nhận một bài làm đúng."""
+    from services import kich_ban_nha
+    from services.de_luyen import sinh_kich_ban as sk
+    de = sk.de_cho(d)
+    assert "C. THIẾT BỊ" in de and "B2. AI Ở NHÀ" in de
+    for y in d["dap_an"].get("phai_co") or []:
+        assert y["thiet_bi"] in de
+    bai = {"kich_ban": [{"thiet_bi": y["thiet_bi"], "tinh_huong": y["tu"][0], "cam_bien_thay": "",
+                         "nen": y.get("nen", "bat"), "hien_tai": y.get("hien_tai", "sai"), "vi_sao": "", "hoi": None}
+                        for y in d["dap_an"].get("phai_co") or []]
+           + [{"thiet_bi": next(iter(d["uv"]["thiet_bi"])), "tinh_huong": "hỏi", "cam_bien_thay": "", "nen": "hoi",
+               "hien_tai": "khong_ro", "vi_sao": "", "hoi": nhom[0]} for nhom in d["dap_an"].get("phai_hoi_ve") or []]}
+    k = kich_ban_nha.kiem(bai, d["uv"])
+    assert isinstance(k, dict) and sk.cham_cho(k, d["dap_an"]) == []
+    assert sk.cham_cho({"kich_ban": []}, d["dap_an"]) != []

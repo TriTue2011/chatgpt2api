@@ -25,9 +25,10 @@ from utils.log import logger
 
 _PATH = Path(DATA_DIR) / "agent" / "kich_ban_nha.json"
 _khoa = threading.RLock()
-NEN = ("bat", "tat", "giu", "khong_lam", "hoi")
+NEN = ("bat", "tat", "giu", "khong_lam", "hoi", "bao")
 HIEN_TAI = ("dung", "sai", "khong_ro")
-_NEN_DOC = {"bat": "bật", "tat": "tắt", "giu": "giữ nguyên", "khong_lam": "không làm gì", "hoi": "hỏi anh"}
+_NEN_DOC = {"bat": "bật", "tat": "tắt", "giu": "giữ nguyên", "khong_lam": "không làm gì", "hoi": "hỏi anh",
+            "bao": "báo anh"}
 #: Tối đa câu hỏi mỗi lượt dựng — hỏi dồn thì chủ nhà không trả lời hết (chủ máy 11/09: "xác minh lần lượt").
 HOI_TOI_DA = 8
 
@@ -134,6 +135,9 @@ def do() -> dict[str, Any]:
         else:
             continue
         phong.setdefault(boi_canh_nha.phong_cua(ma) or "chưa xếp khu", []).append(f"{ten.get(ma, ma)} ({loai})")
+    # Ai đang ở nhà: người (person) và máy người cầm (device_tracker) — cần để xét "cả nhà vắng mà có người".
+    nguoi = [f"{ten.get(str(x['entity_id']), x['entity_id'])} ({x.get('state')})" for x in st
+             if str(x["entity_id"]).split(".")[0] in ("person", "device_tracker")][:12]
     so_do = so_do_nha.so()
     ap = so_do.get("ap")
     moi = next((b for b in reversed(so_do["bai"]) if b.get("ket_qua") != "sai"), None)
@@ -142,7 +146,8 @@ def do() -> dict[str, Any]:
     tbs = {tb: {"ten": ten.get(tb, tb), "khu": boi_canh_nha.phong_cua(tb) or "chưa xếp khu",
                 "viec": _viec_dang_cai(tb, cd, d["mo_hinh"].get(tb) or {}, ten)}
            for tb, cd in sorted(d["thiet_bi"].items()) if cd.get("bat")}
-    return {"so_do": so_do_nha.doc(s) if s else "", "so_do_chac": bool(ap), "phong": phong, "thiet_bi": tbs,
+    return {"so_do": so_do_nha.doc(s) if s else "", "so_do_chac": bool(ap), "phong": phong, "nguoi": nguoi,
+            "thiet_bi": tbs,
             "mo_ta": [x["noi_dung"] for x in so_do["mo_ta"]]}
 
 
@@ -150,6 +155,9 @@ def de(uv: dict[str, Any], da_hoi: list[dict[str, Any]]) -> str:
     dong = [("A. SƠ ĐỒ NHÀ (đã chấm):" if uv["so_do_chac"] else "A. SƠ ĐỒ NHÀ (bot vẽ, CHƯA chấm):"),
             uv["so_do"] or "(chưa có)", "\nB. CẢM BIẾN THEO PHÒNG:"]
     dong += [f"- {p}: {', '.join(ds)}" for p, ds in sorted(uv["phong"].items())] or ["(không có)"]
+    dong += ["\nB2. AI Ở NHÀ — người và điện thoại/máy người cầm (home = ở nhà, not_home = đi vắng; cả nhà "
+             "not_home mà trong nhà có người là bất thường):"]
+    dong += [f"- {x}" for x in uv.get("nguoi") or []] or ["(không có — bot không biết lúc nào cả nhà vắng)"]
     dong.append("\nC. THIẾT BỊ và việc ĐANG CÀI (bộ kích hoạt sẽ làm đúng như thế):")
     for tb, x in uv["thiet_bi"].items():
         dong.append(f"- {tb} | {x['ten']} | ở {x['khu']}")
