@@ -288,7 +288,8 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
         if kiem_ao is not None:
             cu["kiem_ao"] = kiem_ao
         if tat_khi_vang is not None:
-            cu["tat_khi_vang"] = tat_khi_vang
+            cu["tat_khi_vang"] = {**{k: v for k, v in (cu.get("tat_khi_vang") or {}).items()
+                                     if k in ("giu", "nhin")}, **tat_khi_vang}
             _hen_tat_huy(tb)
         if tat_khi_sang is not None:
             cu["tat_khi_sang"] = tat_khi_sang
@@ -525,7 +526,18 @@ def _kiem_tat_khi_vang(x: Any) -> dict[str, Any]:
         raise ValueError("Tắt khi vắng: cảm biến là binary_sensor, 1–240 phút.")
     if x.get("bat") and not cb:
         raise ValueError("Tắt khi vắng: bật thì phải chọn ít nhất một cảm biến.")
-    return {"bat": bool(x.get("bat")), "cam_bien": cb, "phut": phut}
+    ra = {"bat": bool(x.get("bat")), "cam_bien": cb, "phut": phut}
+    # Ngoại vi NHÌN LẠI (bot chọn ở `co_nguoi_nha`): gửi thì kiểm, không gửi thì giữ cái đang có.
+    if "giu" in x:
+        giu = str(x.get("giu") or "")
+        if giu and not giu.startswith("binary_sensor."):
+            raise ValueError("Tắt khi vắng: ngoại vi nhìn lại là binary_sensor.")
+        ra["giu"] = giu
+    if "nhin" in x:
+        if not isinstance(x.get("nhin") or [], list):
+            raise ValueError("Tắt khi vắng: «nhin» là danh sách tên camera.")
+        ra["nhin"] = [str(c) for c in x.get("nhin") or []]
+    return ra
 
 
 def _so_do(tb: str) -> tuple[set[str], set[str]]:
@@ -1756,6 +1768,14 @@ def _tat_vi_vang(tb: str) -> None:
         if _nguoi_vua_cham(tb, luc) or _vua_lam(tb, "off", ca_chieu_nguoc=False):
             _hen_tat_luc(tb, HEN_LAI)       # chặn tạm — vẫn vắng thì lát nữa xét lại
             return
+        nhin_lai = ""
+        if tv.get("giu") and tv.get("nhin") and _trang_thai_mot(str(tv["giu"])) == "on":
+            thay = _nhin_lai(list(tv["nhin"]))
+            logger.info({"event": "kich_hoat_nhin_lai", "thiet_bi": tb, "camera": tv["nhin"], "thay": thay})
+            if thay is None or thay:
+                _hen_tat_luc(tb, HEN_LAI)   # thấy người, hoặc không nhìn được — lát nữa xét lại
+                return
+            nhin_lai = f"ngoại vi báo có thể còn người, em nhìn lại {', '.join(tv['nhin'])}: không thấy ai"
         if any(x.get("hanh_dong") == "off" and x.get("cach", "khong") == "khong"
                and _khung_dang(x, luc) for x in cd.get("ngoai_le") or []):
             return
@@ -1770,12 +1790,34 @@ def _tat_vi_vang(tb: str) -> None:
                 nhan["vang_tu"] = max(tat)  # type: ignore[type-var]
         phut = round(phut_vang(cd, float(nhan.get("vang_tu") or luc)))
         vi = f"phòng trống, trời đã sáng ~{troi:.0f} lux" if troi is not None else f"vắng {phut} phút"
+        if nhin_lai:
+            vi += f"; {nhin_lai}"
         id_ = dd.ghi_nhan(_ten_tt(tb, "off"), "off", 1.0, {"nguon": vi, BEN_VUNG: 1, **nhan}, "tu_lam")
         _bao_tu_lam(tb, f"🤖 #{id_} Em đã tắt {_ten_tb(tb)} ({vi}).\nĐúng hay sai ạ? Anh trả "
                         f"lời «đúng» hoặc «sai» — sai thì em bật lại ngay. Không trả lời trong "
                         f"{CHAM_TU_LAM // 60} phút là em tính đúng.")
     except Exception as exc:  # noqa: BLE001
         logger.warning({"event": "kich_hoat_tat_vang_loi", "thiet_bi": tb, "error": str(exc)[:200]})
+
+
+def _nhin_lai(camera: list[str]) -> str | None:
+    """Chủ máy 29/09/2026: laptop của vợ "là ngoại vi … để kiểm tra lại xem có ở phòng khách
+    không" — không phải lý do giữ đèn. Chụp từng camera bot chọn, đếm NGƯỜI bằng YOLO tại chỗ.
+    Trả tên camera thấy người, "" nếu không camera nào thấy, None nếu không nhìn được camera nào
+    (không đoán là vắng)."""
+    from services import camera_nha, nhin_nha, yolo_nha
+
+    nhin_duoc = False
+    for c in camera:
+        try:
+            _ten, jpeg = camera_nha.chup(c, cho_ai=True, timeout=15.0)
+            anh = yolo_nha.doc_anh(jpeg)
+            nhin_duoc = True
+            if nhin_nha.vat_the(anh, chi_nhan={"person"}):
+                return c
+        except Exception as exc:  # noqa: BLE001 — một camera hỏng không làm hỏng lượt tắt
+            logger.warning({"event": "kich_hoat_nhin_lai_loi", "camera": c, "error": str(exc)[:160]})
+    return "" if nhin_duoc else None
 
 
 # ── Tắt khi đủ sáng — kiểu quản gia ───────────────────────────────────────
@@ -2090,6 +2132,9 @@ def tong_quan() -> list[dict[str, Any]]:
                    },
                    "tat_khi_vang": {
                        "bat": bool(tv.get("bat")), "phut": int(tv.get("phut") or MAC_DINH_VANG_PHUT),
+                       # Ngoại vi bot chọn: báo "có thể còn người" thì bot nhìn lại bằng camera.
+                       "giu": ({"ma": tv["giu"], "ten": ten_ha.get(tv["giu"], tv["giu"])} if tv.get("giu") else None),
+                       "nhin": list(tv.get("nhin") or []),
                        # Giờ đang được tự nới (tắt nhầm rồi người bật lại) — số phút chờ hiện dùng.
                        # Giờ bot đang chờ lâu hơn số chủ máy đặt (học từ thời gian mất dấu, hoặc
                        # vừa nới vì tắt nhầm) — và số đo của lượt học.

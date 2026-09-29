@@ -787,7 +787,7 @@ def ghi_thoi_quen(lan: int, ket_luan: list[dict[str, Any]]) -> dict[str, list[di
 
 def ghi_co_nguoi(lan: int, ket_luan: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     """Lưu kết luận CÓ NGƯỜI THẬT (`services/co_nguoi_nha.py`) — mỗi thiết bị một câu `co_nguoi`.
-    `gia_tri` là hai biểu thức; `nhom.ten` giữ tên cảm biến để câu hỏi đọc được."""
+    `gia_tri` là hai biểu thức và camera nhìn lại; `nhom.ten` giữ tên cảm biến để câu hỏi đọc được."""
     now = time.time()
     moi: list[dict[str, Any]] = []
     lap_lai: list[dict[str, Any]] = []
@@ -796,7 +796,7 @@ def ghi_co_nguoi(lan: int, ket_luan: list[dict[str, Any]]) -> dict[str, list[dic
         for k in ket_luan:
             g = {"ma": [k["ma_hoc"]], "ma_hoc": k["ma_hoc"], "chac": k["chac"],
                  "vi_sao": k["vi_sao"], "khu_vuc": k["khu_vuc"], "ten": k["ten"], "giai_luc": now}
-            gt = {"co_nguoi": k["co_nguoi"], "giu": k["giu"]}
+            gt = {"co_nguoi": k["co_nguoi"], "giu": k["giu"], "nhin": k.get("nhin")}
             _ghi_mot_cau(conn, lan, now, "co_nguoi", k["ma_hoc"], gt, g, moi, lap_lai)
         conn.commit()
     return {"moi": moi, "lap_lai": lap_lai}
@@ -1231,7 +1231,8 @@ def _cau_doc(d: dict[str, Any], ten: dict[str, str]) -> str:
         ten_cb = g.get("ten") or {}
         loi = f"{_nhan(d['khoa'], ten)} — tắt khi vắng theo: {_bieu_thuc_doc(gt['co_nguoi'], ten_cb)}"
         if gt.get("giu"):
-            loi += f"; giữ khỏi tắt nhầm khi: {_bieu_thuc_doc(gt['giu'], ten_cb)}"
+            loi += (f"; khi {_bieu_thuc_doc(gt['giu'], ten_cb)} thì nhìn lại bằng "
+                    f"{', '.join(gt.get('nhin') or [])} trước khi tắt")
         return loi
     if gt.get("hoc"):
         return f"Học thói quen {_nhan(d['khoa'], ten)}"

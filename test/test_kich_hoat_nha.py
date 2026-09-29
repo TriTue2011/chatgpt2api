@@ -959,3 +959,52 @@ def test_o_lai_nhan_la_cau_tra_loi_cua_chu_may(kh, monkeypatch):
     ten_ol = f"{DEN} {kh.O_LAI}"
     assert ra["dem_nguon"][ten_ol] == 11, "ngày chẵn 28 → 8: 11 lần tự bật trong phần học"
     assert sum(r["k"] for r in ra["luat"]) == 10, "lượt anh nói «không» thành mẫu không"
+
+
+def test_ngoai_vi_chi_de_nhin_lai_khong_giu(kh, monkeypatch):
+    """Chủ máy 29/09/2026: laptop của vợ "là ngoại vi … để kiểm tra lại xem có ở phòng khách
+    không". Vắng đủ lâu mà ngoại vi còn báo thì NHÌN LẠI bằng camera: thấy người thì chờ, không
+    thấy thì tắt, không nhìn được thì chờ xét lại. Ngoại vi tắt thì không cần nhìn."""
+    LAP = "binary_sensor.c2a_giu_laptop"
+    tt = {x["entity_id"]: dict(x) for x in TT}
+    tt[DEN]["state"] = "on"
+    tt[LAP] = {"entity_id": LAP, "state": "on", "attributes": {}}
+    monkeypatch.setattr(kh, "_trang_thai_ha", lambda: list(tt.values()))
+    monkeypatch.setattr(kh, "_trang_thai_mot", lambda ma: tt.get(ma, {}).get("state", ""))
+    from services import ha_client
+    monkeypatch.setattr(ha_client, "get_state", lambda e: tt.get(e))
+    hen: list = []
+
+    class HenGia:
+        def __init__(self, giay, ham, args=()):
+            self.giay, self.ham, self.args = giay, ham, args
+            hen.append(self)
+
+        def start(self):
+            pass
+
+        def cancel(self):
+            pass
+    monkeypatch.setattr(kh.threading, "Timer", HenGia)
+    nhin: list = []
+    thay = {"kq": "Cam phòng khách"}
+    monkeypatch.setattr(kh, "_nhin_lai", lambda cams: nhin.append(cams) or thay["kq"])
+    kh.dat_thiet_bi(DEN, bat=True, tat_khi_vang={"bat": True, "cam_bien": [NGU], "phut": 3,
+                                                  "giu": LAP, "nhin": ["Cam phòng khách"]})
+    kh.dat_thiet_bi(DEN, tat_khi_vang={"bat": True, "cam_bien": [NGU], "phut": 3})
+    assert kh.ds_thiet_bi()[DEN]["tat_khi_vang"]["nhin"] == ["Cam phòng khách"], "sửa trên web không làm mất"
+    kh._tat_vi_vang(DEN)
+    assert nhin == [["Cam phòng khách"]] and kh.goi == [] and hen[-1].giay == kh.HEN_LAI, "thấy người: chờ"
+    thay["kq"] = None
+    kh._tat_vi_vang(DEN)
+    assert kh.goi == [], "không nhìn được camera thì không đoán là vắng"
+    thay["kq"] = ""
+    kh._tat_vi_vang(DEN)
+    assert kh.goi == [("switch", "turn_off", {"entity_id": DEN})], "nhìn lại không thấy ai: tắt"
+    kh.goi.clear()
+    from services import du_doan_nha as dd
+    dd._db().execute("DELETE FROM du_doan")
+    dd._db().commit()
+    tt[LAP]["state"] = "off"
+    kh._tat_vi_vang(DEN)
+    assert len(nhin) == 3 and kh.goi, "ngoại vi không báo thì tắt, không cần nhìn"

@@ -71,6 +71,8 @@ type ThietBi = {
   };
   tat_khi_vang?: {
     bat: boolean; phut: number; cam_bien: { ma: string; ten: string }[]; goi_y: { ma: string; ten: string }[];
+    /** Ngoại vi bot chọn: báo "có thể còn người" thì bot nhìn lại bằng camera `nhin` rồi mới tắt. */
+    giu?: { ma: string; ten: string } | null; nhin?: string[];
     quay_lai_moi_ngay?: Record<string, Record<string, number>>;
     tu_noi?: { gio: number; phut: number }[];
     tu_hoc?: { quang?: number; mat_dau?: number; nham?: number; nham_co_dinh?: number };
@@ -170,6 +172,12 @@ function TatKhiVang({ t, luu, doiMa }: {
         tắt (người vừa tự bật trong 5 phút thì chưa tắt; khung giờ «Tắt: không làm» — vd giờ ngủ — thì không
         tắt). Radar hay mất người khi nằm yên — xem bảng dưới để chọn phút.
       </p>
+      {t.giu && t.nhin?.length ? (
+        <p className="text-emerald-600">
+          Ngoại vi «{t.giu.ten}» báo có thể còn người thì bot NHÌN LẠI bằng {t.nhin.join(", ")} trước khi tắt —
+          thấy người thì chờ, không thấy thì tắt. Ngoại vi không bao giờ tự giữ thiết bị (bot tự chọn, anh chấm).
+        </p>
+      ) : null}
       {Object.entries(t.quay_lai_moi_ngay ?? {}).map(([ten, bang]) => (
         <div key={ten} className="text-muted-foreground">
           {ten}: vắng ≥ N phút rồi lại có người (lần/ngày) —{" "}

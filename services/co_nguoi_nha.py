@@ -67,6 +67,15 @@ def _dong(ro: sqlite3.Connection, ma: str, tu: float, den: float) -> tuple[list[
         "SELECT ts, gia_tri FROM (SELECT ts, gia_tri FROM su_kien WHERE thiet_bi=? AND truong='state'"
         " AND ts<? ORDER BY ts DESC LIMIT 1) UNION ALL SELECT ts, gia_tri FROM su_kien"
         " WHERE thiet_bi=? AND truong='state' AND ts>=? AND ts<? ORDER BY ts", (ma, tu, ma, tu, den))]
+    if ra and ra[0][0] >= tu:
+        # Không có bản ghi nào trước ``tu``: kho chỉ ghi khi ĐỔI, nhưng lần đổi đầu tiên mang giá trị
+        # CŨ. Bỏ nó thì máy ít đổi (laptop, điện thoại) "không rõ" gần hết tháng — đo 29/09/2026 đề
+        # đèn trần: mọi ngoại vi "không rõ" 77–98% số lần vắng.
+        r = ro.execute("SELECT gia_tri_cu FROM su_kien WHERE thiet_bi=? AND truong='state' AND ts>=?"
+                       " ORDER BY ts LIMIT 1", (ma, tu)).fetchone()
+        cu = str((r or [""])[0] or "").strip().lower()
+        if cu:
+            ra.insert(0, (tu, cu))
     return [t for t, _ in ra], [g for _, g in ra]
 
 
@@ -229,15 +238,35 @@ def ung_vien(tb: str, ro: sqlite3.Connection, tu: float, den: float, *,
         return ", ".join(f"{g} {_ti_le(n, len(ds))}" for g, n in
                          sorted(dem.items(), key=lambda i: -i[1])[:2]) if ds else "—"
 
+    def lech(x: dict[str, Any]) -> float:
+        """Một trạng thái xuất hiện ở lần mất dấu nhiều hơn ở lần đi thật bao nhiêu — đúng tiêu chí
+        hướng dẫn cho bot dùng để chọn ngoại vi."""
+        def phan(ds: Khoang) -> dict[str, float]:
+            dem: dict[str, float] = {}
+            for a, _ in ds:
+                g = _luc(x["ts"], x["gt"], a)
+                if g not in _KHONG_RO:
+                    dem[g] = dem.get(g, 0) + 1 / len(ds)
+            return dem
+        pn, pd = phan(ngan) if ngan else {}, phan(dai) if dai else {}
+        return max((v - pd.get(g, 0.0) for g, v in pn.items()), default=0.0)
+
     nv = []
     for m, x in ngoai_vi.items():
         if all(_luc(x["ts"], x["gt"], a) in _KHONG_RO for a, _ in quang):
             continue
         nv.append({"ma": m, "ten": x["ten"], "ngan": phan_bo(x, ngan), "dai": phan_bo(x, dai),
-                   "doi_ngay": x["doi_ngay"],
+                   "doi_ngay": x["doi_ngay"], "lech": lech(x),
                    "gia_tri": sorted({g for g in x["gt"] if g not in _KHONG_RO})})
-    nv.sort(key=lambda d: -d["doi_ngay"])
-    return {"ma": tb, "khu": khu_tb, "so_ngay": so_ngay, "gio_bat": dai_bat / 3600,
+    # Bảng cắt ở _TOI_DA_NGOAI_VI dòng: xếp theo tiêu chí chọn, không theo độ hay đổi — đo 29/09/2026
+    # laptop của vợ (đổi 2 lần/14 ngày) rơi khỏi đề đèn trần dù chủ nhà nêu đích danh nó.
+    nv.sort(key=lambda d: (-d["lech"], -d["doi_ngay"]))
+    try:
+        from services import camera_nha
+        camera = [str(c["name"]) for c in camera_nha.danh_sach()]
+    except Exception:  # noqa: BLE001 — không đọc được sổ camera thì bot không có camera để nhìn lại
+        camera = []
+    return {"ma": tb, "camera": camera, "khu": khu_tb, "so_ngay": so_ngay, "gio_bat": dai_bat / 3600,
             "hien_dien": {m: {k: v for k, v in x.items() if k not in ("ts", "gt", "bat")}
                           for m, x in hien_dien.items()},
             "trong": trong, "ket": ket, "cap": cap, "sang_khac": sang_khac[:_TOI_DA_LAY],
@@ -278,6 +307,8 @@ def de(uv: dict[str, Any], ten_tb: str, dan: list[str]) -> str:
              for x in uv["ngoai_vi"]]
     if not uv["ngoai_vi"]:
         dong.append("(không có)")
+    dong += ["\nE. CAMERA — c2a chụp được ảnh rồi tự đếm người:"]
+    dong += [f"- {c}" for c in uv.get("camera") or []] or ["(không có)"]
     return "\n".join(dong)
 
 
@@ -321,7 +352,17 @@ def kiem(data: Any, uv: dict[str, Any]) -> dict[str, Any] | str:
         chac = min(1.0, max(0.0, float(data.get("chac"))))
     except (TypeError, ValueError):
         chac = 0.0
-    return {"co_nguoi": co, "giu": giu, "chac": round(chac, 2),
+    nhin = data.get("nhin")
+    if nhin is not None:
+        if not isinstance(nhin, list) or not all(isinstance(x, str) for x in nhin):
+            return "nhin phải là danh sách tên camera hoặc null"
+        la = [x for x in nhin if x not in (uv.get("camera") or [])]
+        if la:
+            return f"nhin: camera không có trong đề: {la!r}"
+        nhin = nhin or None
+    if giu is not None and not nhin:
+        return "giu phải đi cùng nhin — ngoại vi chỉ để NHÌN LẠI, không giữ một mình"
+    return {"co_nguoi": co, "giu": giu, "nhin": nhin, "chac": round(chac, 2),
             "vi_sao": str(data.get("vi_sao") or "")[:300]}
 
 
@@ -464,7 +505,8 @@ def ap_dung() -> list[dict[str, Any]]:
             da = so.get(tb) or {}
             if d["ket_qua"] == "sai":
                 if da.get("id") == d["id"]:
-                    kich_hoat_nha.dat_thiet_bi(tb, tat_khi_vang={**tv, "cam_bien": da["truoc"]})
+                    kich_hoat_nha.dat_thiet_bi(tb, tat_khi_vang={**tv, "cam_bien": da["truoc"],
+                                                                 "giu": "", "nhin": []})
                     cam_bien_ghep.xoa(ma_ghep(tb, "vang"))
                     cam_bien_ghep.xoa(ma_ghep(tb, "giu"))
                     so.pop(tb, None)
@@ -477,13 +519,17 @@ def ap_dung() -> list[dict[str, Any]]:
             ten = ten_ha.get(tb) or tb
             ds = [ma_ghep(tb, "vang")]
             cam_bien_ghep.dat(ds[0], f"Có người — {ten}"[:60], d["gia_tri"]["co_nguoi"])
-            if d["gia_tri"].get("giu"):
-                ds.append(ma_ghep(tb, "giu"))
-                cam_bien_ghep.dat(ds[1], f"Giữ khỏi tắt nhầm — {ten}"[:60], d["gia_tri"]["giu"])
+            # Ngoại vi KHÔNG nằm trong danh sách vắng: nó không giữ thiết bị, chỉ khiến bot nhìn
+            # lại bằng camera trước khi tắt (`kich_hoat_nha._tat_vi_vang`).
+            giu = ""
+            if d["gia_tri"].get("giu") and d["gia_tri"].get("nhin"):
+                giu = ma_ghep(tb, "giu")
+                cam_bien_ghep.dat(giu, f"Nên nhìn lại — {ten}"[:60], d["gia_tri"]["giu"])
             else:
                 cam_bien_ghep.xoa(ma_ghep(tb, "giu"))
             truoc = da.get("truoc") if da else tv["cam_bien"]
-            kich_hoat_nha.dat_thiet_bi(tb, tat_khi_vang={**tv, "cam_bien": ds})
+            kich_hoat_nha.dat_thiet_bi(tb, tat_khi_vang={**tv, "cam_bien": ds, "giu": giu,
+                                                         "nhin": list(d["gia_tri"].get("nhin") or [])})
             so[tb] = {"id": d["id"], "truoc": truoc, "luc": time.time()}
             lam.append({"thiet_bi": tb, "cam_bien": ds, "id": d["id"]})
         if lam:

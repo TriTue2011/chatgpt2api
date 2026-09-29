@@ -90,23 +90,27 @@ def test_khu_khong_co_cam_bien_thi_khong_hoi(cn):
 
 def test_kiem_chi_nhan_ma_va_trang_thai_co_trong_de(cn):
     _lich_su()
-    uv = _do(cn)
+    uv = {**_do(cn), "camera": ["Cam phòng khách", "Cam bếp"]}
     dung = {"co_nguoi": {"hoac": [{"ma": C}, {"va": [{"ma": R}, {"khong": {"ma": B}}]}]},
-            "giu": {"va": [{"ma": L, "la": ["home"]}, {"khong": {"ma": B}}]}, "chac": 0.8, "vi_sao": "x"}
-    assert cn.kiem(dung, uv)["giu"] == dung["giu"]
+            "giu": {"va": [{"ma": L, "la": ["home"]}, {"khong": {"ma": B}}]}, "nhin": ["Cam phòng khách"],
+            "chac": 0.8, "vi_sao": "x"}
+    assert cn.kiem(dung, uv)["giu"] == dung["giu"] and cn.kiem(dung, uv)["nhin"] == ["Cam phòng khách"]
+    assert cn.kiem({**dung, "giu": None, "nhin": None}, uv)["nhin"] is None
     for sai, vi in (({**dung, "co_nguoi": {"ma": "binary_sensor.bia"}}, "không có trong đề"),
                     ({**dung, "co_nguoi": {"ma": L, "la": ["home"]}}, "không dùng được ở đây"),
                     ({**dung, "giu": {"ma": L, "la": ["dang_dung"]}}, "trạng thái"),
                     ({**dung, "co_nguoi": {"ma": B}}, "trong khu"),
-                    ({**dung, "co_nguoi": {"va": []}}, "Biểu thức")):
+                    ({**dung, "co_nguoi": {"va": []}}, "Biểu thức"),
+                    ({**dung, "nhin": None}, "NHÌN LẠI"),               # ngoại vi không giữ một mình
+                    ({**dung, "nhin": ["Cam ban công"]}, "không có trong đề")):
         assert vi in cn.kiem(sai, uv)
 
 
 def _ket_luan(cn, **k):
     from services import hieu_thiet_bi_nha as ht
     kl = {"ma_hoc": QUAT, "khu_vuc": "Phòng khách", "co_nguoi": {"hoac": [{"ma": C}, {"ma": R}]},
-          "giu": {"va": [{"ma": L, "la": ["home"]}, {"khong": {"ma": B}}]}, "chac": 0.8,
-          "vi_sao": "", "ten": {R: "Radar PK", C: "Camera PK", L: "Laptop vợ", B: "Radar bếp"}, **k}
+          "giu": {"va": [{"ma": L, "la": ["home"]}, {"khong": {"ma": B}}]}, "nhin": ["Cam phòng khách"],
+          "chac": 0.8, "vi_sao": "", "ten": {R: "Radar PK", C: "Camera PK", L: "Laptop vợ", B: "Radar bếp"}, **k}
     ht.ghi_co_nguoi(1, [kl])
     return next(d for d in ht.dang_hieu_luc() if d["loai_cau_hoi"] == "co_nguoi")
 
@@ -115,20 +119,23 @@ def test_hoi_roi_moi_ap_sai_thi_tra_lai(cn, kh):  # noqa: F811
     from services import cam_bien_ghep, hieu_thiet_bi_nha as ht
     kh.dat_thiet_bi(QUAT, bat=True, tat_khi_vang={"bat": True, "cam_bien": [R], "phut": 3})
     d = _ket_luan(cn)
-    assert "Camera PK hoặc Radar PK" in ht._cau_doc(d, {}) and "Laptop vợ là home và không Radar bếp" in ht._cau_doc(d, {})
+    assert "Camera PK hoặc Radar PK" in ht._cau_doc(d, {}) and "khi Laptop vợ là home và không Radar bếp thì nhìn lại bằng Cam phòng khách" in ht._cau_doc(d, {})
     assert cn.ap_dung() == []                                   # chưa chấm: chỉ hỏi
     assert kh._nap()["thiet_bi"][QUAT]["tat_khi_vang"]["cam_bien"] == [R]
 
     ht.sua_cham(d["id"], True, cham_boi="chu_may")
     ht.ap_ket_luan()
     vang, giu = cn.ma_ghep(QUAT, "vang"), cn.ma_ghep(QUAT, "giu")
-    assert kh._nap()["thiet_bi"][QUAT]["tat_khi_vang"] == {"bat": True, "cam_bien": sorted([vang, giu]), "phut": 3}
+    # Ngoại vi KHÔNG vào danh sách vắng — nó chỉ khiến bot nhìn lại bằng camera trước khi tắt.
+    assert kh._nap()["thiet_bi"][QUAT]["tat_khi_vang"] == {
+        "bat": True, "cam_bien": [vang], "phut": 3, "giu": giu, "nhin": ["Cam phòng khách"]}
     assert cam_bien_ghep.ds()[vang]["bieu_thuc"] == d["gia_tri"]["co_nguoi"]
     assert cn.ap_dung() == []                                   # áp rồi thì thôi
 
     ht.sua_cham(d["id"], False, cham_boi="chu_may", ghi_chu="đèn này chiếu cả bếp")
     ht.ap_ket_luan()
-    assert kh._nap()["thiet_bi"][QUAT]["tat_khi_vang"]["cam_bien"] == [R]
+    assert kh._nap()["thiet_bi"][QUAT]["tat_khi_vang"] == {"bat": True, "cam_bien": [R], "phut": 3,
+                                                           "giu": "", "nhin": []}
     assert vang not in cam_bien_ghep.ds() and giu not in cam_bien_ghep.ds()
     assert ht.ghi_chu_cham("co_nguoi", QUAT) == ["(chấm sai) đèn này chiếu cả bếp"]
 
