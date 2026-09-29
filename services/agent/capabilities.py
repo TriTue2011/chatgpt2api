@@ -1112,6 +1112,13 @@ def _h_so_do_nha(args: dict, ctx: dict) -> dict:
     from services import so_do_nha
 
     viec = str(args.get("viec") or "xem").strip().lower()
+    if viec == "chup_camera":
+        # Chủ máy 29/09/2026: "dùng cam để đo theo mô tả của tôi. Chụp ảnh mà phân tích" — bot chụp,
+        # kẻ lưới, YOLO khoanh đồ vật, model thị giác chia ô theo phòng rồi vẽ lại sơ đồ.
+        cam = [str(args["camera"])] if args.get("camera") else None
+        threading.Thread(target=so_do_nha.doc_anh_va_ve, args=(cam,), name="so-do-nha-anh", daemon=True).start()
+        return {"text": f"Em đang chụp {cam[0] if cam else 'từng camera'}, kẻ lưới và nhìn ảnh theo lời anh tả để "
+                        "chia khung hình theo phòng — xong em gửi vào nhóm học hỏi rồi vẽ lại sơ đồ ạ."}
     if viec == "mo_ta":
         noi = str(args.get("noi_dung") or "").strip()
         if not noi:
@@ -1132,6 +1139,25 @@ def _h_so_do_nha(args: dict, ctx: dict) -> dict:
     s = so_do_nha.ap()
     return {"text": ("Sơ đồ nhà em đang dùng:\n" + so_do_nha.doc(s)) if s else
             "Em chưa có sơ đồ nhà nào được anh xác nhận. Anh mô tả giúp em nhé."}
+
+
+def _h_kich_ban_nha(args: dict, ctx: dict) -> dict:
+    """Kịch bản nhà (`services/kich_ban_nha.py`): bot dựng tình huống cho từng thiết bị từ sơ đồ nhà,
+    xét cách đang cài có đúng không, hỏi chủ nhà từng câu; chủ nhà trả lời câu «❓ KB…»."""
+    import threading
+
+    from services import kich_ban_nha
+
+    viec = str(args.get("viec") or "dung").strip().lower()
+    if viec == "tra_loi":
+        return {"text": kich_ban_nha.tra_loi(str(args.get("noi_dung") or ""),
+                                             int(args["so"]) if args.get("so") else None)}
+    if viec == "xem":
+        lan = kich_ban_nha.so()["lan"]
+        return {"text": lan[-1]["tom_tat"] if lan else "Em chưa dựng tình huống nào ạ."}
+    threading.Thread(target=kich_ban_nha.giai_va_bao, name="kich-ban-nha", daemon=True).start()
+    return {"text": "Em đang dựng các tình huống đi lại trong nhà cho từng thiết bị theo sơ đồ nhà — xong em gửi "
+                    "nhóm học hỏi, chỗ chưa chắc em hỏi anh từng câu ạ."}
 
 
 def _h_ghi_du_kien(args: dict, ctx: dict) -> dict:
@@ -7342,13 +7368,28 @@ CAPABILITIES: dict[str, Capability] = {
         description=("Chủ nhà MÔ TẢ nhà (chung cư/nhà đất, mấy tầng, phòng nào, bếp mở hay có vách, cửa chính "
                      "mở vào đâu, camera nhìn thấy gì) hoặc TRẢ LỜI câu bot hỏi về sơ đồ nhà → viec='mo_ta'. "
                      "Chấm sơ đồ bot vẽ («sơ đồ đúng rồi», «sai, bếp có vách kính») → viec='cham'. "
-                     "Hỏi sơ đồ nhà → viec='xem'."),
+                     "Bảo CHỤP ẢNH camera để phân tích / đo khu vực theo mô tả («chụp cam bếp phân tích», "
+                     "«dùng cam để đo») → viec='chup_camera' (camera = tên camera nếu nêu; nếu câu có cả mô tả "
+                     "thì gọi viec='mo_ta' TRƯỚC rồi mới chup_camera). Hỏi sơ đồ nhà → viec='xem'."),
         parameters={"type": "object", "properties": {
-            "viec": {"type": "string", "enum": ["mo_ta", "cham", "xem"]},
+            "viec": {"type": "string", "enum": ["mo_ta", "cham", "xem", "chup_camera"]},
+            "camera": {"type": "string", "description": "viec='chup_camera': tên camera (bỏ trống = mọi camera)."},
             "noi_dung": {"type": "string", "description": "Lời chủ nhà mô tả/trả lời, giữ đúng ý."},
             "dung": {"type": "boolean", "description": "viec='cham': sơ đồ đúng hay sai."},
             "ghi_chu": {"type": "string", "description": "viec='cham': chỗ sai chủ nhà chỉ ra."},
             "so": {"type": "integer", "description": "Số #N của bài sơ đồ nếu chủ nhà nêu."}},
+            "required": ["viec"]}),
+    "kich_ban_nha": Capability(
+        name="kich_ban_nha", risk=READ, handler=_h_kich_ban_nha,
+        emoji="🧭", label="Tình huống nhà — bot tự dựng và hỏi",
+        description=("Bảo bot DỰNG / xét lại các TÌNH HUỐNG đi lại trong nhà cho các thiết bị theo sơ đồ nhà («tạo "
+                     "tình huống», «xét các tình huống cho đèn trần») → viec='dung'. TRẢ LỜI câu hỏi «❓ KB<số> …» "
+                     "của bot → viec='tra_loi' (noi_dung = lời trả lời, so = số KB nếu nêu). Hỏi bot đã dựng "
+                     "được gì → viec='xem'."),
+        parameters={"type": "object", "properties": {
+            "viec": {"type": "string", "enum": ["dung", "tra_loi", "xem"]},
+            "noi_dung": {"type": "string", "description": "viec='tra_loi': lời chủ nhà, giữ đúng ý."},
+            "so": {"type": "integer", "description": "Số KB của câu hỏi nếu người dùng nêu."}},
             "required": ["viec"]}),
     "ghi_du_kien": Capability(
         name="ghi_du_kien", risk=READ, handler=_h_ghi_du_kien,
@@ -8345,6 +8386,7 @@ _CAP_GROUP: dict[str, str] = {
     "write_code": "code",
     "home_status": "homeassistant", "control_home": "homeassistant",
     "ghi_du_kien": "homeassistant", "tra_loi_bot_nha": "homeassistant", "so_do_nha": "homeassistant",
+    "kich_ban_nha": "homeassistant",
     "describe_device": "homeassistant",
     # MQTT cùng nhóm quyền với Home Assistant: ai được điều khiển nhà thì được
     # điều khiển qua cả hai đường, không phải tích thêm ô riêng.

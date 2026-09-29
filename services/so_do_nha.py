@@ -16,10 +16,17 @@ sơ đồ, người chấm (chủ nhà / giáo viên) rồi mới ÁP. Bằng ch
   phòng khách cột A–B phần lớn trùng lúc chỉ radar bếp báo — góc bếp trong khung hình.
 * CỬA: cửa chính mở rồi phòng nào có người đầu tiên.
 * Lời chủ nhà mô tả (và bản vẽ, qua lời mô tả của model thị giác).
+* ẢNH CAMERA: chủ máy 29/09/2026 "chụp ảnh cam phòng khách phân tích, dùng yolo phân tích cho chính
+  xác", "bếp tính từ chiếc thùng gỗ màu xanh trong ảnh chụp ra đến cửa ban công". Lưới thống kê chỉ
+  có ô nào chân người từng đứng và nhãn radar hay báo lây (bài #4–#11: camera phòng khách chỉ ra 1–2
+  ô). Code chụp khung, kẻ đúng lưới 8×6, cho YOLO khoanh đồ vật (tủ lạnh, tivi, bàn ăn…); BOT (model
+  thị giác, hướng dẫn `doc_anh_camera.md`) nhìn ảnh + mốc chủ nhà tả rồi chia ô theo phòng. Kết quả
+  vào sổ như một lời mô tả nguồn «anh:<camera>» — lượt vẽ sơ đồ đọc nó như mọi bằng chứng khác.
 """
 
 from __future__ import annotations
 
+import base64
 import bisect
 import json
 import sqlite3
@@ -73,13 +80,16 @@ def so() -> dict[str, Any]:
         return _nap()
 
 
-def them_mo_ta(noi_dung: str, nguon: str = "chu_may") -> int:
-    """Lời chủ nhà mô tả nhà (hoặc bản mô tả bản vẽ của model thị giác). Trả số thứ tự."""
+def them_mo_ta(noi_dung: str, nguon: str = "chu_may", *, thay_cu: bool = False) -> int:
+    """Lời chủ nhà mô tả nhà (hoặc bản mô tả bản vẽ / ảnh camera của model thị giác). Trả số thứ tự.
+    ``thay_cu``: bỏ các mô tả cũ CÙNG nguồn (đọc lại ảnh một camera thì bản mới thay bản cũ)."""
     noi_dung = str(noi_dung or "").strip()
     if not noi_dung:
         raise ValueError("Mô tả rỗng.")
     with _khoa:
         d = _nap()
+        if thay_cu:
+            d["mo_ta"] = [x for x in d["mo_ta"] if x.get("nguon") != nguon]
         d["mo_ta"].append({"luc": time.time(), "nguon": nguon, "noi_dung": noi_dung[:4000]})
         _luu(d)
         return len(d["mo_ta"])
@@ -394,6 +404,182 @@ def giai_va_bao() -> dict[str, Any]:
                + "\nAnh trả lời hoặc mô tả thêm, em vẽ lại; đúng thì anh nói «sơ đồ đúng rồi».")
         ht.bao_nhom(tin)
     return kq
+
+
+# ── Đọc ẢNH camera ─────────────────────────────────────────────────────────
+_ANH_DIR = Path(DATA_DIR) / "agent" / "so_do_nha"
+
+
+def ten_o(c: int, h: int) -> str:
+    return f"{chr(ord('A') + c)}{h + 1}"
+
+
+def ve_luoi(anh: Any, vat: list[Any]) -> bytes:
+    """Ảnh BGR → JPEG có lưới COT×HANG ghi tên ô và hộp đồ vật YOLO (nhãn tiếng Anh; tên tiếng Việt nằm
+    trong đề chữ)."""
+    import io
+
+    from PIL import Image, ImageDraw, ImageFont
+
+    ra = Image.fromarray(anh[:, :, ::-1].copy())
+    rong, cao = ra.size
+    ve = ImageDraw.Draw(ra)
+    try:
+        chu = ImageFont.load_default(size=max(12, cao // 45))
+    except TypeError:          # Pillow cũ: không có cỡ chữ
+        chu = ImageFont.load_default()
+    vang, do_ = (255, 255, 0), (255, 0, 0)
+    for c in range(1, COT):
+        ve.line([(int(c * rong / COT), 0), (int(c * rong / COT), cao)], fill=vang, width=1)
+    for h in range(1, HANG):
+        ve.line([(0, int(h * cao / HANG)), (rong, int(h * cao / HANG))], fill=vang, width=1)
+    for c in range(COT):
+        for h in range(HANG):
+            ve.text((int(c * rong / COT) + 4, int(h * cao / HANG) + 2), ten_o(c, h), fill=vang, font=chu)
+    for v in vat:
+        x1, y1, x2, y2 = (int(t) for t in v.hop)
+        ve.rectangle([x1, y1, x2, y2], outline=do_, width=2)
+        ve.text((x1 + 2, max(0, y1 - cao // 40)), v.nhan, fill=do_, font=chu)
+    buf = io.BytesIO()
+    ra.save(buf, format="JPEG", quality=85)
+    return buf.getvalue()
+
+
+def la_anh_dem(anh: Any) -> bool:
+    """Camera chuyển hồng ngoại ban đêm cho ảnh xám: ba kênh màu gần như trùng nhau."""
+    import numpy as np
+
+    m = anh[::8, ::8].astype(np.int16)
+    return float(np.abs(m[..., 0] - m[..., 1]).mean() + np.abs(m[..., 1] - m[..., 2]).mean()) < 3.0
+
+
+def mo_ta_vat(v: Any, rong: int, cao: int) -> str:
+    """Một đồ vật YOLO → «tên (nhãn) — chân ô X, trải A1–C3» (chân = giữa đáy hộp, chỗ nó đứng trên sàn)."""
+    x1, y1, x2, y2 = (float(t) for t in v.hop)
+    chan = o_cua((x1 + x2) / 2 / rong, min(y2 / cao, 0.999))
+    return (f"{v.ten} ({v.nhan}, {v.diem:.0%}) — chân ô {chan}, trải "
+            f"{o_cua(x1 / rong, y1 / cao)}–{o_cua(min(x2 / rong, 0.999), min(y2 / cao, 0.999))}")
+
+
+def _goi_thi_giac(noi: str, jpeg: bytes, max_tokens: int = 1500) -> str:
+    """Một lượt gọi model thị giác (nhánh «vision») với một ảnh. Lỗi thì ném RuntimeError."""
+    from services.agent.branches import branch_model
+    from services.agent.runtime import call_model, content_of
+
+    url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()
+    r = call_model(branch_model("vision"), [{"role": "user", "content": [
+        {"type": "text", "text": noi}, {"type": "image_url", "image_url": {"url": url}}]}],
+        timeout=180, max_tokens=max_tokens,
+        # Cùng khuôn lời gọi học của bot (`hieu_thiet_bi_nha._goi_model`): xin JSON, tắt mọi tích hợp.
+        # Đo 30/09/2026: thiếu ba tham số này thì cả ba model thị giác trả «json\nmo ta…» — mất sạch
+        # ngoặc, nháy, gạch dưới — không đọc được.
+        response_format={"type": "json_object"}, no_smart_home=True, allowed_groups=set())
+    if r.get("error"):
+        raise RuntimeError(f"model thị giác lỗi: {str(r['error'])[:160]}")
+    return str(content_of(r) or "")
+
+
+def _ten_phong() -> list[str]:
+    from services import boi_canh_nha, ha_client
+    return sorted({boi_canh_nha.phong_cua(str(s["entity_id"])) for s in ha_client.get_states() or []} - {"", None})
+
+
+def kiem_anh(data: Any, phong: list[str]) -> dict[str, Any] | str:
+    """Loại bài đọc ảnh sai khuôn: ô phải A1–H6, phòng phải có trong nhà."""
+    if not isinstance(data, dict) or not isinstance(data.get("thay"), dict):
+        return "phải là JSON có «thay»: {phòng: [ô]}"
+    thay: dict[str, list[str]] = {}
+    for k, o in data["thay"].items():
+        if k not in phong:
+            return f"phòng không có trong nhà: {k!r}"
+        if not isinstance(o, list) or not all(isinstance(x, str) and len(x) == 2 and "A" <= x[0] <= chr(ord("A") + COT - 1)
+                                              and "1" <= x[1] <= str(HANG) for x in o):
+            return f"{k}: ô phải dạng A1–{chr(ord('A') + COT - 1)}{HANG}"
+        if o:
+            thay[k] = sorted(set(o), key=lambda x: (x[1], x[0]))
+    try:
+        chac = min(1.0, max(0.0, float(data.get("chac"))))
+    except (TypeError, ValueError):
+        chac = 0.0
+    return {"thay": thay, "moc": str(data.get("moc") or "")[:400], "chac": round(chac, 2),
+            "vi_sao": str(data.get("vi_sao") or "")[:500]}
+
+
+def doc_anh_camera(ten: str) -> dict[str, Any]:
+    """Chụp ``ten``, kẻ lưới + YOLO khoanh đồ vật, bot (model thị giác) chia ô theo phòng; kết quả vào sổ
+    thành lời mô tả nguồn «anh:<camera>» (thay bản đọc cũ của camera đó)."""
+    from services import camera_nha, ha_client, hieu_thiet_bi_nha as ht, nhin_nha, yolo_nha
+
+    ten_that, jpeg = camera_nha.chup(ten, timeout=20.0)
+    anh = yolo_nha.doc_anh(jpeg)
+    cao, rong = anh.shape[:2]
+    vat = nhin_nha.vat_the(anh)
+    dem = la_anh_dem(anh)
+    luoi = ve_luoi(anh, vat)
+    _ANH_DIR.mkdir(parents=True, exist_ok=True)
+    (_ANH_DIR / f"{ten_that}.jpg").write_bytes(luoi)
+    phong = _ten_phong()
+    mo_ta = [x["noi_dung"] for x in so()["mo_ta"] if not str(x.get("nguon") or "").startswith("anh:")]
+    huong, ban = ht.huong_dan("doc_anh_camera")
+    de = "\n".join([f"CAMERA: {ten_that}",
+                    f"PHÒNG trong nhà (chỉ dùng đúng các tên này): {', '.join(phong)}",
+                    f"ẢNH: khung hình đã kẻ lưới {COT}×{HANG} — cột A–{chr(ord('A') + COT - 1)} trái→phải, "
+                    f"hàng 1–{HANG} trên→dưới, tên ô ghi ở góc trên-trái mỗi ô; hộp đỏ là đồ vật YOLO thấy."
+                    + (" ẢNH ĐÊM (hồng ngoại, đen trắng — không thấy màu)." if dem else ""),
+                    "YOLO thấy:"] + [f"- {mo_ta_vat(v, rong, cao)}" for v in vat[:25]] + (["- (không thấy gì)"] if not vat else [])
+                   + ["CHỦ NHÀ MÔ TẢ:"] + ([f"- {x}" for x in mo_ta] or ["- (chưa có)"]))
+    if ha_client._URL_CO_MAT_KHAU.search(de):
+        return {"ok": False, "loi": "đề có chuỗi dạng tài khoản:mật khẩu — bỏ lượt"}
+    data = ht._doc_json(_goi_thi_giac(huong + "\n\n---\n\n" + de, luoi))
+    k = kiem_anh(data, phong) if data is not None else "không đọc được JSON"
+    if isinstance(k, str):
+        logger.warning({"event": "so_do_nha_anh_loai", "camera": ten_that, "loi": k})
+        return {"ok": False, "camera": ten_that, "loi": k}
+    noi = (f"Ảnh {ten_that} (bot đọc ảnh chụp{' ĐÊM đen trắng' if dem else ''} đã kẻ lưới {COT}×{HANG}, YOLO khoanh "
+           f"đồ vật, chắc {round(100 * k['chac'])}%; hướng dẫn {ban}): "
+           + ("; ".join(f"{p}: ô {', '.join(o)}" for p, o in k["thay"].items()) or "không thấy phòng nào trong nhà")
+           + (f". Mốc: {k['moc']}" if k["moc"] else ""))
+    them_mo_ta(noi, nguon=f"anh:{ten_that}", thay_cu=True)
+    logger.info({"event": "so_do_nha_anh", "camera": ten_that, "thay": k["thay"], "vat": len(vat)})
+    return {"ok": True, "camera": ten_that, **k, "dem": dem, "luoi": luoi,
+            "vat": [mo_ta_vat(v, rong, cao) for v in vat[:25]]}
+
+
+def doc_anh_va_ve(cameras: list[str] | None = None) -> dict[str, Any]:
+    """Đọc ảnh từng camera (mặc định mọi camera) rồi vẽ lại sơ đồ và báo nhóm học hỏi."""
+    from services import camera_nha, hieu_thiet_bi_nha as ht
+
+    ds = cameras or [str(c["name"]) for c in camera_nha.danh_sach()]
+    ra = []
+    for c in ds:
+        try:
+            ra.append(doc_anh_camera(c))
+        except Exception as exc:  # noqa: BLE001 — một camera hỏng không bỏ cả lượt
+            ra.append({"ok": False, "camera": c, "loi": str(exc)[:160]})
+    from services import thong_bao
+    from services.protocol.conversation import save_image_bytes
+
+    loi = []
+    for x in ra:
+        if not x.get("ok"):
+            loi.append(f"• {x['camera']}: chưa đọc được — {x.get('loi')}")
+            continue
+        # Gửi kèm ẢNH LƯỚI em đã nhìn: chủ nhà chấm được từng ô, lời chấm vào sổ mô tả và lần đọc sau đọc cả nó.
+        tin = (f"📷 {x['camera']} — em chia ô (ô ghi ở góc mỗi ô trong ảnh), chắc {round(100 * x['chac'])}%:\n"
+               + ("\n".join(f"• {p}: {', '.join(o)}" for p, o in x["thay"].items()) or "• không thấy phòng nào trong nhà")
+               + (f"\nMốc em dùng: {x['moc'][:200]}" if x.get("moc") else "")
+               + ("\n(Ảnh ĐÊM đen trắng — mốc theo màu em chưa thấy; anh bảo em chụp lại ban ngày.)" if x.get("dem") else "")
+               + "\nSai ô nào anh nói, vd «ô E4, F4 là phòng khách», em đọc lại.")
+        try:
+            url = save_image_bytes(x.pop("luoi"))
+        except Exception:  # noqa: BLE001 — không lưu được ảnh thì vẫn gửi chữ
+            url = ""
+        thong_bao.gui("hoc_hoi.hieu_thiet_bi", tin, anh_url=url)
+    if loi:
+        ht.bao_nhom("📷 Camera em chưa nhìn được:\n" + "\n".join(loi))
+    for x in ra:
+        x.pop("luoi", None)
+    return {"anh": ra, "so_do": giai_va_bao()}
 
 
 # ── Dùng sơ đồ ──────────────────────────────────────────────────────────────

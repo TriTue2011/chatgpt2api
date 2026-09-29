@@ -1239,7 +1239,9 @@ def _cau_doc(d: dict[str, Any], ten: dict[str, str]) -> str:
             loi += (f"; khi {_bieu_thuc_doc(gt['giu'], ten_cb)} thì nhìn lại bằng "
                     f"{', '.join(gt.get('nhin') or [])} trước khi tắt")
         if gt.get("roi_di"):
-            loi += f"; vắng mà {_bieu_thuc_doc(gt['roi_di'], ten_cb)} (người đã sang khu khác) thì tắt ngay"
+            loi += (f"; vắng mà {_bieu_thuc_doc(gt['roi_di'], ten_cb)} (người đã sang khu khác) thì tắt ngay"
+                    + (f" — chỉ khi người mới ở ≤ {gt['roi_khi_o_duoi']} phút (đi ngang)"
+                       if gt.get("roi_khi_o_duoi") else ""))
         return loi
     if gt.get("hoc"):
         return f"Học thói quen {_nhan(d['khoa'], ten)}"

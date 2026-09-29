@@ -1706,7 +1706,9 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
      "- Trả lời tin bot «#N Em đã bật/tắt … Đúng hay sai ạ?» / «#N … bật không ạ?» bằng lời "
      "tự nhiên → tra_loi_bot_nha (dung/sai/co/khong). Người dùng DẠY bot về nhà (thiết bị nào "
      "nối với nào, cảm biến nào là gì) → ghi_du_kien. Mô tả NHÀ (chung cư/nhà đất, phòng, bếp mở, "
-     "cửa, camera nhìn đâu) hoặc trả lời/chấm «🏠 #N … sơ đồ nhà» → so_do_nha. Còn LỆNH «tắt đèn "
+     "cửa, camera nhìn đâu) hoặc trả lời/chấm «🏠 #N … sơ đồ nhà» → so_do_nha; bảo chụp ảnh camera "
+     "để phân tích/đo KHU VỰC cho sơ đồ → so_do_nha viec='chup_camera' (khác xem camera). Dựng/xét TÌNH "
+     "HUỐNG cho thiết bị theo sơ đồ, hoặc trả lời câu «❓ KB<số>» → kich_ban_nha. Còn LỆNH «tắt đèn "
      "đi» → control_home."),
     ("homeassistant", _KW_NHATHONGMINH,
      "- Nếp sinh hoạt bot học được (giờ ăn, buổi sáng, trước khi ngủ) → "

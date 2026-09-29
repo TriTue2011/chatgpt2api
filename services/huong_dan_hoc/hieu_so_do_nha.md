@@ -51,6 +51,12 @@ trả lời được bằng có/không hoặc một tên).
    → ghi cả phòng đó vào `thay` của camera: đó là chỗ hai phòng thông nhau.
    Nhớ: nhãn dựa vào radar, mà radar hay báo lây — cả camera toàn một phòng thì
    đó là phòng của camera, số lẻ tẻ phòng khác là nhiễu.
+   Mục E có dòng «Ảnh <camera> …» (bot đã NHÌN ẢNH chụp camera đó, kẻ đúng
+   lưới này, theo mốc chủ nhà tả) → `thay` của camera đó CHÉP ĐÚNG các ô trong
+   dòng ảnh; mục C chỉ còn để hỏi lại khi hai bên trái nhau nặng (vd ảnh nói
+   toàn bếp mà lưới ≥ 60% phòng khách ở nhiều ô). Lưới thống kê chỉ có ô chân
+   người từng đứng và nhãn radar hay báo lây — nên số ô KHÔNG nói phòng to
+   hay nhỏ.
 4. Mục D — CỬA: cửa mở rồi phòng nào có người đầu tiên = cửa mở vào phòng đó
    (thường là phòng khách / sảnh). "(không phòng nào)" nhiều = người đi RA.
 5. Mục E — lời chủ nhà: chung cư hay nhà đất, mấy tầng, bếp mở hay kín… thắng

@@ -70,3 +70,47 @@ def test_nhin_lai_chi_dem_nguoi_trong_vung_phong(so, monkeypatch):
     assert kh._nhin_lai(["Cam bếp"], "") == "Cam bếp", "không biết khu thì đếm cả khung"
     ev["box"] = [0.05, 0.6, 0.1, 0.35]                      # chân ở A6 — phần phòng khách
     assert kh._nhin_lai(["Cam bếp"], "Phòng khách") == "Cam bếp"
+
+
+def test_doc_anh_camera_ke_luoi_yolo_bot_chia_o_roi_vao_so(so, tmp_path, monkeypatch):
+    """Chủ máy 29/09/2026: "dùng cam để đo theo mô tả của tôi. Chụp ảnh mà phân tích", "dùng yolo để xác
+    nhận lại". Code chụp, kẻ lưới, YOLO khoanh đồ vật; bot (model thị giác) chia ô; kết quả vào sổ như lời
+    mô tả nguồn «anh:<camera>», đọc lại thì thay bản cũ."""
+    import numpy as np
+
+    from services import camera_nha, ha_client, hieu_thiet_bi_nha as ht, nhin_nha, yolo_nha
+
+    anh = np.zeros((600, 800, 3), np.uint8)
+    anh[:, :, 2] = 90                                         # ảnh màu (ban ngày)
+    assert not so.la_anh_dem(anh) and so.la_anh_dem(np.full((60, 80, 3), 77, np.uint8))
+
+    class Vat:
+        nhan, diem, hop, ten = "refrigerator", 0.9, (0, 100, 200, 500), "tủ lạnh"
+    assert so.mo_ta_vat(Vat(), 800, 600) == "tủ lạnh (refrigerator, 90%) — chân ô B6, trải A2–C6"
+    assert so.ve_luoi(anh, [Vat()])[:2] == b"\xff\xd8"
+
+    monkeypatch.setattr(so, "_ANH_DIR", tmp_path / "anh")
+    monkeypatch.setattr(camera_nha, "chup", lambda ten, timeout=20.0: (ten, b"jpeg"))
+    monkeypatch.setattr(yolo_nha, "doc_anh", lambda b: anh)
+    monkeypatch.setattr(nhin_nha, "vat_the", lambda a: [Vat()])
+    monkeypatch.setattr(so, "_ten_phong", lambda: ["Bếp", "Phòng khách"])
+    monkeypatch.setattr(ht, "huong_dan", lambda ten: ("HƯỚNG DẪN", "v1"))
+    monkeypatch.setattr(ha_client, "get_states", lambda: [])
+    de: list[str] = []
+    tra = ['{"thay": {"Bếp": ["A5", "B5"], "Phòng khách": ["E6"]}, "moc": "tủ lạnh ở A5", "chac": 0.8}']
+    monkeypatch.setattr(so, "_goi_thi_giac", lambda noi, jpeg: de.append(noi) or tra[0])
+    so.them_mo_ta("Bếp tính từ thùng gỗ xanh tới cửa ban công")
+    r = so.doc_anh_camera("Cam bếp")
+    assert r["ok"] and r["thay"] == {"Bếp": ["A5", "B5"], "Phòng khách": ["E6"]}
+    assert "tủ lạnh (refrigerator" in de[0] and "thùng gỗ xanh" in de[0] and "Bếp, Phòng khách" in de[0]
+    assert (tmp_path / "anh" / "Cam bếp.jpg").exists()
+    tra[0] = '{"thay": {"Bếp": ["A5"]}, "chac": 0.9}'
+    so.doc_anh_camera("Cam bếp")
+    anh_mo_ta = [x for x in so.so()["mo_ta"] if x["nguon"] == "anh:Cam bếp"]
+    assert len(anh_mo_ta) == 1 and "Bếp: ô A5" in anh_mo_ta[0]["noi_dung"], "đọc lại thì thay bản cũ"
+    assert "thùng gỗ xanh" not in de[1].split("CHỦ NHÀ MÔ TẢ:")[0]
+    assert "Ảnh Cam bếp" not in de[1], "lần đọc sau không lấy bài đọc ảnh cũ làm lời chủ nhà"
+    tra[0] = '{"thay": {"Phòng học": ["A1"]}}'
+    assert "không có trong nhà" in so.doc_anh_camera("Cam bếp")["loi"]
+    tra[0] = '{"thay": {"Bếp": ["Z9"]}}'
+    assert "ô phải dạng" in so.doc_anh_camera("Cam bếp")["loi"]
