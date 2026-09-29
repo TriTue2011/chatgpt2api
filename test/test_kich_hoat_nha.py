@@ -1216,3 +1216,40 @@ def test_nghi_nhieu_song_bao_camera_khong_thay_thi_chup_lai_roi_tat(kh, monkeypa
     assert kh._noi_vang(DEN, r["boi_canh"], time.time()) is None, "sai ở đường nhiễu không nới giờ chờ vắng"
     kh._theo_nhieu(CAM, "on", kh.ds_thiet_bi())
     assert DEN not in kh._hen_nhieu, "camera thấy người: huỷ hẹn"
+
+
+def test_dinh_vi_toa_do_theo_so_do_da_cham(kh, monkeypatch):
+    """Chủ máy 30/09/2026: "đứng ở bếp nhưng cảm biến phòng khách vẫn báo có người, nhưng không kích hoạt gì
+    vì không ở phòng khách, và khi cảm biến hiện diện bếp cùng báo có người phải xác định lại tọa độ. Train
+    chứ không áp đặt cứng". Chỉ khi SƠ ĐỒ đã chấm có ô camera cho khu và khu liền kề cùng báo."""
+    from services import boi_canh_nha, so_do_nha
+    tt = {x["entity_id"]: dict(x) for x in TT}
+    monkeypatch.setattr(kh, "_trang_thai_ha", lambda: list(tt.values()))
+    monkeypatch.setattr(boi_canh_nha, "phong_cua",
+                        lambda ma: {DEN: "Phòng ngủ", NGU: "Phòng ngủ", BEP: "Bếp"}.get(ma, ""))
+    monkeypatch.setattr(kh.time, "sleep", lambda s: None)
+    nhin: list = []
+    thay = [""]
+    monkeypatch.setattr(kh, "_nhin_lai", lambda cam, khu, chi_chup=False: nhin.append((cam, khu)) or thay[0])
+    nguon = f"{NGU} có người vào"
+    monkeypatch.setattr(so_do_nha, "ap", lambda: None)
+    assert kh._dinh_vi(DEN, nguon) is None, "chưa có sơ đồ đã chấm: không định vị, làm như cũ"
+    s = {"phong": [{"ten": "Phòng ngủ", "thong_voi": ["Bếp"]}, {"ten": "Bếp", "thong_voi": ["Phòng ngủ"]}],
+         "camera": [{"ten": "Cam", "thay": {"Phòng ngủ": ["A5"], "Bếp": ["F5"]}}]}
+    monkeypatch.setattr(so_do_nha, "ap", lambda: s)
+    assert kh._dinh_vi(DEN, nguon) is None and not nhin, "khu liền kề không báo: không mơ hồ, khỏi nhìn"
+    assert kh._dinh_vi(DEN, f"{CUA} có người vào") is None, "nguồn cửa đã có đường xác nhận riêng"
+    tt[BEP]["state"] = "on"
+    assert kh._dinh_vi(DEN, nguon) == "" and nhin[-1] == (["Cam"], "Phòng ngủ") and len(nhin) == 2
+    thay[0] = "Cam"
+    assert kh._dinh_vi(DEN, nguon) == "Cam"
+    # Chặn rồi người tự bật ngay → ghi «sai», vào mục G của đề sơ đồ.
+    with kh._khoa:
+        kh._nap().setdefault("dinh_vi", []).append({"luc": time.time() - 30, "thiet_bi": DEN, "nguon": nguon,
+                                                    "ket_qua": "cho"})
+    kh._nguoi_lam(DEN, "on", time.time())
+    assert kh._nap()["dinh_vi"][-1]["ket_qua"] == "sai"
+    de = so_do_nha.de({"phong": {}, "cung_bao": [], "camera": {}, "cua": {}, "ten": {},
+                       "dinh_vi_sai": ["Đèn phòng ngủ (khu Phòng ngủ), nguồn Hiện diện phòng ngủ, lúc 30/09 21:00"]},
+                      [], [])
+    assert "G. ĐỊNH VỊ CHẶN NHẦM" in de

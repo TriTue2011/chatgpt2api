@@ -1412,6 +1412,50 @@ def xet(tb: str, hd: str, nguon: str, luc: float) -> dict[str, Any]:
     return {"lam": "tu_lam" if _duoc_tu_lam(tb, hd) else "hoi", "p": p, "x": x}
 
 
+#: Định vị: Frigate có thể chậm một nhịp mới có sự kiện của người vừa bước vào — không thấy ai thì nhìn lại
+#: sau ngần này giây trước khi kết luận "người ở khu khác".
+DINH_VI_NHIN_LAI = 2.5
+
+
+def _dinh_vi(tb: str, nguon: str) -> str | None:
+    """Người vừa kích hoạt thật sự đứng ở khu của thiết bị không — bằng TOẠ ĐỘ trên camera.
+
+    Chủ máy 30/09/2026: "nếu đứng ở bếp nhưng cảm biến phòng khách vẫn báo có người, nhưng không kích hoạt
+    gì vì không ở phòng khách, và khi cảm biến hiện diện bếp cùng báo có người phải xác định lại tọa độ.
+    Cái này train chứ không phải áp đặt cứng". Nên mọi thứ đi từ SƠ ĐỒ NHÀ bot vẽ và người đã chấm:
+
+    * chỉ xét khi nguồn là cảm biến hiện diện (hoặc «ở lại»), và cảm biến của khu LIỀN KỀ (sơ đồ ghi thông /
+      có vách) đang cùng báo — lúc đó mới mơ hồ;
+    * nhìn các camera mà sơ đồ gán ô cho khu này, chỉ đếm người đứng trong các ô đó (`_nhin_lai`).
+
+    Trả tên camera thấy người trong khu, "" nếu camera nhìn được mà không ai trong khu (người ở khu khác —
+    đừng làm), None nếu không cần / không định vị được (chưa có sơ đồ đã chấm, không camera) — làm như cũ."""
+    from services import boi_canh_nha, so_do_nha
+
+    ma = nguon.split(" ")[0]
+    if not (nguon.endswith(" " + O_LAI) or (nguon.endswith(" có người vào") and ma in _lop(_LOP_HIEN_DIEN))):
+        return None
+    s = so_do_nha.ap() or {}
+    khu = boi_canh_nha.phong_cua(tb)
+    p = next((x for x in s.get("phong") or [] if x.get("ten") == khu), None)
+    if not p:
+        return None
+    ke = set(p.get("thong_voi") or []) | set(p.get("vach_voi") or [])
+    cams = [c["ten"] for c in s.get("camera") or [] if (c.get("thay") or {}).get(khu)]
+    if not ke or not cams:
+        return None
+    tt = {str(x["entity_id"]): str(x.get("state") or "").lower() for x in _trang_thai_ha()}
+    if not any(tt.get(m) == "on" and boi_canh_nha.phong_cua(m) in ke
+               for m in _lop(_LOP_HIEN_DIEN) if not _cbg.la_ghep(m)):
+        return None                     # không khu liền kề nào cùng báo — không mơ hồ
+    thay = _nhin_lai(cams, khu)
+    if thay == "":
+        time.sleep(DINH_VI_NHIN_LAI)
+        thay = _nhin_lai(cams, khu)
+    logger.info({"event": "kich_hoat_dinh_vi", "thiet_bi": tb, "nguon": nguon, "thay": thay})
+    return thay
+
+
 def _duoc_tu_lam(tb: str, hd: str) -> bool:
     """Tự làm khi: đủ thang của `du_doan_nha` (50 lượt, 95%), HOẶC chủ máy cho tự làm
     ngay (26/09/2026: "tôi muốn test thử tính năng bot tự thực hiện"). Cho tự làm ngay
@@ -1449,6 +1493,14 @@ def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
                         ds.append({"luc": luc, "thiet_bi": tb, "nguon": nguon})
                         del ds[:-BAO_AO_GIU]
                         _luu()
+                return
+            if hd == "on" and _dinh_vi(tb, nguon) == "":
+                logger.info({"event": "kich_hoat_dinh_vi_chan", "thiet_bi": tb, "nguon": nguon})
+                with _khoa:
+                    ds = _nap().setdefault("dinh_vi", [])
+                    ds.append({"luc": luc, "thiet_bi": tb, "nguon": nguon, "ket_qua": "cho"})
+                    del ds[:-BAO_AO_GIU]
+                    _luu()
                 return
             vi = (_nap()["mo_hinh"][tb][hd].get("ten") or {}).get(nguon, nguon)
             nhan = {"nguon": nguon, **{k: round(v, 2) for k, v in q["x"].items() if not k.startswith("[")}}
@@ -1628,6 +1680,17 @@ def _nguoi_lam(tb: str, gt: str, luc: float) -> None:
     cho = _dang_cho(tb)
     if cho and cho["hanh_dong"] == gt:
         dd.ghi_dung(int(cho["id"]))
+    if gt == "on":
+        # Bot vừa chặn bật vì định vị thấy người ở khu khác mà người tự bật ngay → định vị sai (ô camera của
+        # sơ đồ thiếu / lệch). Lượt vẽ sơ đồ sau đọc những lần này (`so_do_nha.de`, mục G).
+        with _khoa:
+            sua = False
+            for x in _nap().get("dinh_vi") or []:
+                if x["thiet_bi"] == tb and x.get("ket_qua") == "cho" and 0 <= luc - float(x["luc"]) <= CHO:
+                    x["ket_qua"] = "sai"
+                    sua = True
+            if sua:
+                _luu()
     nguoc = "off" if gt == "on" else "on"
     with dd._khoa:
         r = dd._db().execute(

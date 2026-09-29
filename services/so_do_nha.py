@@ -252,8 +252,14 @@ def do(den: float | None = None) -> dict[str, Any]:
                     j += 1
             cua_ra.setdefault(m, Counter())[dau[1] if dau else "(không phòng nào)"] += 1
 
+    from services import kich_hoat_nha
+    dinh_vi_sai = [f"{ten.get(x['thiet_bi'], x['thiet_bi'])} (khu {boi_canh_nha.phong_cua(x['thiet_bi'])}), nguồn "
+                   f"{ten.get(x['nguon'].split(' ')[0], x['nguon'])}, lúc "
+                   f"{time.strftime('%d/%m %H:%M', time.localtime(float(x['luc'])))}"
+                   for x in kich_hoat_nha._nap().get("dinh_vi") or [] if x.get("ket_qua") == "sai"]
     return {"phong": phong, "khu_radar": khu_ds, "ket": sorted(ket), "cung_bao": cung_bao, "camera": camera,
-            "loi_camera": loi_camera, "cua": {m: dict(c) for m, c in cua_ra.items()}, "ten": ten}
+            "loi_camera": loi_camera, "cua": {m: dict(c) for m, c in cua_ra.items()}, "ten": ten,
+            "dinh_vi_sai": dinh_vi_sai}
 
 
 # ── Đề ──────────────────────────────────────────────────────────────────────
@@ -282,6 +288,13 @@ def de(uv: dict[str, Any], mo_ta: list[str], dan: list[str]) -> str:
     dong += [f"- {ten.get(m, m)}: " + ", ".join(f"{k} {v}" for k, v in sorted(c.items(), key=lambda i: -i[1]))
              for m, c in uv["cua"].items()] or ["(không có cảm biến cửa)"]
     dong += ["\nE. CHỦ NHÀ MÔ TẢ:"] + ([f"- {x}" for x in mo_ta] or ["(chưa có)"])
+    sai = uv.get("dinh_vi_sai") or []
+    if sai:
+        # Bot chặn bật vì camera thấy người ở ngoài ô của khu, mà người tự bật ngay: ô của khu trên camera
+        # đó đang THIẾU (hoặc ranh giới lệch) — sửa `camera.thay`.
+        dong += ["\nG. ĐỊNH VỊ CHẶN NHẦM (theo sơ đồ đang dùng, camera không thấy ai trong ô của khu mà người "
+                 "vẫn tự bật thiết bị ngay sau đó — ô của khu đang thiếu hoặc lệch):"]
+        dong += [f"- {x}" for x in sai[-10:]]
     if dan:
         dong += ["\nCHỦ NHÀ DẶN (khi chấm các lần trước):"] + [f"- {x}" for x in dan]
     return "\n".join(dong)

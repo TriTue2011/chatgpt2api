@@ -59,7 +59,12 @@ trả lời được bằng có/không hoặc một tên).
    hay nhỏ.
 4. Mục D — CỬA: cửa mở rồi phòng nào có người đầu tiên = cửa mở vào phòng đó
    (thường là phòng khách / sảnh). "(không phòng nào)" nhiều = người đi RA.
-5. Mục E — lời chủ nhà: chung cư hay nhà đất, mấy tầng, bếp mở hay kín… thắng
+5. Mục G — ĐỊNH VỊ CHẶN NHẦM: bot dùng ô camera của sơ đồ này để biết người
+   đứng ở khu nào; mỗi dòng là một lần nó tưởng người ở khu khác nên không bật,
+   mà người lại tự bật ngay → ô của khu đó trên camera đang THIẾU (thường là ô
+   sát ranh giới, chỗ cửa, chỗ ngồi). Thêm ô cho khu đó, hoặc hỏi chủ nhà ranh
+   giới nằm đâu.
+6. Mục E — lời chủ nhà: chung cư hay nhà đất, mấy tầng, bếp mở hay kín… thắng
    mọi suy đoán. Chưa có lời chủ nhà mà số đo không đủ → `kieu: "khong_ro"` và
    hỏi.
 
