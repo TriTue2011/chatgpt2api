@@ -44,6 +44,8 @@ _luong: threading.Thread | None = None
 
 def doc_danh_sach(van_ban: str) -> list[dict[str, str]]:
     """Mỗi dòng ``email|mật khẩu|hạt giống TOTP``. Dấu ``|`` vì mật khẩu hay có ``:``.
+    Dòng CHỈ có email = đăng nhập lại tài khoản đã lưu: solver tự lấy mật khẩu + hạt giống trong kho
+    `openai` (`bu_credential`), mật khẩu không phải gõ lại.
     Dòng sai khuôn → ValueError nêu số dòng; email trùng chỉ giữ lần đầu."""
     ra: list[dict[str, str]] = []
     thay: set[str] = set()
@@ -52,13 +54,14 @@ def doc_danh_sach(van_ban: str) -> list[dict[str, str]]:
         if not dong or dong.startswith("#"):
             continue
         phan = [p.strip() for p in dong.split("|")]
-        if len(phan) < 2 or "@" not in phan[0] or not phan[1]:
-            raise ValueError(f"Dòng {i}: cần «email|mật khẩu|TOTP».")
+        phan = [p for p in phan if p] if len(phan) > 1 and not any(phan[1:]) else phan
+        if "@" not in phan[0] or (len(phan) > 1 and not phan[1]):
+            raise ValueError(f"Dòng {i}: cần «email|mật khẩu|TOTP» hoặc chỉ email (đã lưu mật khẩu).")
         email = phan[0].lower()
         if email in thay:
             continue
         thay.add(email)
-        ra.append({"email": email, "mat_khau": phan[1],
+        ra.append({"email": email, "mat_khau": phan[1] if len(phan) > 1 else "",
                    "totp": re.sub(r"\s+", "", phan[2]) if len(phan) > 2 else ""})
     if not ra:
         raise ValueError("Danh sách trống.")
@@ -188,9 +191,18 @@ def _mot(x: dict[str, Any]) -> None:
         _dat(x, "dang_nhap", str(s.get("message") or st))
     d = requests.get(f"{goc}/v1/openai-native/{p}/token", headers=H, timeout=30).json()
     token = str(d.get("access_token") or "")
-    if not token.startswith("eyJ"):
-        _dat(x, "loi", "Đăng nhập xong nhưng solver không trả token")
+    # KIỂM KẾT QUẢ trước khi báo xong. Đo 29/09/2026: 17 tài khoản hotmail báo «xong» mà solver trả
+    # cookie phiên mã hoá thay cho access token — không đọc được email, làm mới đánh lỗi, bước gộp
+    # trùng xoá dòng không email: mất cả 17 mà không ai hay.
+    email_token = account_service._email_from_token_or_account(token)
+    if email_token != x["email"]:
+        _dat(x, "loi", "Solver trả token không dùng được (không phải access token ChatGPT"
+                       + (f" của {x['email']}" if email_token else "") + ") — thử lại tài khoản này")
         return
     account_service.add_accounts([token])
     account_service.refresh_accounts([token])
-    _dat(x, "xong", f"Đã thêm {d.get('email') or x['email']} vào pool")
+    acc = account_service.find_free_by_email(x["email"]) or {}
+    if str(acc.get("status") or "") not in _CON_SONG:
+        _dat(x, "loi", f"Đã thêm nhưng kiểm lại thì tài khoản ở trạng thái «{acc.get('status') or 'không thấy'}»")
+        return
+    _dat(x, "xong", f"Đã thêm {x['email']} vào pool (kiểm lại: {acc.get('status')})")

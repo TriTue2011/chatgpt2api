@@ -354,7 +354,7 @@ function HangLoat() {
       <Textarea
         value={ds}
         onChange={(e) => setDs(e.target.value)}
-        placeholder={"email1@gmail.com|mật khẩu|hạt giống TOTP\nemail2@icloud.com|mật khẩu|hạt giống TOTP"}
+        placeholder={"email1@gmail.com|mật khẩu|hạt giống TOTP\nemail2@icloud.com|mật khẩu|hạt giống TOTP\nemail3@hotmail.com   ← đã lưu mật khẩu thì chỉ cần email"}
         className="min-h-[96px] rounded-lg font-mono text-base sm:text-xs"
         disabled={!!tt?.dang_chay}
       />

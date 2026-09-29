@@ -251,6 +251,38 @@ async def _wait_for_google_login(page, timeout: int = 60) -> bool:
     return False
 
 
+def _jwt_payload(tok: str) -> dict:
+    """Phần payload của một JWS (3 đoạn). Không phải JWS, hay không giải mã được → {}."""
+    import base64
+    import json
+
+    phan = str(tok or "").split(".")
+    if len(phan) != 3 or not tok.startswith("eyJ"):
+        return {}
+    try:
+        p = phan[1] + "=" * (-len(phan[1]) % 4)
+        d = json.loads(base64.urlsafe_b64decode(p))
+    except Exception:
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def la_access_token(tok: str) -> bool:
+    """Chuỗi này đúng là access token của ChatGPT: JWS đọc được, mang claim xác thực của OpenAI.
+
+    Đo 29/09/2026: 17 tài khoản hotmail đăng nhập "thành công" nhưng token nhận về là cookie phiên
+    MÃ HOÁ (JWE ``{"alg":"dir"…}``, 5 đoạn) — cũng bắt đầu bằng ``eyJ`` nên lọt qua mọi lần quét cũ;
+    backend-api từ chối, c2a đánh lỗi rồi xoá dòng không email. Nhận theo NỘI DUNG, không theo tiền tố."""
+    d = _jwt_payload(tok)
+    return bool(d) and any(k in d for k in ("https://api.openai.com/auth", "https://api.openai.com/profile", "scp"))
+
+
+def _email_trong_token(tok: str) -> Optional[str]:
+    d = _jwt_payload(tok)
+    e = d.get("email") or (d.get("https://api.openai.com/profile") or {}).get("email")
+    return e if isinstance(e, str) and "@" in e else None
+
+
 async def _scrape_chatgpt_token(page) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """After redirect back to chatgpt.com, scrape the JWT and email.
 
@@ -264,29 +296,35 @@ async def _scrape_chatgpt_token(page) -> tuple[Optional[str], Optional[str], Opt
     # chatgpt.com/backend-api accepts. (Scanning localStorage/cookies below
     # grabbed the wrong eyJ value / the opaque NextAuth session cookie, which
     # decodes to an empty payload and gets 401 "could not parse" from the API.)
-    try:
-        result = await page.evaluate(
-            """async () => {
-                try {
-                    const r = await fetch('/api/auth/session', { credentials: 'include' });
-                    const t = await r.text();
-                    try { return { status: r.status, json: JSON.parse(t) }; }
-                    catch (e) { return { status: r.status }; }
-                } catch (e) { return { status: 0, error: String(e) }; }
-            }"""
-        )
-        if isinstance(result, dict) and result.get("status") == 200:
-            j = result.get("json") or {}
-            at = j.get("accessToken")
-            if isinstance(at, str) and at.startswith("eyJ"):
-                access_token = at
-                access_token_preview = at[:40] + "..."
-                user = j.get("user") or {}
-                if isinstance(user, dict) and user.get("email"):
-                    captured_email = user.get("email")
-                logger.info("chatgpt_login: got accessToken from /api/auth/session")
-    except Exception:
-        pass
+    # Vài nhịp: ngay sau khi chuyển hướng về chatgpt.com phiên có lúc chưa sẵn — hỏi một lần rồi rơi
+    # xuống các đường quét dưới là cách đã nhận nhầm cookie phiên (29/09/2026).
+    for lan in range(5):
+        try:
+            result = await page.evaluate(
+                """async () => {
+                    try {
+                        const r = await fetch('/api/auth/session', { credentials: 'include' });
+                        const t = await r.text();
+                        try { return { status: r.status, json: JSON.parse(t) }; }
+                        catch (e) { return { status: r.status }; }
+                    } catch (e) { return { status: 0, error: String(e) }; }
+                }"""
+            )
+            if isinstance(result, dict) and result.get("status") == 200:
+                j = result.get("json") or {}
+                at = j.get("accessToken")
+                if isinstance(at, str) and la_access_token(at):
+                    access_token = at
+                    access_token_preview = at[:40] + "..."
+                    user = j.get("user") or {}
+                    if isinstance(user, dict) and user.get("email"):
+                        captured_email = user.get("email")
+                    logger.info("chatgpt_login: got accessToken from /api/auth/session")
+                    break
+        except Exception:
+            pass
+        if lan < 4:
+            await asyncio.sleep(1.5)
 
     # Try localStorage / sessionStorage first
     for storage_key in ("localStorage", "sessionStorage"):
@@ -296,12 +334,12 @@ async def _scrape_chatgpt_token(page) -> tuple[Optional[str], Optional[str], Opt
                     const keys = Object.keys({storage_key});
                     for (const k of keys) {{
                         const v = {storage_key}.getItem(k);
-                        if (v && v.startsWith('eyJ') && v.length > 100) return v;
+                        if (v && v.startsWith('eyJ') && v.split('.').length === 3 && v.length > 100) return v;
                     }}
                     return null;
                 }})()"""
             )
-            if token and not access_token:
+            if token and not access_token and la_access_token(token):
                 logger.info("chatgpt_login: found JWT in %s", storage_key)
                 access_token = token
                 access_token_preview = token[:40] + "..." if len(token) > 40 else token
@@ -319,7 +357,7 @@ async def _scrape_chatgpt_token(page) -> tuple[Optional[str], Optional[str], Opt
             for c in cookies:
                 val = str(c.get("value") or "")
                 name = str(c.get("name") or "")
-                if not val.startswith("eyJ") or val.count(".") < 2 or len(val) < 100:
+                if not la_access_token(val):
                     continue
                 # Prefer known JWT cookie names if present
                 if "token" not in name.lower() and "auth" not in name.lower():
@@ -331,9 +369,11 @@ async def _scrape_chatgpt_token(page) -> tuple[Optional[str], Optional[str], Opt
         except Exception:
             pass
 
-    # Try to get email from the page
+    if access_token and not captured_email:
+        captured_email = _email_trong_token(access_token)
+    # Try to get email from the page (chỉ khi phiên/token chưa cho — đừng đè email đã chắc)
     try:
-        captured_email = await page.evaluate("""(() => {
+        captured_email = captured_email or await page.evaluate("""(() => {
             const el = document.querySelector('[data-testid="account-email"], [title*="@"]');
             if (el) return el.textContent?.trim() || el.getAttribute("title");
             const userEl = document.querySelector('[class*="user"], [class*="profile"], [class*="account"]');

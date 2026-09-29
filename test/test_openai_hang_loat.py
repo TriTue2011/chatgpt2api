@@ -11,6 +11,18 @@ import pytest  # noqa: E402
 from services import openai_hang_loat as hl  # noqa: E402
 
 
+def _jwt(email: str) -> str:
+    """Access token giả đúng khuôn JWS của ChatGPT (payload có email + claim xác thực)."""
+    import base64
+    import json as _j
+    b = lambda d: base64.urlsafe_b64encode(_j.dumps(d).encode()).decode().rstrip("=")  # noqa: E731
+    return f"{b({'alg': 'RS256'})}.{b({'https://api.openai.com/profile': {'email': email}, 'https://api.openai.com/auth': {}})}.ky"
+
+
+#: Cookie phiên MÃ HOÁ (JWE, 5 đoạn) — cũng bắt đầu bằng eyJ; 29/09/2026 solver trả nhầm thứ này.
+JWE = "eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0..aXY.Y2lwaGVy.dGFn"
+
+
 class _Tl:
     def __init__(self, d):
         self._d = d
@@ -43,7 +55,7 @@ def gia(monkeypatch):
         p = url.split("/")[-2]
         email = next(e for e in kq if hl._profile(e) == p)
         if url.endswith("/token"):
-            return _Tl({"access_token": f"eyJ.{p}", "email": email})
+            return _Tl({"access_token": JWE if email in phien else _jwt(email), "email": email})
         nhip[p] = nhip.get(p, 0) + 1
         if nhip[p] < 2:
             return _Tl({"state": "running", "message": "Đang điền mật khẩu"})
@@ -52,14 +64,20 @@ def gia(monkeypatch):
 
     them: list[str] = []
     song: dict[str, str] = {}
+    phien: set[str] = set()
     monkeypatch.setattr("requests.post", post)
     monkeypatch.setattr("requests.get", get)
     from services.account_service import account_service
-    monkeypatch.setattr(account_service, "add_accounts", lambda t: them.extend(t) or {})
+    def them_vao(t):
+        them.extend(t)
+        for x in t:
+            song[account_service._email_from_token_or_account(x)] = "active"
+        return {}
+    monkeypatch.setattr(account_service, "add_accounts", them_vao)
     monkeypatch.setattr(account_service, "refresh_accounts", lambda t: {})
     monkeypatch.setattr(account_service, "find_free_by_email",
                         lambda e: {"status": song[e]} if e in song else None)
-    yield {"kq": kq, "them": them, "song": song, "nhat_ky": nhat_ky}
+    yield {"kq": kq, "them": them, "song": song, "nhat_ky": nhat_ky, "phien": phien}
     hl._dung.set()
     if hl._luong:
         hl._luong.join(5)
@@ -79,6 +97,21 @@ def test_doc_danh_sach():
         hl.doc_danh_sach("a@x.com|p\nkhong-phai-email|p")
     with pytest.raises(ValueError):
         hl.doc_danh_sach("  \n")
+    # Chỉ email = đăng nhập lại tài khoản đã lưu (solver lấy mật khẩu trong kho).
+    assert hl.doc_danh_sach("c@x.com\nd@x.com|") == [{"email": "c@x.com", "mat_khau": "", "totp": ""},
+                                                     {"email": "d@x.com", "mat_khau": "", "totp": ""}]
+    with pytest.raises(ValueError, match="Dòng 1"):
+        hl.doc_danh_sach("e@x.com||TOTP")
+
+
+def test_token_khong_dung_duoc_thi_bao_loi_khong_bao_xong(gia):
+    """29/09/2026: 17 tài khoản hotmail báo «xong» mà solver trả cookie phiên mã hoá — mất cả 17."""
+    gia["kq"].update({"a@x.com": "success", "b@x.com": "success"})
+    gia["phien"].add("a@x.com")
+    tt = _chay_het("a@x.com|p|t\nb@x.com|p|t")
+    assert [x["state"] for x in tt["ds"]] == ["loi", "xong"]
+    assert "không phải access token" in tt["ds"][0]["message"]
+    assert gia["them"] == [_jwt("b@x.com")]
 
 
 def test_lan_luot_bo_qua_tai_khoan_con_song(gia):
@@ -86,7 +119,7 @@ def test_lan_luot_bo_qua_tai_khoan_con_song(gia):
     gia["song"].update({"b@x.com": "active", "c@x.com": "error"})
     tt = _chay_het("a@x.com|pa|T1\nb@x.com|pb|T2\nc@x.com|pc|T3")
     assert [x["state"] for x in tt["ds"]] == ["xong", "da_co", "xong"]
-    assert gia["them"] == ["eyJ.openai-a", "eyJ.openai-c"]
+    assert gia["them"] == [_jwt("a@x.com"), _jwt("c@x.com")]
     assert gia["nhat_ky"] == ["bat_dau a@x.com pa T1", "bat_dau c@x.com pc T3"]
     assert not tt["dang_chay"]
     assert all("mat_khau" not in x for x in tt["ds"])
