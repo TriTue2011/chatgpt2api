@@ -967,6 +967,7 @@ def hoc(tb: str) -> dict[str, Any]:
         sk = [x for x in sk_toan_nha if x[1].split(" ")[0] in nhi_phan] if nhi_phan else sk_toan_nha
         lux = {m: tq._tuyen(ro, m, "state", tu, den) for m in ma_lux}
         cho_vang = _hoc_cho_vang(ro, cd, ts_tb, gt_tb, tu, den)
+        nhieu = _hoc_nhieu(ro, tb, tu, den) if (cd.get("tat_khi_vang") or {}).get("bat") else {}
         hay_bat = {d["cam_bien"]: _hoc_hay_bat(ro, tb, d["cam_bien"], d["co_mat"], den - NGAY_HAY_BAT * 86400, den)
                    for l in cd.get("luat_chu") or [] for d in l.get("neu") or [] if d["loai"] == "muc_hay_bat"}
         hien = sorted(nhi_phan & _lop(_LOP_HIEN_DIEN)) if cd.get("hoi_de_hoc") else []
@@ -982,7 +983,7 @@ def hoc(tb: str) -> dict[str, Any]:
                           "den_gop": _den_gop_hoc(ts_tb, gt_tb, lux),
                           "vang_quay_lai": _vang_quay_lai(sk_toan_nha, nhi_phan, den - tu),
                           "goi_y_them": _goi_y_them(sk_toan_nha, bat, ts_tb, gt_tb, nhi_phan),
-                          "cho_vang": cho_vang.get("do") or {}, "hay_bat": hay_bat,
+                          "cho_vang": cho_vang.get("do") or {}, "hay_bat": hay_bat, "nhieu": nhieu,
                           "o_lai": {"phut": phut_ol, "lan": lan_ol, "cam_bien": hien,
                                     "dac_trung": sorted(dong_ol)} if hien else {}}
     for hd, dich in (("on", bat), ("off", tat)):
@@ -1800,8 +1801,8 @@ def _noi_vang(tb: str, boi_canh: Any, luc: float) -> tuple[int, float] | None:
         vang_tu = float(bc.get("vang_tu"))
     except (TypeError, ValueError, AttributeError):
         return None
-    if bc.get("roi"):
-        return None     # tắt vì «đã rời khu», không phải vì hết giờ chờ — sai ở đây không nói gì về giờ chờ
+    if bc.get("roi") or bc.get("nhieu"):
+        return None     # tắt vì «đã rời khu» / nghi nhiễu, không phải vì hết giờ chờ — sai ở đây không nói gì về giờ chờ
     with _khoa:
         cd = _nap()["thiet_bi"].get(tb)
         if not cd:
@@ -1841,12 +1842,17 @@ def roi_sai_quanh_gio(tb: str, luc: float) -> tuple[int, int]:
     Chủ máy 29/09/2026: "bật lại thiết bị vào các thời điểm khác nhau thì cũng có giá trị khác
     nhau" — bị bật lại lúc 22h (đang đọc sách, người khác đi ngang bếp) không nói gì về 14h. Sai
     đủ `du_doan_nha._SAI_TUT_CAP` lần quanh giờ nào thì quanh giờ đó thôi tắt nhanh, về chờ đủ."""
+    return _sai_quanh_gio(tb, luc, "roi")
+
+
+def _sai_quanh_gio(tb: str, luc: float, khoa: str) -> tuple[int, int]:
+    """(sai, số lần) trong 10 lần gần nhất bot tắt theo đường ``khoa`` (dấu trong bối cảnh) QUANH GIỜ này."""
     from services import du_doan_nha as dd
     h = datetime.fromtimestamp(luc, _TZ).hour
     gan = {(h + d) % 24 for d in range(-MAT_DAU_LAN, MAT_DAU_LAN + 1)}
     with dd._khoa:
         r = dd._db().execute(
-            "SELECT ts, ket_qua FROM du_doan WHERE ten=? AND COALESCE(json_extract(boi_canh, '$.roi'), 0)=1"
+            f"SELECT ts, ket_qua FROM du_doan WHERE ten=? AND COALESCE(json_extract(boi_canh, '$.{khoa}'), 0)=1"
             " ORDER BY ts DESC LIMIT 200", (_ten_tt(tb, "off"),)).fetchall()
     ds = [str(x["ket_qua"]) for x in r if datetime.fromtimestamp(float(x["ts"]), _TZ).hour in gan][:10]
     return sum(1 for k in ds if k == "sai"), len(ds)
@@ -1946,7 +1952,7 @@ def _tat_vi_vang(tb: str) -> None:
         logger.warning({"event": "kich_hoat_tat_vang_loi", "thiet_bi": tb, "error": str(exc)[:200]})
 
 
-def _nhin_lai(camera: list[str], khu: str = "") -> str | None:
+def _nhin_lai(camera: list[str], khu: str = "", *, chi_chup: bool = False) -> str | None:
     """Chủ máy 29/09/2026: laptop của vợ "là ngoại vi … để kiểm tra lại xem có ở phòng khách
     không" — không phải lý do giữ đèn. Nhìn lại từng camera bot chọn:
 
@@ -1959,12 +1965,15 @@ def _nhin_lai(camera: list[str], khu: str = "") -> str | None:
     trong các ô đó — camera bếp thấy cả phòng khách thì người nấu ăn không giữ đèn phòng khách
     (chủ máy: "danh giới phòng khách và bếp"). Chưa có sơ đồ cho camera đó thì đếm cả khung.
 
+    ``chi_chup``: bỏ số đếm của Frigate, luôn chụp + YOLO — dùng khi chính camera Frigate là bên đang
+    nói "không có ai" và cần một con mắt độc lập để xác nhận (xem `_xet_nhieu`).
+
     Trả tên camera thấy người, "" nếu không camera nào thấy, None nếu không nhìn được camera nào
     (không đoán là vắng)."""
     from services import camera_nha, mqtt_nha, nhin_nha, so_do_nha, yolo_nha
 
     try:
-        frigate = mqtt_nha.dem_nguoi()
+        frigate = {} if chi_chup else mqtt_nha.dem_nguoi()
     except Exception:  # noqa: BLE001 — không có MQTT thì chụp
         frigate = {}
     if frigate.get("_cu"):
@@ -2003,6 +2012,140 @@ def _nhin_lai(camera: list[str], khu: str = "") -> str | None:
         except Exception as exc:  # noqa: BLE001 — một camera hỏng không làm hỏng lượt tắt
             logger.warning({"event": "kich_hoat_nhin_lai_loi", "camera": c, "error": str(exc)[:160]})
     return "" if nhin_duoc else None
+
+
+# ── Nghi NHIỄU: sóng báo có người mà camera cùng khu không thấy ai đã lâu ──────
+# Chủ máy 30/09/2026: "cùng ban công nhưng cảm biến hiện diện báo có mà frigate báo không lâu rồi, có thể
+# bị nhiễu nên cần xác nhận lại bằng vision để tắt thiết bị. Train chung, không phải đặt riêng thiết bị."
+# Đo 30 ngày: ban công 141,5 giờ radar báo có người mà camera không thấy ai rồi radar tự tắt (nhiễu);
+# người THẬT khuất tầm camera thì 90% camera thấy lại trong 1,7 phút (phòng khách 0,3', bếp 0,7').
+# Nên: mỗi thiết bị bot tự rút X = phân vị 90 "khuất tầm rồi camera thấy lại" của CHÍNH khu nó + 1 phút;
+# quá X mà vẫn chỉ sóng báo → chụp + YOLO đếm người trong ô của khu (mắt độc lập với Frigate); không ai thì
+# tắt. Người bật lại ngay = sai; sai đủ 2/10 quanh giờ nào thì quanh giờ đó thôi (như «rời khu»).
+NHIEU_PHAN_VI = 0.9
+NHIEU_MAU = 20
+_hen_nhieu: dict[str, threading.Timer] = {}
+
+
+def _cam_bien_khu(tb: str) -> tuple[list[str], list[str]]:
+    """(sóng, camera): cảm biến hiện diện THẬT cùng khu với thiết bị — camera là cảm biến sinh từ tích hợp
+    Frigate (nền tảng HA), còn lại là sóng/chuyển động. Theo khu vực HA, không theo tên."""
+    from services import boi_canh_nha, ha_client
+    khu = boi_canh_nha.phong_cua(tb)
+    if not khu:
+        return [], []
+    nen = (ha_client.get_ha_area_index() or {}).get("entity_platform") or {}
+    ds = sorted(m for m in _lop(_LOP_HIEN_DIEN) if not _cbg.la_ghep(m) and boi_canh_nha.phong_cua(m) == khu)
+    return [m for m in ds if nen.get(m) != "frigate"], [m for m in ds if nen.get(m) == "frigate"]
+
+
+def _hoc_nhieu(ro: sqlite3.Connection, tb: str, tu: float, den: float) -> dict[str, Any]:
+    """Số phút chờ trước khi nghi nhiễu, bot tự rút từ khu của thiết bị. Không đủ mẫu / khu không có cả
+    sóng lẫn camera → {} (không dùng)."""
+    song, cam = _cam_bien_khu(tb)
+    if not song or not cam:
+        return {}
+    dong = {m: _chuoi_nhi_phan(ro, m, tu, den) for m in song + cam}
+    tt: dict[str, str] = {}
+    a: float | None = None
+    that: list[float] = []
+    for t, ma, g in sorted((t, ma, g) for ma, (ts, gt) in dong.items() for t, g in zip(ts, gt)):
+        tt[ma] = g
+        co_song = any(tt.get(m) == "on" for m in song)
+        co_cam = any(tt.get(m) == "on" for m in cam)
+        if co_song and not co_cam and a is None:
+            a = t
+        elif a is not None and (co_cam or not co_song):
+            if co_cam:
+                that.append((t - a) / 60)       # khuất tầm rồi camera thấy lại = người thật
+            a = None
+    if len(that) < NHIEU_MAU:
+        return {"song": song, "cam": cam, "phut": None, "mau": len(that)}
+    that.sort()
+    p = that[min(len(that) - 1, math.ceil(NHIEU_PHAN_VI * len(that)) - 1)]
+    return {"song": song, "cam": cam, "phut": float(math.ceil(p) + 1), "mau": len(that)}
+
+
+def _huy_nhieu(tb: str) -> None:
+    with _khoa:
+        cu = _hen_nhieu.pop(tb, None)
+    if cu:
+        cu.cancel()
+
+
+def _hen_nhieu_luc(tb: str, giay: float) -> None:
+    _huy_nhieu(tb)
+    t = threading.Timer(giay, _xet_nhieu, args=(tb,))
+    t.daemon = True
+    with _khoa:
+        _hen_nhieu[tb] = t
+    t.start()
+
+
+def _theo_nhieu(ma: str, gt: str, ds: dict[str, dict[str, Any]]) -> None:
+    """Camera cùng khu vừa tắt mà sóng còn báo → hẹn xét nhiễu; camera thấy lại / sóng hết báo → huỷ."""
+    mh = _nap()["mo_hinh"]
+    for tb, cd in ds.items():
+        nh = (mh.get(tb) or {}).get("nhieu") or {}
+        if not nh.get("phut") or not (cd.get("tat_khi_vang") or {}).get("bat") or not (cd.get("tat_khi_vang") or {}).get("nhin"):
+            continue
+        if ma not in nh["cam"] and ma not in nh["song"]:
+            continue
+        tt = {str(s["entity_id"]): str(s.get("state") or "").lower() for s in _trang_thai_ha()}
+        tt[ma] = gt
+        if any(tt.get(m) == "on" for m in nh["cam"]) or not any(tt.get(m) == "on" for m in nh["song"]):
+            _huy_nhieu(tb)
+        elif tb not in _hen_nhieu:
+            _hen_nhieu_luc(tb, float(nh["phut"]) * 60)
+
+
+def nhieu_sai_quanh_gio(tb: str, luc: float) -> tuple[int, int]:
+    """(sai, số lần) trong 10 lần gần nhất bot tắt vì nghi nhiễu QUANH GIỜ này."""
+    return _sai_quanh_gio(tb, luc, "nhieu")
+
+
+def _xet_nhieu(tb: str) -> None:
+    """Hẹn tới: vẫn chỉ sóng báo, camera không ai → chụp lại bằng YOLO; không thấy ai thì tắt."""
+    from services import boi_canh_nha, du_doan_nha as dd, ha_client
+
+    with _khoa:
+        _hen_nhieu.pop(tb, None)
+    try:
+        cd = ds_thiet_bi().get(tb) or {}
+        tv = cd.get("tat_khi_vang") or {}
+        nh = ((_nap()["mo_hinh"].get(tb) or {}).get("nhieu")) or {}
+        if not nh.get("phut") or not tv.get("bat") or not tv.get("nhin"):
+            return
+        tt = {str(s["entity_id"]): str(s.get("state") or "").lower() for s in _trang_thai_ha()}
+        if any(tt.get(m) == "on" for m in nh["cam"]) or not any(tt.get(m) == "on" for m in nh["song"]):
+            return
+        if str((ha_client.get_state(tb) or {}).get("state") or "").lower() != "on":
+            return
+        luc = time.time()
+        if _deu_vang(list(tv.get("cam_bien") or [])):
+            return                          # đã vắng: đường «tắt khi vắng» lo
+        if _nguoi_vua_cham(tb, luc) or _vua_lam(tb, "off", ca_chieu_nguoc=False):
+            _hen_nhieu_luc(tb, HEN_LAI)
+            return
+        if nhieu_sai_quanh_gio(tb, luc)[0] >= _roi_sai_toi_da():
+            return
+        if any(x.get("hanh_dong") == "off" and x.get("cach", "khong") == "khong"
+               and _khung_dang(x, luc) for x in cd.get("ngoai_le") or []):
+            return
+        thay = _nhin_lai(list(tv["nhin"]), boi_canh_nha.phong_cua(tb), chi_chup=True)
+        logger.info({"event": "kich_hoat_nghi_nhieu", "thiet_bi": tb, "thay": thay})
+        if thay is None or thay:
+            _hen_nhieu_luc(tb, float(nh["phut"]) * 60)   # thấy người / không nhìn được: lát nữa xét lại
+            return
+        if not _lam(tb, "off", tu_lam=True):
+            return
+        vi = (f"cảm biến sóng báo có người nhưng camera không thấy ai quá {nh['phut']:g} phút; em chụp "
+              f"{', '.join(tv['nhin'])} nhìn lại: không có ai — nghi cảm biến nhiễu")
+        id_ = dd.ghi_nhan(_ten_tt(tb, "off"), "off", 1.0, {"nguon": vi, BEN_VUNG: 1, "nhieu": 1}, "tu_lam")
+        _bao_tu_lam(tb, f"🤖 #{id_} Em đã tắt {_ten_tb(tb)} ({vi}).\nĐúng hay sai ạ? Anh trả lời «đúng» hoặc "
+                        f"«sai» — sai thì em bật lại ngay. Không trả lời trong {CHAM_TU_LAM // 60} phút là em tính đúng.")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning({"event": "kich_hoat_nhieu_loi", "thiet_bi": tb, "error": str(exc)[:200]})
 
 
 # ── Tắt khi đủ sáng — kiểu quản gia ───────────────────────────────────────
@@ -2175,6 +2318,7 @@ def su_kien(ma: str, gia_tri: Any, *, do_ai: bool = False) -> None:
         _theo_vang(ma, gt, ds)
         _theo_sang(ma, gia_tri, ds)
         _theo_o_lai(ma, gt, ds)
+        _theo_nhieu(ma, gt, ds)
         if do_ai:
             return
         if ma in ds and gt in HANH_DONG:

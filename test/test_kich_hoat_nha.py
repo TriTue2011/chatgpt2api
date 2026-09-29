@@ -1146,3 +1146,73 @@ def test_cua_mo_phai_co_nguoi_vao_moi_bat(kh, monkeypatch):
     kh._cho_nguoi_vao(lambda *a: lam.append(a), DEN, "on")
     assert lam == [(DEN, "on")], "cửa mở rồi khu có người mới vào: bật"
     assert kh._la_cua(f"{CUA} có người vào") and not kh._la_cua(f"{NGU} có người vào")
+
+
+def test_nghi_nhieu_song_bao_camera_khong_thay_thi_chup_lai_roi_tat(kh, monkeypatch):
+    """Chủ máy 30/09/2026: "cảm biến hiện diện báo có mà frigate báo không lâu rồi, có thể bị nhiễu nên cần
+    xác nhận lại bằng vision để tắt thiết bị. Train chung". Bot tự rút số phút từ khu của chính thiết bị
+    (khuất tầm rồi camera thấy lại = người thật), quá số đó chụp + YOLO; không ai thì tắt, thấy người thì chờ."""
+    import json as _j
+
+    from services import boi_canh_nha, du_doan_nha as dd, ha_client
+    CAM = "binary_sensor.phong_ngu_person_occupancy"
+    KHU = "binary_sensor.c2a_vang_den"
+    tt = {x["entity_id"]: dict(x) for x in TT}
+    tt[CAM] = {"entity_id": CAM, "state": "off", "attributes": {"device_class": "occupancy"}}
+    tt[KHU] = {"entity_id": KHU, "state": "on", "attributes": {}}
+    tt[DEN]["state"] = "on"
+    tt[NGU]["state"] = "on"
+    monkeypatch.setattr(kh, "_trang_thai_ha", lambda: list(tt.values()))
+    monkeypatch.setattr(ha_client, "get_state", lambda e: tt.get(e))
+    monkeypatch.setattr(ha_client, "get_ha_area_index", lambda: {"entity_platform": {CAM: "frigate"}})
+    monkeypatch.setattr(boi_canh_nha, "phong_cua", lambda ma: "Phòng ngủ" if ma in (DEN, NGU, CAM) else "")
+    assert kh._cam_bien_khu(DEN) == ([NGU], [CAM])
+    # 30 lần người khuất tầm camera rồi camera thấy lại sau 1–2 phút (người thật) + nhiễu dài không ai thấy.
+    t0 = time.time() - 5 * 86400
+    for i in range(30):
+        a = t0 + i * 3600
+        _sk(NGU, "on", a)
+        _sk(CAM, "on", a + 1)
+        _sk(CAM, "off", a + 60)
+        _sk(CAM, "on", a + 60 + (60 if i % 2 else 120))
+        _sk(CAM, "off", a + 400)
+        _sk(NGU, "off", a + 410)
+    _sk(NGU, "on", t0 + 40 * 3600)
+    _sk(NGU, "off", t0 + 45 * 3600)          # 5 giờ radar báo, camera không thấy ai: nhiễu
+    import sqlite3
+    from services import lich_su_nha as ls
+    with sqlite3.connect(f"file:{ls._DB_PATH}?mode=ro", uri=True) as ro:
+        nh = kh._hoc_nhieu(ro, DEN, t0 - 10, time.time())
+    assert nh["mau"] == 60 and nh["phut"] == 3.0          # 30 lần camera thấy ngay + 30 lần khuất 1–2 phút; p90 = 2 + 1
+
+    hen: list = []
+
+    class HenGia:
+        def __init__(self, giay, ham, args=()):
+            self.giay = giay
+            hen.append(self)
+            self.daemon = True
+
+        def start(self):
+            pass
+
+        def cancel(self):
+            pass
+    monkeypatch.setattr(kh.threading, "Timer", HenGia)
+    kh.dat_thiet_bi(DEN, bat=True, tat_khi_vang={"bat": True, "cam_bien": [KHU], "phut": 3, "nhin": ["Cam ngủ"]})
+    kh._nap()["mo_hinh"][DEN] = {"nhieu": nh, "luc": time.time()}
+    kh._theo_nhieu(CAM, "off", kh.ds_thiet_bi())
+    assert hen and hen[-1].giay == 180, "camera tắt mà radar còn báo: hẹn xét sau số phút bot học"
+    thay = ["Cam ngủ"]
+    monkeypatch.setattr(kh, "_nhin_lai", lambda cam, khu, chi_chup=False: thay[0] if chi_chup else None)
+    kh._xet_nhieu(DEN)
+    assert kh.goi == [] and hen[-1].giay == 180, "chụp lại thấy người: không tắt, lát nữa xét lại"
+    thay[0] = ""
+    kh._xet_nhieu(DEN)
+    assert kh.goi == [("switch", "turn_off", {"entity_id": DEN})]
+    r = dd._db().execute("SELECT id, boi_canh FROM du_doan ORDER BY id DESC LIMIT 1").fetchone()
+    bc = _j.loads(r["boi_canh"])
+    assert bc["nhieu"] == 1 and "nhiễu" in bc["nguon"]
+    assert kh._noi_vang(DEN, r["boi_canh"], time.time()) is None, "sai ở đường nhiễu không nới giờ chờ vắng"
+    kh._theo_nhieu(CAM, "on", kh.ds_thiet_bi())
+    assert DEN not in kh._hen_nhieu, "camera thấy người: huỷ hẹn"
