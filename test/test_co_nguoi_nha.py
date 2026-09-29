@@ -78,7 +78,7 @@ def test_do_bay_dung_hien_tuong_that(cn):
     assert uv["hien_dien"][C]["rieng"] == "5%"                  # 1000 s camera thấy mà radar mất
     assert uv["ngoai_vi"][0]["ma"] == L and uv["ngoai_vi"][0]["ngan"] == "home 100%"
     de = cn.de(uv, "Quạt phòng khách", ["(chấm sai) quạt theo cả laptop vợ"])
-    assert "CHỦ NHÀ DẶN" in de and "laptop vợ" in de and f"kẹt: {H}" in de
+    assert "GIÁO VIÊN DẶN" in de and "laptop vợ" in de and f"kẹt: {H}" in de
 
 
 def test_khu_khong_co_cam_bien_thi_khong_hoi(cn):
@@ -177,3 +177,17 @@ def test_roi_khu_bay_bang_va_kiem_chi_nhan_cam_bien_khu_khac(cn):
     assert cn.kiem(bai, uv)["roi_di"] == {"ma": B}
     assert "KHU KHÁC" in cn.kiem({**bai, "roi_di": {"ma": R}}, uv), "cảm biến trong khu không phải «đã rời»"
     assert "KHU KHÁC" in cn.kiem({**bai, "roi_di": {"ma": H}}, uv), "cảm biến kẹt không dùng"
+
+
+def test_giao_vien_cham_sai_thi_bot_giai_lai_va_thay_loi_cham(cn, kh):  # noqa: F811
+    """29/09/2026: giáo viên chấm #840/#841 sai (thiếu loại lây) mà bot không giải lại, cũng không
+    thấy vì sao — nay lời giáo viên vào đề và kích giải lại."""
+    import time as _t
+    from services import hieu_thiet_bi_nha as ht
+    kh.dat_thiet_bi(QUAT, bat=True, tat_khi_vang={"bat": True, "cam_bien": [R], "phut": 3})
+    d = _ket_luan(cn)
+    assert not cn._can_giai(d, _t.time())
+    ht.sua_cham(d["id"], False, cham_boi="claude", ghi_chu="thiếu loại lây radar bếp")
+    d = next(x for x in ht.dang_hieu_luc() if x["id"] == d["id"])
+    assert cn._can_giai(d, _t.time())
+    assert ht.ghi_chu_cham("co_nguoi", QUAT) == ["(giáo viên chấm sai) thiếu loại lây radar bếp"]

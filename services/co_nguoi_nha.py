@@ -346,7 +346,7 @@ def de(uv: dict[str, Any], ten_tb: str, dan: list[str]) -> str:
     if uv.get("so_do"):
         dong += [""] + list(uv["so_do"])
     if dan:
-        dong.append("\nCHỦ NHÀ DẶN (khi chấm các lần chọn trước của thiết bị này):")
+        dong.append("\nCHỦ NHÀ / GIÁO VIÊN DẶN (khi chấm các lần chọn trước của thiết bị này):")
         dong += [f"- {x}" for x in dan]
     dong += ["\nA. CẢM BIẾN HIỆN DIỆN TRONG KHU (lúc thiết bị bật):",
              "mã | tên | đổi/ngày | báo có người | CHỈ mình nó báo"]
@@ -491,7 +491,8 @@ def _can_giai(cu: dict[str, Any] | None, now: float) -> bool:
     if not cu:
         return True
     giai_luc = float(cu["nhom"].get("giai_luc") or 0)
-    if cu["ket_qua"] == "sai" and cu.get("cham_boi") == "chu_may" and float(cu.get("cham_luc") or 0) > giai_luc:
+    if (cu["ket_qua"] == "sai" and cu.get("cham_boi") in ("chu_may", "claude")
+            and float(cu.get("cham_luc") or 0) > giai_luc):
         return True
     return now - giai_luc >= _GIAI_LAI_SAU_GIAY
 

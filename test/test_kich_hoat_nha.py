@@ -1079,3 +1079,28 @@ def test_roi_khu_tat_sau_mot_nhip_sai_quanh_gio_thi_thoi(kh, monkeypatch):
     n = len(hen)
     kh._theo_vang(ROI, "on", kh.ds_thiet_bi())
     assert len(hen) == n, "sai 2 lần quanh giờ này: về chờ đủ phút"
+
+
+def test_cua_mo_phai_co_nguoi_vao_moi_bat(kh, monkeypatch):
+    """Chủ máy 29/09/2026: "cửa mở và có người đi vào thì phải bật bằng cách xác nhận qua cảm biến và
+    cam". Cửa mở mà khu không có ai MỚI vào (người đi ra) thì không bật."""
+    KHU = "binary_sensor.c2a_vang_den"
+    tt = {x["entity_id"]: dict(x) for x in TT}
+    tt[KHU] = {"entity_id": KHU, "state": "off", "attributes": {}}
+    monkeypatch.setattr(kh, "_trang_thai_ha", lambda: list(tt.values()))
+    kh.dat_thiet_bi(DEN, bat=True, tat_khi_vang={"bat": True, "cam_bien": [KHU], "phut": 3})
+    lam: list = []
+    monkeypatch.setattr(kh, "CUA_XAC_NHAN_GIAY", 0.2)
+    monkeypatch.setattr(kh, "CUA_NHIP", 0.05)
+    kh._cho_nguoi_vao(lambda *a: lam.append(a), DEN, "on")
+    assert lam == [], "không ai vào trong hạn (người đi ra): không bật"
+    tt[KHU]["state"] = "on"
+    kh._cho_nguoi_vao(lambda *a: lam.append(a), DEN, "on")
+    assert lam == [], "khu đã có người TỪ TRƯỚC khi mở cửa: không phải người mới vào"
+    tt[KHU]["state"] = "off"
+    import threading as _th
+    t = _th.Timer(0.08, lambda: tt[KHU].__setitem__("state", "on"))
+    t.start()
+    kh._cho_nguoi_vao(lambda *a: lam.append(a), DEN, "on")
+    assert lam == [(DEN, "on")], "cửa mở rồi khu có người mới vào: bật"
+    assert kh._la_cua(f"{CUA} có người vào") and not kh._la_cua(f"{NGU} có người vào")

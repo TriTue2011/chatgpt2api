@@ -1536,21 +1536,77 @@ def _bao_vang(ma: str) -> None:
     _phat(f"{ma} vắng", time.time())
 
 
+#: Cửa mở là VÀO hoặc RA. Chủ máy 29/09/2026: "cửa mở và có người đi vào thì phải bật bằng cách xác
+#: nhận qua cảm biến và cam". Nguồn BẬT là cảm biến CỬA thì chờ tối đa ngần này giây để cảm biến có
+#: người của CHÍNH khu thiết bị (cảm biến bot chọn cho «tắt khi vắng» — radar, camera) báo có người
+#: MỚI vào; không ai vào (người đi ra) thì thôi.
+CUA_XAC_NHAN_GIAY = 60
+CUA_NHIP = 3
+
+
+def _khu_co_nguoi(tb: str) -> bool | None:
+    """Khu của thiết bị lúc này có người không, theo cảm biến «có người» bot đã chọn cho nó (tắt khi
+    vắng). None = thiết bị chưa có cảm biến khu nào — không xác nhận được."""
+    cb = list(((_nap()["thiet_bi"].get(tb) or {}).get("tat_khi_vang") or {}).get("cam_bien") or [])
+    if not cb:
+        return None
+    tt = {str(s["entity_id"]): str(s.get("state") or "").lower() for s in _trang_thai_ha()}
+    return any(tt.get(m) == "on" for m in cb)
+
+
+def _cho_nguoi_vao(lam: Any, tb: str, *args: Any) -> None:
+    """Chạy ``lam(tb, *args)`` khi khu của thiết bị có người MỚI vào trong CUA_XAC_NHAN_GIAY."""
+    try:
+        truoc = _khu_co_nguoi(tb)
+        han = time.time() + CUA_XAC_NHAN_GIAY
+        while True:
+            if truoc is None:
+                lam(tb, *args)
+                return
+            co = _khu_co_nguoi(tb)
+            if co and not truoc:
+                lam(tb, *args)
+                return
+            if not co:
+                truoc = False           # khu đang vắng: lần có người sau đó là người mới vào
+            if time.time() >= han:
+                break
+            time.sleep(CUA_NHIP)
+        logger.info({"event": "kich_hoat_cua_khong_ai_vao", "thiet_bi": tb})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning({"event": "kich_hoat_cho_vao_loi", "thiet_bi": tb, "error": str(exc)[:160]})
+
+
+def _la_cua(nguon: str) -> bool:
+    ma = nguon.split(" ")[0]
+    return any(str(s["entity_id"]) == ma and (s.get("attributes") or {}).get("device_class") in _LOP_CUA
+               for s in _trang_thai_ha())
+
+
 def _phat(nguon: str, luc: float) -> None:
     mh = _nap()["mo_hinh"]
+    cua = nguon.endswith(" có người vào") and _la_cua(nguon)
     for tb, cd in ds_thiet_bi().items():
         chu = cd.get("luat_chu") or []
         for l in chu:
             if nguon in l["khi"]:
-                threading.Thread(target=_xu_ly_chu, args=(tb, l, nguon, luc),
-                                 name="kich-hoat-luat-chu", daemon=True).start()
+                if cua and l["hanh_dong"] == "on":
+                    threading.Thread(target=_cho_nguoi_vao, args=(_xu_ly_chu, tb, l, nguon, luc),
+                                     name="kich-hoat-cho-vao", daemon=True).start()
+                else:
+                    threading.Thread(target=_xu_ly_chu, args=(tb, l, nguon, luc),
+                                     name="kich-hoat-luat-chu", daemon=True).start()
         co_chu = {l["hanh_dong"] for l in chu}
         for hd in HANH_DONG:
             if hd in co_chu:
                 continue                     # luật anh đặt thắng luật bot học ở hướng này
             if nguon in ((mh.get(tb) or {}).get(hd) or {}).get("nguon", []):
-                threading.Thread(target=_xu_ly, args=(tb, hd, nguon, luc),
-                                 name="kich-hoat-xu-ly", daemon=True).start()
+                if cua and hd == "on":
+                    threading.Thread(target=_cho_nguoi_vao, args=(_xu_ly, tb, hd, nguon, luc),
+                                     name="kich-hoat-cho-vao", daemon=True).start()
+                else:
+                    threading.Thread(target=_xu_ly, args=(tb, hd, nguon, luc),
+                                     name="kich-hoat-xu-ly", daemon=True).start()
 
 
 def _nguoi_lam(tb: str, gt: str, luc: float) -> None:

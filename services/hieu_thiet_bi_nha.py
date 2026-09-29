@@ -804,13 +804,18 @@ def ghi_co_nguoi(lan: int, ket_luan: list[dict[str, Any]]) -> dict[str, list[dic
 
 def ghi_chu_cham(loai: str, khoa: str, toi_da: int = 5) -> list[str]:
     """Lời chủ nhà ghi khi chấm các câu trước của CHÍNH câu này (mới nhất trước) — đề của lượt
-    sau chỉ mang những lời đó, không mang cả sổ dữ kiện chung."""
+    sau chỉ mang những lời đó, không mang cả sổ dữ kiện chung.
+
+    Lời GIÁO VIÊN chấm (``cham_boi='claude'``) cũng vào, ghi rõ là giáo viên — không thì giáo viên
+    chấm sai mà bot không bao giờ thấy vì sao (29/09/2026: #840/#841 thiếu loại lây, bot không giải lại).
+    """
     with _khoa:
         rows = _db().execute(
-            "SELECT ket_qua, ghi_chu FROM quyet_dinh WHERE loai_cau_hoi=? AND khoa=?"
-            " AND cham_boi='chu_may' AND TRIM(COALESCE(ghi_chu, ''))<>''"
+            "SELECT ket_qua, ghi_chu, cham_boi FROM quyet_dinh WHERE loai_cau_hoi=? AND khoa=?"
+            " AND cham_boi IN ('chu_may', 'claude') AND TRIM(COALESCE(ghi_chu, ''))<>''"
             " ORDER BY cham_luc DESC LIMIT ?", (loai, khoa, toi_da)).fetchall()
-    return [f"(chấm {'đúng' if r['ket_qua'] == 'dung' else 'sai'}) {r['ghi_chu']}" for r in rows]
+    return [f"({'giáo viên ' if r['cham_boi'] == 'claude' else ''}chấm {'đúng' if r['ket_qua'] == 'dung' else 'sai'})"
+            f" {r['ghi_chu']}" for r in rows]
 
 
 # ── Chủ máy sửa sơ đồ kích hoạt ─────────────────────────────────────────────
