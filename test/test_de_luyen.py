@@ -48,8 +48,11 @@ def test_de_tinh_huong_dung_khuon(d):
     assert "C. THIẾT BỊ" in de and "B2. AI Ở NHÀ" in de
     for y in d["dap_an"].get("phai_co") or []:
         assert y["thiet_bi"] in de
+    def mot(v, mac_dinh):
+        return (v[0] if isinstance(v, list) else v) if v else mac_dinh
     bai = {"kich_ban": [{"thiet_bi": y["thiet_bi"], "tinh_huong": y["tu"][0], "cam_bien_thay": "",
-                         "nen": y.get("nen", "bat"), "hien_tai": y.get("hien_tai", "sai"), "vi_sao": "", "hoi": None}
+                         "nen": mot(y.get("nen"), "bat"), "hien_tai": mot(y.get("hien_tai"), "sai"), "vi_sao": "",
+                         "hoi": None}
                         for y in d["dap_an"].get("phai_co") or []]
            + [{"thiet_bi": next(iter(d["uv"]["thiet_bi"])), "tinh_huong": "hỏi", "cam_bien_thay": "", "nen": "hoi",
                "hien_tai": "khong_ro", "vi_sao": "", "hoi": nhom[0]} for nhom in d["dap_an"].get("phai_hoi_ve") or []]}
