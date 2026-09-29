@@ -224,7 +224,7 @@ def _mo_ta(h: dict[str, Any], ten_map: dict[str, str] | None = None,
     ma = str(h.get("thiet_bi") or "?")
     tr = str(h.get("truong") or "")
     nhan = {"chet": "🔴 chết hẳn", "do": "🟠 đơ (vẫn báo nhưng số không đổi)",
-            "chap_chon": "🟡 chập chờn"}.get(str(h.get("loai")), str(h.get("loai")))
+            "chap_chon": "🟡 chập chờn", "mat_ket_noi": "🔌 mất kết nối"}.get(str(h.get("loai")), str(h.get("loai")))
     ct = str(h.get("chi_tiet") or "")
     ten, khu = _ten_khu(ma, ten_map or {}, khu_map or {})
 
@@ -286,6 +286,128 @@ def con_ton_tai(hong: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return hong
 
 
+# ── Mất kết nối (thực thể HA đang `unavailable`) ────────────────────────────
+# Chủ máy 29/09/2026: "khi nào thiết bị không khả dụng, mất kết nối mới là đơ" — và "lấy thêm thông
+# tin từ homeassistant, mqtt … tìm kiếm cả thông tin cộng đồng". Tài liệu HA: `unavailable` = "HA
+# cannot reach the device or service"; `unknown` = có kết nối nhưng chưa có giá trị (không phải lỗi).
+# Nhưng `unavailable` cũng không phải lúc nào cũng hỏng: đo 29/09/2026, 110 thực thể cùng
+# `unavailable` từ lúc HA khởi động lại — tivi tắt nguồn, app HA trên máy tính bảng không mở. Nên so
+# với NẾP của chính thực thể (lịch sử HA giữ cả `unavailable`, kho c2a thì không): báo khi lần mất
+# kết nối này dài hơn MỌI lần trước trong cửa sổ, và thực thể từng khả dụng trong cửa sổ đó.
+#: Ngắn hơn ngần này không báo — HA khởi động lại, mạng chớp vài phút là chuyện thường.
+MAT_KET_NOI_TOI_THIEU = 3600
+MAT_KET_NOI_NGAY = 30
+#: (mã, lúc bắt đầu mất kết nối) → lỗi hoặc None — mỗi lần mất kết nối chỉ tra lịch sử HA MỘT lần
+#: (quét chạy 5 phút một lần; ~100 thực thể `unavailable` cùng lúc sau khi HA khởi động lại).
+_mkn_da_xet: dict[tuple[str, float], dict[str, Any] | None] = {}
+
+
+def _lich_su_ha(ma: list[str], tu: float) -> dict[str, list[tuple[float, str]]]:
+    """{mã: [(ts, trạng thái chữ thường)]} từ /api/history của HA (giữ cả `unavailable`)."""
+    import urllib.parse
+    from services import lich_su_nha
+
+    ra: dict[str, list[tuple[float, str]]] = {}
+    bat_dau = datetime.fromtimestamp(tu, timezone.utc).isoformat()
+    for i in range(0, len(ma), 40):
+        # end_time BẮT BUỘC: thiếu nó HA chỉ trả MỘT ngày tính từ mốc đầu (đo 29/09/2026: 30 ngày → rỗng).
+        q = urllib.parse.urlencode({"filter_entity_id": ",".join(ma[i:i + 40]), "minimal_response": "true",
+                                    "no_attributes": "true",
+                                    "end_time": datetime.now(timezone.utc).isoformat()})
+        for chuoi in lich_su_nha._ha_lay("/api/history/period/" + urllib.parse.quote(bat_dau) + "?" + q) or []:
+            if not chuoi:
+                continue
+            eid = str(chuoi[0].get("entity_id") or "")
+            ra[eid] = [(datetime.fromisoformat(str(x["last_changed"])).timestamp(), str(x.get("state") or "").lower())
+                       for x in chuoi if x.get("last_changed")]
+    return ra
+
+
+def mat_ket_noi(trang_thai: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Thực thể HA đang `unavailable` lâu bất thường so với chính nó — cùng dạng lỗi của `soi_hong`."""
+    from services import ha_client
+
+    now = time.time()
+    dang: dict[str, float] = {}
+    st = trang_thai if trang_thai is not None else (ha_client.get_states() or [])
+    ten = {str(x.get("entity_id")): str((x.get("attributes") or {}).get("friendly_name") or "") for x in st}
+    for x in st:
+        if str(x.get("state") or "").lower() != "unavailable":
+            continue
+        try:
+            tu = datetime.fromisoformat(str(x.get("last_changed"))).timestamp()
+        except ValueError:
+            continue
+        if now - tu >= MAT_KET_NOI_TOI_THIEU:
+            dang[str(x["entity_id"])] = tu
+    if not dang:
+        return []
+    moi = sorted(m for m, tu in dang.items() if (m, tu) not in _mkn_da_xet)
+    lich = _lich_su_ha(moi, now - MAT_KET_NOI_NGAY * 86400) if moi else {}
+    for ma in moi:
+        _mkn_da_xet[(ma, dang[ma])] = _xet_mat_ket_noi(ma, dang[ma], lich.get(ma) or [])
+    for k in [k for k in _mkn_da_xet if dang.get(k[0]) != k[1]]:
+        _mkn_da_xet.pop(k)               # đã kết nối lại (hoặc lần mất mới) — bỏ kết quả cũ
+    ra = []
+    for ma, tu in sorted(dang.items()):
+        loi = _mkn_da_xet.get((ma, tu))
+        im = now - tu
+        if loi and im > loi["nguong"]:
+            ra.append({k: v for k, v in loi.items() if k != "nguong"} | {"chi_tiet": loi["chi_tiet"].format(gio=im / 3600)})
+    return _gom_theo_thiet_bi(ra, ten)
+
+
+def _gom_theo_thiet_bi(ra: list[dict[str, Any]], ten: dict[str, str]) -> list[dict[str, Any]]:
+    """Một thiết bị mất kết nối kéo theo MỌI thực thể của nó (đo 29/09/2026: 5 camera Imou = 90 thực
+    thể) — gom thành MỘT lỗi mỗi thiết bị theo sổ thiết bị của HA, kèm số thực thể và tích hợp."""
+    from services import ha_client
+
+    try:
+        idx = ha_client.get_ha_area_index() or {}
+    except Exception:  # noqa: BLE001 — không có sổ thì để nguyên từng thực thể
+        idx = {}
+    tb_cua = idx.get("entity_device_ids") or {}
+    tich_hop = idx.get("entity_platform") or {}
+    nhom: dict[tuple, list[dict[str, Any]]] = {}
+    for h in ra:
+        nhom.setdefault(tuple(tb_cua.get(h["thiet_bi"]) or [h["thiet_bi"]]), []).append(h)
+    gom = []
+    for ds in nhom.values():
+        dai = sorted(ds, key=lambda h: (len(ten.get(h["thiet_bi"]) or h["thiet_bi"]), h["thiet_bi"]))[0]
+        if len(ds) > 1:
+            th = tich_hop.get(dai["thiet_bi"])
+            dai = {**dai, "chi_tiet": f"{dai['chi_tiet']} · cả thiết bị: {len(ds)} thực thể"
+                                      + (f" (tích hợp {th})" if th else "")}
+        gom.append(dai)
+    return gom
+
+
+def _xet_mat_ket_noi(ma: str, tu: float, lich: list[tuple[float, str]]) -> dict[str, Any] | None:
+    """Ngưỡng của lần mất kết nối từ ``tu`` theo nếp của chính thực thể; None = không có nếp để so."""
+    cu: list[float] = []
+    a: float | None = None
+    tot = 0
+    for ts, g in lich:
+        if ts >= tu:
+            break
+        if g == "unavailable":
+            a = ts if a is None else a
+        else:
+            tot += 1
+            if a is not None:
+                cu.append(ts - a)
+                a = None
+    if not tot:
+        return None         # cả cửa sổ chưa từng khả dụng — không có nếp để so
+    # Lỗi hay không phụ thuộc thời gian: lúc này chưa dài hơn lần cũ thì xét lại ở lượt sau — nên
+    # chỉ lưu NGƯỠNG, `mat_ket_noi` so với thời gian mất kết nối hiện tại.
+    return {"thiet_bi": ma, "truong": "state", "loai": "mat_ket_noi", "nguong": max(cu) if cu else 0.0,
+            "chi_tiet": ("không khả dụng {gio:.1f} giờ — lâu hơn mọi lần mất kết nối trước "
+                         f"({max(cu) / 3600:.1f} giờ)" if cu else
+                         "không khả dụng {gio:.1f} giờ — " + f"{MAT_KET_NOI_NGAY} ngày qua chưa từng mất kết nối"),
+            "lan_cuoi_tot": tu, "so_ban_ghi": tot}
+
+
 def quet(so_ngay: int = 7) -> dict[str, Any]:
     """Soi thiết bị hỏng, cập nhật sổ, trả về những lỗi ĐẾN HẠN báo.
 
@@ -301,6 +423,10 @@ def quet(so_ngay: int = 7) -> dict[str, Any]:
         logger.warning({"event": "canh_bao_soi_loi", "error": str(exc)[:200]})
         return {"can_bao": [], "tong_hong": 0, "dang_im": 0, "loi": str(exc)[:200]}
 
+    try:
+        hong += mat_ket_noi()
+    except Exception as exc:
+        logger.warning({"event": "canh_bao_mat_ket_noi_loi", "error": str(exc)[:200]})
     hong = con_ton_tai(hong)
     with _khoa:
         khong = (_doc().get("khong_phai_loi") or {})
@@ -542,6 +668,7 @@ def danh_sach() -> list[dict[str, Any]]:
 
 
 def _reset_for_tests() -> None:
+    _mkn_da_xet.clear()
     with _khoa:
         try:
             _FILE.unlink()

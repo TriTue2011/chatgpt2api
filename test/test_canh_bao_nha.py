@@ -379,3 +379,47 @@ class KhongPhaiLoiTest(unittest.TestCase):
         self.assertEqual(self._quet(hong)["tong_hong"], 1, "đã ghi không phải lỗi: không tính nữa")
         self.m.bo_im("zigbee2mqtt/Phòng ngủ")
         self.assertEqual(self._quet(hong)["tong_hong"], 2, "bật lại cảnh báo: báo lại")
+
+
+class MatKetNoiTest(unittest.TestCase):
+    """Chủ máy 29/09/2026: "khi nào thiết bị không khả dụng, mất kết nối mới là đơ". So với NẾP của
+    chính thực thể: tivi tắt nguồn đêm nào cũng `unavailable` thì không báo; camera chưa từng mất kết
+    nối mà nay mất 7 giờ thì báo — gom theo thiết bị."""
+
+    def setUp(self) -> None:
+        import services.canh_bao_nha as m
+        self.m = m
+        m._mkn_da_xet.clear()
+
+    def test_so_voi_nep_cua_chinh_no_va_gom_theo_thiet_bi(self) -> None:
+        from datetime import datetime, timezone
+        now = time.time()
+
+        def iso(t):
+            return datetime.fromtimestamp(t, timezone.utc).isoformat()
+        tu = now - 7 * 3600
+        st = [{"entity_id": "media_player.tivi", "state": "unavailable", "last_changed": iso(tu),
+               "attributes": {"friendly_name": "Tivi"}},
+              {"entity_id": "camera.cam1_live", "state": "unavailable", "last_changed": iso(tu),
+               "attributes": {"friendly_name": "Cam1 Live"}},
+              {"entity_id": "switch.cam1_privacy", "state": "unavailable", "last_changed": iso(tu),
+               "attributes": {"friendly_name": "Cam1 Privacy mode"}},
+              {"entity_id": "sensor.moi_them", "state": "unavailable", "last_changed": iso(tu),
+               "attributes": {}},
+              {"entity_id": "light.vua_mat", "state": "unavailable", "last_changed": iso(now - 600),
+               "attributes": {}}]
+        lich = {"media_player.tivi": [(now - 3 * 86400, "on"), (now - 3 * 86400 + 3600, "unavailable"),
+                                      (now - 2 * 86400, "on")],       # từng mất 23 giờ
+                "camera.cam1_live": [(now - 10 * 86400, "idle")],
+                "switch.cam1_privacy": [(now - 10 * 86400, "off")],
+                "sensor.moi_them": [(now - 10 * 86400, "unavailable")]}   # chưa từng khả dụng
+        from services import ha_client
+        with mock.patch.object(self.m, "_lich_su_ha", return_value=lich), \
+                mock.patch.object(ha_client, "get_ha_area_index", return_value={
+                    "entity_device_ids": {"camera.cam1_live": ["imou:1"], "switch.cam1_privacy": ["imou:1"]},
+                    "entity_platform": {"camera.cam1_live": "imou_life"}}):
+            ra = self.m.mat_ket_noi(st)
+        self.assertEqual([h["thiet_bi"] for h in ra], ["camera.cam1_live"])
+        self.assertIn("2 thực thể", ra[0]["chi_tiet"])
+        self.assertIn("imou_life", ra[0]["chi_tiet"])
+        self.assertEqual(ra[0]["loai"], "mat_ket_noi")
