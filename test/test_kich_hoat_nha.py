@@ -1240,6 +1240,8 @@ def test_dinh_vi_toa_do_theo_so_do_da_cham(kh, monkeypatch):
     assert kh._dinh_vi(DEN, nguon) is None and not nhin, "khu liền kề không báo: không mơ hồ, khỏi nhìn"
     assert kh._dinh_vi(DEN, f"{CUA} có người vào") is None, "nguồn cửa đã có đường xác nhận riêng"
     tt[BEP]["state"] = "on"
+    assert kh._dinh_vi(DEN, f"{BEP} có người vào") is None and not nhin, \
+        "cảm biến kích hoạt ở khu BÊN CẠNH = luật bật đón trước, không phải báo lây (soát lỗi)"
     assert kh._dinh_vi(DEN, nguon) == "" and nhin[-1] == (["Cam"], "Phòng ngủ") and len(nhin) == 2
     thay[0] = "Cam"
     assert kh._dinh_vi(DEN, nguon) == "Cam"
@@ -1288,3 +1290,8 @@ def test_muc_khi_bat_hoc_theo_nhiet_do(kh, monkeypatch):
     assert kh.goi[-1] == ("fan", "turn_on", {"entity_id": QUAT, "preset_mode": "low"})
     kh._lam(QUAT, "off", tu_lam=True)
     assert kh.goi[-1] == ("fan", "turn_off", {"entity_id": QUAT})
+    # Soát lỗi: số (percentage — kho gộp vào so_do, mất dấu do_ai) và danh sách (rgb_color — HA từ chối chuỗi)
+    # không phải thứ học được ở đây.
+    assert kh._la_lua_chon("high") and not kh._la_lua_chon("66") and not kh._la_lua_chon("[255, 147, 41]")
+    kh._nap()["mo_hinh"][QUAT] = {"muc": {**m, "moc": [[27.0, "[255, 1, 2]", 5]]}}
+    assert kh._chon_muc(QUAT) is None

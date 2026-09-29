@@ -1384,6 +1384,8 @@ def _hoc_muc(ro: sqlite3.Connection, tb: str, tu: float, den: float) -> dict[str
         nhom: dict[str, list[float]] = {}
         for t, g in ro.execute("SELECT ts, gia_tri FROM su_kien WHERE thiet_bi=? AND truong=? AND do_ai=0"
                                " AND ts>=? AND ts<?", (tb, f, tu, den)):
+            if not _la_lua_chon(str(g)):
+                continue
             v = tq._truoc(ts_n, gt_n, float(t))
             try:
                 nhom.setdefault(str(g), []).append(float(v))
@@ -1397,6 +1399,22 @@ def _hoc_muc(ro: sqlite3.Connection, tb: str, tu: float, den: float) -> dict[str
     return tot
 
 
+def _la_lua_chon(g: str) -> bool:
+    """Giá trị dạng LỰA CHỌN (preset_mode "high", fan_mode "auto"…) — thứ học được ở đây.
+
+    Soát lỗi 30/09/2026: mức dạng SỐ (percentage, brightness) bị kho gộp vào `so_do` 5 phút — mất dấu do_ai,
+    nên học từ đó là học cả việc bot làm (bẫy tự khẳng định); màu dạng danh sách (rgb_color) mà gửi lại HA
+    thành chuỗi thì HA từ chối lệnh bật. Hai loại đó chưa học — cần tầng Ghi giữ dấu do_ai cho số trước."""
+    g = g.strip()
+    if not g or g.startswith(("[", "(", "{")):
+        return False
+    try:
+        float(g)
+    except ValueError:
+        return True
+    return False
+
+
 def _chon_muc(tb: str) -> tuple[str, Any] | None:
     """Mức ứng với nhiệt độ lúc này: giá trị có nhiệt trung vị GẦN nhất."""
     m = ((_nap()["mo_hinh"].get(tb) or {}).get("muc")) or {}
@@ -1408,11 +1426,7 @@ def _chon_muc(tb: str) -> tuple[str, Any] | None:
     except (TypeError, ValueError):
         return None
     _, g, _n = min(m["moc"], key=lambda x: abs(float(x[0]) - nhiet))
-    try:
-        v: Any = int(g) if str(g).lstrip("-").isdigit() else float(g)
-    except ValueError:
-        v = g
-    return str(m["truong"]), v
+    return (str(m["truong"]), str(g)) if _la_lua_chon(str(g)) else None
 
 
 def _bao_tu_lam(tb: str, noi_dung: str) -> None:
@@ -1515,6 +1529,10 @@ def _dinh_vi(tb: str, nguon: str) -> str | None:
         return None
     s = so_do_nha.ap() or {}
     khu = boi_canh_nha.phong_cua(tb)
+    if not nguon.endswith(" " + O_LAI) and boi_canh_nha.phong_cua(ma) != khu:
+        # Cảm biến kích hoạt ở khu BÊN CẠNH = luật bật đón trước (người đang đi tới) — không phải báo lây;
+        # người chưa vào khu nên camera đương nhiên chưa thấy (soát lỗi 30/09/2026).
+        return None
     p = next((x for x in s.get("phong") or [] if x.get("ten") == khu), None)
     if not p:
         return None
@@ -1551,6 +1569,16 @@ def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
     from services import du_doan_nha as dd, ha_client, thong_bao
 
     try:
+        # Định vị (chụp camera, YOLO, chờ Frigate một nhịp) chạy NGOÀI `_khoa_xet`: giữ khoá chung lúc đó là
+        # mọi thiết bị khác phải xếp hàng hàng chục giây (soát lỗi 30/09/2026). Chỉ nhìn khi luật định làm.
+        if hd == "on" and xet(tb, hd, nguon, luc)["lam"] != "im" and _dinh_vi(tb, nguon) == "":
+            logger.info({"event": "kich_hoat_dinh_vi_chan", "thiet_bi": tb, "nguon": nguon})
+            with _khoa:
+                ds = _nap().setdefault("dinh_vi", [])
+                ds.append({"luc": luc, "thiet_bi": tb, "nguon": nguon, "ket_qua": "cho"})
+                del ds[:-BAO_AO_GIU]
+                _luu()
+            return
         with _khoa_xet:
             st = ha_client.get_state(tb) or {}
             if str(st.get("state") or "").lower() in (hd, *_KHONG_RO):
@@ -1571,14 +1599,6 @@ def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
                         ds.append({"luc": luc, "thiet_bi": tb, "nguon": nguon})
                         del ds[:-BAO_AO_GIU]
                         _luu()
-                return
-            if hd == "on" and _dinh_vi(tb, nguon) == "":
-                logger.info({"event": "kich_hoat_dinh_vi_chan", "thiet_bi": tb, "nguon": nguon})
-                with _khoa:
-                    ds = _nap().setdefault("dinh_vi", [])
-                    ds.append({"luc": luc, "thiet_bi": tb, "nguon": nguon, "ket_qua": "cho"})
-                    del ds[:-BAO_AO_GIU]
-                    _luu()
                 return
             vi = (_nap()["mo_hinh"][tb][hd].get("ten") or {}).get(nguon, nguon)
             nhan = {"nguon": nguon, **{k: round(v, 2) for k, v in q["x"].items() if not k.startswith("[")}}
