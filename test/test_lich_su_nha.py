@@ -292,43 +292,60 @@ class LichSuNhaTest(unittest.TestCase):
         self.assertEqual(gt, ["on", "off"])
 
     # ── soi hỏng ───────────────────────────────────────────────────────────
-    def test_soi_hong_bat_duoc_cam_bien_do(self) -> None:
-        """Đúng ca thật: phòng học VẪN GỬI TIN ĐỀU nhưng lux đứng yên ở 86.
+    # Chủ máy 29/09/2026: "Lỗi khi xét đến trong ngày hôm nay không đổi mà hôm trước có thay
+    # đổi liên tục" — mỗi trường so với chính nó, không theo ngưỡng từng loại tra bằng tên.
+    def _doi_moi_ngay(self, tb: str, truong: str, tu_ngay: float, den_ngay: float) -> None:
+        """Đổi giá trị mỗi giờ, từ ``tu_ngay`` tới ``den_ngay`` ngày trước."""
+        now = time.time()
+        t, i = now - tu_ngay * 86400, 0
+        while t < now - den_ngay * 86400:
+            self._ghi("mqtt", tb, truong, 20 + (i % 7) * 11, False, t)
+            t += 3600
+            i += 1
 
-        Đây là loại nguy hiểm hơn chết hẳn: nhìn vào tưởng còn chạy. Phải phân
-        biệt với 'chet' (im lặng hoàn toàn) — hai cách chữa khác nhau.
+    def test_soi_hong_bat_duoc_cam_bien_do(self) -> None:
+        """Đúng ca thật: phòng học VẪN GỬI TIN ĐỀU nhưng lux đứng yên ở 86 — sau nhiều ngày đổi.
+
+        Đây là loại nguy hiểm hơn chết hẳn: nhìn vào tưởng còn chạy.
         """
         now = time.time()
-        for i in range(48):  # gửi đều 2 ngày, giá trị KHÔNG ĐỔI
-            self._ghi("mqtt", "hien_dien_phong_hoc", "illuminance", 86,
-                      False, now - i * 3600)
+        self._doi_moi_ngay("hien_dien_phong_hoc", "illuminance", 10, 2)
+        for i in range(48):  # 2 ngày cuối gửi đều, giá trị KHÔNG ĐỔI
+            self._ghi("mqtt", "hien_dien_phong_hoc", "illuminance", 86, False, now - 2 * 86400 + 1 + i * 3600)
         ra = self.m.soi_hong(7)
         do = [x for x in ra if x["loai"] == "do" and "phong_hoc" in x["thiet_bi"]]
         self.assertTrue(do, f"phải phát hiện cảm biến ĐƠ, nhận được: {ra}")
 
     def test_soi_hong_phan_biet_chet_voi_do(self) -> None:
-        """Im lặng hẳn = 'chet'; vẫn gửi mà giá trị đứng yên = 'do'."""
-        now = time.time()
-        self._ghi("mqtt", "cb_im", "illuminance", 50, False, now - 6 * 86400)
+        """Đổi đều mỗi ngày rồi im hẳn = 'chet'."""
+        self._doi_moi_ngay("cb_im", "illuminance", 10, 2)
         loai = {x["thiet_bi"]: x["loai"] for x in self.m.soi_hong(7)}
         self.assertEqual(loai.get("cb_im"), "chet")
 
     def test_soi_hong_khong_bao_nham_cam_bien_khoe(self) -> None:
-        now = time.time()
-        for i in range(10):
-            self._ghi("mqtt", "cb_tot", "illuminance", 50 + i * 7, False, now - i * 600)
+        self._doi_moi_ngay("cb_tot", "illuminance", 10, 0)
         ra = self.m.soi_hong(7)
         self.assertFalse([x for x in ra if x["thiet_bi"] == "cb_tot"],
                          "cảm biến đang đổi giá trị đều thì không được báo hỏng")
 
-    def test_soi_hong_ngach_pin_khac_ngach_lux(self) -> None:
-        """Pin không đổi 10 ngày là bình thường; lux không đổi 10 ngày là hỏng."""
+    def test_soi_hong_khong_bao_nut_bam_va_tham_so_khong_bao_gio_doi_deu(self) -> None:
+        """Tin «54 thiết bị đang lỗi» ngày 29/09/2026: nút bấm nhả, tham số cấu hình radar, báo
+        khói — chưa bao giờ đổi mỗi ngày thì đứng yên không phải hỏng."""
         now = time.time()
-        self._ghi("mqtt", "cb_a", "battery", 98, False, now - 10 * 86400)
-        self._ghi("mqtt", "cb_b", "illuminance", 86, False, now - 10 * 86400)
-        loai = {x["thiet_bi"]: x["loai"] for x in self.m.soi_hong(30)}
-        self.assertNotIn("cb_a", loai, "pin đứng yên 10 ngày là bình thường")
-        self.assertIn("cb_b", loai, "lux đứng yên 10 ngày là hỏng")
+        for n in (12, 9, 5, 3):
+            self._ghi("ha", "button.ir_quat_tat", "state", f"2026-09-{n:02d}", False, now - n * 86400)
+        self._ghi("mqtt", "zigbee2mqtt/Cảm biến phòng khách", "bathroom", "on", False, now - 14 * 86400)
+        self._ghi("mqtt", "zigbee2mqtt/Báo khói bếp", "smoke", "false", False, now - 18 * 86400)
+        ten = {x["thiet_bi"] for x in self.m.soi_hong(7)}
+        self.assertFalse(ten & {"button.ir_quat_tat", "zigbee2mqtt/Cảm biến phòng khách",
+                                "zigbee2mqtt/Báo khói bếp"}, ten)
+
+    def test_soi_hong_nghi_mot_ngay_giua_chung_khong_phai_lien_tuc(self) -> None:
+        """Có một ngày không đổi trong 7 ngày trước lần đổi cuối thì chưa gọi là "đổi liên tục"."""
+        self._doi_moi_ngay("cb_thua", "illuminance", 10, 7)   # im 48 giờ: trọn một ngày lịch
+        self._doi_moi_ngay("cb_thua", "illuminance", 5, 2)
+        ten = [x["thiet_bi"] for x in self.m.soi_hong(7)]
+        self.assertNotIn("cb_thua", ten)
 
     def test_soi_hong_bat_ca_thiet_bi_IM_LANG_ngoai_cua_so(self) -> None:
         """Cảm biến hỏng LÂU không có bản ghi nào trong cửa sổ.
@@ -336,23 +353,10 @@ class LichSuNhaTest(unittest.TestCase):
         Lỗi thật đã gặp: lọc "ts >= cửa sổ" lúc gom danh sách thì loại đúng cái
         cần tìm — cảm biến phòng học im 9 ngày biến mất khỏi kết quả soi 9 ngày.
         """
-        now = time.time()
-        self._ghi("mqtt", "cb_chet_lau", "illuminance", 86, False, now - 20 * 86400)
+        self._doi_moi_ngay("cb_chet_lau", "illuminance", 30, 20)
         ten = [x["thiet_bi"] for x in self.m.soi_hong(7)]
         self.assertIn("cb_chet_lau", ten,
                       "thiết bị im lặng lâu hơn cửa sổ vẫn PHẢI bị bắt")
-
-    def test_nguong_tra_theo_ten_thiet_bi(self) -> None:
-        """Dữ liệu nạp từ HA có trường luôn là 'state', loại nằm trong TÊN.
-
-        Chỉ tra theo trường thì mọi cảm biến HA rơi về mặc định 7 ngày.
-        """
-        self.assertEqual(self.m._nguong("sensor.abc_illuminance", "state"),
-                         self.m._NGUONG_DO_GIAY["illuminance"])
-        self.assertEqual(self.m._nguong("sensor.abc_battery", "state"),
-                         self.m._NGUONG_DO_GIAY["battery"])
-        self.assertEqual(self.m._nguong("light.khong_ro", "state"),
-                         self.m._NGUONG_DO_MAC_DINH)
 
     def test_nap_tu_ha_ghi_ca_bang_tuoi(self) -> None:
         """soi_hong đo im lặng từ bảng tuoi — không ghi thì không soi ra được."""

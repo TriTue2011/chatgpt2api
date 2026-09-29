@@ -1090,105 +1090,92 @@ def nap_tu_ha(so_ngay: int = 10, thuc_the: list[str] | None = None) -> dict[str,
 
 
 # ── Soi thiết bị hỏng ───────────────────────────────────────────────────────
-# Ngưỡng "bao lâu không đổi thì coi là đơ" phải theo LOẠI cảm biến: pin không
-# đổi 30 ngày là bình thường, lux không đổi 24 giờ là hỏng.
-_NGUONG_DO_GIAY: dict[str, float] = {
-    "illuminance": 24 * 3600, "illuminance_lux": 24 * 3600,
-    "temperature": 24 * 3600, "humidity": 24 * 3600,
-    "presence": 48 * 3600, "occupancy": 48 * 3600, "motion": 48 * 3600,
-    "linkquality": 24 * 3600, "distance": 24 * 3600, "target_distance": 24 * 3600,
-    "power": 24 * 3600, "current": 24 * 3600, "voltage": 7 * 86400,
-    "battery": 30 * 86400,
-}
-_NGUONG_DO_MAC_DINH = 7 * 86400
+# Chủ máy 29/09/2026 (tin «Nhà có 54 thiết bị đang lỗi»): "Đang không phân biệt được switch,
+# button. Vì các cái này là button nhấn nhả, nó tự về trạng thái ban đầu, có những cái không bao
+# giờ thay đổi trạng thái. Lỗi khi xét đến trong ngày hôm nay không đổi mà hôm trước có thay đổi
+# liên tục."
+#
+# Bản cũ đo "im bao lâu" theo NGƯỠNG TỪNG LOẠI tra bằng chữ trong tên (illuminance 24 giờ, pin 30
+# ngày, còn lại 7 ngày) — danh sách từ khoá, và luôn thiếu: đo thật 29/09/2026, 68 lỗi thì 66 là
+# thứ vốn không bao giờ đổi đều (tham số cấu hình radar, báo khói chỉ báo khi có khói, lệnh
+# ``/set``, cảm biến điện thoại một giá trị). Nay mỗi trường so với CHÍNH NÓ: trước lần đổi cuối,
+# nó đã đổi đủ mọi ngày trong ``so_ngay`` ngày, mà giờ đứng yên trọn một ngày. Cùng kho đó chỉ còn
+# 2 lỗi, cả hai thật: radar phòng khách im 14 ngày (trước đó đổi hàng trăm lần mỗi ngày), pin một
+# thiết bị im 11 ngày.
+_IM_HONG_GIAY = 86400
 _TY_LE_CHAP_CHON = 20.0
 
 
-def _nguong(thiet_bi: str, truong: str) -> float:
-    """Ngưỡng "im bao lâu thì coi là hỏng", theo LOẠI cảm biến.
-
-    Pin đứng yên 30 ngày là bình thường; lux đứng yên 24 giờ là hỏng.
-
-    Phải tra CẢ TÊN THIẾT BỊ, không chỉ tên trường: dữ liệu nạp từ Home
-    Assistant có trường luôn là "state", còn loại nằm trong tên
-    (``sensor.hien_dien_phong_hoc_illuminance``). Chỉ tra trường thì mọi cảm
-    biến HA đều rơi về mặc định 7 ngày và hỏng nhẹ không bao giờ bị bắt.
-    """
-    t = truong.lower()
-    if t in _NGUONG_DO_GIAY:
-        return _NGUONG_DO_GIAY[t]
-    tb = thiet_bi.lower()
-    for k, v in _NGUONG_DO_GIAY.items():
-        if k in tb:
-            return v
-    return _NGUONG_DO_MAC_DINH
+def _ngay(ts: float) -> int:
+    """Số ngày theo giờ Việt Nam — "hôm nay", "hôm trước" của chủ máy."""
+    return int((ts + 7 * 3600) // 86400)
 
 
 def soi_hong(so_ngay: int = 7) -> list[dict[str, Any]]:
     """Cảm biến chết / đơ / chập chờn.
 
-    Không cần học máy — đối chiếu quá khứ là đủ, nên chắc chắn hơn hẳn phần
-    đoán thói quen. Đo thật trên HA chủ máy 09/09/2026 (500 cảm biến, 7 ngày):
-    24 chết hẳn, 63 đơ, 69 chập chờn.
+    Không cần học máy — đối chiếu quá khứ của chính trường đó là đủ. GIÁ TRỊ KÉP: vừa cảnh báo
+    chủ nhà, vừa BẢO VỆ phần học — cảm biến đơ mà đem đi học thì dạy quản gia điều sai (đèn phòng
+    học ra đúng 50,0% vì lux đứng yên ở 86 suốt 7 ngày).
 
-    GIÁ TRỊ KÉP: vừa cảnh báo chủ nhà, vừa BẢO VỆ phần học — cảm biến đơ mà
-    đem đi học thì dạy quản gia điều sai. Đo được: đèn phòng học ra đúng 50,0%
-    (bằng hệt đoán bừa) vì cảm biến phòng học báo lux đứng yên ở 86 suốt 7 ngày.
+    * ĐỔI trong một ngày: có bản ghi ``su_kien`` (bảng này chỉ ghi khi giá trị đổi), hoặc một ô
+      ``so_do`` dao động (nhỏ < lớn) hay khác ô trước.
+    * Hỏng khi lần đổi cuối đã quá ``_IM_HONG_GIAY`` VÀ ``so_ngay`` ngày tính tới hôm đổi cuối,
+      ngày nào cũng có đổi. Nút bấm, công tắc ít dùng, tham số cấu hình không bao giờ đổi đều như
+      vậy nên không bao giờ bị báo.
+    * Còn gửi tin (``tuoi`` mới trong một ngày) là ĐƠ; im hẳn là CHẾT.
 
-    ⚠️ KHÔNG dùng ``last_changed`` của trạng thái hiện tại để đo "bao lâu không
-    đổi" — HA vừa khởi động lại là đặt lại hết, cả 415 cảm biến trông như vừa
-    cập nhật. Phải đọc qua lịch sử, và đây chính là lý do bảng ``su_kien``
-    dùng được cho việc này.
+    ⚠️ KHÔNG dùng ``last_changed`` của trạng thái hiện tại — HA vừa khởi động lại là đặt lại hết.
+    ⚠️ KHÔNG lọc theo cửa sổ khi gom: thiết bị hỏng lâu không có bản ghi nào gần đây.
     """
     now = time.time()
     tu = now - max(1, int(so_ngay)) * 86400
+    so_ngay = max(1, int(so_ngay))
     ra: list[dict[str, Any]] = []
+    doi: dict[tuple[str, str], set[int]] = {}
+    cuoi: dict[tuple[str, str], float] = {}
+    so_ban_ghi: dict[tuple[str, str], int] = {}
 
     with _khoa_db:
         conn = _db()
-        # PHẢI soi CẢ HAI bảng: cảm biến số (lux, nhiệt độ) nằm ở so_do, chỉ
-        # trạng thái rời rạc mới ở su_kien. Soi mỗi su_kien thì bỏ sót đúng ca
-        # quan trọng nhất — phòng học báo lux=86 đứng yên 7 ngày.
-        #
-        # ⚠️ KHÔNG lọc "ts >= cửa sổ" khi gom danh sách thiết bị: cảm biến hỏng
-        # lâu thì KHÔNG có bản ghi nào trong cửa sổ, lọc là loại đúng cái cần
-        # tìm. Đã gặp thật: cảm biến phòng học im 9 ngày biến mất khỏi kết quả.
-        # Lấy TOÀN BỘ, rồi mới xét thời gian im lặng.
-        thong = {}
         for r in conn.execute(
-                "SELECT thiet_bi, truong, COUNT(*) n, COUNT(DISTINCT gia_tri) dm,"
-                " MAX(ts) cuoi FROM su_kien GROUP BY thiet_bi, truong"):
-            thong[(r["thiet_bi"], r["truong"])] = [int(r["n"]), int(r["dm"]), float(r["cuoi"])]
-        g = _o_gop_giay()
-        for r in conn.execute(
-                "SELECT thiet_bi, truong, SUM(n) n, COUNT(DISTINCT nho||'/'||lon) dm,"
-                " MAX(o_5p) cuoi FROM so_do GROUP BY thiet_bi, truong"):
+                "SELECT thiet_bi, truong, CAST((ts + 25200) / 86400 AS INTEGER) ngay, COUNT(*) n,"
+                " MAX(ts) cuoi FROM su_kien GROUP BY thiet_bi, truong, ngay"):
             k = (r["thiet_bi"], r["truong"])
-            cu = thong.get(k)
-            moi = [int(r["n"]), int(r["dm"]), float(r["cuoi"]) * g]
-            thong[k] = moi if cu is None else [cu[0] + moi[0],
-                                               max(cu[1], moi[1]),
-                                               max(cu[2], moi[2])]
-        moi_nhat = {(r["thiet_bi"], r["truong"]): (r["gia_tri"], r["ts"])
+            doi.setdefault(k, set()).add(int(r["ngay"]))
+            cuoi[k] = max(cuoi.get(k, 0.0), float(r["cuoi"]))
+            so_ban_ghi[k] = so_ban_ghi.get(k, 0) + int(r["n"])
+        g = _o_gop_giay()
+        truoc: dict[tuple[str, str], tuple[float, float]] = {}
+        for r in conn.execute("SELECT thiet_bi, truong, o_5p, nho, lon, n FROM so_do"
+                              " ORDER BY thiet_bi, truong, o_5p"):
+            k = (r["thiet_bi"], r["truong"])
+            o = (float(r["nho"]), float(r["lon"]))
+            so_ban_ghi[k] = so_ban_ghi.get(k, 0) + int(r["n"])
+            if o[0] < o[1] or (k in truoc and truoc[k] != o):
+                t = float(r["o_5p"]) * g
+                doi.setdefault(k, set()).add(_ngay(t))
+                cuoi[k] = max(cuoi.get(k, 0.0), t)
+            truoc[k] = o
+        moi_nhat = {(r["thiet_bi"], r["truong"]): (r["gia_tri"], float(r["ts"]))
                     for r in conn.execute("SELECT thiet_bi, truong, gia_tri, ts FROM tuoi")}
 
-    for (tb, tr), (n, dm, cuoi) in thong.items():
-        gt_cuoi, ts_cuoi = moi_nhat.get((tb, tr), (None, cuoi))
-        im = now - float(ts_cuoi or cuoi)
-        nguong = _nguong(tb, tr)
-
-        if im > max(nguong * 2, 3 * 86400):
-            ra.append({
-                "thiet_bi": tb, "truong": tr, "loai": "chet",
-                "chi_tiet": f"không tin nào trong {im / 86400:.1f} ngày",
-                "lan_cuoi_tot": ts_cuoi, "so_ban_ghi": n,
-            })
-        elif dm <= 1 and im > nguong:
-            ra.append({
-                "thiet_bi": tb, "truong": tr, "loai": "do",
-                "chi_tiet": f"chỉ một giá trị \"{gt_cuoi}\" suốt {im / 86400:.1f} ngày",
-                "lan_cuoi_tot": ts_cuoi, "so_ban_ghi": n,
-            })
+    for k, lan_doi in cuoi.items():
+        im = now - lan_doi
+        if im < _IM_HONG_GIAY:
+            continue
+        d = _ngay(lan_doi)
+        if not all(x in doi[k] for x in range(d - so_ngay + 1, d + 1)):
+            continue                    # trước đó không đổi đều mỗi ngày — không phải hỏng
+        gt_cuoi, ts_tin = moi_nhat.get(k, (None, lan_doi))
+        con_gui = now - ts_tin < _IM_HONG_GIAY
+        ra.append({
+            "thiet_bi": k[0], "truong": k[1], "loai": "do" if con_gui else "chet",
+            "chi_tiet": (f"vẫn gửi tin nhưng đứng yên ở \"{gt_cuoi}\" {im / 86400:.1f} ngày"
+                         if con_gui else f"không tin nào trong {(now - ts_tin) / 86400:.1f} ngày")
+                        + f" (trước đó đổi mỗi ngày, {so_ngay} ngày liền)",
+            "lan_cuoi_tot": lan_doi, "so_ban_ghi": so_ban_ghi.get(k, 0),
+        })
 
     # Chập chờn: đếm số lần rơi vào unavailable/unknown trong chính su_kien.
     with _khoa_db:
