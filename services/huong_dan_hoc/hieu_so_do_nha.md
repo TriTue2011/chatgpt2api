@@ -57,6 +57,10 @@ trả lời được bằng có/không hoặc một tên).
    toàn bếp mà lưới ≥ 60% phòng khách ở nhiều ô). Lưới thống kê chỉ có ô chân
    người từng đứng và nhãn radar hay báo lây — nên số ô KHÔNG nói phòng to
    hay nhỏ.
+   Mục C2 — ĐƯỜNG ĐI: ô người hay XUẤT HIỆN / BIẾN MẤT ở mép khung hình là lối
+   vào (cửa phòng, khoảng thông sang phòng khác, cửa ra ban công); đường đi
+   hay cắt qua giữa hai vùng là chỗ hai phòng nối nhau — ranh giới nằm ở đó.
+   Đường đi không cho biết ô nào là phòng nào; nó cho biết CHỖ NỐI.
 4. Mục D — CỬA: cửa mở rồi phòng nào có người đầu tiên = cửa mở vào phòng đó
    (thường là phòng khách / sảnh). "(không phòng nào)" nhiều = người đi RA.
 5. Mục G — ĐỊNH VỊ CHẶN NHẦM: bot dùng ô camera của sơ đồ này để biết người

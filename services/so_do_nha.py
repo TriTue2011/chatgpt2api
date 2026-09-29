@@ -48,6 +48,8 @@ NGAY = 30
 COT, HANG = 8, 6
 #: Ô có ít hơn ngần này mẫu thì không bày — một hai lần trùng không nói lên phòng nào.
 O_TOI_THIEU = 20
+#: Mỗi camera bày tối đa ngần này cặp đường đi (ô đầu → ô cuối) hay gặp nhất.
+DUONG_TOI_DA = 8
 #: Cửa mở rồi trong ngần này giây phòng nào có người đầu tiên.
 CUA_GIAY = 60
 #: Cảm biến báo có người quá ngần này thời gian là KẸT (cùng số `co_nguoi_nha._KET`).
@@ -213,6 +215,7 @@ def do(den: float | None = None) -> dict[str, Any]:
 
     # 2. Lưới camera từ sự kiện người của Frigate.
     camera: dict[str, Any] = {}
+    duong: dict[str, list] = {}
     loi_camera = ""
     try:
         for c in camera_nha.danh_sach():
@@ -221,7 +224,19 @@ def do(den: float | None = None) -> dict[str, Any]:
                 continue
             ev = _frigate(f"/api/events?camera={urllib.parse.quote(src)}&label=person&limit=100000&after={int(tu)}")
             luoi: dict[str, Counter] = {}
+            di: Counter = Counter()
             for e in ev:
+                # Đường đi Frigate lưu sẵn (`path_data`: điểm tỉ lệ 0–1 kèm giờ): ô ĐẦU → ô CUỐI của người —
+                # đường cắt qua ranh giới ở đâu là chỗ cửa / khoảng thông; ô người hay hiện ra / biến mất ở mép
+                # khung là lối vào phòng.
+                pd = (e.get("data") or {}).get("path_data") or []
+                if len(pd) >= 2:
+                    try:
+                        dau, cuoi = o_cua(*pd[0][0][:2]), o_cua(*pd[-1][0][:2])
+                    except (TypeError, ValueError, IndexError):
+                        dau = cuoi = ""
+                    if dau and cuoi and dau != cuoi:
+                        di[(dau, cuoi)] += 1
                 hop = (e.get("data") or {}).get("box")
                 if not hop:
                     continue
@@ -230,6 +245,7 @@ def do(den: float | None = None) -> dict[str, Any]:
                     continue
                 luoi.setdefault(o_cua(*diem_chan(hop)), Counter())[next(iter(co))] += 1
             camera[str(c["name"])] = {o: dict(cnt) for o, cnt in luoi.items() if sum(cnt.values()) >= O_TOI_THIEU}
+            duong[str(c["name"])] = [[a, b, n] for (a, b), n in di.most_common(DUONG_TOI_DA) if n >= O_TOI_THIEU]
     except Exception as exc:  # noqa: BLE001 — không có Frigate thì vẫn đo phần khác
         loi_camera = str(exc)[:160]
 
@@ -258,7 +274,7 @@ def do(den: float | None = None) -> dict[str, Any]:
                    f"{time.strftime('%d/%m %H:%M', time.localtime(float(x['luc'])))}"
                    for x in kich_hoat_nha._nap().get("dinh_vi") or [] if x.get("ket_qua") == "sai"]
     return {"phong": phong, "khu_radar": khu_ds, "ket": sorted(ket), "cung_bao": cung_bao, "camera": camera,
-            "loi_camera": loi_camera, "cua": {m: dict(c) for m, c in cua_ra.items()}, "ten": ten,
+            "loi_camera": loi_camera, "cua": {m: dict(c) for m, c in cua_ra.items()}, "ten": ten, "duong": duong,
             "dinh_vi_sai": dinh_vi_sai}
 
 
@@ -284,6 +300,11 @@ def de(uv: dict[str, Any], mo_ta: list[str], dan: list[str]) -> str:
             n = sum(luoi[o].values())
             dong.append(f"  {o}: " + ", ".join(f"{k} {round(100 * v / n)}%" for k, v in
                                                 sorted(luoi[o].items(), key=lambda i: -i[1])) + f" ({n})")
+    if any(uv.get("duong") or {}):
+        dong += ["\nC2. ĐƯỜNG ĐI trên camera — người xuất hiện ở ô ĐẦU, đi tới ô CUỐI (số lần, 30 ngày):"]
+        for c, ds in sorted((uv.get("duong") or {}).items()):
+            if ds:
+                dong.append(f"- {c}: " + ", ".join(f"{a}→{b} ({n})" for a, b, n in ds))
     dong += ["\nD. CỬA — mở ra rồi trong 60 giây phòng nào có người đầu tiên:"]
     dong += [f"- {ten.get(m, m)}: " + ", ".join(f"{k} {v}" for k, v in sorted(c.items(), key=lambda i: -i[1]))
              for m, c in uv["cua"].items()] or ["(không có cảm biến cửa)"]

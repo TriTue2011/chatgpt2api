@@ -114,3 +114,10 @@ def test_doc_anh_camera_ke_luoi_yolo_bot_chia_o_roi_vao_so(so, tmp_path, monkeyp
     assert "không có trong nhà" in so.doc_anh_camera("Cam bếp")["loi"]
     tra[0] = '{"thay": {"Bếp": ["Z9"]}}'
     assert "ô phải dạng" in so.doc_anh_camera("Cam bếp")["loi"]
+
+
+def test_de_bay_duong_di_frigate():
+    de = sd.de({"phong": {}, "cung_bao": [], "camera": {}, "cua": {}, "ten": {},
+                "duong": {"Cam bếp": [["C3", "F5", 40], ["A1", "B2", 25]], "Cam cửa": []}}, [], [])
+    assert "C2. ĐƯỜNG ĐI" in de and "- Cam bếp: C3→F5 (40), A1→B2 (25)" in de and "Cam cửa" not in de
+    assert "C2. ĐƯỜNG ĐI" not in sd.de({"phong": {}, "cung_bao": [], "camera": {}, "cua": {}, "ten": {}}, [], [])
