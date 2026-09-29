@@ -8,16 +8,21 @@ Chỉ trả JSON.
 
 ## Đi từng thiết bị, đi qua ĐỦ các loại tình huống có trong nhà này
 
-Với MỖI thiết bị, đi lần lượt TỪNG loại 1–11 dưới đây; loại nào có thể xảy ra
+Với MỖI thiết bị, đi lần lượt TỪNG loại 1–13 dưới đây; loại nào có thể xảy ra
 ở nơi đó thì PHẢI có ít nhất một tình huống (đèn phòng ngủ không cần "nấu ăn",
-nhưng thiết bị ở cửa/cổng/phòng khách luôn phải xét loại 8, 9 và 11). Mỗi
+nhưng thiết bị ở cửa/cổng/garage/phòng khách luôn phải xét loại 8, 9, 11 và 13). Mỗi
 thiết bị thường 6–10 tình huống.
 
 1. VÀO khu: từ cửa chính (về nhà), từ phòng bên cạnh; ban ngày và buổi tối.
+   Luôn xét AI ĐANG Ở SẴN trong khu: người vào phòng lúc có người khác đang
+   NGỦ (ngủ trưa, ngủ đêm, người ốm) — bật đèn là đánh thức họ.
 2. ĐI NGANG khu: đi từ A sang B phải qua khu này (đọc sơ đồ: phòng nào thông,
    phòng nào có cửa ra khu nào — vd từ phòng ngủ ra nhà tắm có cửa phía bếp).
    Đèn: đi tới đâu sáng tới đó, đi qua rồi thì tắt; quạt: không bật cho người
-   đi ngang.
+   đi ngang. Đối chiếu VỊ TRÍ cảm biến với HƯỚNG ĐI: cảm biến chỉ thấy người
+   trong vùng của nó — đi tới từ phía bên kia (từ tầng trên xuống mà radar ở
+   chân cầu thang, từ cuối hành lang mà cảm biến ở đầu) thì chỉ khi tới nơi mới
+   được thấy: suốt đoạn đường trước đó thiết bị chưa bật → `hien_tai` = `sai`.
 3. Ở LẠI, NGỒI YÊN: xem tivi, ăn cơm, làm việc, đọc sách, ngủ — radar hay mất
    dấu người ngồi yên; camera thường vẫn thấy.
 4. RỜI rồi QUAY LẠI nhanh: vào nhà tắm, lấy đồ, ra ban công phơi đồ.
@@ -32,11 +37,24 @@ thiết bị thường 6–10 tình huống.
 10. Riêng của thiết bị: quạt theo nóng/mát; đèn đi theo tivi; đèn gần tủ lạnh
     lúc lấy đồ ăn đêm… TÊN thiết bị chưa nói hết công dụng ("đèn tủ lạnh" có
     thể là đèn trong tủ hay đèn đặt cạnh tủ) → không đoán, hỏi.
-11. AN NINH / BẤT THƯỜNG: cả nhà đi vắng (mục B2: mọi người / điện thoại đều
-    not_home) mà trong nhà có người hoặc cửa mở — PHẢI có tình huống này cho
-    thiết bị cạnh cửa chính, `nen` = `bao`; người lạ đứng lâu trước cửa; người già ở một mình
-    mà quá giờ quen thuộc vẫn không thấy cử động (sáng không dậy, vào nhà tắm
-    quá lâu).
+11. AN NINH / BẤT THƯỜNG — thiết bị cạnh cửa chính, cổng, garage PHẢI có các
+    tình huống này, `nen` = `bao`:
+    - cả nhà đi vắng (mục B2: mọi người / điện thoại đều not_home) mà trong
+      nhà có người hoặc cửa mở;
+    - cả nhà đang NGỦ (khung giờ ngủ, đêm khuya) mà cửa chính / cửa cuốn mở;
+    - người lạ đứng lâu trước cửa, cổng;
+    - người già ở một mình quá giờ quen thuộc vẫn không thấy cử động (sáng
+      không dậy, vào nhà tắm quá lâu).
+    Đề (lời chủ nhà) nói có NGƯỜI GIÀ / TRẺ NHỎ / NGƯỜI ỐM ở nhà → thiết bị ở
+    phòng họ hay ở (phòng ngủ, nhà tắm) BẮT BUỘC có tình huống `bao` cho họ —
+    kể cả khi thiết bị chỉ là cái đèn: đèn và cảm biến của phòng đó là thứ cho
+    biết họ có còn cử động bình thường không.
+12. NGUY HIỂM cho người yếu: thiết bị nguy hiểm (bếp, bình nóng lạnh, máy móc,
+    ổ điện) đang chạy mà trẻ nhỏ hoặc người già tới gần → `bao` (không bao giờ
+    tự bật những thiết bị này).
+13. ĐỂ QUÊN: cửa (cửa chính, cửa cuốn, cửa tủ lạnh, cửa sổ lúc mưa) mở lâu bất
+    thường, thiết bị bật lâu khi không ai dùng (bếp, bàn là, vòi nước) → `bao`
+    — dù thiết bị em đang xét chỉ là cái đèn cạnh đó.
 
 ## Kinh nghiệm chung (cộng đồng nhà thông minh — mọi kiểu nhà, văn phòng, xưởng)
 

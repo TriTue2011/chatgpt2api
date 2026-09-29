@@ -13,6 +13,7 @@ giả ngoài trời) — đáp án là bot phải tự thấy chỗ hổng đó 
            một giá trị hoặc danh sách giá trị được chấp nhận.
   phai_hoi_ve: [[chữ, …], …] — mỗi nhóm: có câu hỏi chứa ít nhất một chữ của nhóm.
   khong_nen: [{"thiet_bi", "nen"}] — không tình huống nào của thiết bị đó được chọn `nen` này.
+  khong_nen_tu: [{"thiet_bi", "nen", "tu"}] — như trên nhưng chỉ tình huống chứa một trong các chữ.
 """
 
 from __future__ import annotations
@@ -90,7 +91,8 @@ DE: list[dict[str, Any]] = [
                    "BẬT (bot học, tự làm): khi Cảm biến chuyển động cổng có người vào, Độ sáng sân ≤ 10",
                    "TẮT KHI VẮNG: Cảm biến chuyển động cổng báo vắng liền 2–2 phút"])}),
      "dap_an": {"phai_co": [{"thiet_bi": "light.den_cong", "hien_tai": "sai",
-                             "tu": ["lá", "cây", "xe", "mưa", "báo giả", "gió", "côn trùng", "mèo", "chó"]},
+                             "tu": ["lá", "cây", "xe", "mưa", "báo giả", "gió", "côn trùng", "mèo", "chó", "nhiễu",
+                                    "camera không thấy", "camera cổng không thấy"]},
                             {"thiet_bi": "light.den_cong", "nen": "bao",
                              "tu": ["lạ", "đứng lâu", "lảng vảng"]}]}},
 
@@ -181,8 +183,9 @@ DE += [
                    "BẬT (bot học, tự làm): khi Radar phòng con có người vào, Độ sáng phòng con ≤ 60",
                    _TAT_RADAR.format(cb="Radar phòng con", p=5)])},
                ["Bé 3 tuổi ngủ trưa 12:30–14:30 trong phòng con, kéo rèm tối."]),
-     "dap_an": {"phai_co": [{"thiet_bi": "light.den_phong_con", "hien_tai": "sai",
-                             "nen": ["khong_lam", "hoi"], "tu": ["ngủ trưa", "trưa", "đang ngủ", "bé ngủ"]}]}},
+     "dap_an": {"phai_co": [{"thiet_bi": "light.den_phong_con", "hien_tai": ["sai", "khong_ro"],
+                             "nen": ["khong_lam", "hoi", "tat", "giu"], "tu": ["ngủ trưa", "trưa", "đang ngủ", "bé ngủ"]}],
+                "khong_nen_tu": [{"thiet_bi": "light.den_phong_con", "nen": "bat", "tu": ["ngủ trưa", "bé đang ngủ"]}]}},
 
     {"ten": "lam_ca_dem_ve_muon",
      "tinh_huong": "Chồng làm ca đêm về 23:30 lúc khung «cả nhà ngủ» chặn bật đèn — về nhà tối om; nhưng không được "
@@ -341,5 +344,9 @@ def cham_cho(bai: dict[str, Any] | str, dap_an: dict[str, Any]) -> list[str]:
             loi.append(f"thiếu câu hỏi về {nhom}")
     for y in dap_an.get("khong_nen") or []:
         if any(x["thiet_bi"] == y["thiet_bi"] and x["nen"] == y["nen"] for x in kb):
+            loi.append(f"không được chọn {y}")
+    for y in dap_an.get("khong_nen_tu") or []:
+        if any(x["thiet_bi"] == y["thiet_bi"] and x["nen"] == y["nen"] and any(t.lower() in _chu(x) for t in y["tu"])
+               for x in kb):
             loi.append(f"không được chọn {y}")
     return loi
