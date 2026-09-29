@@ -180,7 +180,11 @@ def _mot(x: dict[str, Any]) -> None:
         if st == "success":
             break
         if st == "failed":
-            _dat(x, "loi", str(s.get("error") or s.get("message") or "Đăng nhập thất bại"))
+            loi = str(s.get("error") or s.get("message") or "Đăng nhập thất bại")
+            # Mã lỗi `account_*` do CHÍNH OpenAI đặt tên là lỗi của riêng tài khoản (vd account_deactivated —
+            # bị xoá / vô hiệu hoá): không phải máy chủ bị chặn, nên không tính vào HONG_LIEN_DUNG.
+            m = re.search(r"error_code=(account_[A-Za-z0-9_]+)", loi)
+            _dat(x, "khoa" if m else "loi", f"OpenAI báo tài khoản lỗi {m.group(1)}: {loi}" if m else loi)
             return
         if st == "need_code":
             _dat(x, "loi", "OpenAI hỏi mã mà không sinh được từ TOTP — kiểm hạt giống")

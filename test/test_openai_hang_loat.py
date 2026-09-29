@@ -60,7 +60,8 @@ def gia(monkeypatch):
         if nhip[p] < 2:
             return _Tl({"state": "running", "message": "Đang điền mật khẩu"})
         dang.clear()
-        return _Tl({"state": kq[email], "error": "Sai mật khẩu"})
+        st, _, loi = kq[email].partition(":")
+        return _Tl({"state": st, "error": loi or "Sai mật khẩu"})
 
     them: list[str] = []
     song: dict[str, str] = {}
@@ -140,3 +141,14 @@ def test_khong_chay_hai_danh_sach_cung_luc(gia):
         hl.bat_dau("a@x.com|p|t")
         with pytest.raises(ValueError, match="Đang chạy"):
             hl.bat_dau("a@x.com|p|t")
+
+
+def test_openai_khoa_tai_khoan_khong_dung_ca_hang(gia):
+    """30/09/2026: 17 tài khoản hotmail — OpenAI trả «error_code: account_deactivated». Lỗi của RIÊNG tài
+    khoản: ghi «khoa», không tính vào luật hai tài khoản hỏng liền thì dừng (máy chủ không bị chặn)."""
+    khoa = "failed:OpenAI báo lỗi error_code=account_deactivated: Bạn không có tài khoản vì tài khoản đó đã bị xóa"
+    gia["kq"].update({"a@x.com": khoa, "b@x.com": khoa, "c@x.com": khoa, "d@x.com": "success"})
+    tt = _chay_het("a@x.com\nb@x.com\nc@x.com\nd@x.com")
+    assert [x["state"] for x in tt["ds"]] == ["khoa", "khoa", "khoa", "xong"]
+    assert "account_deactivated" in tt["ds"][0]["message"]
+    assert gia["nhat_ky"][0] == "bat_dau a@x.com  ", "chỉ email: solver tự lấy mật khẩu trong kho"

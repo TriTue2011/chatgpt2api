@@ -301,7 +301,7 @@ type DongHangLoat = { email: string; state: string; message: string; luc: number
 
 const NHAN_HANG_LOAT: Record<string, string> = {
   cho: "chờ", dang_nhap: "đang đăng nhập", xong: "xong", da_co: "đã có",
-  loi: "lỗi", bo: "bỏ",
+  loi: "lỗi", bo: "bỏ", khoa: "OpenAI khoá tài khoản",
 };
 
 /**

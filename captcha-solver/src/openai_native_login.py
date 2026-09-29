@@ -318,8 +318,14 @@ async def _run_inner(session: OpenAILoginSession, password: str) -> None:
         return
 
     # ── Màn hình 1: email ──
+    # Bắt đầu từ địa chỉ đăng nhập mà CHÍNH chatgpt.com cấp (NextAuth → auth.openai.com/api/accounts/
+    # authorize): đăng nhập xong OpenAI mới trả phiên về chatgpt.com. Đo 30/09/2026 (chụp màn hình ảo):
+    # vào thẳng auth.openai.com/log-in thì email + mật khẩu + TOTP đều qua mà chatgpt.com vẫn "Đăng
+    # nhập / Đăng ký miễn phí"; mở authorize SAU đó thì OpenAI lại đòi /log-in — phiên kiểu kia vô dụng.
+    # Code cũ quét nhầm cookie phiên mã hoá rồi báo thành công (17 tài khoản hotmail).
     session.message = "Mở trang đăng nhập OpenAI..."
-    await page.goto(_AUTH_LOGIN, wait_until="domcontentloaded", timeout=45_000)
+    if not await _dua_phien_ve_chatgpt(page):
+        await page.goto(_AUTH_LOGIN, wait_until="domcontentloaded", timeout=45_000)
     await asyncio.sleep(2.5)
     await _qua_man_chan(page)
 
@@ -347,8 +353,16 @@ async def _run_inner(session: OpenAILoginSession, password: str) -> None:
 
     # ── Màn hình 4: về chatgpt.com, lấy token ──
     session.message = "Đang lấy token..."
+    da_bam_lai = False
     for _ in range(6):
         await asyncio.sleep(5.0)
+        logger.info("openai_login: lay token o %s", (page.url or "").split("?")[0])
+        loi = await _loi_openai(page)
+        if loi:
+            # Trang lỗi của chính OpenAI (vd account_deactivated — tài khoản bị xoá/vô hiệu hoá). Đo
+            # 30/09/2026: 17 tài khoản hotmail đứng ở trang này; code cũ bỏ qua nó, sang chatgpt.com, quét
+            # nhầm cookie phiên rồi báo thành công.
+            raise RuntimeError(f"OpenAI báo lỗi error_code={loi[0]}: {loi[1]}")
         token, captured, preview = await _scrape_chatgpt_token(page)
         if token:
             session.access_token = token
@@ -365,10 +379,68 @@ async def _run_inner(session: OpenAILoginSession, password: str) -> None:
                                 timeout=45_000)
             except Exception:
                 pass
+        elif not da_bam_lai and await _dua_phien_ve_chatgpt(page):
+            # Vẫn chưa về chatgpt.com (vd phải đi đường dự phòng /log-in): thử luồng của chatgpt.com
+            # một lần — auth.openai.com còn phiên hợp lệ thì tự chuyển về.
+            da_bam_lai = True
+            session.message = "Đưa phiên OpenAI về chatgpt.com..."
 
     raise RuntimeError(
         "Đăng nhập xong nhưng không lấy được access token. Mở noVNC xem trang "
         "đang dừng ở đâu — thường là còn một bước xác minh nữa.")
+
+
+async def _loi_openai(page) -> tuple[str, str] | None:
+    """Trang lỗi của auth.openai.com ghi rõ ``error_code: <mã>`` — trả (mã, câu giải thích) nếu có."""
+    if "openai.com" not in (page.url or ""):
+        return None
+    try:
+        chu = await page.evaluate("() => (document.body && document.body.innerText) || ''")
+    except Exception:
+        return None
+    import re
+    m = re.search(r"error_code:\s*([A-Za-z0-9_.-]+)", str(chu or ""))
+    if not m:
+        return None
+    giai_thich = next((d.strip() for d in str(chu).splitlines() if len(d.strip()) > 30), "")
+    return m.group(1), giai_thich[:160]
+
+
+async def _dua_phien_ve_chatgpt(page) -> bool:
+    """chatgpt.com chưa đăng nhập: xin chính chatgpt.com (NextAuth) địa chỉ đăng nhập qua OpenAI rồi mở nó —
+    auth.openai.com đã có phiên thì tự chuyển về chatgpt.com kèm phiên. True = đã mở được địa chỉ đó."""
+    try:
+        kq = await page.evaluate(
+            """async () => {
+                const pv = await (await fetch('/api/auth/providers', {credentials: 'include'})).json();
+                const ten = Object.keys(pv || {});
+                const id = ten.includes('openai') ? 'openai' : (ten.find(k => k !== 'google' && k !== 'apple'
+                           && k !== 'microsoft-entra-id' && k !== 'email') || ten[0] || 'openai');
+                const c = await (await fetch('/api/auth/csrf', {credentials: 'include'})).json();
+                const r = await fetch('/api/auth/signin/' + id, {
+                    method: 'POST', credentials: 'include',
+                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                    body: new URLSearchParams({csrfToken: c.csrfToken, callbackUrl: 'https://chatgpt.com/',
+                                               json: 'true'})});
+                let j = {};
+                try { j = await r.json(); } catch (e) {}
+                return {providers: ten, id: id, status: r.status, url: j.url || ''};
+            }""")
+    except Exception as exc:
+        logger.info("openai_login: xin dia chi dang nhap cua chatgpt.com loi: %s", str(exc)[:200])
+        return False
+    url = str((kq or {}).get("url") or "")
+    logger.info("openai_login: nextauth providers=%s id=%s status=%s url=%s", (kq or {}).get("providers"),
+                (kq or {}).get("id"), (kq or {}).get("status"), url.split("?")[0])
+    if not url.startswith("https://"):
+        return False
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+        await asyncio.sleep(4.0)
+    except Exception:
+        return False
+    logger.info("openai_login: sau nextauth trang dung o %s", (page.url or "").split("?")[0])
+    return True
 
 
 async def _qua_buoc_2fa(session: OpenAILoginSession, page) -> None:
