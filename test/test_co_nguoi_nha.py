@@ -128,14 +128,14 @@ def test_hoi_roi_moi_ap_sai_thi_tra_lai(cn, kh):  # noqa: F811
     vang, giu = cn.ma_ghep(QUAT, "vang"), cn.ma_ghep(QUAT, "giu")
     # Ngoại vi KHÔNG vào danh sách vắng — nó chỉ khiến bot nhìn lại bằng camera trước khi tắt.
     assert kh._nap()["thiet_bi"][QUAT]["tat_khi_vang"] == {
-        "bat": True, "cam_bien": [vang], "phut": 3, "giu": giu, "nhin": ["Cam phòng khách"]}
+        "bat": True, "cam_bien": [vang], "phut": 3, "giu": giu, "nhin": ["Cam phòng khách"], "roi": ""}
     assert cam_bien_ghep.ds()[vang]["bieu_thuc"] == d["gia_tri"]["co_nguoi"]
     assert cn.ap_dung() == []                                   # áp rồi thì thôi
 
     ht.sua_cham(d["id"], False, cham_boi="chu_may", ghi_chu="đèn này chiếu cả bếp")
     ht.ap_ket_luan()
     assert kh._nap()["thiet_bi"][QUAT]["tat_khi_vang"] == {"bat": True, "cam_bien": [R], "phut": 3,
-                                                           "giu": "", "nhin": []}
+                                                           "giu": "", "nhin": [], "roi": ""}
     assert vang not in cam_bien_ghep.ds() and giu not in cam_bien_ghep.ds()
     assert ht.ghi_chu_cham("co_nguoi", QUAT) == ["(chấm sai) đèn này chiếu cả bếp"]
 
@@ -159,3 +159,21 @@ def test_giai_lai_khi_chu_nha_vua_cham_sai_khong_giai_lai_cau_lap_lai(cn):
     assert cn._can_giai({**cu, "ket_qua": "sai", "cham_boi": "chu_may", "cham_luc": now - 60}, now)
     assert not cn._can_giai({**cu, "ket_qua": "sai", "cham_boi": "lap_lai", "cham_luc": None}, now)
     assert cn._can_giai({**cu, "nhom": {"giai_luc": now - 8 * 86400}}, now)
+
+
+def test_roi_khu_bay_bang_va_kiem_chi_nhan_cam_bien_khu_khac(cn):
+    """Bảng F: ngay sau lúc khu vắng mà radar bếp báo có người (người sang bếp) thì khu này có người
+    lại nhanh hay không — so với lúc không khu nào báo. roi_di chỉ nhận cảm biến KHU KHÁC."""
+    _lich_su()
+    _sk(B, "off", T0 + 2990)
+    _sk(B, "on", T0 + 3030)                 # 30 s sau lúc PK vắng (3000), radar bếp thấy người
+    uv = _do(cn)
+    assert [d["x"] for d in uv["roi"]] == [B] and uv["roi"][0]["n"] == 1
+    assert "khung" in uv["roi_nen"] and "nham" in uv["roi_nen"]
+    de = cn.de(uv, "Quạt phòng khách", [])
+    assert "F. RỜI KHU" in de and "(không cảm biến khu khác nào báo)" in de
+    uv = {**uv, "camera": []}
+    bai = {"co_nguoi": {"ma": R}, "giu": None, "nhin": None, "roi_di": {"ma": B}, "chac": 0.7, "vi_sao": ""}
+    assert cn.kiem(bai, uv)["roi_di"] == {"ma": B}
+    assert "KHU KHÁC" in cn.kiem({**bai, "roi_di": {"ma": R}}, uv), "cảm biến trong khu không phải «đã rời»"
+    assert "KHU KHÁC" in cn.kiem({**bai, "roi_di": {"ma": H}}, uv), "cảm biến kẹt không dùng"

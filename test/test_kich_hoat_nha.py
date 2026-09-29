@@ -1029,3 +1029,51 @@ def test_nhin_lai_dung_frigate_truoc_khong_co_moi_chup(kh, monkeypatch):
     monkeypatch.setattr(mqtt_nha, "dem_nguoi", lambda: {"_cu": True})
     kh._nhin_lai(["Cam phòng khách"])
     assert chup[-1] == "Cam phòng khách", "số Frigate đóng băng thì không tin — chụp"
+
+
+def test_roi_khu_tat_sau_mot_nhip_sai_quanh_gio_thi_thoi(kh, monkeypatch):
+    """Cảm biến «đã rời khu» (bot chọn) báo lúc khu đang vắng → tắt sau một nhịp quan sát thay vì
+    chờ đủ phút. Bị bật lại ngay (sai) đủ 2 lần QUANH GIỜ đó thì quanh giờ đó thôi tắt nhanh — giờ
+    khác vẫn dùng (chủ máy: bật lại vào thời điểm khác nhau thì giá trị khác nhau)."""
+    ROI = "binary_sensor.c2a_roi_den"
+    tt = {x["entity_id"]: dict(x) for x in TT}
+    tt[DEN]["state"] = "on"
+    tt[NGU]["state"] = "off"
+    monkeypatch.setattr(kh, "_trang_thai_ha", lambda: list(tt.values()))
+    from services import ha_client
+    monkeypatch.setattr(ha_client, "get_state", lambda e: tt.get(e))
+    hen: list = []
+
+    class HenGia:
+        def __init__(self, giay, ham, args=()):
+            self.giay, self.ham, self.args = giay, ham, args
+            hen.append(self)
+            self.daemon = True
+
+        def start(self):
+            pass
+
+        def cancel(self):
+            pass
+    monkeypatch.setattr(kh.threading, "Timer", HenGia)
+    kh.dat_thiet_bi(DEN, bat=True, tat_khi_vang={"bat": True, "cam_bien": [NGU], "phut": 10, "roi": ROI})
+    kh._theo_vang(NGU, "off", kh.ds_thiet_bi())
+    assert hen[-1].giay == 600
+    kh._theo_vang(ROI, "on", kh.ds_thiet_bi())
+    assert hen[-1].giay == kh.ROI_GIAY, "người đã sang khu khác: chỉ chờ một nhịp"
+    hen[-1].ham(*hen[-1].args)
+    assert kh.goi == [("switch", "turn_off", {"entity_id": DEN})]
+    from services import du_doan_nha as dd
+    import json as _j
+    r = dd._db().execute("SELECT id, boi_canh FROM du_doan ORDER BY id DESC LIMIT 1").fetchone()
+    assert _j.loads(r["boi_canh"])["roi"] == 1 and "sang khu khác" in _j.loads(r["boi_canh"])["nguon"]
+    assert kh._noi_vang(DEN, r["boi_canh"], time.time() + 60) is None, "sai ở đường «rời khu» không nới giờ chờ"
+    dd.ghi_sai(int(r["id"]))
+    id2 = dd.ghi_nhan(f"{DEN}#off", "off", 1.0, {"roi": 1}, "tu_lam")
+    dd.ghi_sai(id2)
+    assert kh.roi_sai_quanh_gio(DEN, time.time()) == (2, 2)
+    assert kh.roi_sai_quanh_gio(DEN, time.time() + 6 * 3600) == (0, 0), "giờ khác không bị khoá"
+    kh._theo_vang(NGU, "off", kh.ds_thiet_bi())
+    n = len(hen)
+    kh._theo_vang(ROI, "on", kh.ds_thiet_bi())
+    assert len(hen) == n, "sai 2 lần quanh giờ này: về chờ đủ phút"

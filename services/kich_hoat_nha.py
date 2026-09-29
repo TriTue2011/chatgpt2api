@@ -289,7 +289,7 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
             cu["kiem_ao"] = kiem_ao
         if tat_khi_vang is not None:
             cu["tat_khi_vang"] = {**{k: v for k, v in (cu.get("tat_khi_vang") or {}).items()
-                                     if k in ("giu", "nhin")}, **tat_khi_vang}
+                                     if k in ("giu", "nhin", "roi")}, **tat_khi_vang}
             _hen_tat_huy(tb)
         if tat_khi_sang is not None:
             cu["tat_khi_sang"] = tat_khi_sang
@@ -533,6 +533,11 @@ def _kiem_tat_khi_vang(x: Any) -> dict[str, Any]:
         if giu and not giu.startswith("binary_sensor."):
             raise ValueError("Tắt khi vắng: ngoại vi nhìn lại là binary_sensor.")
         ra["giu"] = giu
+    if "roi" in x:
+        roi = str(x.get("roi") or "")
+        if roi and not roi.startswith("binary_sensor."):
+            raise ValueError("Tắt khi vắng: cảm biến «đã rời khu» là binary_sensor.")
+        ra["roi"] = roi
     if "nhin" in x:
         if not isinstance(x.get("nhin") or [], list):
             raise ValueError("Tắt khi vắng: «nhin» là danh sách tên camera.")
@@ -1593,6 +1598,7 @@ def _hen_tat_huy(tb: str) -> None:
     with _khoa:
         cu = _hen_tat.pop(tb, None)
         _han_tat.pop(tb, None)
+        _ly_do_tat.pop(tb, None)
     if cu:
         cu.cancel()
 
@@ -1609,6 +1615,16 @@ def _theo_vang(ma: str, gt: str, ds: dict[str, dict[str, Any]]) -> None:
         if not tv.get("bat"):
             continue
         cb = list(tv.get("cam_bien") or [])
+        if ma == tv.get("roi") and gt == "on":
+            # Bot học: cảm biến này báo lúc khu đang vắng = người đã sang khu khác → khỏi chờ đủ
+            # số phút, chỉ chờ một nhịp quan sát rồi xét lại (`_tat_vi_vang` kiểm lại mọi thứ).
+            han = _han_tat.get(tb)
+            if (_deu_vang(cb) and han is not None and han - time.time() > ROI_GIAY
+                    and roi_sai_quanh_gio(tb, time.time())[0] < _roi_sai_toi_da()):
+                _hen_tat_luc(tb, ROI_GIAY)
+                with _khoa:
+                    _ly_do_tat[tb] = "người đã sang khu khác"
+            continue
         if ma in cb and gt == "on":
             _hen_tat_huy(tb)
         elif (ma in cb and gt == "off") or (ma == tb and gt == "on"):
@@ -1715,9 +1731,12 @@ def _noi_vang(tb: str, boi_canh: Any, luc: float) -> tuple[int, float] | None:
     sau (lượt học đưa lần mất dấu này vào số đo). Trả (giờ, số phút chờ); không phải lần tắt vì
     vắng thì None."""
     try:
-        vang_tu = float(json.loads(boi_canh or "{}").get("vang_tu"))
+        bc = json.loads(boi_canh or "{}")
+        vang_tu = float(bc.get("vang_tu"))
     except (TypeError, ValueError, AttributeError):
         return None
+    if bc.get("roi"):
+        return None     # tắt vì «đã rời khu», không phải vì hết giờ chờ — sai ở đây không nói gì về giờ chờ
     with _khoa:
         cd = _nap()["thiet_bi"].get(tb)
         if not cd:
@@ -1740,6 +1759,34 @@ SANG_VANG_GIAY = 30
 _han_tat: dict[str, float] = {}
 
 
+#: Nhịp quan sát "người đi đâu" sau lúc khu vắng — cùng số `co_nguoi_nha.ROI_GIAY` (bảng F của đề).
+ROI_GIAY = 60
+#: Lý do lượt tắt sắp tới (vd "người đã sang khu khác") — để tin báo nói đúng vì sao.
+_ly_do_tat: dict[str, str] = {}
+
+
+def _roi_sai_toi_da() -> int:
+    from services import du_doan_nha as dd
+    return dd._SAI_TUT_CAP
+
+
+def roi_sai_quanh_gio(tb: str, luc: float) -> tuple[int, int]:
+    """(sai, số lần) trong 10 lần gần nhất bot tắt theo «đã rời khu» QUANH GIỜ này (± MAT_DAU_LAN).
+
+    Chủ máy 29/09/2026: "bật lại thiết bị vào các thời điểm khác nhau thì cũng có giá trị khác
+    nhau" — bị bật lại lúc 22h (đang đọc sách, người khác đi ngang bếp) không nói gì về 14h. Sai
+    đủ `du_doan_nha._SAI_TUT_CAP` lần quanh giờ nào thì quanh giờ đó thôi tắt nhanh, về chờ đủ."""
+    from services import du_doan_nha as dd
+    h = datetime.fromtimestamp(luc, _TZ).hour
+    gan = {(h + d) % 24 for d in range(-MAT_DAU_LAN, MAT_DAU_LAN + 1)}
+    with dd._khoa:
+        r = dd._db().execute(
+            "SELECT ts, ket_qua FROM du_doan WHERE ten=? AND COALESCE(json_extract(boi_canh, '$.roi'), 0)=1"
+            " ORDER BY ts DESC LIMIT 200", (_ten_tt(tb, "off"),)).fetchall()
+    ds = [str(x["ket_qua"]) for x in r if datetime.fromtimestamp(float(x["ts"]), _TZ).hour in gan][:10]
+    return sum(1 for k in ds if k == "sai"), len(ds)
+
+
 def _hen_tat_luc(tb: str, giay: float) -> None:
     _hen_tat_huy(tb)
     t = threading.Timer(giay, _tat_vi_vang, args=(tb,))
@@ -1757,6 +1804,7 @@ def _tat_vi_vang(tb: str) -> None:
     with _khoa:
         _hen_tat.pop(tb, None)
         _han_tat.pop(tb, None)
+        ly_do = _ly_do_tat.pop(tb, "")
     try:
         cd = ds_thiet_bi().get(tb) or {}
         tv = cd.get("tat_khi_vang") or {}
@@ -1788,8 +1836,11 @@ def _tat_vi_vang(tb: str) -> None:
             tat = [_lan_off_kho(m, luc) for m in tv.get("cam_bien") or []]
             if tat and all(t is not None for t in tat):
                 nhan["vang_tu"] = max(tat)  # type: ignore[type-var]
+        if ly_do and troi is None:
+            nhan["roi"] = 1
         phut = round(phut_vang(cd, float(nhan.get("vang_tu") or luc)))
-        vi = f"phòng trống, trời đã sáng ~{troi:.0f} lux" if troi is not None else f"vắng {phut} phút"
+        vi = (f"phòng trống, trời đã sáng ~{troi:.0f} lux" if troi is not None
+              else ly_do or f"vắng {phut} phút")
         if nhin_lai:
             vi += f"; {nhin_lai}"
         id_ = dd.ghi_nhan(_ten_tt(tb, "off"), "off", 1.0, {"nguon": vi, BEN_VUNG: 1, **nhan}, "tu_lam")
@@ -2229,6 +2280,7 @@ def _reset_for_tests(duong: Path) -> None:
     for t in [*_hen_vang.values(), *_hen_tat.values(), *_hen_sang.values(), *_hen_o_lai.values()]:
         t.cancel()
     _hen_o_lai.clear()
+    _ly_do_tat.clear()
     _o_lai_xet_luc.clear()
     _o_lai_da_phat.clear()
     _hen_vang.clear()

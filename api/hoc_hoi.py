@@ -417,13 +417,18 @@ def create_router() -> APIRouter:
 
     @router.post("/api/hoc-hoi/ket-luan/cham")
     async def ket_luan_cham(body: dict, authorization: str | None = Header(default=None)):
-        """Chấm lại một kết luận — người chấm là chủ máy. body: {id, dung, ghi_chu}."""
+        """Chấm lại một kết luận. body: {id, dung, ghi_chu, cham_boi?} — người chấm mặc định là chủ
+        máy; giáo viên (Claude) chấm thì gửi ``cham_boi: "claude"`` để sổ ghi đúng ai chấm. Chấm
+        qua đây để việc ÁP chạy trong chính tiến trình app (cài đặt kích hoạt nằm trong RAM)."""
         require_admin(authorization)
         try:
             from services import hieu_thiet_bi_nha
+            cham_boi = str(body.get("cham_boi") or "chu_may")
+            if cham_boi not in ("chu_may", "claude"):
+                return {"ok": False, "error": "cham_boi là chu_may hoặc claude."}
             ok = hieu_thiet_bi_nha.sua_cham(
                 int(body.get("id") or 0), bool(body.get("dung")),
-                cham_boi="chu_may", ghi_chu=str(body.get("ghi_chu") or ""))
+                cham_boi=cham_boi, ghi_chu=str(body.get("ghi_chu") or ""))
             if ok:
                 await asyncio.to_thread(hieu_thiet_bi_nha.ap_ket_luan)
             return {"ok": ok} if ok else {"ok": False, "error": "Không có kết luận đó."}

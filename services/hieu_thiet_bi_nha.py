@@ -796,7 +796,7 @@ def ghi_co_nguoi(lan: int, ket_luan: list[dict[str, Any]]) -> dict[str, list[dic
         for k in ket_luan:
             g = {"ma": [k["ma_hoc"]], "ma_hoc": k["ma_hoc"], "chac": k["chac"],
                  "vi_sao": k["vi_sao"], "khu_vuc": k["khu_vuc"], "ten": k["ten"], "giai_luc": now}
-            gt = {"co_nguoi": k["co_nguoi"], "giu": k["giu"], "nhin": k.get("nhin")}
+            gt = {"co_nguoi": k["co_nguoi"], "giu": k["giu"], "nhin": k.get("nhin"), "roi_di": k.get("roi_di")}
             _ghi_mot_cau(conn, lan, now, "co_nguoi", k["ma_hoc"], gt, g, moi, lap_lai)
         conn.commit()
     return {"moi": moi, "lap_lai": lap_lai}
@@ -1233,6 +1233,8 @@ def _cau_doc(d: dict[str, Any], ten: dict[str, str]) -> str:
         if gt.get("giu"):
             loi += (f"; khi {_bieu_thuc_doc(gt['giu'], ten_cb)} thì nhìn lại bằng "
                     f"{', '.join(gt.get('nhin') or [])} trước khi tắt")
+        if gt.get("roi_di"):
+            loi += f"; vắng mà {_bieu_thuc_doc(gt['roi_di'], ten_cb)} (người đã sang khu khác) thì tắt ngay"
         return loi
     if gt.get("hoc"):
         return f"Học thói quen {_nhan(d['khoa'], ten)}"
