@@ -730,12 +730,15 @@ def _dac_trung(luc: float, nguon: str, ds_nguon: list[str],
     return x
 
 
-def _nhan_da_cham(tb: str, hd: str) -> list[tuple[float, str]]:
-    """(ts, ket_qua) những lần bot đã hỏi/làm cho hướng này — nhãn của chính chủ máy."""
+def _nhan_da_cham(tb: str, hd: str) -> list[tuple[float, str, str]]:
+    """(ts, ket_qua:cach, nguồn) những lần bot đã hỏi/làm cho hướng này — nhãn của chính chủ máy.
+    Nguồn để mỗi câu trả lời chỉ làm nhãn cho mẫu của ĐÚNG nguồn đã khiến bot hỏi."""
     from services import du_doan_nha as dd
     with dd._khoa:
-        return [(float(r["ts"]), str(r["ket_qua"]) + ":" + str(r["cach"])) for r in dd._db().execute(
-            "SELECT ts, ket_qua, cach FROM du_doan WHERE ten=? ORDER BY ts", (_ten_tt(tb, hd),))]
+        return [(float(r["ts"]), str(r["ket_qua"]) + ":" + str(r["cach"]), str(r["nguon"] or ""))
+                for r in dd._db().execute(
+                    "SELECT ts, ket_qua, cach, json_extract(boi_canh, '$.nguon') nguon FROM du_doan"
+                    " WHERE ten=? ORDER BY ts", (_ten_tt(tb, hd),))]
 
 
 # ── Có người Ở LẠI — chưa đủ tin thì hỏi để học ────────────────────────────
@@ -765,6 +768,8 @@ PHUT_TU = "phút từ "
 O_LAI_TRAN = 60.0
 _hen_o_lai: dict[str, threading.Timer] = {}
 _o_lai_xet_luc: dict[str, float] = {}
+#: Lượt ở (mốc bắt đầu) đã phát nguồn «ở lại» — mỗi lượt xét MỘT lần, kể cả khi lần đó bot im.
+_o_lai_da_phat: dict[str, float] = {}
 
 
 def _chuoi_nhi_phan(ro: sqlite3.Connection, ma: str, tu: float, den: float) -> tuple[list[float], list[str]]:
@@ -842,6 +847,14 @@ def _o_lai_luc(tb: str, luc: float) -> tuple[float, dict[str, tuple[list[float],
         dong = {m: _chuoi_nhi_phan(ro, m, luc - O_LAI_NHIN, luc) for m in ol.get("dac_trung") or ol["cam_bien"]}
     finally:
         ro.close()
+    # Kho ghi qua HÀNG ĐỢI (`lich_su_nha.ghi`) nên lần "on" vừa tới có thể chưa xuống đĩa — trạng
+    # thái HA lúc này mới là sự thật của "bây giờ". Không thêm thì lượt ở của cảm biến bật một lần
+    # rồi đứng yên (camera, cảm biến ghép) bị bỏ lỡ trọn.
+    tt = {str(s["entity_id"]): str(s.get("state") or "").lower() for s in _trang_thai_ha()}
+    for m, (ts, gt) in dong.items():
+        if tt.get(m) == "on" and (not gt or gt[-1] != "on"):
+            ts.append(luc)
+            gt.append("on")
     luot = _luot_o({m: dong[m] for m in ol["cam_bien"] if m in dong}, luc)
     return (luot[-1][0], dong) if luot and luot[-1][1] >= luc else None
 
@@ -883,6 +896,10 @@ def _xet_o_lai(tb: str) -> None:
                 _hen_o_lai[tb] = t
             t.start()
             return
+        with _khoa:
+            if _o_lai_da_phat.get(tb) == o[0]:
+                return
+            _o_lai_da_phat[tb] = o[0]
         if not _da_xong_luot(tb, o[0]):
             _phat(f"{tb} {O_LAI}", luc)
     except Exception as exc:  # noqa: BLE001
@@ -957,7 +974,9 @@ def hoc(tb: str) -> dict[str, Any]:
             truoc[ten_ol] = lan_ol
             ds_nguon = sorted({*ds_nguon, ten_ol})
         nguoi = sorted(bat + tat)
-        cham = _nhan_da_cham(tb, hd)
+        cham_moi = _nhan_da_cham(tb, hd)
+        cham = [(t, kq) for t, kq, n in cham_moi if not n.endswith(" " + O_LAI)]
+        cham_ol = [(t, kq) for t, kq, n in cham_moi if n == ten_ol]
         ts_cham = [t for t, _ in cham]
         mau: list[tuple[dict[str, float], int, float]] = []
         nguon_set = set(ds_nguon)
@@ -984,7 +1003,7 @@ def hoc(tb: str) -> dict[str, Any]:
         for a, b in luot if co_ol else []:
             # Mẫu «ở lại»: bot đã hỏi/làm trong lượt thì câu chủ máy trả lời là nhãn (lấy đúng lúc
             # hỏi); chưa thì lúc lượt đủ ``phut_ol`` — nhãn là người có tự bật trước khi lượt hết.
-            da_hoi = [(tc, kq.split(":")[0]) for tc, kq in cham if a <= tc <= b]
+            da_hoi = [(tc, kq.split(":")[0]) for tc, kq in cham_ol if a <= tc <= b]
             if da_hoi:
                 t, kq = da_hoi[0]
                 if kq not in ("dung", "sai"):
@@ -2147,6 +2166,7 @@ def _reset_for_tests(duong: Path) -> None:
         t.cancel()
     _hen_o_lai.clear()
     _o_lai_xet_luc.clear()
+    _o_lai_da_phat.clear()
     _hen_vang.clear()
     _hen_tat.clear()
     _hen_sang.clear()

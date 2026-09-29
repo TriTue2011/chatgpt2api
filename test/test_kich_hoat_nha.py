@@ -948,7 +948,10 @@ def test_o_lai_nhan_la_cau_tra_loi_cua_chu_may(kh, monkeypatch):
     kh.dat_thiet_bi(DEN, bat=True, hoi_de_hoc=True)
     kh.hoc(DEN)
     b = _luc(10, 14)
-    id_ = dd.ghi_nhan(f"{DEN}#on", "on", 0.5, {}, "hoi")
+    id_ = dd.ghi_nhan(f"{DEN}#on", "on", 0.5, {"nguon": f"{DEN} {kh.O_LAI}"}, "hoi")
+    khac = dd.ghi_nhan(f"{DEN}#on", "on", 0.5, {"nguon": f"{NGU} có người vào"}, "hoi")
+    dd._db().execute("UPDATE du_doan SET ts=? WHERE id=?", (_luc(12, 14, 1), khac))
+    dd.ghi_sai(khac)                        # câu hỏi của nguồn KHÁC trong lượt ở: không phải nhãn «ở lại»
     dd._db().execute("UPDATE du_doan SET ts=? WHERE id=?", (b + 8 * 60, id_))
     dd._db().commit()
     dd.ghi_sai(id_)
