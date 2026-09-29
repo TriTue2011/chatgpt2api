@@ -16,7 +16,7 @@ def test_de_dung_khuon_va_dap_an_co_trong_de(d):
     de = co_nguoi_nha.de(d["uv"], d["ten_tb"], d["dan"])
     assert "A. CẢM BIẾN" in de and "F. RỜI KHU" in de and "E. CAMERA" in de
     for k, v in d["dap_an"].items():
-        for m in (v or []):
+        for m in (v if isinstance(v, (list, dict)) and not k.endswith("_mot_trong") else []):
             assert m in de, f"{d['ten']}: đáp án {k} nhắc {m} không có trong đề"
 
 
@@ -30,3 +30,8 @@ def test_cham():
     assert de_luyen.cham(bai, {"co_nguoi_phu_dinh_khong": [B]}) == [f"co_nguoi không được loại lây {B}"]
     assert de_luyen.cham(bai, {"giu_phai_co": {L: ["not_home"]}})[0].startswith("giu:")
     assert de_luyen.cham("model lỗi", {}) == ["bài bị loại: model lỗi"]
+    assert de_luyen.cham({**bai, "roi_khi_o_duoi": 3}, {"roi_khi_o_duoi": 3}) == []
+    assert de_luyen.cham({**bai, "roi_khi_o_duoi": None}, {"roi_khi_o_duoi": 3}) == [
+        "roi_khi_o_duoi phải là 3, bài viết None"]
+    assert de_luyen.cham({**bai, "roi_khi_o_duoi": 1}, {"roi_khi_o_duoi_mot_trong": [1, 3]}) == []
+    assert de_luyen.cham({**bai, "roi_khi_o_duoi": 10}, {"roi_khi_o_duoi_mot_trong": [1, 3]}) != []

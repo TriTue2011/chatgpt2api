@@ -40,6 +40,10 @@ MAT_DAU_GIAY = 600
 ROI_GIAY = 60
 #: Có người lại trong ngần này giây sau lúc tắt = tắt nhầm (5 phút — "bật lại ngay").
 ROI_NHAM = 300
+#: ĐI NGANG hay Ở LẠI: lượt có người trước lúc khu vắng dài không quá ngần này phút (chủ máy 29/09/2026:
+#: "đi đến đâu sáng đến đó, nếu lưu trú thì giữ trạng thái"). Đo 29/09/2026 phòng ngủ: người ghé dưới
+#: 1 phút rồi sang khu khác, tắt nhanh nhầm 5/31; đã ở trên 10 phút thì nhầm 9/17.
+O_MOC_PHUT = (1, 3, 10)
 #: Khung giờ để bot thấy CÙNG một việc có giá trị khác nhau theo lúc (chủ máy 29/09/2026: "bật lại
 #: thiết bị vào các thời điểm khác nhau thì cũng có giá trị khác nhau").
 KHUNG_GIO = (("đêm", 0, 5), ("sáng", 5, 11), ("trưa", 11, 14), ("chiều", 14, 18), ("tối", 18, 24))
@@ -275,6 +279,19 @@ def ung_vien(tb: str, ro: sqlite3.Connection, tu: float, den: float, *,
             i += 1
         return False
 
+    # Lượt có người trong khu (khe vắng ngắn hơn VANG gộp lại — cùng nghĩa "vắng" lúc sống): mỗi
+    # quãng vắng biết người đã ở bao lâu trước đó — đi ngang hay ở lại.
+    bd_luot: list[float] = []
+    cuoi = -1e18
+    for a, b in hop_trong:
+        if a - cuoi >= kich_hoat_nha.VANG:
+            bd_luot.append(a)
+        cuoi = max(cuoi, b)
+
+    def da_o(a: float) -> float:
+        i = bisect.bisect_right(bd_luot, a - 1e-6) - 1
+        return (a - bd_luot[i]) / 60 if i >= 0 else 1e9
+
     def ty(ds: Khoang) -> dict[str, Any]:
         """Chỉ những lần CÒN vắng lúc đường tắt nhanh kịp tắt (2 nhịp quan sát); "nhầm" = có người
         lại trong ROI_NHAM giây sau đó — đúng tỉ lệ tắt nhầm nếu tắt nhanh. Mất dấu vài giây thì
@@ -283,8 +300,10 @@ def ung_vien(tb: str, ro: sqlite3.Connection, tu: float, den: float, *,
         def nham(q: Khoang) -> str:
             return _ti_le(sum(1 for a, b in q if b - a <= 2 * ROI_GIAY + ROI_NHAM), len(q))
         theo = {ten: [q for q in con if _khung(q[0]) == ten] for ten, _a, _b in KHUNG_GIO}
+        theo_o = {p: [q for q in con if da_o(q[0]) <= p] for p in O_MOC_PHUT}
         return {"n": len(con), "nham": nham(con),
-                "khung": " ".join(f"{ten} {nham(q)}/{len(q)}" for ten, q in theo.items() if q)}
+                "khung": " ".join(f"{ten} {nham(q)}/{len(q)}" for ten, q in theo.items() if q),
+                "o": " ".join(f"≤{p}' {nham(q)}/{len(q)}" for p, q in theo_o.items() if q)}
 
     theo_x = {x: [q for q in quang if bat_trong(x, q[0], q[0] + ROI_GIAY)] for x in khac}
     co_x = {q for ds in theo_x.values() for q in ds}
@@ -373,12 +392,15 @@ def de(uv: dict[str, Any], ten_tb: str, dan: list[str]) -> str:
         dong.append("(không có)")
     dong += [f"\nF. RỜI KHU — trong {ROI_GIAY} giây đầu sau lúc mục A vắng, cảm biến khu khác báo có người."
              f" Chỉ tính lần khu này còn vắng sau {2 * ROI_GIAY // 60} phút (lúc tắt nhanh sẽ tắt);"
-             f" TẮT NHẦM = có người lại trong {ROI_NHAM // 60} phút sau đó:",
-             "mã (khu, đổi/ngày) | số lần | tắt nhầm | tắt nhầm theo khung giờ (tỉ lệ/số lần)"]
-    dong += [f"{_khac(hd, d['x'])} | {d['n']} | {d['nham']} | {d['khung']}" for d in uv.get("roi") or []]
+             f" TẮT NHẦM = có người lại trong {ROI_NHAM // 60} phút sau đó. Cột cuối: chỉ tính lần người"
+             f" mới Ở trong khu không quá N phút trước lúc vắng (≤1' là đi ngang):",
+             "mã (khu, đổi/ngày) | số lần | tắt nhầm | tắt nhầm theo khung giờ (tỉ lệ/số lần) | "
+             "tắt nhầm theo lúc trước đã ở (tỉ lệ/số lần)"]
+    dong += [f"{_khac(hd, d['x'])} | {d['n']} | {d['nham']} | {d['khung']} | {d.get('o') or '—'}"
+             for d in uv.get("roi") or []]
     nen = uv.get("roi_nen") or {}
     dong.append(f"(không cảm biến khu khác nào báo) | {nen.get('n', 0)} | {nen.get('nham', '—')} | "
-                f"{nen.get('khung', '')}")
+                f"{nen.get('khung', '')} | {nen.get('o') or '—'}")
     if uv.get("roi_da"):
         dong.append("Bot đã tắt theo «rời khu» rồi bị bật lại ngay (sai/số lần): "
                     + ", ".join(f"{k} {v['sai']}/{v['n']}" for k, v in uv["roi_da"].items()))
@@ -437,6 +459,11 @@ def kiem(data: Any, uv: dict[str, Any]) -> dict[str, Any] | str:
         la_ = _ma_trong(roi_di) - (hien_dien - set(uv["trong"]) - set(uv["ket"]))
         if la_:
             return f"roi_di chỉ dùng cảm biến KHU KHÁC có trong đề (không trong khu, không kẹt): {sorted(la_)!r}"
+    roi_phut = data.get("roi_khi_o_duoi")
+    if roi_di is None or roi_phut in (None, "", 0):
+        roi_phut = None
+    elif roi_phut not in O_MOC_PHUT:
+        return f"roi_khi_o_duoi phải là một trong {O_MOC_PHUT} (phút, như cột cuối mục F) hoặc null"
     nhin = data.get("nhin")
     if nhin is not None:
         if not isinstance(nhin, list) or not all(isinstance(x, str) for x in nhin):
@@ -447,7 +474,8 @@ def kiem(data: Any, uv: dict[str, Any]) -> dict[str, Any] | str:
         nhin = nhin or None
     if giu is not None and not nhin:
         return "giu phải đi cùng nhin — ngoại vi chỉ để NHÌN LẠI, không giữ một mình"
-    return {"co_nguoi": co, "giu": giu, "nhin": nhin, "roi_di": roi_di, "chac": round(chac, 2),
+    return {"co_nguoi": co, "giu": giu, "nhin": nhin, "roi_di": roi_di, "roi_khi_o_duoi": roi_phut,
+            "chac": round(chac, 2),
             "vi_sao": str(data.get("vi_sao") or "")[:300]}
 
 
@@ -592,7 +620,8 @@ def ap_dung() -> list[dict[str, Any]]:
             if d["ket_qua"] == "sai":
                 if da.get("id") == d["id"]:
                     kich_hoat_nha.dat_thiet_bi(tb, tat_khi_vang={**tv, "cam_bien": da["truoc"],
-                                                                 "giu": "", "nhin": [], "roi": ""})
+                                                                 "giu": "", "nhin": [], "roi": "",
+                                                                 "roi_phut": None})
                     cam_bien_ghep.xoa(ma_ghep(tb, "vang"))
                     cam_bien_ghep.xoa(ma_ghep(tb, "giu"))
                     cam_bien_ghep.xoa(ma_ghep(tb, "roi"))
@@ -622,6 +651,7 @@ def ap_dung() -> list[dict[str, Any]]:
                 cam_bien_ghep.xoa(ma_ghep(tb, "roi"))
             truoc = da.get("truoc") if da else tv["cam_bien"]
             kich_hoat_nha.dat_thiet_bi(tb, tat_khi_vang={**tv, "cam_bien": ds, "giu": giu, "roi": roi,
+                                                         "roi_phut": d["gia_tri"].get("roi_khi_o_duoi") if roi else None,
                                                          "nhin": list(d["gia_tri"].get("nhin") or [])})
             so[tb] = {"id": d["id"], "truoc": truoc, "luc": time.time()}
             lam.append({"thiet_bi": tb, "cam_bien": ds, "id": d["id"]})

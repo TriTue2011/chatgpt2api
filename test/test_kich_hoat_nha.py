@@ -1081,6 +1081,48 @@ def test_roi_khu_tat_sau_mot_nhip_sai_quanh_gio_thi_thoi(kh, monkeypatch):
     assert len(hen) == n, "sai 2 lần quanh giờ này: về chờ đủ phút"
 
 
+def test_roi_khu_chi_khi_di_ngang_o_lai_thi_giu(kh, monkeypatch):
+    """Chủ máy 29/09/2026: "đi đến đâu sáng đến đó, nếu lưu trú thì giữ trạng thái". Bot chọn tắt
+    nhanh chỉ khi người mới ở ≤ 3 phút (`roi_phut`): ghé 1 phút rồi sang khu khác → tắt sau một nhịp;
+    đã ở 40 phút → chờ đủ phút như thường."""
+    ROI = "binary_sensor.c2a_roi_den"
+    tt = {x["entity_id"]: dict(x) for x in TT}
+    tt[DEN]["state"] = "on"
+    monkeypatch.setattr(kh, "_trang_thai_ha", lambda: list(tt.values()))
+    hen: list = []
+
+    class HenGia:
+        def __init__(self, giay, ham, args=()):
+            self.giay = giay
+            hen.append(self)
+            self.daemon = True
+
+        def start(self):
+            pass
+
+        def cancel(self):
+            pass
+    monkeypatch.setattr(kh.threading, "Timer", HenGia)
+    kh.dat_thiet_bi(DEN, bat=True, tat_khi_vang={"bat": True, "cam_bien": [NGU], "phut": 10, "roi": ROI,
+                                                 "roi_phut": 3})
+    assert kh.ds_thiet_bi()[DEN]["tat_khi_vang"]["roi_phut"] == 3
+    kh.dat_thiet_bi(DEN, tat_khi_vang={"bat": True, "cam_bien": [NGU], "phut": 10})
+    assert kh.ds_thiet_bi()[DEN]["tat_khi_vang"]["roi_phut"] == 3, "web gửi thiếu thì giữ lựa chọn của bot"
+    now = time.time()
+    for o_phut, cho in ((1, kh.ROI_GIAY), (40, 600)):
+        kh._lan_off.clear()
+        from services import lich_su_nha as ls
+        with ls._khoa_db:
+            ls._db().execute("DELETE FROM su_kien")
+            ls._db().commit()
+        _sk(NGU, "off", now - 3 * 3600)
+        _sk(NGU, "on", now - 20 - o_phut * 60)
+        _sk(NGU, "off", now - 20)
+        kh._theo_vang(NGU, "off", kh.ds_thiet_bi())
+        kh._theo_vang(ROI, "on", kh.ds_thiet_bi())
+        assert hen[-1].giay == cho, f"đã ở {o_phut} phút"
+
+
 def test_cua_mo_phai_co_nguoi_vao_moi_bat(kh, monkeypatch):
     """Chủ máy 29/09/2026: "cửa mở và có người đi vào thì phải bật bằng cách xác nhận qua cảm biến và
     cam". Cửa mở mà khu không có ai MỚI vào (người đi ra) thì không bật."""

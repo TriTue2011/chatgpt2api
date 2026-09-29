@@ -101,7 +101,19 @@ giờ nào thì quanh giờ đó bot tự thôi dùng, về chờ đủ.
 3. Bỏ cảm biến hay báo lây với khu này (mục B) và cảm biến kẹt.
 4. Mục F có dòng "Bot đã tắt theo «rời khu» rồi bị bật lại ngay" thì các khung
    có sai là bằng chứng lựa chọn cũ sai ở giờ đó — sửa hoặc bỏ.
-5. Nghi ngờ thì `null`: chờ đủ phút vẫn an toàn hơn tắt trước mặt người.
+5. ĐI NGANG hay Ở LẠI — "đi đến đâu sáng đến đó, ở lại thì giữ": người ghé
+   vài chục giây rồi sang khu khác là đi ngang, tắt sau lưng họ là đúng; người
+   đã ở lâu (đọc sách, ngồi máy tính, nằm nghỉ) mà cảm biến khu khác báo thì
+   hay là NGƯỜI KHÁC đi lại, còn họ vẫn ở đó. Cột cuối mục F tách tắt nhầm theo
+   lúc trước người đã ở bao lâu (≤1', ≤3', ≤10'). Cả dòng không đạt điều 1
+   nhưng một mốc N đạt đủ ba điều (dùng số lần và tỉ lệ CỦA MỐC ĐÓ, và thấp hơn
+   rõ mốc cùng N của dòng "không cảm biến khu khác nào báo") → vẫn dùng cảm
+   biến đó, kèm `roi_khi_o_duoi` = N LỚN NHẤT đạt (xét từ ≤10' xuống: mốc lớn
+   hơn tắt nhanh được nhiều lần hơn; mốc nhỏ hơn KHÔNG an toàn hơn nếu tỉ lệ
+   của nó không thấp hơn). Cả dòng đạt mà mốc nhỏ không
+   tốt hơn → `roi_khi_o_duoi` = `null` (mọi lúc). Tỉ lệ tắt nhầm TĂNG khi ở lâu
+   hơn là dấu hiệu rõ: chỉ tắt nhanh khi đi ngang.
+6. Nghi ngờ thì `null`: chờ đủ phút vẫn an toàn hơn tắt trước mặt người.
 
 ## Cách viết biểu thức
 
@@ -112,7 +124,7 @@ giờ nào thì quanh giờ đó bot tự thôi dùng, về chờ đủ.
 
 ```json
 {"co_nguoi": {...}, "giu": {...} hoặc null, "nhin": ["<tên camera mục E>"] hoặc null,
- "roi_di": {...} hoặc null, "chac": 0.8, "vi_sao": "..."}
+ "roi_di": {...} hoặc null, "roi_khi_o_duoi": 1 | 3 | 10 | null, "chac": 0.8, "vi_sao": "..."}
 ```
 
 `chac`: 0–1. `vi_sao`: tiếng Việt, tối đa 3 câu, nêu số đo đã dựa vào và trả

@@ -128,14 +128,15 @@ def test_hoi_roi_moi_ap_sai_thi_tra_lai(cn, kh):  # noqa: F811
     vang, giu = cn.ma_ghep(QUAT, "vang"), cn.ma_ghep(QUAT, "giu")
     # Ngoại vi KHÔNG vào danh sách vắng — nó chỉ khiến bot nhìn lại bằng camera trước khi tắt.
     assert kh._nap()["thiet_bi"][QUAT]["tat_khi_vang"] == {
-        "bat": True, "cam_bien": [vang], "phut": 3, "giu": giu, "nhin": ["Cam phòng khách"], "roi": ""}
+        "bat": True, "cam_bien": [vang], "phut": 3, "giu": giu, "nhin": ["Cam phòng khách"], "roi": "",
+        "roi_phut": None}
     assert cam_bien_ghep.ds()[vang]["bieu_thuc"] == d["gia_tri"]["co_nguoi"]
     assert cn.ap_dung() == []                                   # áp rồi thì thôi
 
     ht.sua_cham(d["id"], False, cham_boi="chu_may", ghi_chu="đèn này chiếu cả bếp")
     ht.ap_ket_luan()
     assert kh._nap()["thiet_bi"][QUAT]["tat_khi_vang"] == {"bat": True, "cam_bien": [R], "phut": 3,
-                                                           "giu": "", "nhin": [], "roi": ""}
+                                                           "giu": "", "nhin": [], "roi": "", "roi_phut": None}
     assert vang not in cam_bien_ghep.ds() and giu not in cam_bien_ghep.ds()
     assert ht.ghi_chu_cham("co_nguoi", QUAT) == ["(chấm sai) đèn này chiếu cả bếp"]
 
@@ -177,6 +178,26 @@ def test_roi_khu_bay_bang_va_kiem_chi_nhan_cam_bien_khu_khac(cn):
     assert cn.kiem(bai, uv)["roi_di"] == {"ma": B}
     assert "KHU KHÁC" in cn.kiem({**bai, "roi_di": {"ma": R}}, uv), "cảm biến trong khu không phải «đã rời»"
     assert "KHU KHÁC" in cn.kiem({**bai, "roi_di": {"ma": H}}, uv), "cảm biến kẹt không dùng"
+    # Đi ngang hay ở lại: bot chỉ chọn được đúng các mốc của cột cuối mục F.
+    assert cn.kiem({**bai, "roi_khi_o_duoi": 3}, uv)["roi_khi_o_duoi"] == 3
+    assert "roi_khi_o_duoi" in cn.kiem({**bai, "roi_khi_o_duoi": 7}, uv)
+    assert cn.kiem({**bai, "roi_di": None, "roi_khi_o_duoi": 3}, uv)["roi_khi_o_duoi"] is None
+
+
+def test_roi_khu_tach_di_ngang_voi_o_lai(cn):
+    """Chủ máy 29/09/2026: "đi đến đâu sáng đến đó, nếu lưu trú thì giữ trạng thái". Bảng F tách tắt
+    nhầm theo lúc trước người đã ở bao lâu: ghé 30 s rồi sang bếp (đi thật) khác ngồi 40 phút rồi
+    radar bếp báo (người khác đi, người này quay lại ngay)."""
+    _sk(QUAT, "on", T0 - 10)
+    _sk(H, "on", T0 - 99)
+    for ma, gt, t in [(R, "on", T0), (R, "off", T0 + 30), (B, "on", T0 + 50), (B, "off", T0 + 400),
+                      (R, "on", T0 + 2000), (R, "off", T0 + 4400), (B, "on", T0 + 4420), (B, "off", T0 + 4500),
+                      (R, "on", T0 + 4700), (R, "off", T0 + 9000)]:
+        _sk(ma, gt, t)
+    uv = _do(cn)
+    d = next(d for d in uv["roi"] if d["x"] == B)
+    assert d["n"] == 2 and d["o"] == "≤1' 0%/1 ≤3' 0%/1 ≤10' 0%/1"
+    assert "tắt nhầm theo lúc trước đã ở" in cn.de(uv, "Quạt phòng khách", [])
 
 
 def test_giao_vien_cham_sai_thi_bot_giai_lai_va_thay_loi_cham(cn, kh):  # noqa: F811

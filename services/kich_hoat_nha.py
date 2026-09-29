@@ -289,7 +289,7 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
             cu["kiem_ao"] = kiem_ao
         if tat_khi_vang is not None:
             cu["tat_khi_vang"] = {**{k: v for k, v in (cu.get("tat_khi_vang") or {}).items()
-                                     if k in ("giu", "nhin", "roi")}, **tat_khi_vang}
+                                     if k in ("giu", "nhin", "roi", "roi_phut")}, **tat_khi_vang}
             _hen_tat_huy(tb)
         if tat_khi_sang is not None:
             cu["tat_khi_sang"] = tat_khi_sang
@@ -538,6 +538,13 @@ def _kiem_tat_khi_vang(x: Any) -> dict[str, Any]:
         if roi and not roi.startswith("binary_sensor."):
             raise ValueError("Tắt khi vắng: cảm biến «đã rời khu» là binary_sensor.")
         ra["roi"] = roi
+    if "roi_phut" in x:
+        # Tắt nhanh theo «đã rời khu» chỉ khi người mới ở không quá ngần này phút (đi ngang);
+        # None = mọi lúc. Bot chọn ở `co_nguoi_nha` (`roi_khi_o_duoi`).
+        rp = x.get("roi_phut")
+        if rp not in (None, "") and (not isinstance(rp, (int, float)) or not 0 < float(rp) <= 240):
+            raise ValueError("Tắt khi vắng: «roi_phut» là số phút 1–240 hoặc để trống.")
+        ra["roi_phut"] = float(rp) if rp not in (None, "") else None
     if "nhin" in x:
         if not isinstance(x.get("nhin") or [], list):
             raise ValueError("Tắt khi vắng: «nhin» là danh sách tên camera.")
@@ -1674,9 +1681,11 @@ def _theo_vang(ma: str, gt: str, ds: dict[str, dict[str, Any]]) -> None:
         if ma == tv.get("roi") and gt == "on":
             # Bot học: cảm biến này báo lúc khu đang vắng = người đã sang khu khác → khỏi chờ đủ
             # số phút, chỉ chờ một nhịp quan sát rồi xét lại (`_tat_vi_vang` kiểm lại mọi thứ).
+            # Bot chọn «chỉ khi đi ngang» (`roi_phut`) thì người đã ở lâu hơn — LƯU TRÚ — giữ nguyên.
             han = _han_tat.get(tb)
             if (_deu_vang(cb) and han is not None and han - time.time() > ROI_GIAY
-                    and roi_sai_quanh_gio(tb, time.time())[0] < _roi_sai_toi_da()):
+                    and roi_sai_quanh_gio(tb, time.time())[0] < _roi_sai_toi_da()
+                    and _di_ngang(tb, cb, tv.get("roi_phut"))):
                 _hen_tat_luc(tb, ROI_GIAY)
                 with _khoa:
                     _ly_do_tat[tb] = "người đã sang khu khác"
@@ -1841,6 +1850,35 @@ def roi_sai_quanh_gio(tb: str, luc: float) -> tuple[int, int]:
             " ORDER BY ts DESC LIMIT 200", (_ten_tt(tb, "off"),)).fetchall()
     ds = [str(x["ket_qua"]) for x in r if datetime.fromtimestamp(float(x["ts"]), _TZ).hour in gan][:10]
     return sum(1 for k in ds if k == "sai"), len(ds)
+
+
+def _di_ngang(tb: str, cam_bien: list[str], phut: Any) -> bool:
+    """Lượt có người vừa hết trong khu dài không quá ``phut`` phút (None = không xét — luôn đúng).
+
+    Chủ máy 29/09/2026: "đi đến đâu sáng đến đó, và nếu lưu trú thì giữ trạng thái". Cùng cách tính
+    với cột «đã ở» của mục F trong đề `co_nguoi_nha`: lượt = các lần cảm biến báo có người, khe vắng
+    ngắn hơn VANG gộp lại; đã ở = lúc khu bắt đầu vắng − lúc lượt bắt đầu."""
+    if phut in (None, ""):
+        return True
+    from services import lich_su_nha
+    luc = time.time()
+    ro = sqlite3.connect(f"file:{lich_su_nha._DB_PATH}?mode=ro", uri=True, timeout=10.0)
+    try:
+        dong = {m: _chuoi_nhi_phan(ro, m, luc - O_LAI_NHIN, luc) for m in cam_bien}
+    finally:
+        ro.close()
+    # Lần tắt gần nhất mỗi cảm biến: bản sống trước (kho ghi qua hàng đợi, có thể chưa xuống đĩa).
+    tat = []
+    for m, (ts, gt) in dong.items():
+        cuoi = next((ts[i] for i in range(len(gt) - 1, -1, -1) if gt[i] == "off"), None)
+        t = max((x for x in (_lan_off.get(m), cuoi) if x is not None), default=None)
+        if t is not None:
+            tat.append(t)
+    vang_tu = max(tat) if tat else luc
+    luot = [x for x in _luot_o(dong, luc) if x[0] < vang_tu]
+    if not luot:
+        return False
+    return (vang_tu - luot[-1][0]) / 60 <= float(phut)
 
 
 def _hen_tat_luc(tb: str, giay: float) -> None:

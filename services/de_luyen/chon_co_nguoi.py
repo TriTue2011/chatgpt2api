@@ -214,6 +214,30 @@ DE: list[dict[str, Any]] = [
                roi_nen={"n": 60, "nham": "50%", "khung": "tối 52%/30 đêm 70%/20"}),
      "dap_an": {"roi_di": None}},
 
+    {"ten": "di_ngang_thi_tat_o_lai_thi_giu",
+     "tinh_huong": "Đi đến đâu sáng đến đó: ghé phòng ngủ lấy đồ vài chục giây rồi ra phòng khách là đi thật; "
+                   "nằm đọc sách lâu thì radar phòng khách báo là người KHÁC đi lại — cả dòng 26% không đạt, "
+                   "nhưng mốc ≤3' đạt: chỉ tắt nhanh khi người mới ghé.",
+     "ten_tb": "Đèn phòng ngủ", "dan": [],
+     "uv": _uv("light.den_ngu5", "Phòng ngủ",
+               {RN: _hd("Radar phòng ngủ", "Phòng ngủ", 45, "80%", "80%"), RPK: _hd("Radar phòng khách", "Phòng khách", 300),
+                RB: _hd("Radar bếp", "Bếp", 200)},
+               roi=[{"x": RPK, "n": 60, "nham": "26%", "khung": "sáng 20%/15 chiều 22%/15 tối 32%/30",
+                     "o": "≤1' 16%/31 ≤3' 14%/36 ≤10' 26%/50"}],
+               roi_nen={"n": 30, "nham": "45%", "khung": "tối 48%/20", "o": "≤1' 40%/10 ≤3' 42%/12 ≤10' 44%/20"}),
+     "dap_an": {"roi_di_phai_co": [RPK], "roi_khi_o_duoi_mot_trong": [1, 3]}},
+
+    {"ten": "o_lau_hay_di_ngang_deu_quay_lai",
+     "tinh_huong": "Căn hộ nhiều người, phòng khách thông bếp: dù người mới ghé hay đã ngồi lâu, cảm biến bếp báo "
+                   "xong vẫn có người lại phòng khách hơn nửa số lần — không có mốc nào tắt nhanh được.",
+     "ten_tb": "Đèn trần phòng khách", "dan": [],
+     "uv": _uv("light.den_pk9", "Phòng khách", _pk_can_ho(),
+               roi=[{"x": RB, "n": 190, "nham": "65%", "khung": "chiều 60%/50 tối 68%/100",
+                     "o": "≤1' 69%/33 ≤3' 64%/57 ≤10' 66%/101"}],
+               roi_nen={"n": 360, "nham": "67%", "khung": "tối 66%/200", "o": "≤1' 63%/103 ≤3' 62%/159 ≤10' 64%/236"},
+               camera=["Cam phòng khách"], frigate=["Cam phòng khách"]),
+     "dap_an": {"roi_di": None}},
+
     {"ten": "dan_ngoai_vi_nhung_khong_co_camera",
      "tinh_huong": "Chủ nhà dặn laptop là ngoại vi nhưng phòng làm việc không có camera nào — không nhìn lại "
                    "được thì ngoại vi vô dụng, phải nói rõ.",

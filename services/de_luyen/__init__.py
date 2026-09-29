@@ -6,6 +6,8 @@ kèm `dap_an`. `cham` so bài giải với đáp án; `luyen` cho bot giải và
 
 Đáp án (mọi khoá đều tuỳ chọn):
   <bieu_thuc>: None                 — bài phải để null (bieu_thuc: co_nguoi | giu | nhin | roi_di)
+  <khoa>: <số / chữ>                — bài phải đúng giá trị đó (vd roi_khi_o_duoi: 3)
+  <khoa>_mot_trong: [giá trị]       — bài phải là một trong các giá trị đó
   <bieu_thuc>_phai_co: [mã] | {mã: [trạng thái]}  — phải có (kèm đúng trạng thái)
   <bieu_thuc>_phai_co_mot: [mã]     — phải có ít nhất một trong các mã
   <bieu_thuc>_khong_co: [mã]        — không được có
@@ -44,7 +46,11 @@ def cham(bai: dict[str, Any] | str, dap_an: dict[str, Any]) -> list[str]:
     loi: list[str] = []
     for k, v in dap_an.items():
         goc = k.split("_phai_co")[0].split("_khong_co")[0]
-        if k.endswith("_phai_co_mot"):
+        if k.endswith("_mot_trong"):
+            goc = k[:-len("_mot_trong")]
+            if bai.get(goc) not in v:
+                loi.append(f"{goc} phải là một trong {v}, bài viết {bai.get(goc)!r}")
+        elif k.endswith("_phai_co_mot"):
             co = _ma(bai.get(goc))
             if not any(m in co for m in v):
                 loi.append(f"{goc} phải có ít nhất một trong {v}")
@@ -67,6 +73,8 @@ def cham(bai: dict[str, Any] | str, dap_an: dict[str, Any]) -> list[str]:
             loi += [f"co_nguoi không được loại lây {m}" for m in v if co.get(m, (set(), False))[1]]
         elif v is None and bai.get(k) not in (None, [], {}):
             loi.append(f"{k} phải là null")
+        elif v is not None and not isinstance(v, (list, dict)) and bai.get(k) != v:
+            loi.append(f"{k} phải là {v!r}, bài viết {bai.get(k)!r}")
     return loi
 
 
