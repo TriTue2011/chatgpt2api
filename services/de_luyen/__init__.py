@@ -7,6 +7,7 @@ kèm `dap_an`. `cham` so bài giải với đáp án; `luyen` cho bot giải và
 Đáp án (mọi khoá đều tuỳ chọn):
   <bieu_thuc>: None                 — bài phải để null (bieu_thuc: co_nguoi | giu | nhin | roi_di)
   <bieu_thuc>_phai_co: [mã] | {mã: [trạng thái]}  — phải có (kèm đúng trạng thái)
+  <bieu_thuc>_phai_co_mot: [mã]     — phải có ít nhất một trong các mã
   <bieu_thuc>_khong_co: [mã]        — không được có
   co_nguoi_phu_dinh: [mã]           — phải nằm trong một nhánh `khong` (loại lây)
   co_nguoi_phu_dinh_khong: [mã]     — không được nằm trong nhánh `khong`
@@ -42,8 +43,12 @@ def cham(bai: dict[str, Any] | str, dap_an: dict[str, Any]) -> list[str]:
         return [f"bài bị loại: {bai}"]
     loi: list[str] = []
     for k, v in dap_an.items():
-        goc, _, duoi = k.partition("_phai_co") if "_phai_co" in k else k.partition("_khong_co")
-        if k.endswith("_phai_co"):
+        goc = k.split("_phai_co")[0].split("_khong_co")[0]
+        if k.endswith("_phai_co_mot"):
+            co = _ma(bai.get(goc))
+            if not any(m in co for m in v):
+                loi.append(f"{goc} phải có ít nhất một trong {v}")
+        elif k.endswith("_phai_co"):
             co = _ma(bai.get(goc))
             ds = v.items() if isinstance(v, dict) else ((m, None) for m in v)
             for m, la in ds:

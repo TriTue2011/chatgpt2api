@@ -375,8 +375,8 @@ def de(uv: dict[str, Any], ten_tb: str, dan: list[str]) -> str:
     if uv.get("roi_da"):
         dong.append("Bot đã tắt theo «rời khu» rồi bị bật lại ngay (sai/số lần): "
                     + ", ".join(f"{k} {v['sai']}/{v['n']}" for k, v in uv["roi_da"].items()))
-    dong += ["\nE. CAMERA — c2a chụp được ảnh rồi tự đếm người:"]
-    dong += [f"- {c}" + (" (Frigate đếm sẵn — khỏi chụp)" if c in (uv.get("camera_frigate") or []) else "")
+    dong += ["\nE. CAMERA — c2a nhìn lại được (tên | cách đếm người):"]
+    dong += [f"{c} | " + ("Frigate đếm sẵn, khỏi chụp" if c in (uv.get("camera_frigate") or []) else "chụp rồi đếm")
              for c in uv.get("camera") or []] or ["(không có)"]
     return "\n".join(dong)
 

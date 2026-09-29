@@ -44,6 +44,7 @@ RB, CB = "binary_sensor.radar_bep", "binary_sensor.camera_bep_person"
 RN, RT, RH = "binary_sensor.radar_phong_ngu", "binary_sensor.radar_nha_tam", "binary_sensor.radar_phong_hoc"
 RBC = "binary_sensor.radar_ban_cong"
 LAP, DT = "device_tracker.laptop_chi_lan", "device_tracker.dien_thoai_chi_lan"
+LAPM, DTM = "device_tracker.laptop_me", "device_tracker.dien_thoai_me"
 TIVI, LOA = "media_player.tivi_phong_khach", "media_player.loa_nha_tam"
 
 
@@ -191,4 +192,67 @@ DE: list[dict[str, Any]] = [
                {RPK: _hd("Radar phòng khách", "Phòng khách", 350, "70%", "70%"), RB: _hd("Radar bếp", "Bếp", 310)},
                cap=[{"r": RPK, "x": RB, "p": 0.6, "xac": {}}], camera=["Cam cổng"]),
      "dap_an": {"co_nguoi_phai_co": [RPK], "co_nguoi_phu_dinh_khong": [RB]}},
+
+    # ── Ca BẪY: số đo nhìn thì đẹp nhưng không đủ để hành động ──
+    {"ten": "roi_khu_it_mau",
+     "tinh_huong": "«Rời khu» chỉ có 6 lần đo — tắt nhầm 0% nhưng chưa đủ để tin; tắt trước mặt người "
+                   "một lần là mất lòng tin.",
+     "ten_tb": "Đèn phòng ngủ", "dan": [],
+     "uv": _uv("light.den_ngu3", "Phòng ngủ",
+               {RN: _hd("Radar phòng ngủ", "Phòng ngủ", 45, "80%", "80%"), RPK: _hd("Radar phòng khách", "Phòng khách", 300)},
+               roi=[{"x": RPK, "n": 6, "nham": "0%", "khung": "tối 0%/6"}],
+               roi_nen={"n": 40, "nham": "45%", "khung": "tối 45%/40"}),
+     "dap_an": {"roi_di": None}},
+
+    {"ten": "roi_khu_dung_ngay_sai_toi_va_dem",
+     "tinh_huong": "Ban ngày ra khỏi phòng ngủ là đi thật; tối và đêm người nằm đọc sách/ngủ, radar mất dấu "
+                   "lúc người khác đi ngoài phòng khách — cùng một cảm biến, khác giờ khác nghĩa.",
+     "ten_tb": "Đèn phòng ngủ", "dan": [],
+     "uv": _uv("light.den_ngu4", "Phòng ngủ",
+               {RN: _hd("Radar phòng ngủ", "Phòng ngủ", 45, "80%", "80%"), RPK: _hd("Radar phòng khách", "Phòng khách", 300)},
+               roi=[{"x": RPK, "n": 70, "nham": "19%", "khung": "sáng 3%/30 chiều 5%/15 tối 45%/15 đêm 60%/10"}],
+               roi_nen={"n": 60, "nham": "50%", "khung": "tối 52%/30 đêm 70%/20"}),
+     "dap_an": {"roi_di": None}},
+
+    {"ten": "dan_ngoai_vi_nhung_khong_co_camera",
+     "tinh_huong": "Chủ nhà dặn laptop là ngoại vi nhưng phòng làm việc không có camera nào — không nhìn lại "
+                   "được thì ngoại vi vô dụng, phải nói rõ.",
+     "ten_tb": "Đèn phòng làm việc",
+     "dan": ["(chấm sai) Laptop chị Lan là ngoại vi để kiểm tra lại có người không."],
+     "uv": _uv("light.den_lv", "Phòng làm việc",
+               {"binary_sensor.radar_phong_lam_viec": _hd("Radar phòng làm việc", "Phòng làm việc", 50, "75%", "75%"),
+                RPK: _hd("Radar phòng khách", "Phòng khách", 300)},
+               ngoai_vi=[_nv(LAP, "Laptop chị Lan", ["home", "not_home"], "home 40%", "not_home 40%", 0.1)],
+               camera=["Cam cổng", "Cam phòng khách"]),
+     "dap_an": {"giu": None, "nhin": None}},
+
+    {"ten": "dan_goi_ten_khac_trong_de",
+     "tinh_huong": "Chủ nhà nói 'máy tính của mẹ', trong đề tên là 'Laptop Mẹ' — cùng nghĩa, dùng đúng mã đó, "
+                   "không lấy nhầm điện thoại hay laptop người khác.",
+     "ten_tb": "Đèn phòng khách",
+     "dan": ["(chấm sai) Máy tính của mẹ là ngoại vi — mẹ hay ngồi yên xem máy tính ở phòng khách."],
+     "uv": _uv("light.den_pk7", "Phòng khách", _pk_can_ho(),
+               ngoai_vi=[_nv(LAP, "Laptop chị Lan", ["home", "not_home"], "home 30%", "home 35%", 0.1),
+                         _nv(LAPM, "Laptop Mẹ", ["home", "not_home"], "home 20%", "not_home 30%", 0.1),
+                         _nv(DTM, "Điện thoại Mẹ", ["home", "not_home"], "home 85%", "home 60%", 0.5)],
+               camera=["Cam phòng khách"], frigate=["Cam phòng khách"]),
+     "dap_an": {"giu_phai_co": {LAPM: ["home"]}, "giu_khong_co": [LAP], "nhin_phai_co": ["Cam phòng khách"]}},
+
+    {"ten": "cung_bao_nhung_camera_xac_nhan_cao",
+     "tinh_huong": "Radar phòng khách cùng báo với radar bếp 50% nhưng lúc đó camera phòng khách thấy người 85% — "
+                   "là HAI người ở hai khu, không phải báo lây: không loại.",
+     "ten_tb": "Đèn phòng khách", "dan": [],
+     "uv": _uv("light.den_pk8", "Phòng khách", _pk_can_ho(),
+               cap=[{"r": RPK, "x": RB, "p": 0.5, "xac": {CPK: "85%"}}], camera=["Cam phòng khách"]),
+     "dap_an": {"co_nguoi_phai_co": [RPK, CPK], "co_nguoi_phu_dinh_khong": [RB]}},
+
+    {"ten": "den_chieu_ca_hai_khu",
+     "tinh_huong": "Chủ nhà dặn đèn này chiếu cả bếp lẫn phòng khách — có người ở bếp cũng là cần đèn.",
+     "ten_tb": "Đèn trần chung",
+     "dan": ["(chấm sai) Đèn này chiếu cả bếp — người đứng nấu ở bếp vẫn cần đèn, đừng tắt."],
+     "uv": _uv("light.den_chung", "Phòng khách", _pk_can_ho(),
+               cap=[{"r": RPK, "x": RB, "p": 0.55, "xac": {CPK: "35%"}}],
+               sang_khac=[{"x": RB, "ngan": "60%", "dai": "50%"}, {"x": CB, "ngan": "55%", "dai": "45%"}],
+               camera=["Cam phòng khách", "Cam bếp"]),
+     "dap_an": {"co_nguoi_phai_co": [CPK], "co_nguoi_phai_co_mot": [RB, CB], "co_nguoi_phu_dinh_khong": [RB, CB]}},
 ]

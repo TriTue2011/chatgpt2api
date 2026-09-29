@@ -43,7 +43,9 @@ Dùng cảm biến mục A (trong khu); cảm biến khu khác ở mục B chỉ
    R bằng `R VÀ KHÔNG X`, C vẫn nằm trong `hoac` ngoài cùng. Không có camera
    xác nhận thì KHÔNG loại lây: cùng báo có thể là hai người ở hai khu.
 4. Đừng dùng cảm biến khu khác làm "có người" của khu này, trừ khi chủ nhà dặn
-   (vd đèn chiếu cả hai khu).
+   (vd đèn chiếu cả hai khu). Khi đó khu X chủ nhà nêu CŨNG là khu của thiết bị:
+   nối cảm biến khu X vào `hoac`, và KHÔNG loại lây theo khu X nữa (điều 3) —
+   người ở X cũng cần thiết bị.
 
 ## 2. `giu` + `nhin` — ngoại vi là lý do để NHÌN LẠI, không phải lý do giữ
 
@@ -54,8 +56,10 @@ CHỤP camera em chọn (`nhin`) và đếm người — thấy người thì ch
 tắt.
 
 1. CHỦ NHÀ DẶN nêu một ngoại vi (vd "laptop của vợ") → BẮT BUỘC dùng nó, bỏ qua
-   điều 2. Tìm dòng mục D có TÊN khớp, chép đúng MÃ ở cột đầu dòng đó — kiểm
-   lại: mã em viết phải nằm cùng dòng với tên chủ nhà nói. Trạng thái là lúc
+   điều 2 (nhưng vẫn cần camera ở điều 4 — không camera nào nhìn lại được thì
+   `null` và nói rõ vì sao trong `vi_sao`). Tìm dòng mục D cùng NGHĨA (chủ nhà
+   có thể gọi khác tên trong đề: "máy tính của mẹ" ↔ "Laptop Mẹ"), chép đúng MÃ
+   ở cột đầu dòng đó — kiểm lại: mã em viết phải nằm cùng dòng với tên ấy. Trạng thái là lúc
    máy ĐANG DÙNG (`home`, `on`, `playing`), không bao giờ lúc máy tắt/đi vắng
    (`off`, `not_home`).
 2. Không có lời dặn: chỉ xét khi mục C có nhiều lần mất dấu; ngoại vi mục D
@@ -64,7 +68,7 @@ tắt.
 3. `giu` là điều kiện "có thể còn người ở khu này": ngoại vi `va` điều cho
    thấy người dùng máy không ở khu khác (điện thoại của họ `home` VÀ KHÔNG cảm
    biến các khu khác người hay sang).
-4. `nhin`: tên camera ở mục E thấy được khu của thiết bị — đoán theo tên
+4. `nhin`: tên camera (cột đầu mục E, chép đúng tên) thấy được khu của thiết bị — đoán theo tên
    camera và khu. Camera khu khác mà khung hình trùm sang khu này (nhà thông
    tầng, chung cư bếp liền phòng khách) cũng chọn được. Không có camera nào
    thấy khu này thì `giu` = `null`, `nhin` = `null`: không nhìn lại được thì
@@ -80,10 +84,13 @@ nhịp quan sát (mục F) rồi tắt. Sai (người bật lại ngay) đủ 2 
 giờ nào thì quanh giờ đó bot tự thôi dùng, về chờ đủ.
 
 1. Dùng mục F. Cột "tắt nhầm" là đúng tỉ lệ lần tắt nhanh sẽ tắt trước mặt
-   người. Một cảm biến khu khác chỉ dùng được khi tắt nhầm của nó KHÔNG QUÁ
-   20% (2 trên 10 lần — cùng mức bot tự tụt cấp) VÀ có ít nhất 10 lần, VÀ thấp
-   hơn rõ dòng "không cảm biến khu khác nào báo". Không đạt → khu đó thông với
-   khu này, hoặc là người khác đi → không dùng.
+   người. Một cảm biến khu khác chỉ dùng được khi đạt CẢ BA:
+   a. số lần ≥ 10 — ít hơn thì KHÔNG dùng, dù tắt nhầm 0% (vài lần may mắn
+      không nói lên gì);
+   b. tắt nhầm ≤ 20% (2 trên 10 lần — cùng mức bot tự tụt cấp);
+   c. thấp hơn rõ dòng "không cảm biến khu khác nào báo".
+   Thiếu một điều → khu đó thông với khu này, người khác đi, hoặc chưa đủ bằng
+   chứng → không dùng.
 2. Xem cột theo khung giờ: một khung có ≥ 5 lần mà tắt nhầm quá 20% thì nói rõ
    trong `vi_sao`; nhiều khung như vậy → không dùng.
 3. Bỏ cảm biến hay báo lây với khu này (mục B) và cảm biến kẹt.
