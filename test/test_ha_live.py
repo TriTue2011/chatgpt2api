@@ -89,6 +89,30 @@ class PatchStateTests(unittest.TestCase):
         self.assertNotIn("camera.cua_sub", [s["entity_id"] for s in hc._state_cache])
 
 
+class GhiThuocTinhDieuKhienTests(unittest.TestCase):
+    """29/09/2026: "mức quạt theo nóng/mát" mà kho chưa từng ghi mức quạt. Ghi thuộc tính mà CHÍNH dịch vụ
+    HA của miền nhận làm tham số — theo danh mục dịch vụ thật, không danh sách tay."""
+
+    def test_ghi_preset_quat_theo_danh_muc_dich_vu(self) -> None:
+        from unittest import mock
+        cat = {"fan": {"set_preset_mode": {"fields": {"preset_mode": {}}},
+                       "turn_on": {"fields": {"percentage": {}, "advanced_fields": {"collapsed": True,
+                                                                                   "fields": {"oscillating": {}}}}}}}
+        ha_live._truong_dk_luc = 0.0
+        moi = {"entity_id": "fan.pk", "state": "on",
+               "attributes": {"preset_mode": "high", "percentage": 100, "oscillating": True,
+                              "friendly_name": "Quạt", "preset_modes": ["low", "high"]}}
+        with mock.patch.object(hc, "get_service_catalog", return_value=cat), \
+                mock.patch("services.lich_su_nha.ghi") as ghi, \
+                mock.patch("services.lich_su_nha.la_bot_tu_lam", return_value=False), \
+                mock.patch("services.kich_hoat_nha.su_kien"), mock.patch("services.cam_bien_ghep.khi_doi"):
+            ha_live._ghi_lich_su(moi, "fan.pk")
+        truong = sorted(c.args[2] for c in ghi.call_args_list)
+        self.assertEqual(truong, ["oscillating", "percentage", "preset_mode", "state"])
+        self.assertNotIn("preset_modes", truong, "danh sách lựa chọn không phải thứ người chỉnh")
+        ha_live._truong_dk_luc = 0.0
+
+
 def _frame(opcode: int, payload: bytes, fin: bool = True) -> bytes:
     """Frame server→client (KHÔNG mask) như HA gửi."""
     h = bytearray([(0x80 if fin else 0) | opcode])

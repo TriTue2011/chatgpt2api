@@ -244,6 +244,40 @@ def _dang_ghi(entity_id: str) -> bool:
 _THUOC_TINH_EVENT = ("event_type", "value")
 
 
+#: Thuộc tính ĐIỀU KHIỂN được của một miền = tên trường mà chính các dịch vụ HA của miền đó nhận (quạt:
+#: preset_mode, percentage, oscillating; đèn: brightness, color_temp_kelvin…; điều hoà: temperature,
+#: fan_mode…). Chủ máy 29/09/2026 muốn "mức quạt theo nóng/mát" mà kho chưa từng ghi mức quạt — chỉ ghi
+#: `state`. Lấy theo danh mục dịch vụ THẬT của HA (kể cả tích hợp tự thêm), không danh sách tay.
+_TRUONG_DK_TTL = 3600.0
+_truong_dk: dict[str, frozenset[str]] = {}
+_truong_dk_luc = 0.0
+
+
+def _gom_truong(fields: Any, ra: set[str]) -> None:
+    """Tên trường của một dịch vụ; bản HA mới lồng trường vào nhóm (``{"advanced_fields": {"fields": …}}``)."""
+    for ten, meta in (fields or {}).items():
+        if isinstance(meta, dict) and isinstance(meta.get("fields"), dict):
+            _gom_truong(meta["fields"], ra)
+        else:
+            ra.add(str(ten))
+
+
+def truong_dieu_khien(mien: str) -> frozenset[str]:
+    global _truong_dk, _truong_dk_luc
+    if time.time() - _truong_dk_luc > _TRUONG_DK_TTL:
+        from services import ha_client
+        cat = ha_client.get_service_catalog() or {}
+        if cat:
+            moi: dict[str, frozenset[str]] = {}
+            for m, svcs in cat.items():
+                ra: set[str] = set()
+                for meta in (svcs or {}).values():
+                    _gom_truong((meta or {}).get("fields"), ra)
+                moi[m] = frozenset(ra - {"entity_id", "device_id", "area_id"})
+            _truong_dk, _truong_dk_luc = moi, time.time()
+    return _truong_dk.get(mien, frozenset())
+
+
 def _ghi_lich_su(new_state: dict[str, Any] | None, entity_id: str) -> None:
     """Đẩy một thay đổi trạng thái HA vào `lich_su_nha`."""
     if new_state is None or not _dang_ghi(entity_id):
@@ -265,6 +299,18 @@ def _ghi_lich_su(new_state: dict[str, Any] | None, entity_id: str) -> None:
             v = tt.get(k)
             if v is not None and str(v).lower() not in ("unknown", "none", ""):
                 lich_su_nha.ghi("ha", entity_id, k, v)
+        return
+    try:
+        dk = truong_dieu_khien(entity_id.split(".")[0])
+    except Exception:  # noqa: BLE001 — không đọc được danh mục thì chỉ ghi state như cũ
+        dk = frozenset()
+    if dk:
+        tt = new_state.get("attributes") or {}
+        for k in dk & set(tt):
+            v = tt.get(k)
+            if v is not None and not isinstance(v, dict) and str(v).lower() not in ("unknown", "none", ""):
+                # Cùng dấu do_ai với state: bot vừa bật kèm mức thì mức đó cũng là việc của bot.
+                lich_su_nha.ghi("ha", entity_id, k, v, do_ai=do_ai)
 
 
 def _resync(index: dict[str, int]) -> None:
