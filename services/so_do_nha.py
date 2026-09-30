@@ -521,7 +521,11 @@ def mo_ta_vat(v: Any, rong: int, cao: int) -> str:
 #: Đổi lại 30/09/2026 chiều theo bộ đề ảnh thật (`de_luyen/doc_anh_camera`, đáp án = vùng chủ máy khoanh): Gemini
 #: 3.6 flash đạt 4/4 camera cả hai lượt (tìm đúng mốc «thùng gỗ xanh» mà Claude không thấy), Claude đạt 2/4 và
 #: hay 429. Chủ máy chọn đổi.
-MODEL_ANH_MAC_DINH = "gemini_free/gemini-3.6-flash"
+#: Nhiều model (phân cách dấu phẩy): model ĐẦU đọc mọi lần và bỏ phiếu, model sau chỉ vào THAY khi model trước
+#: hỏng (lỗi gọi, 429). Chủ máy 30/09/2026 muốn "kết hợp và bù trừ"; đo trên bộ đề ảnh thật: trộn phiếu
+#: Gemini–Claude–Gemini đạt 11/16 camera (Claude không mạnh hơn ở mặt nào, chỉ thêm phiếu sai và cầm đa số mỗi
+#: lần Gemini lỡ), chỉ Gemini đạt 8/8. Nên Claude bù khi Gemini HỎNG, không bù bằng phiếu.
+MODEL_ANH_MAC_DINH = "gemini_free/gemini-3.6-flash,claude/auto"
 
 
 def model_anh() -> str:
@@ -529,7 +533,12 @@ def model_anh() -> str:
     return str(nhin_nha._muc("so_do").get("model_anh") or "").strip() or MODEL_ANH_MAC_DINH
 
 
-def _goi_thi_giac(noi: str, jpeg: bytes, max_tokens: int = 4000) -> str:
+def cac_model_anh() -> list[str]:
+    """Danh sách model đọc ảnh theo thứ tự ưu tiên (cài đặt `model_anh`, phân cách dấu phẩy)."""
+    return [m.strip() for m in model_anh().split(",") if m.strip()]
+
+
+def _goi_thi_giac(noi: str, jpeg: bytes, max_tokens: int = 4000, model: str | None = None) -> str:
     """Một lượt gọi model đọc ảnh sơ đồ (`model_anh`) với một ảnh. Lỗi thì ném RuntimeError.
 
     ``max_tokens`` 4000: lưới 16×12 = 192 ô, bài chia hai phòng dài gần 1000 token; đo 30/09/2026 mức 1500 làm
@@ -537,7 +546,7 @@ def _goi_thi_giac(noi: str, jpeg: bytes, max_tokens: int = 4000) -> str:
     from services.agent.runtime import call_model, content_of
 
     url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()
-    r = call_model(model_anh(), [{"role": "user", "content": [
+    r = call_model(model or cac_model_anh()[0], [{"role": "user", "content": [
         {"type": "text", "text": noi}, {"type": "image_url", "image_url": {"url": url}}]}],
         timeout=180, max_tokens=max_tokens,
         # Cùng khuôn lời gọi học của bot (`hieu_thiet_bi_nha._goi_model`): xin JSON, tắt mọi tích hợp.
@@ -625,20 +634,26 @@ def gop_phieu(bai: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def doc_nhieu_lan(lenh: str, luoi: bytes, phong: list[str]) -> tuple[dict[str, Any] | str | None, str]:
-    """Đọc ảnh ``LAN_DOC`` lần rồi gộp theo đa số. Trả (kết quả | lỗi khuôn | None khi model không đọc được lần
-    nào, lỗi model cuối). Lỗi model giữa chừng (429…) sau khi đã đọc được: nghỉ rồi đọc tiếp — model đang có,
-    chỉ bận. Dùng chung cho đường chạy thật và bộ đề `de_luyen/doc_anh_camera`."""
+    """Đọc ảnh ``LAN_DOC`` lần rồi gộp theo đa số. Model đầu (`cac_model_anh`) đọc mọi lần; nó lỗi (429, không
+    gọi được) thì rút khỏi lượt và model kế đọc thay. Chỉ còn một model mà nó lỗi sau khi đã đọc được: nghỉ rồi
+    đọc tiếp. Sai khuôn thì chính model đó đọc lại. Trả (kết quả | lỗi khuôn | None khi không đọc được lần nào,
+    lỗi model cuối). Dùng chung cho đường chạy thật và bộ đề `de_luyen/doc_anh_camera`."""
     from services import hieu_thiet_bi_nha as ht
 
+    con = cac_model_anh()
     hop_le: list[dict[str, Any]] = []
     loi_khuon, loi_model = "", ""
-    for _ in range(2 * LAN_DOC):
-        if len(hop_le) >= LAN_DOC:
+    for _ in range(2 * LAN_DOC + len(con)):
+        if len(hop_le) >= LAN_DOC or not con:
             break
+        m = con[0]
         try:
-            tho = _goi_thi_giac(lenh, luoi)
+            tho = _goi_thi_giac(lenh, luoi, model=m)
         except RuntimeError as exc:
             loi_model = str(exc)[:160]
+            if len(con) > 1:
+                con.pop(0)
+                continue
             if not hop_le:
                 break
             time.sleep(NGHI_THU_LAI_S)
@@ -648,9 +663,9 @@ def doc_nhieu_lan(lenh: str, luoi: bytes, phong: list[str]) -> tuple[dict[str, A
         if isinstance(k, str):
             loi_khuon = k
         else:
-            hop_le.append(k)
+            hop_le.append({**k, "model": m})
     if hop_le:
-        return gop_phieu(hop_le), loi_model
+        return {**gop_phieu(hop_le), "model": ", ".join(x["model"] for x in hop_le)}, loi_model
     return (loi_khuon or None) if not loi_model else None, loi_model
 
 

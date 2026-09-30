@@ -99,7 +99,7 @@ def test_doc_anh_camera_ke_luoi_yolo_bot_chia_o_roi_vao_so(so, tmp_path, monkeyp
     monkeypatch.setattr(ha_client, "get_states", lambda: [])
     de: list[str] = []
     tra = ['{"thay": {"Bếp": ["A5", "B5"], "Phòng khách": ["E6"]}, "moc": "tủ lạnh ở A5", "chac": 0.8}']
-    monkeypatch.setattr(so, "_goi_thi_giac", lambda noi, jpeg: de.append(noi) or tra[0])
+    monkeypatch.setattr(so, "_goi_thi_giac", lambda noi, jpeg, **k: de.append(noi) or tra[0])
     so.them_mo_ta("Bếp tính từ thùng gỗ xanh tới cửa ban công")
     r = so.doc_anh_camera("Cam bếp")
     assert r["ok"] and r["thay"] == {"Bếp": ["A5", "B5"], "Phòng khách": ["E6"]}
@@ -129,7 +129,8 @@ def test_model_doc_anh_rieng_mac_dinh_gemini(monkeypatch):
     (`nhin_nha.so_do.model_anh`)."""
     from services import nhin_nha
     monkeypatch.setattr(nhin_nha, "_muc", lambda ten: {})
-    assert sd.model_anh() == "gemini_free/gemini-3.6-flash"
+    assert sd.model_anh() == "gemini_free/gemini-3.6-flash,claude/auto"
+    assert sd.cac_model_anh() == ["gemini_free/gemini-3.6-flash", "claude/auto"]
     monkeypatch.setattr(nhin_nha, "_muc", lambda ten: {"model_anh": " gemini_free/x "} if ten == "so_do" else {})
     assert sd.model_anh() == "gemini_free/x"
 
@@ -151,7 +152,7 @@ def test_khong_co_model_doc_anh_thi_xuat_anh_va_lenh_nguoi_dung_tu_lam(so, tmp_p
     monkeypatch.setattr(ha_client, "get_states", lambda: [])
     monkeypatch.setattr(conversation, "save_image_bytes", lambda b: "http://x/images/luoi.jpg")
 
-    def model_hong(noi, jpeg):
+    def model_hong(noi, jpeg, **k):
         raise RuntimeError("model thị giác lỗi: không có claude")
     monkeypatch.setattr(so, "_goi_thi_giac", model_hong)
     r = so.doc_anh_camera("Cam bếp")
@@ -169,7 +170,7 @@ def test_khong_co_model_doc_anh_thi_xuat_anh_va_lenh_nguoi_dung_tu_lam(so, tmp_p
     # Chọn «thu_cong»: không gọi model.
     from services import nhin_nha as nn
     monkeypatch.setattr(nn, "_muc", lambda ten: {"model_anh": "thu_cong"} if ten == "so_do" else {})
-    monkeypatch.setattr(so, "_goi_thi_giac", lambda *a: (_ for _ in ()).throw(AssertionError("không được gọi model")))
+    monkeypatch.setattr(so, "_goi_thi_giac", lambda *a, **k: (_ for _ in ()).throw(AssertionError("không được gọi model")))
     assert so.doc_anh_camera("Cam bếp")["thu_cong"] and "Cam bếp" in so.cho_dap_an()
 
 
@@ -199,7 +200,7 @@ def test_model_da_doc_duoc_thi_loi_la_tam_khong_nho_nguoi(so, tmp_path, monkeypa
     luot = {"Cam bếp": ['{"thay": {"Bếp": ["A5"]}, "chac": 0.8}'],
             "Cam cửa": [RuntimeError("model thị giác lỗi: 429"), '{"thay": {}, "chac": 0.9}']}
 
-    def model(noi, jpeg):
+    def model(noi, jpeg, **k):
         q = luot[noi.split("CAMERA: ")[1].split("\n")[0]]
         x = q.pop(0) if len(q) > 1 else q[0]      # hết lượt thì trả mãi lượt cuối
         if isinstance(x, Exception):
@@ -228,7 +229,7 @@ def test_doc_nhieu_lan_gop_da_so(so, monkeypatch):
     tra = ['{"thay": {"Phòng khách": ["A5", "B5", "C5"]}, "chac": 0.9}',
            '{"thay": {"Phòng khách": ["A5", "B5"], "Bếp": ["K6", "L6"]}, "chac": 0.6}',
            '{"thay": {"Phòng khách": ["A5", "B5", "C5", "D5"]}, "chac": 0.9}']
-    monkeypatch.setattr(so, "_goi_thi_giac", lambda lenh, luoi: tra.pop(0))
+    monkeypatch.setattr(so, "_goi_thi_giac", lambda lenh, luoi, **k: tra.pop(0))
     k, loi = so.doc_nhieu_lan("lệnh", b"", ["Phòng khách", "Bếp"])
     assert k["thay"] == {"Phòng khách": ["A5", "B5", "C5"]} and k["so_lan"] == 3 and loi == ""
     assert 0 < k["chac"] < 0.8, "ô bất đồng kéo độ chắc xuống"
@@ -237,7 +238,7 @@ def test_doc_nhieu_lan_gop_da_so(so, monkeypatch):
            '{"thay": {"Bếp": ["A1"]}, "chac": 0.9}']
     monkeypatch.setattr(so, "NGHI_THU_LAI_S", 0)
 
-    def model(lenh, luoi):
+    def model(lenh, luoi, **k):
         x = tra.pop(0)
         if isinstance(x, Exception):
             raise x
@@ -246,5 +247,35 @@ def test_doc_nhieu_lan_gop_da_so(so, monkeypatch):
     k, loi = so.doc_nhieu_lan("lệnh", b"", ["Bếp"])
     assert k["thay"] == {"Bếp": ["A1"]} and k["so_lan"] == 3 and "429" in loi
     # Model lỗi ngay lần đầu: không đọc được lần nào → None (bên gọi quyết lỗi tạm hay nhờ người).
-    monkeypatch.setattr(so, "_goi_thi_giac", lambda *a: (_ for _ in ()).throw(RuntimeError("không có claude")))
+    monkeypatch.setattr(so, "_goi_thi_giac", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("không có claude")))
     assert so.doc_nhieu_lan("lệnh", b"", ["Bếp"]) == (None, "không có claude")
+
+
+def test_model_sau_chi_thay_khi_model_dau_hong(so, monkeypatch):
+    """Chủ máy 30/09/2026: "kết hợp và bù trừ". Đo: trộn phiếu Gemini–Claude 11/16 camera, chỉ Gemini 8/8 → Claude
+    bù khi Gemini HỎNG, không bỏ phiếu chung (mỗi lần Gemini lỡ là Claude cầm đa số)."""
+    from services import nhin_nha
+    monkeypatch.setattr(nhin_nha, "_muc", lambda ten: {"model_anh": "g, c"} if ten == "so_do" else {})
+    goi: list[str] = []
+    tra = {"g": ["{}", '{"thay": {"Bếp": ["A1"]}, "chac": 0.9}', '{"thay": {"Bếp": ["A1", "B1"]}, "chac": 0.9}',
+                 '{"thay": {"Bếp": ["A1"]}, "chac": 0.9}'],
+           "c": ['{"thay": {"Bếp": ["C1"]}, "chac": 0.9}']}
+
+    def model(lenh, luoi, max_tokens=4000, model=None):
+        goi.append(model)
+        return tra[model].pop(0)
+    monkeypatch.setattr(so, "_goi_thi_giac", model)
+    k, _ = so.doc_nhieu_lan("lệnh", b"", ["Bếp"])
+    assert goi == ["g"] * 4, "Gemini khoẻ thì Claude không đọc; sai khuôn thì Gemini đọc lại"
+    assert k["thay"] == {"Bếp": ["A1"]} and k["model"] == "g, g, g"
+    # Gemini lỗi (429): Claude đọc thay cả lượt.
+    goi.clear()
+
+    def model2(lenh, luoi, max_tokens=4000, model=None):
+        goi.append(model)
+        if model == "g":
+            raise RuntimeError("429")
+        return '{"thay": {"Bếp": ["C1"]}, "chac": 0.9}'
+    monkeypatch.setattr(so, "_goi_thi_giac", model2)
+    k, loi = so.doc_nhieu_lan("lệnh", b"", ["Bếp"])
+    assert goi == ["g", "c", "c", "c"] and k["thay"] == {"Bếp": ["C1"]} and k["so_lan"] == 3 and "429" in loi
