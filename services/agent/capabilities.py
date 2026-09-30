@@ -9218,7 +9218,11 @@ def get(name: str) -> Capability | None:
     return CAPABILITIES.get(name)
 
 
-def persona_list(allow: set[str] | None = None) -> str:
+#: Mục lục gọn: nhóm KHÔNG thuộc việc của lượt thì một dòng với ngần này việc tiêu biểu.
+MUC_LUC_VD = 3
+
+
+def persona_list(allow: set[str] | None = None, chi_tiet: set[str] | None = None) -> str:
     """Human-readable bullet list of real capabilities, for the system prompt.
 
     Single source of truth: adding/removing a Capability updates what the bot
@@ -9226,13 +9230,26 @@ def persona_list(allow: set[str] | None = None) -> str:
     `allow` = bộ lọc chức năng của thread — chỉ liệt kê năng lực được phép,
     kẻo persona khoe 'xem được trạng thái nhà' rồi model BỊA dữ liệu dù tool
     đã bị ẩn (bug thấy 2026-07-15: thread lọc vẫn 'trả lời' đèn bật/tắt).
+
+    ``chi_tiet`` = nhóm việc của lượt này: nhóm đó (và tool lõi) kể đủ từng việc; nhóm được phép KHÁC chỉ một
+    dòng (tên nhóm + vài việc tiêu biểu + cách mở) — mục lục vẫn đủ để biết được làm và mở đúng chương, chỉ
+    không kể từng mục. Chủ máy 30/09/2026: "hỏi gì gửi nấy, promt không lan man để là phình promt cho cgf" —
+    đo: mục lục đầy đủ 4,1 KB/lượt (99 việc) trong khi lượt «giá vàng» chỉ dùng 3 nhóm. ``None`` = kể đủ như cũ.
     """
     lines = []
+    gon: dict[str, list[str]] = {}
     for c in CAPABILITIES.values():
+        nhom = group_of(c.name)
         if (c.name not in _CORE_TOOLS
-                and not nhom_duoc_phep(group_of(c.name), allow)):
+                and not nhom_duoc_phep(nhom, allow)):
             continue
         text = c.label or c.description
+        if chi_tiet is not None and c.name not in _CORE_TOOLS and nhom not in chi_tiet:
+            gon.setdefault(nhom, []).append(text)
+            continue
         gate = " (cần anh/chị duyệt)" if c.risk == CHANGE else ""
         lines.append(f"- {c.emoji + ' ' if c.emoji else ''}{text}{gate}")
+    for nhom, ds in sorted(gon.items()):
+        them = f" (+{len(ds) - MUC_LUC_VD} việc)" if len(ds) > MUC_LUC_VD else ""
+        lines.append(f"- nhóm «{nhom}»: {'; '.join(ds[:MUC_LUC_VD])}{them} — mở bằng mo_nhom_cong_cu")
     return "\n".join(lines)

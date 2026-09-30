@@ -1800,8 +1800,14 @@ def _bang_chi_duong(allow: set[str] | None, user_text: str = "") -> str:
     return out + "\n".join(lines)
 
 
+#: Nhóm cần bản đồ hệ thống (máy chủ, quan hệ phụ thuộc, ghi chú vận hành) — chẩn đoán / quản trị.
+_NHOM_CAN_BAN_DO = {"server", "device"}
+
+
 def _build_system_prompt(user_id: str, allow: set[str] | None = None,
-                         user_text: str = "") -> str:
+                         user_text: str = "", nhom: set[str] | None = None) -> str:
+    """``nhom`` = nhóm việc của lượt (`_nhom_ngu_canh`): mục lục năng lực kể đủ nhóm đó, nhóm khác một dòng;
+    bản đồ hệ thống chỉ khi việc chạm máy chủ / thiết bị. ``None`` = đủ như cũ."""
     name = config.agent_name
     soul = state.load_soul().replace("{agent_name}", name)
     # `_now_line()` CỐ Ý không đứng ở đây mà nằm CUỐI prompt (xem cuối hàm):
@@ -1812,7 +1818,7 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None,
     parts = [soul]
     # Capability list — auto-generated from the registry (single source of truth).
     # Lọc theo `allow` để persona KHÔNG khoe chức năng thread này bị cấm.
-    parts.append("## Em làm được gì (năng lực THẬT lúc này)\n" + caps.persona_list(allow))
+    parts.append("## Em làm được gì (năng lực THẬT lúc này)\n" + caps.persona_list(allow, nhom))
     # Kể năng lực xong phải MỜI hướng dẫn. Danh sách trên trả lời "làm được
     # gì", người đọc xong vẫn không biết bấm gì — mà chính họ thường ngại hỏi
     # tiếp. Menu hướng dẫn do code dựng (services/huong_dan.py) nên câu mời chỉ
@@ -1885,7 +1891,12 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None,
             # cam" bị [BLOCKED] oan dù camera đã được cấp, chỉ vì tool chưa hiện.
             "QUAN TRỌNG: nếu việc xin CÓ trong danh sách «Em làm được gì» nhưng "
             "em chưa thấy tool tương ứng trong lượt này, hãy gọi mo_nhom_cong_cu "
-            "để mở nhóm đó rồi làm — đừng [BLOCKED] một việc nằm trong danh sách.")
+            "để mở nhóm đó rồi làm — đừng [BLOCKED] một việc nằm trong danh sách.\n"
+            # Mục lục gọn (`persona_list(allow, nhom)`): nhóm ngoài việc của lượt chỉ còn một dòng vài việc tiêu
+            # biểu — model phải hiểu cả nhóm đó là quyền, không chỉ đúng mấy việc được kể.
+            "Dòng «nhóm «tên»: …» là cả một nhóm được phép: MỌI việc thuộc nhóm đó đều "
+            "làm được, kể cả việc không được kể tên — gọi mo_nhom_cong_cu(nhom=«tên») "
+            "để lấy công cụ rồi làm.")
         if disabled:
             limit_txt += ("\nNhóm chức năng đã TẮT cho khung chat này: "
                           + ", ".join(disabled) + ".")
@@ -1893,7 +1904,7 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None,
     prov = _provider_summary()
     if prov:
         parts.append("## Công cụ / nhà cung cấp AI đang có\n" + prov)
-    env = state.load_environment()
+    env = state.load_environment() if nhom is None or nhom & _NHOM_CAN_BAN_DO else ""
     if env.strip():
         parts.append("## Môi trường em đang sống (bản đồ hệ thống)\n" + env.strip())
     # Đọc RỘNG hơn trần prompt rồi mới chọn theo việc: nết cũ cắt đuôi ở 4.000
@@ -3442,7 +3453,11 @@ def _orchestrate_locked(user_text: str, user_id: str,
 
     # Only feed the recent tail to the model (summary lives in system prompt).
     model_hist = hist[-max_h:]
-    sys_prompt = _build_system_prompt(user_id, allow, user_text)
+    # Nhóm việc dùng để lọc schema tool VÀ gọn lời nhắc (mục lục, bản đồ hệ thống). Tính MỘT lần từ câu này +
+    # mấy lượt gần nhất, rồi NỚI DẦN theo tool model thực sự gọi: bước sau của một việc có thể cần tool nhóm
+    # khác (vẽ ảnh xong đòi gửi lên kho đám mây), mà lúc tính ban đầu chưa có dấu hiệu nào.
+    _nhom_tool = _nhom_ngu_canh(user_text, hist_before, allow)
+    sys_prompt = _build_system_prompt(user_id, allow, user_text, _nhom_tool)
     # Speech Persona của phiên (nếu cài) — khối nén, lưu sẵn.
     #
     # KHÔNG bơm cho việc đòi nguyên văn (dịch): ở đó người ta cần đúng câu đó
@@ -3511,12 +3526,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
         )
     messages = [{"role": "system", "content": sys_prompt}] + list(model_hist)
 
-    # 2) Agentic loop.
-    # Nhóm việc dùng để lọc schema tool. Tính MỘT lần từ câu này + mấy lượt gần
-    # nhất, rồi NỚI DẦN theo tool model thực sự gọi: bước sau của một việc có
-    # thể cần tool nhóm khác (vẽ ảnh xong đòi gửi lên kho đám mây), mà lúc tính
-    # ban đầu chưa có dấu hiệu nào.
-    _nhom_tool = _nhom_ngu_canh(user_text, hist_before, allow)
+    # 2) Agentic loop (`_nhom_tool` tính ở trên, trước lúc dựng lời nhắc).
     seen_workflows: set[str] = set()  # tier-2: inject each workflow note once/turn
     for _step in range(_MAX_STEPS):
         steps_done = _step + 1
