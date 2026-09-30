@@ -304,3 +304,18 @@ def test_anh_luoi_chi_nhan_ten_co_tep(so, tmp_path, monkeypatch):
     (tmp_path / "bi_mat.jpg").write_bytes(b"y")
     assert so.anh_luoi("Cam bếp").read_bytes() == b"x"
     assert so.anh_luoi("../bi_mat") is None and so.anh_luoi("") is None
+
+
+def test_sua_va_xoa_mo_ta(so, monkeypatch):
+    """Chủ máy 30/09/2026: "có thêm có xoá, có chỉnh sửa"."""
+    monkeypatch.setattr(so.time, "time", lambda: 10.0)
+    so.them_mo_ta("Bếp thông phòng khách")
+    monkeypatch.setattr(so.time, "time", lambda: 20.0)
+    so.them_mo_ta("Ban công sau bếp")
+    assert so.sua_mo_ta(10.0, "Bếp thông phòng khách, có đảo bếp")
+    assert [x["noi_dung"] for x in so.so()["mo_ta"]] == ["Bếp thông phòng khách, có đảo bếp", "Ban công sau bếp"]
+    assert so.sua_mo_ta(20.0, None) and [x["luc"] for x in so.so()["mo_ta"]] == [10.0]
+    assert not so.sua_mo_ta(99.0, "x")
+    import pytest
+    with pytest.raises(ValueError):
+        so.sua_mo_ta(10.0, "  ")

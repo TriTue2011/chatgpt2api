@@ -101,6 +101,24 @@ def them_mo_ta(noi_dung: str, nguon: str = "chu_may", *, thay_cu: bool = False) 
         return len(d["mo_ta"])
 
 
+def sua_mo_ta(luc: float, noi_dung: str | None) -> bool:
+    """Sửa (``noi_dung``) hoặc xoá (``None``) một dòng mô tả, nhận ra bằng ``luc`` lúc ghi. Chủ máy 30/09/2026:
+    "có thêm có xoá, có chỉnh sửa" — lời tả sai nằm lại trong sổ thì mọi lần vẽ sau bot đọc lại cái sai."""
+    if noi_dung is not None and not str(noi_dung).strip():
+        raise ValueError("Mô tả rỗng — muốn bỏ thì bấm xoá.")
+    with _khoa:
+        d = _nap()
+        x = next((m for m in d["mo_ta"] if abs(float(m.get("luc") or 0) - float(luc)) < 1e-6), None)
+        if x is None:
+            return False
+        if noi_dung is None:
+            d["mo_ta"].remove(x)
+        else:
+            x["noi_dung"] = str(noi_dung).strip()[:4000]
+        _luu(d)
+        return True
+
+
 def ap() -> dict[str, Any] | None:
     """Sơ đồ đang dùng (đã chấm đúng), hoặc None."""
     with _khoa:

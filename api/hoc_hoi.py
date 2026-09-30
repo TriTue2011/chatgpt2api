@@ -793,6 +793,18 @@ def create_router() -> APIRouter:
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
+    @router.post("/api/hoc-hoi/so-do-nha/mo-ta/sua")
+    async def so_do_nha_sua_mo_ta(body: dict, authorization: str | None = Header(default=None)):
+        """Sửa hoặc xoá một dòng mô tả. body: {luc, noi_dung} (sửa) hoặc {luc, xoa: true}."""
+        require_admin(authorization)
+        from services import so_do_nha
+        try:
+            ok = so_do_nha.sua_mo_ta(float(body.get("luc") or 0),
+                                     None if body.get("xoa") else str(body.get("noi_dung") or ""))
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True} if ok else {"ok": False, "error": "Không có dòng mô tả đó (đã bị sửa ở nơi khác?)."}
+
     @router.post("/api/hoc-hoi/so-do-nha/giai")
     async def so_do_nha_giai(authorization: str | None = Header(default=None)):
         """Cho bot vẽ lại sơ đồ ngay (đo 30 ngày + gọi model — vài chục giây)."""

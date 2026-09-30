@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Camera, Check, Copy, RefreshCw, Send, X } from "lucide-react";
+import { Camera, Check, Copy, Pencil, RefreshCw, Send, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -89,6 +89,41 @@ function AnhCamera({ cam, thay, mauPhong, luoi }: {
         </button>
       )}
     </div>
+  );
+}
+
+/** Một dòng mô tả: đọc, SỬA tại chỗ, XOÁ (chủ máy 30/09/2026: "có thêm có xoá, có chỉnh sửa"). */
+function DongMoTa({ m, nhan, mau, xong }: { m: MoTa; nhan: string; mau: string; xong: () => Promise<void> }) {
+  const [sua, setSua] = useState<string | null>(null);
+  const luu = async (xoa: boolean) => {
+    if (xoa && !window.confirm("Xoá dòng mô tả này? Lần vẽ sau bot không đọc nó nữa.")) return;
+    if (await goiPost("/api/hoc-hoi/so-do-nha/mo-ta/sua", xoa ? { luc: m.luc, xoa: true } : { luc: m.luc, noi_dung: sua })) {
+      toast.success(xoa ? "Đã xoá" : "Đã sửa — lần vẽ sau bot đọc bản mới");
+      setSua(null);
+      await xong();
+    }
+  };
+  if (sua !== null) {
+    return (
+      <div className="space-y-1">
+        <Textarea className="min-h-[60px] text-xs" value={sua} onChange={(e) => setSua(e.target.value)} />
+        <div className="flex gap-2">
+          <Button size="sm" onClick={() => void luu(false)} disabled={!sua.trim()}><Check className="mr-1 h-4 w-4" />Lưu</Button>
+          <Button size="sm" variant="ghost" onClick={() => setSua(null)}>Huỷ</Button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <p className="group whitespace-pre-wrap text-xs">
+      <span className={mau}>{nhan} ({gio(m.luc)}):</span> {m.noi_dung}
+      <button type="button" title="Sửa" className="ml-1 align-middle" onClick={() => setSua(m.noi_dung)}>
+        <Pencil className="inline size-3 text-muted-foreground" />
+      </button>
+      <button type="button" title="Xoá" className="ml-1 align-middle" onClick={() => void luu(true)}>
+        <Trash2 className="inline size-3 text-destructive" />
+      </button>
+    </p>
   );
 }
 
@@ -270,16 +305,8 @@ export function SoDoNha() {
                 ))
               ) : <div className="text-muted-foreground">Sơ đồ: camera này không thấy phòng nào trong nhà.</div>}
             </div>
-            {doc && (
-              <p className="whitespace-pre-wrap text-xs">
-                <span className="text-muted-foreground">Bot tả ảnh ({gio(doc.luc)}):</span> {doc.noi_dung}
-              </p>
-            )}
-            {khoanh.map((m) => (
-              <p key={m.luc} className="whitespace-pre-wrap text-xs">
-                <span className="text-sky-600">Chủ nhà ({gio(m.luc)}):</span> {m.noi_dung}
-              </p>
-            ))}
+            {doc && <DongMoTa m={doc} nhan="Bot tả ảnh" mau="text-muted-foreground" xong={tai} />}
+            {khoanh.map((m) => <DongMoTa key={m.luc} m={m} nhan="Chủ nhà" mau="text-sky-600" xong={tai} />)}
           </div>
         );
       })}
@@ -289,7 +316,7 @@ export function SoDoNha() {
         <div className="font-medium">Lời chủ nhà mô tả ({loiChu.length})</div>
         <ul className="max-h-64 space-y-1 overflow-y-auto text-xs">
           {loiChu.map((m) => (
-            <li key={m.luc}><span className="text-muted-foreground">{gio(m.luc)}:</span> {m.noi_dung}</li>
+            <li key={m.luc}><DongMoTa m={m} nhan={m.nguon === "chat" ? "Qua chat" : "Chủ nhà"} mau="text-muted-foreground" xong={tai} /></li>
           ))}
         </ul>
         <Textarea className="min-h-[60px] text-xs" value={moTaMoi} onChange={(e) => setMoTaMoi(e.target.value)}
