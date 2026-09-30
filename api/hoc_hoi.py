@@ -923,25 +923,33 @@ def create_router() -> APIRouter:
         require_admin(authorization)
         try:
             from services import lich_sinh_hoat
-            return {"ok": True, "muc": lich_sinh_hoat.ds(), "loai": list(lich_sinh_hoat.LOAI)}
+            return {"ok": True, "muc": lich_sinh_hoat.ds(), "loai": list(lich_sinh_hoat.LOAI),
+                    "thanh_vien": lich_sinh_hoat.thanh_vien(),
+                    "nhom": [{"ma": m, "ten": t} for m, t, _a, _b in lich_sinh_hoat.NHOM],
+                    "goi_y": {m: lich_sinh_hoat.goi_y(m) for m, _t, _a, _b in lich_sinh_hoat.NHOM}}
         except Exception as exc:
             return _loi(exc, "lịch sinh hoạt")
 
     @router.post("/api/hoc-hoi/lich")
     async def lich_dat(body: dict, authorization: str | None = Header(default=None)):
-        """Thay toàn bộ lịch. body: {muc: [{ma?, ten, loai, tu, den, thu}]}. Mục lịch là
-        đặc trưng học nên mọi thiết bị học lại ngay (chạy nền)."""
+        """Thay toàn bộ lịch. body: {muc: [{ma?, ten, loai, tu, den, thu, ai?}], thanh_vien?: [{ma?, ten,
+        nam_sinh?, theo_doi?}]} — thiếu ``thanh_vien`` là giữ nguyên. Mục lịch là đặc trưng học nên mọi thiết
+        bị học lại ngay (chạy nền)."""
         require_admin(authorization)
         try:
             from services import kich_hoat_nha, lich_sinh_hoat
             if not isinstance(body.get("muc"), list):
                 return {"ok": False, "error": "Thiếu danh sách mục lịch."}
-            con = {m["ma"] for m in lich_sinh_hoat.dat(body["muc"])}
+            tv = body.get("thanh_vien")
+            if tv is not None and not isinstance(tv, list):
+                return {"ok": False, "error": "thanh_vien phải là danh sách."}
+            con = {m["ma"] for m in lich_sinh_hoat.dat(body["muc"], tv)}
             mat = sorted({f"{tb}: {x.get('lich')}" for tb, cd in kich_hoat_nha._nap()["thiet_bi"].items()
                           for x in cd.get("ngoai_le") or [] if x.get("lich") and x["lich"] not in con})
             for tb in kich_hoat_nha.ds_thiet_bi():
                 kich_hoat_nha._hoc_nen(tb)
-            return {"ok": True, "muc": lich_sinh_hoat.ds(), "khung_mat_lich": mat}
+            return {"ok": True, "muc": lich_sinh_hoat.ds(), "thanh_vien": lich_sinh_hoat.thanh_vien(),
+                    "khung_mat_lich": mat}
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
         except Exception as exc:

@@ -103,8 +103,8 @@ def dang_canh(c: dict[str, Any], luc: float | None = None) -> bool:
         return any(lsh.trong({"tu": x.get("tu", ""), "den": x.get("den", ""),
                               "thu": x.get("thu") if x.get("thu") is not None else range(7)}, luc)
                    for x in c["khung"] if x.get("tu") and x.get("den") and x["tu"] != x["den"])
-    # nếp sinh hoạt: cả nhà vắng thì không ai ngã ở nhà
-    return not any(m.get("loai") == "vang" for m in lsh.dang(luc))
+    # nếp sinh hoạt: cả nhà vắng thì không ai ngã ở nhà — một người đi làm thì người khác vẫn ở nhà
+    return not lsh.ca_nha("vang", luc)
 
 
 # ── Dáng người ──────────────────────────────────────────────────────────────
