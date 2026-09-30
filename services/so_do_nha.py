@@ -590,10 +590,68 @@ def lenh_doc_anh(ten: str, jpeg: bytes, mo_ta: list[str]) -> tuple[str, bytes, b
     return huong + "\n\n---\n\n" + de, luoi, dem, vat, (rong, cao), ban
 
 
+#: Mỗi camera đọc bấy nhiêu lần rồi lấy ĐA SỐ theo từng ô. Đo 30/09/2026 trên bộ đề ảnh thật: cùng ảnh, cùng
+#: hướng dẫn mà claude/auto mỗi lần chia một kiểu (Cam phòng khách lần đạt, lần bịa «khu bếp» ở tủ giày) — một
+#: lần đọc không tin được, sửa chữ trong hướng dẫn không chữa được độ dao động.
+LAN_DOC = 3
+
+
+def gop_phieu(bai: list[dict[str, Any]]) -> dict[str, Any]:
+    """Gộp nhiều lần đọc: ô nào QUÁ NỬA số lần gán cùng một phòng thì nhận phòng đó, còn lại bỏ.
+    Mốc / lời giải lấy của lần đọc khớp kết quả gộp nhất; `chac` = trung bình × tỉ lệ ô được đa số đồng ý."""
+    can = len(bai) // 2 + 1
+    phieu: dict[tuple[str, str], int] = {}
+    for b in bai:
+        for p, ds in b["thay"].items():
+            for o in ds:
+                phieu[(o, p)] = phieu.get((o, p), 0) + 1
+    thay: dict[str, list[str]] = {}
+    for (o, p), n in phieu.items():
+        if n >= can:
+            thay.setdefault(p, []).append(o)
+    thay = {p: sorted(ds, key=lambda x: (int(x[1:]), x[0])) for p, ds in thay.items()}
+    nhan = {(o, p) for p, ds in thay.items() for o in ds}
+    gan_nhat = max(bai, key=lambda b: len(nhan & {(o, p) for p, ds in b["thay"].items() for o in ds}))
+    moi_o = {o for o, _ in phieu}
+    dong_y = len(nhan) / len(moi_o) if moi_o else 1.0
+    chac = sum(b["chac"] for b in bai) / len(bai) * dong_y
+    return {**gan_nhat, "thay": thay, "chac": round(chac, 2), "so_lan": len(bai)}
+
+
+def doc_nhieu_lan(lenh: str, luoi: bytes, phong: list[str]) -> tuple[dict[str, Any] | str | None, str]:
+    """Đọc ảnh ``LAN_DOC`` lần rồi gộp theo đa số. Trả (kết quả | lỗi khuôn | None khi model không đọc được lần
+    nào, lỗi model cuối). Lỗi model giữa chừng (429…) sau khi đã đọc được: nghỉ rồi đọc tiếp — model đang có,
+    chỉ bận. Dùng chung cho đường chạy thật và bộ đề `de_luyen/doc_anh_camera`."""
+    from services import hieu_thiet_bi_nha as ht
+
+    hop_le: list[dict[str, Any]] = []
+    loi_khuon, loi_model = "", ""
+    for _ in range(2 * LAN_DOC):
+        if len(hop_le) >= LAN_DOC:
+            break
+        try:
+            tho = _goi_thi_giac(lenh, luoi)
+        except RuntimeError as exc:
+            loi_model = str(exc)[:160]
+            if not hop_le:
+                break
+            time.sleep(NGHI_THU_LAI_S)
+            continue
+        data = ht._doc_json(tho)
+        k = kiem_anh(data, phong) if data is not None else "không đọc được JSON"
+        if isinstance(k, str):
+            loi_khuon = k
+        else:
+            hop_le.append(k)
+    if hop_le:
+        return gop_phieu(hop_le), loi_model
+    return (loi_khuon or None) if not loi_model else None, loi_model
+
+
 def doc_anh_camera(ten: str) -> dict[str, Any]:
     """Chụp ``ten``, kẻ lưới + YOLO khoanh đồ vật, bot (model thị giác) chia ô theo phòng; kết quả vào sổ
     thành lời mô tả nguồn «anh:<camera>» (thay bản đọc cũ của camera đó)."""
-    from services import camera_nha, ha_client, hieu_thiet_bi_nha as ht, nhin_nha, yolo_nha
+    from services import camera_nha, ha_client
 
     ten_that, jpeg = camera_nha.chup(ten, timeout=20.0)
     mo_ta = [x["noi_dung"] for x in so()["mo_ta"] if not str(x.get("nguon") or "").startswith("anh:")]
@@ -603,28 +661,22 @@ def doc_anh_camera(ten: str) -> dict[str, Any]:
     phong = _ten_phong()
     if ha_client._URL_CO_MAT_KHAU.search(lenh):
         return {"ok": False, "loi": "đề có chuỗi dạng tài khoản:mật khẩu — bỏ lượt"}
-    loi_model = ""
-    if model_anh() != THU_CONG:
-        try:
-            tho: str | None = _goi_thi_giac(lenh, luoi)
-        except RuntimeError as exc:
-            tho, loi_model = None, str(exc)[:160]
-            if so().get("model_doc_duoc") == model_anh():
-                # Model này ĐÃ từng đọc được ảnh ở nhà này → lần này là lỗi TẠM (bận, quá giới hạn…), không phải nhà
-                # thiếu model. Đo 30/09/2026 07:57: Claude đọc xong 2 camera rồi trả 429 ở 2 camera sau — bản cũ
-                # gửi vào nhóm "em chưa có model đọc ảnh, anh tự làm giúp em". Chỉ việc người mới làm được mới
-                # được đẩy sang người.
-                return {"ok": False, "tam": True, "camera": ten_that,
-                        "loi": f"model đọc ảnh lỗi tạm, lượt sau em đọc lại ({loi_model})"}
+    if model_anh() == THU_CONG:
+        k, loi_model = None, ""
     else:
-        tho = None
-    if tho is None:
+        k, loi_model = doc_nhieu_lan(lenh, luoi, phong)
+        if k is None and loi_model and so().get("model_doc_duoc") == model_anh():
+            # Model này ĐÃ từng đọc được ảnh ở nhà này → lần này là lỗi TẠM (bận, quá giới hạn…), không phải nhà
+            # thiếu model. Đo 30/09/2026 07:57: Claude đọc xong 2 camera rồi trả 429 ở 2 camera sau — bản cũ
+            # gửi vào nhóm "em chưa có model đọc ảnh, anh tự làm giúp em". Chỉ việc người mới làm được mới
+            # được đẩy sang người.
+            return {"ok": False, "tam": True, "camera": ten_that,
+                    "loi": f"model đọc ảnh lỗi tạm, lượt sau em đọc lại ({loi_model})"}
+    if k is None:
         # Không có model đọc ảnh (nhà không có Claude…) hoặc chủ nhà chọn tự làm: xuất ẢNH + LỆNH để người dùng
         # dán vào app của họ, thấy đúng thì gửi đáp án lại (chủ máy 30/09/2026).
         return {"ok": False, "thu_cong": True, "camera": ten_that, "luoi": luoi, "loi": loi_model,
                 **_cho_dap_an(ten_that, lenh, luoi, dem, ban)}
-    data = ht._doc_json(tho)
-    k = kiem_anh(data, phong) if data is not None else "không đọc được JSON"
     if isinstance(k, str):
         logger.warning({"event": "so_do_nha_anh_loai", "camera": ten_that, "loi": k})
         return {"ok": False, "camera": ten_that, "loi": k}

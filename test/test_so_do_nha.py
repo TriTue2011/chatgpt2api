@@ -109,8 +109,8 @@ def test_doc_anh_camera_ke_luoi_yolo_bot_chia_o_roi_vao_so(so, tmp_path, monkeyp
     so.doc_anh_camera("Cam bếp")
     anh_mo_ta = [x for x in so.so()["mo_ta"] if x["nguon"] == "anh:Cam bếp"]
     assert len(anh_mo_ta) == 1 and "Bếp: ô A5" in anh_mo_ta[0]["noi_dung"], "đọc lại thì thay bản cũ"
-    assert "thùng gỗ xanh" not in de[1].split("CHỦ NHÀ MÔ TẢ:")[0]
-    assert "Ảnh Cam bếp" not in de[1], "lần đọc sau không lấy bài đọc ảnh cũ làm lời chủ nhà"
+    assert "thùng gỗ xanh" not in de[so.LAN_DOC].split("CHỦ NHÀ MÔ TẢ:")[0]
+    assert "Ảnh Cam bếp" not in de[so.LAN_DOC], "lần đọc sau không lấy bài đọc ảnh cũ làm lời chủ nhà"
     tra[0] = '{"thay": {"Phòng học": ["A1"]}}'
     assert "không có trong nhà" in so.doc_anh_camera("Cam bếp")["loi"]
     tra[0] = '{"thay": {"Bếp": ["Z9"]}}'
@@ -200,7 +200,8 @@ def test_model_da_doc_duoc_thi_loi_la_tam_khong_nho_nguoi(so, tmp_path, monkeypa
             "Cam cửa": [RuntimeError("model thị giác lỗi: 429"), '{"thay": {}, "chac": 0.9}']}
 
     def model(noi, jpeg):
-        x = luot[noi.split("CAMERA: ")[1].split("\n")[0]].pop(0)
+        q = luot[noi.split("CAMERA: ")[1].split("\n")[0]]
+        x = q.pop(0) if len(q) > 1 else q[0]      # hết lượt thì trả mãi lượt cuối
         if isinstance(x, Exception):
             raise x
         return x
@@ -219,3 +220,31 @@ def test_model_da_doc_duoc_thi_loi_la_tam_khong_nho_nguoi(so, tmp_path, monkeypa
     r = so.doc_anh_va_ve()
     assert r["anh"][1]["tam"] and so.cho_dap_an() == {}
     assert any("lượt sau em đọc lại" in t for t in gui) and not any("chưa có model" in t for t in gui)
+
+
+def test_doc_nhieu_lan_gop_da_so(so, monkeypatch):
+    """Đo 30/09/2026: cùng ảnh cùng hướng dẫn mà mỗi lần đọc một kiểu — một lần lạc (bịa «Bếp» ở tủ giày)
+    không được lọt vào kết quả; ô chỉ nhận khi quá nửa số lần đọc đồng ý."""
+    tra = ['{"thay": {"Phòng khách": ["A5", "B5", "C5"]}, "chac": 0.9}',
+           '{"thay": {"Phòng khách": ["A5", "B5"], "Bếp": ["K6", "L6"]}, "chac": 0.6}',
+           '{"thay": {"Phòng khách": ["A5", "B5", "C5", "D5"]}, "chac": 0.9}']
+    monkeypatch.setattr(so, "_goi_thi_giac", lambda lenh, luoi: tra.pop(0))
+    k, loi = so.doc_nhieu_lan("lệnh", b"", ["Phòng khách", "Bếp"])
+    assert k["thay"] == {"Phòng khách": ["A5", "B5", "C5"]} and k["so_lan"] == 3 and loi == ""
+    assert 0 < k["chac"] < 0.8, "ô bất đồng kéo độ chắc xuống"
+    # Lỗi tạm sau khi đã đọc được: nghỉ rồi đọc tiếp, vẫn đủ 3 lần.
+    tra = ['{"thay": {"Bếp": ["A1"]}, "chac": 0.9}', RuntimeError("429"), '{"thay": {"Bếp": ["A1"]}, "chac": 0.9}',
+           '{"thay": {"Bếp": ["A1"]}, "chac": 0.9}']
+    monkeypatch.setattr(so, "NGHI_THU_LAI_S", 0)
+
+    def model(lenh, luoi):
+        x = tra.pop(0)
+        if isinstance(x, Exception):
+            raise x
+        return x
+    monkeypatch.setattr(so, "_goi_thi_giac", model)
+    k, loi = so.doc_nhieu_lan("lệnh", b"", ["Bếp"])
+    assert k["thay"] == {"Bếp": ["A1"]} and k["so_lan"] == 3 and "429" in loi
+    # Model lỗi ngay lần đầu: không đọc được lần nào → None (bên gọi quyết lỗi tạm hay nhờ người).
+    monkeypatch.setattr(so, "_goi_thi_giac", lambda *a: (_ for _ in ()).throw(RuntimeError("không có claude")))
+    assert so.doc_nhieu_lan("lệnh", b"", ["Bếp"]) == (None, "không có claude")

@@ -44,17 +44,16 @@ DE: list[dict[str, Any]] = _de()
 
 
 def giai_de(d: dict[str, Any], model: Any = None) -> dict[str, Any] | str:
-    """Bot đọc ảnh đề ``d`` đúng như lúc chạy thật (cùng `lenh_doc_anh`, cùng model đọc ảnh)."""
-    from services import hieu_thiet_bi_nha as ht, so_do_nha as so
+    """Bot đọc ảnh đề ``d`` đúng như lúc chạy thật: cùng `lenh_doc_anh`, cùng model, cùng `doc_nhieu_lan`
+    (đọc nhiều lần, gộp đa số)."""
+    from services import so_do_nha as so
 
     jpeg = (THU_MUC / f"{d['ten']}.jpg").read_bytes()
     lenh, luoi, _dem, _vat, _co, _ban = so.lenh_doc_anh(d["ten"], jpeg, d["mo_ta"])
-    try:
-        tho = so._goi_thi_giac(lenh, luoi)
-    except RuntimeError as exc:
-        return f"model lỗi: {str(exc)[:120]}"
-    data = ht._doc_json(tho)
-    return so.kiem_anh(data, so._ten_phong()) if data is not None else "không đọc được JSON"
+    k, loi_model = so.doc_nhieu_lan(lenh, luoi, so._ten_phong())
+    if k is None:
+        return f"model lỗi: {loi_model[:120]}"
+    return k
 
 
 def do(bai: dict[str, Any], dap_an: dict[str, Any]) -> dict[str, Any]:
