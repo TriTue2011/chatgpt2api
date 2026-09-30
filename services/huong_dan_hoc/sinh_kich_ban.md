@@ -47,13 +47,56 @@ xảy ra. Bỏ trống một mã là bài thiếu — bot sẽ hỏi lại đún
   tới gần. `nen` = `bao`. Đề nói có họ ở nhà mà thiết bị ở phòng họ → BẮT BUỘC
   có tình huống, không được để `khong_ap_dung`.
 - `de_quen` — ĐỂ QUÊN: cửa mở lâu, thiết bị bật lâu khi không ai dùng → `bao`.
+- `ngoai_cua` — NGOÀI CỬA / CỔNG / HÀNH LANG: người ĐI LƯỚT qua, ĐỨNG trước
+  cửa (khách, shipper), VÀO nhà, hay NGƯỜI NHÀ đứng nói chuyện với hàng xóm.
+  Trước hết kể các THIẾT BỊ Ở CỬA trong đề và mỗi cái biết được gì: cảm biến
+  cửa — cửa mở/đóng, không biết ai; camera cửa — ai, đứng đâu, bao lâu; loa
+  trên camera — nói được với người ngoài. Phân biệt bằng thứ có thật trong đề: camera nhìn ra cửa (mục B5) cho TOẠ ĐỘ
+  người — chân người gần cửa nhà mình hay ở xa; ĐỨNG YÊN bao lâu; đi về phía
+  nào; NHẬN MẶT người quen (mặt quay đi thì không nhận được, không phải người
+  lạ). BỐN trường hợp, MỖI cái MỘT tình huống riêng: (1) lướt qua → thiết bị
+  trong nhà không làm gì; (2) khách / shipper đứng trước cửa quá lâu → `noi`
+  qua loa trong nhà (mục B4) «có khách trước cửa», có loa trên camera cửa thì
+  chào khách; (3) vào nhà (cửa mở, trong nhà thấy người sau đó); (4) NGƯỜI NHÀ
+  đứng nói chuyện với hàng xóm (nhận mặt là người nhà) → KHÔNG báo khách, không
+  nói qua loa. Ngưỡng «gần» và «lâu» là của chủ nhà → hỏi nếu đề chưa có.
+- `cam_bien_ket` — cảm biến KẸT trạng thái (cửa kẹt «mở» hay «đóng», radar kẹt
+  «có người» cả ngày): đừng dựa MỘT nguồn. Tìm nguồn thứ hai (camera thấy
+  người gần cửa, cảm biến phòng bên, chụp camera đếm người) để xác nhận; nguồn
+  chính kẹt thì dùng nguồn phụ và `bao` chủ nhà xem lại cảm biến.
+- `lich_tung_nguoi` — theo LỊCH TỪNG NGƯỜI và TUỔI (mục B3): cùng một việc
+  (mở cửa lúc 23h) mà ai về, ai đang ngủ khác nhau thì thiết bị khác nhau — về
+  muộn khi trẻ nhỏ / người già đã ngủ: bật đèn nhỏ (bếp, hành lang) thay đèn
+  trần; chỉ một người đi làm thì nhà KHÔNG vắng. Không có lịch từng người →
+  hỏi giờ giấc của người liên quan.
+- `khoang_cach` — radar có số KHOẢNG CÁCH (mục B: «KHOẢNG CÁCH người tới
+  radar»): bật khi người tiến vào gần tới NGƯỠNG (chủ nhà đặt, hoặc nhờ chủ
+  nhà đứng ở chỗ XA NHẤT cần bật để đo), tắt khi xa dần / ra khỏi ngưỡng; số
+  khoảng cách nhảy lung tung thì xác nhận bằng toạ độ trên camera. Đề chưa có
+  ngưỡng → `hoi` «chỗ xa nhất cần bật cách radar bao nhiêu mét». Không có radar
+  khoảng cách ở khu này → `khong_ap_dung`.
+- `loai_tru` — khu KHÔNG có cảm biến (nhà tắm, kho) hoặc cảm biến của khu hỏng:
+  suy bằng LOẠI TRỪ, làm PHÉP ĐẾM ra chữ số: nhà có N người (mục B3); camera
+  A đếm a, camera B đếm b, c người đứng ở vùng hai camera cùng thấy → ngoài
+  khu này có a + b − c người (cộng người radar / hiện diện các khu khác báo mà
+  camera không thấy). Bằng N → khu này vắng → `tat`; ít hơn N, hay cảm biến
+  khu khác đang nghi kẹt → CHƯA chắc, đừng tắt. Có khách (đếm dư người) thì N
+  không còn dùng được. Khu CÓ cảm biến riêng thì mã này chỉ dùng khi cảm biến
+  ấy hỏng. Đề có camera ĐẾM người (mục B) và biết nhà mấy người (B3) là ĐỦ dữ
+  kiện — em TỰ DỰNG ca có số, đừng nói «không đủ dữ liệu». Mẫu: «nhà 3 người;
+  camera phòng khách đếm 2, camera bếp đếm 2, 1 người đứng ở vùng hai camera
+  cùng thấy → ngoài WC có 2 + 2 − 1 = 3 = đủ → WC vắng, `nen` = `tat`».
 
 ## Xét một tình huống
 
 - `cam_bien_thay`: cảm biến nào (mục B, dòng «Ảnh …») báo gì lúc đó — theo vị
-  trí, hướng nhìn, tầm của nó.
-- `nen`: `bat`, `tat`, `giu` (giữ nguyên), `khong_lam`, `hoi` (nên hỏi chủ
-  nhà mỗi lần), `bao` (không đụng thiết bị, BÁO chủ nhà).
+  trí, hướng nhìn, tầm của nó. Dùng được cả mục B5 (nhận mặt, toạ độ, đếm
+  người) — nhưng chỉ thứ ĐỀ CÓ, đừng bịa khả năng nhà không có.
+- `nen` là việc của CHÍNH THIẾT BỊ ĐANG XÉT (►), không phải thiết bị khác: muốn
+  bật đèn nhỏ thay đèn trần thì với đèn trần `nen` = `khong_lam`, còn đèn nhỏ
+  nói trong `vi_sao`. Giá trị: `bat`, `tat`, `giu` (giữ nguyên), `khong_lam`, `hoi` (nên hỏi chủ
+  nhà mỗi lần), `bao` (không đụng thiết bị, BÁO chủ nhà), `noi` (phát câu qua
+  LOA — loa trong nhà hoặc loa trên camera, mục B4; không có loa thì `bao`).
 - `hien_tai`: đọc mục C (bộ kích hoạt làm ĐÚNG như vậy), chạy thử trong đầu với
   `cam_bien_thay`: `dung` — ra đúng `nen`; `sai` — ra khác (bật khi không nên,
   không bật khi nên, tắt trước mặt người, không báo khi phải báo); `khong_ro` —
@@ -78,7 +121,7 @@ Sơ đồ ghi "CHƯA chấm": dùng nó, điều gì quyết định tình huố
 
 ```json
 {"kich_ban": [{"loai": "<mã danh mục>", "tinh_huong": "một câu ngắn", "cam_bien_thay": "...",
-               "nen": "bat|tat|giu|khong_lam|hoi|bao", "hien_tai": "dung|sai|khong_ro",
+               "nen": "bat|tat|giu|khong_lam|hoi|bao|noi", "hien_tai": "dung|sai|khong_ro",
                "vi_sao": "...", "hoi": "..." hoặc null}],
  "khong_ap_dung": [{"loai": "<mã>", "vi_sao": "vì sao ở đây không xảy ra"}],
  "tom_tat": "1–2 câu: thiết bị này thiếu gì nhất"}

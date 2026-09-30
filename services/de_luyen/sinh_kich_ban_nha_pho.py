@@ -43,3 +43,25 @@ DE: list[dict[str, Any]] = [d for d in TAT_CA if d["uv"]["noi"] == "nha_pho"] + 
                             {"thiet_bi": "light.den_san_thuong", "nen": "bao",
                              "tu": ["cửa sân thượng", "cửa mở", "ban đêm", "đêm"]}]}},
 ]
+
+# Chủ máy 30/09/2026: người ngoài cửa — "toàn diện, đừng chỉ có cho duy nhất nhà tôi": nhà phố mặt đường có
+# LOA TRÊN CAMERA cổng — khách đứng lâu thì chào qua loa camera; người đi đường lướt qua thì im.
+DE += [
+    {"ten": "khach_dung_truoc_cua_cuon_chao_qua_loa_camera",
+     "tinh_huong": "Camera trước cửa cuốn có loa: người đi đường lướt qua vỉa hè liên tục; khách đứng sát cửa > 20 giây "
+                   "thì chào qua loa camera và báo người trong nhà; không bật đèn cho người lướt qua.",
+     "uv": _uv(_NHA_PHO,
+               {"Vỉa hè (ngoài nhà)": ["Camera cửa cuốn Person (camera)"],
+                "Phòng khách": ["Radar phòng khách (sóng/chuyển động)", "Cửa cuốn (cửa)"]},
+               {"light.den_hien_nha": ("Đèn hiên", "Phòng khách", [
+                   "BẬT (bot học, tự làm): khi Camera cửa cuốn Person có người vào, Độ sáng ≤ 10",
+                   _TAT_RADAR.format(cb="Camera cửa cuốn Person", p=2)])},
+               ["Nhà mặt đường, camera trước cửa cuốn nhìn cả vỉa hè; cửa nhà ở giữa khung hình."],
+               loa=["Loa camera cửa cuốn (ở Vỉa hè — loa TRÊN CAMERA)", "Loa phòng khách (ở Phòng khách)"],
+               kha_nang=["Frigate: HỘP (toạ độ) từng người trên khung hình mỗi camera, theo dõi một người qua các khung "
+                         "(đứng yên bao lâu, đi về phía nào), đếm người từng camera."]),
+     "dap_an": {"phai_co": [{"thiet_bi": "light.den_hien_nha", "hien_tai": ["sai", "khong_ro"],
+                             "tu": ["lướt qua", "đi đường", "đi qua", "vỉa hè"]},
+                            {"thiet_bi": "light.den_hien_nha", "nen": ["noi", "bao"],
+                             "tu": ["đứng", "khách", "lâu", "chào"]}]}},
+]

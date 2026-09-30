@@ -30,13 +30,14 @@ TANG = "services.kich_ban_nha"
 
 
 def _uv(so_do: str, phong: dict[str, list[str]], thiet_bi: dict[str, tuple[str, str, list[str]]],
-        mo_ta: list[str] | None = None, chac: bool = True, nguoi: list[str] | None = None) -> dict[str, Any]:
+        mo_ta: list[str] | None = None, chac: bool = True, nguoi: list[str] | None = None,
+        loa: list[str] | None = None, kha_nang: list[str] | None = None, lich: list[str] | None = None) -> dict[str, Any]:
     # Loại nơi đọc từ dòng đầu sơ đồ — cùng cách `kich_ban_nha` đọc kiểu nhà.
     dau = so_do.split(",")[0].split("\n")[0].strip().lower()
     noi = {"chung cư": "chung_cu", "nhà phố": "nha_pho", "nhà vườn": "biet_thu", "văn phòng": "van_phong",
            "xưởng": "xuong"}.get(dau, "")
     return {"so_do": so_do, "so_do_chac": chac, "phong": phong, "mo_ta": mo_ta or [], "nguoi": nguoi or [],
-            "noi": noi, "cham": [],
+            "noi": noi, "cham": [], "loa": loa or [], "kha_nang": kha_nang or [], "lich": lich or [],
             "thiet_bi": {tb: {"ten": t, "khu": k, "viec": v} for tb, (t, k, v) in thiet_bi.items()}}
 
 

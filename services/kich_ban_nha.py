@@ -26,10 +26,10 @@ from utils.log import logger
 
 _PATH = Path(DATA_DIR) / "agent" / "kich_ban_nha.json"
 _khoa = threading.RLock()
-NEN = ("bat", "tat", "giu", "khong_lam", "hoi", "bao")
+NEN = ("bat", "tat", "giu", "khong_lam", "hoi", "bao", "noi")
 HIEN_TAI = ("dung", "sai", "khong_ro")
 _NEN_DOC = {"bat": "bật", "tat": "tắt", "giu": "giữ nguyên", "khong_lam": "không làm gì", "hoi": "hỏi anh",
-            "bao": "báo anh"}
+            "bao": "báo anh", "noi": "nói qua loa"}
 #: Tối đa câu hỏi mỗi lượt dựng — hỏi dồn thì chủ nhà không trả lời hết (chủ máy 11/09: "xác minh lần lượt").
 HOI_TOI_DA = 8
 #: Loại nơi — mỗi loại một phần hướng dẫn RIÊNG `sinh_kich_ban_<noi>.md` ghép sau phần chung (chủ máy
@@ -154,21 +154,45 @@ def do() -> dict[str, Any]:
     from services import boi_canh_nha, cam_bien_ghep, ha_client, kich_hoat_nha as kh, so_do_nha
 
     st = ha_client.get_states() or []
-    nen = (ha_client.get_ha_area_index() or {}).get("entity_platform") or {}
+    idx = ha_client.get_ha_area_index() or {}
+    nen = idx.get("entity_platform") or {}
+    tb_cua = {m: tuple(v) for m, v in (idx.get("entity_device_ids") or {}).items() if v}
     ten = {str(s["entity_id"]): str((s.get("attributes") or {}).get("friendly_name") or s["entity_id"]) for s in st}
     phong: dict[str, list[str]] = {}
+    # Thiết bị có cảm biến hiện diện — số KHOẢNG CÁCH cùng thiết bị ấy là của radar (khoảng cách của điện thoại,
+    # beacon thì không), nhận ra theo sổ thiết bị HA, không theo tên.
+    tb_hien_dien = {tb_cua[str(s["entity_id"])] for s in st if str(s["entity_id"]).startswith("binary_sensor.")
+                    and (s.get("attributes") or {}).get("device_class") in kh._LOP_HIEN_DIEN
+                    and str(s["entity_id"]) in tb_cua}
+    tb_camera = {v for m, v in tb_cua.items() if m.startswith("camera.")}
+    loa: list[str] = []
     for s in st:
         ma = str(s["entity_id"])
-        lop = (s.get("attributes") or {}).get("device_class")
-        if not ma.startswith("binary_sensor.") or cam_bien_ghep.la_ghep(ma):
-            continue
-        if lop in kh._LOP_HIEN_DIEN:
-            loai = "camera" if nen.get(ma) == "frigate" else "sóng/chuyển động"
-        elif lop in kh._LOP_CUA:
-            loai = "cửa"
-        else:
-            continue
-        phong.setdefault(boi_canh_nha.phong_cua(ma) or "chưa xếp khu", []).append(f"{ten.get(ma, ma)} ({loai})")
+        a = s.get("attributes") or {}
+        lop = a.get("device_class")
+        mien = ma.split(".")[0]
+        loai = ""
+        if mien == "binary_sensor" and not cam_bien_ghep.la_ghep(ma):
+            if lop in kh._LOP_HIEN_DIEN:
+                loai = "camera" if nen.get(ma) == "frigate" else "sóng/chuyển động"
+            elif lop in kh._LOP_CUA:
+                loai = "cửa"
+        elif mien == "sensor":
+            # Dấu hiệu do tích hợp khai: device_class / đơn vị — dùng được ở mọi nhà.
+            # Không phải tích hợp nào cũng khai device_class (vd `…_target_distance` của radar Zigbee chỉ có
+            # đơn vị) — đơn vị ĐỘ DÀI cùng thiết bị với cảm biến hiện diện cũng là khoảng cách của radar.
+            if ((lop == "distance" or a.get("unit_of_measurement") in ("m", "cm", "mm"))
+                    and tb_cua.get(ma) in tb_hien_dien):
+                loai = f"KHOẢNG CÁCH người tới radar, {a.get('unit_of_measurement') or 'm'}"
+            elif lop == "illuminance":
+                loai = "độ sáng"
+            elif a.get("unit_of_measurement") == "objects":
+                loai = "ĐẾM số vật thể camera thấy"
+        elif mien == "media_player" and int(a.get("supported_features") or 0) & _MEDIA_ANNOUNCE:
+            tren = " — loa TRÊN CAMERA" if tb_cua.get(ma) in tb_camera else ""
+            loa.append(f"{ten.get(ma, ma)} (ở {boi_canh_nha.phong_cua(ma) or 'chưa xếp khu'}{tren})")
+        if loai:
+            phong.setdefault(boi_canh_nha.phong_cua(ma) or "chưa xếp khu", []).append(f"{ten.get(ma, ma)} ({loai})")
     # Ai đang ở nhà: người (person) và máy người cầm (device_tracker) — cần để xét "cả nhà vắng mà có người".
     nguoi = [f"{ten.get(str(x['entity_id']), x['entity_id'])} ({x.get('state')})" for x in st
              if str(x["entity_id"]).split(".")[0] in ("person", "device_tracker")][:12]
@@ -180,9 +204,40 @@ def do() -> dict[str, Any]:
     tbs = {tb: {"ten": ten.get(tb, tb), "khu": boi_canh_nha.phong_cua(tb) or "chưa xếp khu",
                 "viec": _viec_dang_cai(tb, cd, d["mo_hinh"].get(tb) or {}, ten)}
            for tb, cd in sorted(d["thiet_bi"].items()) if cd.get("bat")}
+    from services import lich_sinh_hoat
     return {"so_do": so_do_nha.doc(s) if s else "", "so_do_chac": bool(ap), "phong": phong, "nguoi": nguoi,
             "noi": noi_cua((s or {}).get("kieu")), "thiet_bi": tbs, "cham": so().get("cham") or [],
-            "mo_ta": [x["noi_dung"] for x in so_do["mo_ta"]]}
+            "mo_ta": [x["noi_dung"] for x in so_do["mo_ta"]], "loa": loa, "kha_nang": kha_nang(),
+            "lich": lich_sinh_hoat.doc_cho_bot()}
+
+
+#: Cờ MediaPlayerEntityFeature.MEDIA_ANNOUNCE của HA — loa phát được câu thông báo chen ngang.
+_MEDIA_ANNOUNCE = 1048576
+
+
+def kha_nang() -> list[str]:
+    """Những việc BOT làm được bằng mắt — để tình huống dùng đúng thứ có thật (nhận mặt ở camera nào, đếm và
+    định vị người trên khung hình). Đọc từ cấu hình đang chạy, nhà nào cũng vậy."""
+    from services import nhin_nha, so_do_nha, so_mat_nha
+
+    ra = []
+    try:
+        canh = nhin_nha._muc("canh")
+        cams = [str(c) for c in canh.get("camera") or []]
+        if canh.get("bat") and cams and nhin_nha.co_mat():
+            quen = [str(x["ten"]) for x in so_mat_nha.danh_sach_nguoi()]
+            ra.append(f"NHẬN MẶT người quen trên {', '.join(cams)} (đã dạy mặt: {', '.join(quen) or 'chưa ai'}); "
+                      "mặt cúi / quay đi / ngược sáng thì không nhận được — không nhận ra ≠ người lạ.")
+        if so_do_nha.frigate_url():
+            ra.append("Frigate: HỘP (toạ độ) từng người trên khung hình mỗi camera, theo dõi một người qua các khung "
+                      "(đứng yên bao lâu, đi về phía nào), đếm người từng camera. Hai camera cùng thấy một vùng thì "
+                      "một người có thể bị đếm HAI lần — dùng ô chung trong sơ đồ để trừ.")
+        if nhin_nha.co_yolo():
+            ra.append("Chụp NGAY một camera và đếm người bằng YOLO (dùng để nhìn lại trước khi tắt / khi cảm biến "
+                      "nghi kẹt).")
+    except Exception as exc:  # noqa: BLE001 — thiếu một khả năng thì đề thiếu dòng đó, không hỏng cả lượt
+        logger.warning({"event": "kich_ban_kha_nang_loi", "error": str(exc)[:160]})
+    return ra
 
 
 def de(uv: dict[str, Any], da_hoi: list[dict[str, Any]], tb: str, ma: list[str]) -> str:
@@ -195,6 +250,12 @@ def de(uv: dict[str, Any], da_hoi: list[dict[str, Any]], tb: str, ma: list[str])
     dong += ["\nB2. AI Ở NHÀ — người và điện thoại/máy người cầm (home = ở nhà, not_home = đi vắng; cả nhà "
              "not_home mà trong nhà có người là bất thường):"]
     dong += [f"- {x}" for x in uv.get("nguoi") or []] or ["(không có — bot không biết lúc nào cả nhà vắng)"]
+    if uv.get("lich"):
+        dong += ["\nB3. NGƯỜI TRONG NHÀ và LỊCH TỪNG NGƯỜI (lời khai «thường thường», có hôm lệch):"]
+        dong += list(uv["lich"])
+    dong += ["\nB4. LOA đọc được thông báo:"] + ([f"- {x}" for x in uv.get("loa") or []] or ["(không có loa nào)"])
+    dong += ["\nB5. BOT NHÌN ĐƯỢC GÌ:"] + ([f"- {x}" for x in uv.get("kha_nang") or []]
+                                          or ["(không có — không nhận mặt, không đếm người qua camera)"])
     dong.append("\nC. THIẾT BỊ và việc ĐANG CÀI (bộ kích hoạt sẽ làm đúng như thế) — ĐANG XÉT thiết bị đánh ►; "
                 "thiết bị khác chỉ để biết quanh nó có gì:")
     for m, y in uv["thiet_bi"].items():
@@ -236,12 +297,17 @@ def kiem(data: Any, tb: str, ma: list[str]) -> dict[str, Any] | str:
     """Loại bài sai khuôn (mã ngoài danh mục, giá trị lạ); đúng/sai về nội dung là việc người chấm."""
     if not isinstance(data, dict) or not isinstance(data.get("kich_ban"), list):
         return "phải là JSON có «kich_ban»: [ … ]"
-    ra, kad = [], []
+    # Tình huống SAI KHUÔN thì bỏ RIÊNG nó, không loại cả bài: mã bị hụt do đó sẽ được lượt bổ sung mã bỏ sót hỏi
+    # lại. Đo 30/09/2026 tối (danh mục 22 mã, ChatGPT miễn phí): 5/41 bài đề cũ bị loại cả bài chỉ vì MỘT tình huống
+    # thiếu `loai` / `nen` lạ — dù đã hỏi lại một lần. Không còn tình huống nào dùng được mới là bài hỏng.
+    ra, kad, loi = [], [], []
     for x in data["kich_ban"]:
         if not isinstance(x, dict):
-            return "mỗi kịch bản là một object"
+            loi.append("mỗi kịch bản là một object")
+            continue
         if x.get("loai") not in ma:
-            return f"«loai» phải là mã trong danh mục: {x.get('loai')!r}"
+            loi.append(f"«loai» phải là mã trong danh mục: {x.get('loai')!r}")
+            continue
         if "khong_ap_dung" in (x.get("nen"), x.get("hien_tai")):
             # Bot nói mã này KHÔNG ÁP DỤNG nhưng đặt nhầm vào danh sách tình huống — ý đúng, sai chỗ: chuyển sang
             # «khong_ap_dung». Đo 30/09/2026 (ChatGPT miễn phí): 4/8 lượt bị loại cả bài chỉ vì chỗ này.
@@ -249,9 +315,11 @@ def kiem(data: Any, tb: str, ma: list[str]) -> dict[str, Any] | str:
                         "vi_sao": str(x.get("vi_sao") or x.get("tinh_huong") or "")[:200]})
             continue
         if x.get("nen") not in NEN or x.get("hien_tai") not in HIEN_TAI:
-            return f"«nen» phải thuộc {NEN}, «hien_tai» thuộc {HIEN_TAI}"
+            loi.append(f"«nen» phải thuộc {NEN}, «hien_tai» thuộc {HIEN_TAI}")
+            continue
         if not str(x.get("tinh_huong") or "").strip():
-            return "thiếu «tinh_huong»"
+            loi.append("thiếu «tinh_huong»")
+            continue
         ra.append({"thiet_bi": tb, "loai": x["loai"], "tinh_huong": str(x["tinh_huong"])[:300],
                    "cam_bien_thay": str(x.get("cam_bien_thay") or "")[:300], "nen": x["nen"],
                    "hien_tai": x["hien_tai"], "vi_sao": str(x.get("vi_sao") or "")[:300],
@@ -259,7 +327,12 @@ def kiem(data: Any, tb: str, ma: list[str]) -> dict[str, Any] | str:
     for x in data.get("khong_ap_dung") or []:
         if isinstance(x, dict) and x.get("loai") in ma:
             kad.append({"thiet_bi": tb, "loai": x["loai"], "vi_sao": str(x.get("vi_sao") or "")[:200]})
-    return {"kich_ban": ra, "khong_ap_dung": kad, "tom_tat": str(data.get("tom_tat") or "")[:300]}
+    if loi and not ra:
+        return loi[0]
+    if loi:
+        logger.info({"event": "kich_ban_bo_tinh_huong_sai_khuon", "thiet_bi": tb, "so": len(loi), "loi": loi[0][:120]})
+    return {"kich_ban": ra, "khong_ap_dung": kad, "tom_tat": str(data.get("tom_tat") or "")[:300],
+            "sai_khuon": len(loi)}
 
 
 def thieu(k: dict[str, Any], ma: list[str]) -> list[str]:
@@ -268,13 +341,46 @@ def thieu(k: dict[str, Any], ma: list[str]) -> list[str]:
     return [m for m in ma if m not in co]
 
 
+#: Mỗi lượt gọi bot xét tối đa ngần này mã danh mục. Đo 30/09/2026 tối (ChatGPT miễn phí, 34 đề cũ, cùng lúc): danh
+#: mục 17 mã một lượt đạt 27/34; lên 22 mã một lượt còn 19/34 — mã nhiều thì mỗi mã được xét hời hợt, hụt đúng các
+#: bẫy cũ (ngồi yên mất dấu, quần áo phơi, cửa mở 2h sáng). Chia danh mục thành vài lượt, mỗi lượt ít mã.
+MA_MOI_LUOT = 12
+
+
 def giai_mot(uv: dict[str, Any], tb: str, huong: str, model: str, da_hoi: list[dict[str, Any]]) -> dict[str, Any] | str:
-    """Bot dựng tình huống cho MỘT thiết bị. Thiếu mã nào của danh mục thì hỏi lại ĐÚNG những mã đó một lần
-    (chủ máy 30/09/2026: "tránh bỏ sót, tránh nhầm, thiếu tình huống với chỉ 1 thiết bị")."""
+    """Bot dựng tình huống cho MỘT thiết bị, danh mục chia thành các phần ≤ ``MA_MOI_LUOT`` mã (mỗi phần một lượt
+    gọi), gộp lại. Phần nào hỏng thì mã của phần ấy thành «bỏ sót»; hỏng hết mới trả lỗi."""
+    ma = danh_muc(huong)
+    so_phan = max(1, -(-len(ma) // MA_MOI_LUOT))
+    co = max(1, -(-len(ma) // so_phan))
+    phan = [ma[i:i + co] for i in range(0, len(ma), co)] or [ma]
+    kq: dict[str, Any] = {"kich_ban": [], "khong_ap_dung": [], "tom_tat": [], "thieu": [], "sai_khuon": 0}
+    loi = []
+    for m in phan:
+        k = _giai_phan(uv, tb, huong, model, da_hoi, m)
+        if isinstance(k, str):
+            loi.append(k)
+            kq["thieu"] += m
+            continue
+        kq["kich_ban"] += k["kich_ban"]
+        kq["khong_ap_dung"] += k["khong_ap_dung"]
+        kq["thieu"] += k["thieu"]
+        kq["sai_khuon"] += int(k.get("sai_khuon") or 0)
+        if k.get("tom_tat"):
+            kq["tom_tat"].append(k["tom_tat"])
+    if len(loi) == len(phan):
+        return loi[0]
+    kq["tom_tat"] = " ".join(kq["tom_tat"])[:300]
+    return kq
+
+
+def _giai_phan(uv: dict[str, Any], tb: str, huong: str, model: str, da_hoi: list[dict[str, Any]],
+               ma: list[str]) -> dict[str, Any] | str:
+    """Một lượt: bot dựng tình huống cho các mã ``ma`` của MỘT thiết bị. Thiếu mã nào thì hỏi lại ĐÚNG những mã đó
+    một lần (chủ máy 30/09/2026: "tránh bỏ sót, tránh nhầm, thiếu tình huống với chỉ 1 thiết bị")."""
     from services import hieu_thiet_bi_nha as ht
     from services.thoi_quen_nha import _hoi_bot
 
-    ma = danh_muc(huong)
     dde = de(uv, da_hoi, tb, ma)
     b = _hoi_bot(ht, model, huong, dde)
     k = kiem(b, tb, ma) if not isinstance(b, str) else b

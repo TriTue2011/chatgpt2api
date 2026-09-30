@@ -72,11 +72,19 @@ def test_sai_khuon_thi_hoi_lai_mot_lan_kem_loi(kb, monkeypatch):
     tra = [hong, _bai([None, None])]
     monkeypatch.setattr(thoi_quen_nha, "_hoi_bot", lambda ht, m, h, d: de.append(d) or tra[len(de) - 1])
     k = kb.giai_mot(kb.do(), DEN, "- `vao` — x\n- `o_lai` — y", "m", [])
-    assert len(de) == 2 and "BÀI BỊ LOẠI VÌ SAI KHUÔN" in de[1] and "«loai»" in de[1]
+    # Một tình huống hỏng thì bỏ riêng nó; mã bị hụt («vao») đi lượt bổ sung mã bỏ sót.
+    assert len(de) == 2 and "EM ĐÃ BỎ SÓT các mã: vao" in de[1]
     assert isinstance(k, dict) and k["thieu"] == []
-    # Hỏi lại vẫn sai: trả lỗi như cũ, không hỏi lần ba.
+    # CẢ BÀI sai khuôn: hỏi lại MỘT lần kèm lỗi; vẫn sai thì trả lỗi, không hỏi lần ba.
     de.clear()
-    tra = [hong, hong, hong]
+    toan_hong = _bai([None, None])
+    for x in toan_hong["kich_ban"]:
+        x["loai"] = None
+    tra = [toan_hong, _bai([None, None])]
+    k = kb.giai_mot(kb.do(), DEN, "- `vao` — x\n- `o_lai` — y", "m", [])
+    assert len(de) == 2 and "BÀI BỊ LOẠI VÌ SAI KHUÔN" in de[1] and "«loai»" in de[1] and k["thieu"] == []
+    de.clear()
+    tra = [toan_hong, toan_hong, toan_hong]
     assert isinstance(kb.giai_mot(kb.do(), DEN, "- `vao` — x\n- `o_lai` — y", "m", []), str) and len(de) == 2
 
 
@@ -125,3 +133,63 @@ def test_cham_tinh_huong_vao_de_lan_sau(kb, monkeypatch):
     monkeypatch.setattr(thoi_quen_nha, "_hoi_bot", lambda ht, m, h, d: de.append(d) or _bai([None]))
     kb.giai()
     assert "F. LỜI CHẤM" in de[0] and "(giáo viên chấm SAI)" in de[0] and "13% < 20%" in de[0]
+
+
+def test_de_bay_khoang_cach_do_sang_dem_nguoi_loa_theo_dau_hieu_HA(kb, monkeypatch):
+    """Chủ máy 30/09/2026: tình huống cần khoảng cách radar, đếm người camera, loa / loa camera — nhận ra theo dấu
+    hiệu tích hợp khai (device_class, đơn vị, cờ tính năng, sổ thiết bị), không theo tên, để nhà nào cũng dùng được."""
+    from services import boi_canh_nha, ha_client
+    them = [
+        {"entity_id": "binary_sensor.radar_pk", "state": "on", "attributes": {"device_class": "occupancy", "friendly_name": "Radar PK"}},
+        {"entity_id": "sensor.radar_pk_kc", "state": "2.1", "attributes": {"device_class": "distance", "unit_of_measurement": "m", "friendly_name": "Radar PK khoảng cách"}},
+        {"entity_id": "sensor.radar_pn_target_distance", "state": "376", "attributes": {"unit_of_measurement": "cm", "friendly_name": "Radar PN Target distance"}},
+        {"entity_id": "sensor.dien_thoai_kc", "state": "5", "attributes": {"device_class": "distance", "unit_of_measurement": "km", "friendly_name": "Điện thoại cách nhà"}},
+        {"entity_id": "sensor.lux_pk", "state": "30", "attributes": {"device_class": "illuminance", "friendly_name": "Độ sáng PK"}},
+        {"entity_id": "sensor.cam_pk_person_count", "state": "2", "attributes": {"unit_of_measurement": "objects", "friendly_name": "Cam PK đếm người"}},
+        {"entity_id": "media_player.loa_cam", "state": "idle", "attributes": {"supported_features": 1048576 | 512, "friendly_name": "Loa cam cửa"}},
+        {"entity_id": "media_player.tivi", "state": "off", "attributes": {"supported_features": 512, "friendly_name": "Tivi"}},
+    ]
+    monkeypatch.setattr(ha_client, "get_states", lambda: TT + them)
+    monkeypatch.setattr(ha_client, "get_ha_area_index", lambda: {"entity_platform": {}, "entity_device_ids": {
+        "binary_sensor.radar_pk": ["z:1"], "sensor.radar_pk_kc": ["z:1"], "sensor.radar_pn_target_distance": ["z:1"], "sensor.dien_thoai_kc": ["app:2"],
+        "media_player.loa_cam": ["cam:9"], "camera.cam_cua": ["cam:9"]}})
+    monkeypatch.setattr(boi_canh_nha, "phong_cua", lambda ma: "Phòng ngủ" if ma in (DEN, NGU) else "Phòng khách")
+    uv = kb.do()
+    pk = " | ".join(uv["phong"]["Phòng khách"])
+    assert "Radar PK khoảng cách (KHOẢNG CÁCH người tới radar, m)" in pk
+    assert "Radar PN Target distance (KHOẢNG CÁCH người tới radar, cm)" in pk, "radar Zigbee chỉ khai đơn vị, không device_class"
+    assert "Điện thoại cách nhà" not in pk, "khoảng cách không cùng thiết bị radar thì không phải radar"
+    assert "Độ sáng PK (độ sáng)" in pk and "Cam PK đếm người (ĐẾM số vật thể camera thấy)" in pk
+    assert uv["loa"] == ["Loa cam cửa (ở Phòng khách — loa TRÊN CAMERA)"], "tivi không có cờ thông báo thì không là loa"
+    de = kb.de(uv, [], DEN, ["vao"])
+    assert "B4. LOA đọc được thông báo:\n- Loa cam cửa" in de and "B5. BOT NHÌN ĐƯỢC GÌ:" in de
+    assert "noi" in kb.NEN
+
+
+def test_tinh_huong_sai_khuon_bo_rieng_no_khong_loai_ca_bai(kb):
+    """Đo 30/09/2026: 5/41 bài bị loại cả bài chỉ vì MỘT tình huống thiếu `loai` — nay bỏ riêng tình huống đó."""
+    ma = ["vao", "o_lai"]
+    tot = _bai([None])["kich_ban"][0]
+    k = kb.kiem({"kich_ban": [tot, {**tot, "loai": None}, {**tot, "loai": "o_lai", "nen": "bat_nhe"}]}, DEN, ma)
+    assert isinstance(k, dict) and [x["loai"] for x in k["kich_ban"]] == ["vao"] and k["sai_khuon"] == 2
+    assert kb.thieu(k, ma) == ["o_lai"], "mã bị hụt do bỏ tình huống sai khuôn → lượt bổ sung sẽ hỏi lại"
+
+
+def test_danh_muc_dai_chia_nhieu_luot_moi_luot_it_ma(kb, monkeypatch):
+    """Đo 30/09/2026: 22 mã một lượt tụt 27/34 → 19/34 — chia danh mục, mỗi lượt ≤ MA_MOI_LUOT mã, gộp lại."""
+    from services import thoi_quen_nha
+    ma = [f"ma_{chr(97 + i)}" for i in range(25)]
+    huong = "\n".join(f"- `{m}` — x" for m in ma)
+    de: list[str] = []
+
+    def tra(ht, m, h, d):
+        de.append(d)
+        dong = next(x for x in d.splitlines() if x.startswith("DANH MỤC"))
+        cua = dong.rsplit("): ", 1)[1].split(", ")
+        return {"kich_ban": [{"loai": c, "tinh_huong": "t", "nen": "giu", "hien_tai": "dung"} for c in cua],
+                "tom_tat": f"phần {len(de)}"}
+    monkeypatch.setattr(thoi_quen_nha, "_hoi_bot", tra)
+    k = kb.giai_mot(kb.do(), DEN, huong, "m", [])
+    assert len(de) == 3 and all(len(x.splitlines()[1].rsplit("): ", 1)[1].split(", ")) <= kb.MA_MOI_LUOT for x in de)
+    assert sorted(x["loai"] for x in k["kich_ban"]) == sorted(ma) and k["thieu"] == []
+    assert "phần 1" in k["tom_tat"] and "phần 3" in k["tom_tat"]
