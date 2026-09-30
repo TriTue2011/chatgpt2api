@@ -600,6 +600,13 @@ def doc_anh_camera(ten: str) -> dict[str, Any]:
             tho: str | None = _goi_thi_giac(lenh, luoi)
         except RuntimeError as exc:
             tho, loi_model = None, str(exc)[:160]
+            if so().get("model_doc_duoc") == model_anh():
+                # Model này ĐÃ từng đọc được ảnh ở nhà này → lần này là lỗi TẠM (bận, quá giới hạn…), không phải nhà
+                # thiếu model. Đo 30/09/2026 07:57: Claude đọc xong 2 camera rồi trả 429 ở 2 camera sau — bản cũ
+                # gửi vào nhóm "em chưa có model đọc ảnh, anh tự làm giúp em". Chỉ việc người mới làm được mới
+                # được đẩy sang người.
+                return {"ok": False, "tam": True, "camera": ten_that,
+                        "loi": f"model đọc ảnh lỗi tạm, lượt sau em đọc lại ({loi_model})"}
     else:
         tho = None
     if tho is None:
@@ -613,10 +620,18 @@ def doc_anh_camera(ten: str) -> dict[str, Any]:
         logger.warning({"event": "so_do_nha_anh_loai", "camera": ten_that, "loi": k})
         return {"ok": False, "camera": ten_that, "loi": k}
     _ghi_bai_anh(ten_that, k, dem, f"bot đọc, hướng dẫn {ban}")
+    with _khoa:
+        d = _nap()
+        d["model_doc_duoc"] = model_anh()
+        (d.get("cho_anh") or {}).pop(ten_that, None)   # bot đọc được rồi thì phiếu nhờ người làm tay hết việc
+        _luu(d)
     logger.info({"event": "so_do_nha_anh", "camera": ten_that, "thay": k["thay"], "vat": len(vat)})
     return {"ok": True, "camera": ten_that, **k, "dem": dem, "luoi": luoi,
             "vat": [mo_ta_vat(v, rong, cao) for v in vat[:25]]}
 
+
+#: Lỗi tạm của model đọc ảnh: nghỉ bấy nhiêu giây rồi thử lại một lần trong cùng lượt đọc.
+NGHI_THU_LAI_S = 60.0
 
 #: Đặt `nhin_nha.so_do.model_anh` = giá trị này: không gọi model — luôn xuất ảnh + lệnh cho người dùng tự làm.
 THU_CONG = "thu_cong"
@@ -682,6 +697,15 @@ def doc_anh_va_ve(cameras: list[str] | None = None) -> dict[str, Any]:
             ra.append(doc_anh_camera(c))
         except Exception as exc:  # noqa: BLE001 — một camera hỏng không bỏ cả lượt
             ra.append({"ok": False, "camera": c, "loi": str(exc)[:160]})
+    lai = [i for i, x in enumerate(ra) if x.get("tam")]
+    if lai:
+        # Lỗi tạm (thường là quá giới hạn sau vài ảnh liền): nghỉ một quãng rồi thử lại MỘT lần trong lượt này.
+        time.sleep(NGHI_THU_LAI_S)
+        for i in lai:
+            try:
+                ra[i] = doc_anh_camera(ds[i])
+            except Exception as exc:  # noqa: BLE001
+                ra[i] = {"ok": False, "camera": ds[i], "loi": str(exc)[:160]}
     from services import thong_bao
     from services.protocol.conversation import save_image_bytes
 

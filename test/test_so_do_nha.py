@@ -171,3 +171,51 @@ def test_khong_co_model_doc_anh_thi_xuat_anh_va_lenh_nguoi_dung_tu_lam(so, tmp_p
     monkeypatch.setattr(nn, "_muc", lambda ten: {"model_anh": "thu_cong"} if ten == "so_do" else {})
     monkeypatch.setattr(so, "_goi_thi_giac", lambda *a: (_ for _ in ()).throw(AssertionError("không được gọi model")))
     assert so.doc_anh_camera("Cam bếp")["thu_cong"] and "Cam bếp" in so.cho_dap_an()
+
+
+def test_model_da_doc_duoc_thi_loi_la_tam_khong_nho_nguoi(so, tmp_path, monkeypatch):
+    """Đo 30/09/2026 07:57: Claude đọc xong Cam ban công, Cam bếp rồi trả 429 ở Cam cửa, Cam phòng khách — bản
+    cũ gửi vào nhóm "em chưa có model đọc ảnh, anh tự làm giúp em". Model đã từng đọc được thì lỗi là TẠM:
+    thử lại một lần sau khi nghỉ, không lập phiếu chờ người."""
+    import numpy as np
+
+    from services import camera_nha, ha_client, hieu_thiet_bi_nha as ht, nhin_nha, thong_bao, yolo_nha
+    from services.protocol import conversation
+    anh = np.full((600, 800, 3), (10, 90, 200), np.uint8)
+    monkeypatch.setattr(so, "_ANH_DIR", tmp_path / "anh")
+    monkeypatch.setattr(camera_nha, "chup", lambda ten, timeout=20.0: (ten, b"jpeg"))
+    monkeypatch.setattr(yolo_nha, "doc_anh", lambda b: anh)
+    monkeypatch.setattr(nhin_nha, "vat_the", lambda a: [])
+    monkeypatch.setattr(so, "_ten_phong", lambda: ["Bếp", "Phòng khách"])
+    monkeypatch.setattr(ht, "huong_dan", lambda ten: ("HƯỚNG DẪN", "v1"))
+    monkeypatch.setattr(ha_client, "get_states", lambda: [])
+    monkeypatch.setattr(conversation, "save_image_bytes", lambda b: "http://x/luoi.jpg")
+    monkeypatch.setattr(so, "NGHI_THU_LAI_S", 0)
+    monkeypatch.setattr(so, "giai_va_bao", lambda: {})
+    gui: list[str] = []
+    monkeypatch.setattr(thong_bao, "gui", lambda nhom, tin, anh_url="": gui.append(tin))
+    monkeypatch.setattr(ht, "bao_nhom", lambda tin: gui.append(tin))
+    monkeypatch.setattr(camera_nha, "danh_sach", lambda: [{"name": "Cam bếp"}, {"name": "Cam cửa"}])
+    luot = {"Cam bếp": ['{"thay": {"Bếp": ["A5"]}, "chac": 0.8}'],
+            "Cam cửa": [RuntimeError("model thị giác lỗi: 429"), '{"thay": {}, "chac": 0.9}']}
+
+    def model(noi, jpeg):
+        x = luot[noi.split("CAMERA: ")[1].split("\n")[0]].pop(0)
+        if isinstance(x, Exception):
+            raise x
+        return x
+    monkeypatch.setattr(so, "_goi_thi_giac", model)
+    r = so.doc_anh_va_ve()
+    assert [x["ok"] for x in r["anh"]] == [True, True], "lỗi tạm được thử lại trong cùng lượt"
+    assert so.cho_dap_an() == {} and not any("chưa có model" in t for t in gui)
+    so._cho_dap_an("Cam bếp", "lệnh", b"", False, "v1")
+    luot["Cam bếp"] = ['{"thay": {"Bếp": ["A5"]}, "chac": 0.8}']
+    so.doc_anh_camera("Cam bếp")
+    assert "Cam bếp" not in so.cho_dap_an(), "bot đọc được thì xoá phiếu chờ người"
+    # Thử lại vẫn lỗi: báo lỗi tạm, vẫn không nhờ người làm tay.
+    luot["Cam cửa"] = [RuntimeError("model thị giác lỗi: 429"), RuntimeError("model thị giác lỗi: 429")]
+    luot["Cam bếp"] = ['{"thay": {"Bếp": ["A5"]}, "chac": 0.8}']
+    gui.clear()
+    r = so.doc_anh_va_ve()
+    assert r["anh"][1]["tam"] and so.cho_dap_an() == {}
+    assert any("lượt sau em đọc lại" in t for t in gui) and not any("chưa có model" in t for t in gui)
