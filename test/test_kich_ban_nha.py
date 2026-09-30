@@ -63,6 +63,33 @@ def test_bo_sot_danh_muc_thi_hoi_lai_dung_ma_thieu(kb, monkeypatch):
     assert kb.noi_cua("chung_cu") == "chung_cu" and kb.noi_cua("nha_dat") == "nha_pho" and kb.noi_cua("khong_ro") == ""
 
 
+def test_sai_khuon_thi_hoi_lai_mot_lan_kem_loi(kb, monkeypatch):
+    """Đo 30/09/2026 (Codex hết lượt, combo rơi về ChatGPT miễn phí): một tình huống thiếu `loai` là cả bài bị loại."""
+    from services import thoi_quen_nha
+    de: list[str] = []
+    hong = _bai([None, None])
+    hong["kich_ban"][0]["loai"] = None
+    tra = [hong, _bai([None, None])]
+    monkeypatch.setattr(thoi_quen_nha, "_hoi_bot", lambda ht, m, h, d: de.append(d) or tra[len(de) - 1])
+    k = kb.giai_mot(kb.do(), DEN, "- `vao` — x\n- `o_lai` — y", "m", [])
+    assert len(de) == 2 and "BÀI BỊ LOẠI VÌ SAI KHUÔN" in de[1] and "«loai»" in de[1]
+    assert isinstance(k, dict) and k["thieu"] == []
+    # Hỏi lại vẫn sai: trả lỗi như cũ, không hỏi lần ba.
+    de.clear()
+    tra = [hong, hong, hong]
+    assert isinstance(kb.giai_mot(kb.do(), DEN, "- `vao` — x\n- `o_lai` — y", "m", []), str) and len(de) == 2
+
+
+def test_khong_ap_dung_dat_nham_vao_tinh_huong_thi_chuyen_cho(kb):
+    """Đo 30/09/2026: model ghi `hien_tai: "khong_ap_dung"` ngay trong kich_ban — ý đúng, sai chỗ."""
+    bai = _bai([None, None])
+    bai["kich_ban"][1].update(hien_tai="khong_ap_dung", vi_sao="phòng không có thú cưng")
+    k = kb.kiem(bai, DEN, ["vao", "o_lai"])
+    assert [x["loai"] for x in k["kich_ban"]] == ["vao"]
+    assert k["khong_ap_dung"] == [{"thiet_bi": DEN, "loai": "o_lai", "vi_sao": "phòng không có thú cưng"}]
+    assert kb.thieu(k, ["vao", "o_lai"]) == []
+
+
 def test_hoi_tung_cau_tra_loi_vao_so_do_roi_hoi_cau_ke(kb, monkeypatch):
     from services import so_do_nha, thoi_quen_nha
     monkeypatch.setattr(thoi_quen_nha, "_hoi_bot", lambda ht, m, h, de: _bai(["Ngủ yên radar có giữ không?",

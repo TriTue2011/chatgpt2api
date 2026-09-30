@@ -242,6 +242,12 @@ def kiem(data: Any, tb: str, ma: list[str]) -> dict[str, Any] | str:
             return "mỗi kịch bản là một object"
         if x.get("loai") not in ma:
             return f"«loai» phải là mã trong danh mục: {x.get('loai')!r}"
+        if "khong_ap_dung" in (x.get("nen"), x.get("hien_tai")):
+            # Bot nói mã này KHÔNG ÁP DỤNG nhưng đặt nhầm vào danh sách tình huống — ý đúng, sai chỗ: chuyển sang
+            # «khong_ap_dung». Đo 30/09/2026 (ChatGPT miễn phí): 4/8 lượt bị loại cả bài chỉ vì chỗ này.
+            kad.append({"thiet_bi": tb, "loai": x["loai"],
+                        "vi_sao": str(x.get("vi_sao") or x.get("tinh_huong") or "")[:200]})
+            continue
         if x.get("nen") not in NEN or x.get("hien_tai") not in HIEN_TAI:
             return f"«nen» phải thuộc {NEN}, «hien_tai» thuộc {HIEN_TAI}"
         if not str(x.get("tinh_huong") or "").strip():
@@ -272,6 +278,14 @@ def giai_mot(uv: dict[str, Any], tb: str, huong: str, model: str, da_hoi: list[d
     dde = de(uv, da_hoi, tb, ma)
     b = _hoi_bot(ht, model, huong, dde)
     k = kiem(b, tb, ma) if not isinstance(b, str) else b
+    if isinstance(k, str) and not isinstance(b, str):
+        # Trả JSON mà SAI KHUÔN (thiếu `loai`, `nen` lạ…): một tình huống sai là cả bài bị loại. Hỏi lại MỘT lần
+        # kèm đúng lỗi — cùng cách với lượt bổ sung mã bỏ sót. Đo 30/09/2026 lúc Codex hết lượt, combo rơi về
+        # ChatGPT miễn phí: 5/18 bài đề chung cư + văn phòng bị loại chỉ vì một tình huống thiếu `loai`.
+        b = _hoi_bot(ht, model, huong, dde + "\n\nBÀI EM VỪA LÀM:\n" + json.dumps(b, ensure_ascii=False)
+                     + f"\n\nBÀI BỊ LOẠI VÌ SAI KHUÔN: {k}\nTrả lại JSON ĐÚNG khuôn ở phần «Trả lời»: giữ nội dung, "
+                     "mỗi tình huống đủ `loai` (mã trong danh mục), `nen`, `hien_tai` đúng các giá trị cho phép.")
+        k = kiem(b, tb, ma) if not isinstance(b, str) else b
     if isinstance(k, str):
         return k
     con = thieu(k, ma)
