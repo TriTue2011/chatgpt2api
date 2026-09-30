@@ -3682,6 +3682,13 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
         # thứ trên nó chết). Thứ tự tính lại từ cấu hình mỗi lượt, nên lúc pool
         # hồi là nó tự về vị trí cũ — thường là số 1.
         routes = provider_order.reorder(routes)
+        # Đường đi của combo lượt này: model nào đã thử / bị bỏ qua / lỗi và VÌ SAO, đúng thứ tự thật (sau khi
+        # dời). Chủ máy 30/09/2026 hỏi "free chatgpt còn nhiều mà" sao lượt giá vàng rơi xuống NVIDIA — nhật ký
+        # mất khi khởi động lại nên không trả lời được. Gắn vào câu trả lời cho lượt nội bộ của bot (xem cuối vòng).
+        _duong: list[dict[str, str]] = []
+
+        def _ghi_duong(r: Any, vi: str) -> None:
+            _duong.append({"m": f"{r.provider}/{r.model}", "vi": vi[:120]})
         for _route_idx, route in enumerate(routes):
             messages_for_route = list(messages_copy)
             ha_context_injected = False
@@ -3719,6 +3726,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                 if _route_idx < len(routes) - 1 and not model_cooldown.is_available("combo:" + model, _khoa_nghi(route)):
                     logger.info({"event": "combo_skip_cooling", "combo": model, "provider": route.provider, "model": route.model})
                     last_error = f"{route.model} đang cooldown (combo-level)"
+                    _ghi_duong(route, "bỏ qua: đang nghỉ sau lỗi trước")
                     continue
 
                 # Circuit-breaker per provider: mạch đang MỞ (fail liên tiếp) →
@@ -3730,6 +3738,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                 if _route_idx < len(routes) - 1 and not provider_circuit.allow(route.provider, nhom=model):
                     logger.info({"event": "combo_skip_circuit", "combo": model, "provider": route.provider})
                     last_error = f"{route.provider} circuit open (fail liên tiếp)"
+                    _ghi_duong(route, "bỏ qua: cầu dao ngắt (lỗi liên tiếp)")
                     continue
 
                 cooldown = (model_cooldown.get_cooldown_info(route.model)
@@ -3737,6 +3746,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                 if cooldown:
                     logger.warning({"event": "model_cooldown_skip", "model": route.model, **cooldown})
                     last_error = cooldown["message"]
+                    _ghi_duong(route, "bỏ qua: model đang nghỉ")
                     continue
 
                 # ChatGPT Free has a hard ~45KB backend limit (413 Payload Too
@@ -3764,6 +3774,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                     if payload_bytes > 42_000:
                         logger.info({"event": "combo_skip_free_oversized", "bytes": payload_bytes, "model": route.model})
                         last_error = "payload exceeds ChatGPT Free 45KB limit"
+                        _ghi_duong(route, f"bỏ qua: yêu cầu {payload_bytes} B > 42000 B")
                         continue
 
                 logger.info({
@@ -3797,6 +3808,9 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                 model_cooldown.record_success("combo:" + model, _khoa_nghi(route))
                 provider_circuit.record_success(route.provider, nhom=model)
                 provider_order.record_success(route.provider)
+                if body.get("x_agent_internal") and isinstance(result, dict):
+                    _ghi_duong(route, "ok")
+                    result["x_c2a_duong"] = _duong
                 return result
             except NoFallbackError as exc:
                 # disable_model_fallback: lỗi CỨNG — không thử member kế tiếp
@@ -3806,6 +3820,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                 break
             except Exception as exc:
                 last_error = str(exc)
+                _ghi_duong(route, "lỗi: " + last_error)
                 logger.warning({"event": "combo_fail", "combo": model, "provider": route.provider, "error": last_error[:200]})
                 # Ảnh không đọc được (HEIC/JXL/tải hỏng) → provider nào cũng chết
                 # y hệt. Dừng ngay: không đốt cả combo, không ghi cooldown oan cho

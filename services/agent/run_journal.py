@@ -58,19 +58,21 @@ def bat_dau_do() -> None:
 
 
 @contextmanager
-def do(loai: str, ten: str) -> Iterator[None]:
+def do(loai: str, ten: str) -> Iterator[dict[str, Any]]:
     """Đo một khâu (``loai`` = "model" | "tool") của lượt đang đo; không có lượt nào thì không làm gì.
-    Model gọi BÊN TRONG một tool (tool chụp ảnh gọi model thị giác…) mang ``trong_tool`` — khỏi tính trùng."""
+    Model gọi BÊN TRONG một tool (tool chụp ảnh gọi model thị giác…) mang ``trong_tool`` — khỏi tính trùng.
+    Trả một dict: bên gọi ghi thêm vào mốc (vd ``duong`` — đường đi combo của lời gọi model)."""
+    them: dict[str, Any] = {}
     d = _moc_cv.get()
     if d is None:
-        yield
+        yield them
         return
     bd = time.monotonic()
     trong = d["trong_tool"] > 0
     if loai == "tool":
         d["trong_tool"] += 1
     try:
-        yield
+        yield them
     finally:
         if loai == "tool":
             d["trong_tool"] -= 1
@@ -78,7 +80,7 @@ def do(loai: str, ten: str) -> Iterator[None]:
              "ms": int((time.monotonic() - bd) * 1000), "_bd": bd}
         if trong:
             m["trong_tool"] = 1
-        d["moc"].append(m)
+        d["moc"].append({**m, **them})
 
 
 def tong_ket_do() -> dict[str, Any] | None:

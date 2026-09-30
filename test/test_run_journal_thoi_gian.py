@@ -33,3 +33,15 @@ def test_ngoai_luot_bot_thi_khong_do(monkeypatch):
     runtime.call_model("cx/auto", [], max_tokens=10)
     tk = rj.tong_ket_do()
     assert [(m["loai"], m["ten"]) for m in tk["moc"]] == [("model", "cx/auto")]
+
+
+def test_duong_di_combo_vao_moc_model(monkeypatch):
+    """Chủ máy 30/09/2026: "free chatgpt còn nhiều mà" — mỗi lượt phải thấy model nào thử / bỏ qua / lỗi, vì sao."""
+    from services.agent import runtime
+    duong = [{"m": "chatgpt_free/cgf/auto", "vi": "bỏ qua: đang nghỉ sau lỗi trước"},
+             {"m": "nvidia_nim/nemotron", "vi": "ok"}]
+    monkeypatch.setattr(runtime, "_call_model", lambda model, messages, **k: {"choices": [], "x_c2a_duong": duong})
+    rj.bat_dau_do()
+    runtime.call_model("AI text", [])
+    tk = rj.tong_ket_do()
+    assert tk["moc"][0]["duong"] == duong

@@ -153,8 +153,11 @@ def _base() -> str:
 def call_model(model: str, messages: list[dict[str, Any]], **kwargs: Any) -> dict[str, Any]:
     """Gọi model (xem `_call_model`) — trong lượt bot thì đo thời gian lời gọi (`run_journal.do`)."""
     from services.agent import run_journal
-    with run_journal.do("model", model):
-        return _call_model(model, messages, **kwargs)
+    with run_journal.do("model", model) as them:
+        r = _call_model(model, messages, **kwargs)
+        if isinstance(r, dict) and r.get("x_c2a_duong"):
+            them["duong"] = r["x_c2a_duong"]      # combo: model nào thử / bỏ qua / lỗi, vì sao
+        return r
 
 
 def _call_model(
