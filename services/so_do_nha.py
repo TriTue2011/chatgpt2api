@@ -854,9 +854,75 @@ def doc_anh_va_ve(cameras: list[str] | None = None) -> dict[str, Any]:
     return {"anh": ra, "so_do": giai_va_bao()}
 
 
+# ── Chủ nhà KHOANH trên ảnh ─────────────────────────────────────────────────
+# Chủ máy 30/09/2026 tối: "sao không tích được trên ảnh nhỉ, mấy chỗ sai, rõ ràng sáng tôi đã gửi chi tiết cho bạn
+# rồi". Vùng chủ nhà khoanh là ĐÁP ÁN, thắng bài bot tự đọc: sơ đồ trên web, bộ đếm người theo phòng
+# (``o_cua_phong``) và đề cho bot vẽ lại đều dùng nó.
+def khoanh(camera: str | None = None) -> dict[str, Any]:
+    """{camera: {"phong": {phòng: [ô]}, "do": [ô đồ đạc], "luc"}} (hoặc của một camera)."""
+    d = so().get("chu_khoanh") or {}
+    return dict(d.get(camera) or {}) if camera is not None else dict(d)
+
+
+def dat_khoanh(camera: str, phong: Any, do: Any = None) -> dict[str, Any]:
+    """Lưu vùng chủ nhà khoanh cho một camera (thay bản cũ). ``phong`` rỗng và ``do`` rỗng = bỏ khoanh, quay về
+    bài bot đọc. Ô sai dạng, một ô hai phòng → ValueError."""
+    camera = str(camera or "").strip()
+    if not camera:
+        raise ValueError("Thiếu tên camera.")
+    if not isinstance(phong, dict):
+        raise ValueError("«phong» phải là {phòng: [ô]}.")
+    sach: dict[str, list[str]] = {}
+    da: dict[str, str] = {}
+    for ten, o in phong.items():
+        ten = str(ten or "").strip()
+        if not ten or len(ten) > 40 or not isinstance(o, list) or not all(la_o(x) for x in o):
+            raise ValueError(f"«{ten}»: ô phải dạng {mau_o()}")
+        for x in o:
+            if da.get(x, ten) != ten:
+                raise ValueError(f"ô {x} vừa thuộc «{da[x]}» vừa thuộc «{ten}»")
+            da[x] = ten
+        if o:
+            sach[ten] = sorted(set(o), key=lambda x: (int(x[1:]), x[0]))
+    do_ = [x for x in (do or []) if la_o(x) and x not in da]
+    if do is not None and not isinstance(do, list):
+        raise ValueError("«do» phải là danh sách ô.")
+    with _khoa:
+        d = _nap()
+        ck = d.setdefault("chu_khoanh", {})
+        if not sach and not do_:
+            ck.pop(camera, None)
+        else:
+            ck[camera] = {"phong": sach, "do": sorted(set(do_), key=lambda x: (int(x[1:]), x[0])),
+                          "luc": time.time()}
+        d["mo_ta"] = [x for x in d["mo_ta"] if x.get("nguon") != f"khoanh:{camera}"]
+        if sach or do_:
+            d["mo_ta"].append({"luc": time.time(), "nguon": f"khoanh:{camera}", "noi_dung": (
+                f"Chủ nhà khoanh trên ảnh {camera} (ĐÁP ÁN, thắng mọi lần bot đọc): "
+                + "; ".join(f"{k}: ô {', '.join(v)}" for k, v in sach.items())
+                + (f"; ĐỒ ĐẠC (không ai đứng, không thuộc phòng nào): ô {', '.join(do_)}" if do_ else ""))[:4000]})
+        _luu(d)
+    return khoanh(camera)
+
+
+def thay_cua(camera: str) -> dict[str, list[str]]:
+    """Ô theo phòng của ``camera``: vùng chủ nhà khoanh nếu có, không thì theo sơ đồ đang dùng."""
+    k = khoanh(camera)
+    if k.get("phong"):
+        return dict(k["phong"])
+    for c in (ap() or {}).get("camera") or []:
+        if c.get("ten") == camera:
+            return dict(c.get("thay") or {})
+    return {}
+
+
 # ── Dùng sơ đồ ──────────────────────────────────────────────────────────────
 def o_cua_phong(camera: str, phong: str) -> set[str]:
-    """Ô trên khung hình ``camera`` thuộc ``phong`` theo sơ đồ đang dùng (rỗng = không biết)."""
+    """Ô trên khung hình ``camera`` thuộc ``phong`` — vùng chủ nhà khoanh trước, không thì theo sơ đồ đang dùng
+    (rỗng = không biết)."""
+    k = khoanh(camera)
+    if k.get("phong"):
+        return set(k["phong"].get(phong) or [])
     s = ap() or {}
     for c in s.get("camera") or []:
         if c.get("ten") == camera:

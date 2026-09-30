@@ -793,6 +793,18 @@ def create_router() -> APIRouter:
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
+    @router.post("/api/hoc-hoi/so-do-nha/khoanh")
+    async def so_do_nha_khoanh(body: dict, authorization: str | None = Header(default=None)):
+        """Chủ nhà khoanh ô trên ảnh một camera. body: {camera, phong: {phòng: [ô]}, do: [ô]} — rỗng cả hai là bỏ
+        khoanh. Vùng khoanh thắng bài bot đọc."""
+        require_admin(authorization)
+        from services import so_do_nha
+        try:
+            return {"ok": True, "khoanh": so_do_nha.dat_khoanh(str(body.get("camera") or ""), body.get("phong") or {},
+                                                               body.get("do"))}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+
     @router.post("/api/hoc-hoi/so-do-nha/mo-ta/sua")
     async def so_do_nha_sua_mo_ta(body: dict, authorization: str | None = Header(default=None)):
         """Sửa hoặc xoá một dòng mô tả. body: {luc, noi_dung} (sửa) hoặc {luc, xoa: true}."""

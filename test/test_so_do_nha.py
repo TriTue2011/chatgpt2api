@@ -319,3 +319,25 @@ def test_sua_va_xoa_mo_ta(so, monkeypatch):
     import pytest
     with pytest.raises(ValueError):
         so.sua_mo_ta(10.0, "  ")
+
+
+def test_chu_nha_khoanh_thang_bai_bot_doc(so):
+    """Chủ máy 30/09/2026 tối: "sao không tích được trên ảnh nhỉ, mấy chỗ sai … sáng tôi đã gửi chi tiết"."""
+    import pytest
+    with so._khoa:
+        d = so._nap()
+        d["ap"] = {"camera": [{"ten": "Cam bếp", "thay": {"Bếp": ["A1"], "Phòng khách": ["B2"]}}]}
+        so._luu(d)
+    assert so.o_cua_phong("Cam bếp", "Bếp") == {"A1"}
+    k = so.dat_khoanh("Cam bếp", {"Bếp": ["E4", "E5"], "Phòng khách": ["B10"]}, ["C3", "E4"])
+    assert k["phong"] == {"Bếp": ["E4", "E5"], "Phòng khách": ["B10"]} and k["do"] == ["C3"], "ô đã có phòng thì không là đồ"
+    assert so.o_cua_phong("Cam bếp", "Bếp") == {"E4", "E5"} and so.thay_cua("Cam bếp")["Phòng khách"] == ["B10"]
+    mt = [x for x in so.so()["mo_ta"] if x["nguon"] == "khoanh:Cam bếp"]
+    assert len(mt) == 1 and "ĐÁP ÁN" in mt[0]["noi_dung"] and "ĐỒ ĐẠC" in mt[0]["noi_dung"]
+    with pytest.raises(ValueError, match="vừa thuộc"):
+        so.dat_khoanh("Cam bếp", {"Bếp": ["A1"], "Phòng khách": ["A1"]})
+    with pytest.raises(ValueError):
+        so.dat_khoanh("Cam bếp", {"Bếp": ["Z99"]})
+    so.dat_khoanh("Cam bếp", {}, [])
+    assert so.khoanh("Cam bếp") == {} and so.o_cua_phong("Cam bếp", "Bếp") == {"A1"}, "bỏ khoanh thì về bài bot"
+    assert not [x for x in so.so()["mo_ta"] if x["nguon"] == "khoanh:Cam bếp"]

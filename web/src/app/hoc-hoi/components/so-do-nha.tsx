@@ -36,7 +36,8 @@ type SoDo = {
 };
 type Bai = { id: number; luc: number; gia_tri: SoDo; ket_qua: "cho" | "dung" | "sai"; ghi_chu?: string };
 type MoTa = { luc: number; nguon: string; noi_dung: string };
-type SoData = { mo_ta?: MoTa[]; bai?: Bai[]; ap?: (SoDo & { id: number }) | null; luoi?: { cot: number; hang: number } };
+type SoData = { mo_ta?: MoTa[]; bai?: Bai[]; ap?: (SoDo & { id: number }) | null; luoi?: { cot: number; hang: number };
+  chu_khoanh?: Record<string, { phong?: Record<string, string[]>; do?: string[]; luc?: number }> };
 
 const TEN_KIEU: Record<string, string> = {
   chung_cu: "Chung cư", nha_pho: "Nhà phố", biet_thu: "Nhà vườn / biệt thự", van_phong: "Văn phòng",
@@ -47,13 +48,22 @@ const MAU = ["#ef4444", "#3b82f6", "#22c55e", "#eab308", "#a855f7", "#f97316", "
 
 const gio = (t: number) => new Date(t * 1000).toLocaleString("vi-VN");
 
-/** Ảnh lưới của một camera (tải kèm xác thực) + ô tô màu theo phòng. */
-function AnhCamera({ cam, thay, mauPhong, luoi }: {
-  cam: string; thay: Record<string, string[]>; mauPhong: Record<string, string>; luoi: { cot: number; hang: number };
+type Khoanh = { phong?: Record<string, string[]>; do?: string[]; luc?: number };
+const DO = "__do";
+
+/** Ảnh lưới của một camera (tải kèm xác thực) + ô tô màu theo phòng. Chế độ KHOANH: chọn cọ (phòng / đồ đạc / xoá)
+ * rồi bấm hay kéo qua các ô, lưu thành đáp án của chủ nhà (chủ máy 30/09/2026: "sao không tích được trên ảnh"). */
+function AnhCamera({ cam, thay, doDac, mauPhong, luoi, phongDs, daKhoanh, xong }: {
+  cam: string; thay: Record<string, string[]>; doDac: string[]; mauPhong: Record<string, string>;
+  luoi: { cot: number; hang: number }; phongDs: string[]; daKhoanh: boolean; xong: () => Promise<void>;
 }) {
   const [url, setUrl] = useState<string | null>(null);
   const [khong, setKhong] = useState(false);
   const [to, setTo] = useState(true);
+  const [sua, setSua] = useState(false);
+  const [nhap, setNhap] = useState<Record<string, string>>({});
+  const [co, setCo] = useState<string>("");
+  const [dangKeo, setDangKeo] = useState(false);
 
   useEffect(() => {
     let bo = "";
@@ -63,31 +73,102 @@ function AnhCamera({ cam, thay, mauPhong, luoi }: {
     return () => { if (bo) URL.revokeObjectURL(bo); };
   }, [cam]);
 
+  const batDauSua = () => {
+    const m: Record<string, string> = {};
+    Object.entries(thay).forEach(([p, ds]) => ds.forEach((o) => { m[o] = p; }));
+    doDac.forEach((o) => { if (!m[o]) m[o] = DO; });
+    setNhap(m);
+    setCo(phongDs[0] || DO);
+    setSua(true);
+  };
+  const to1 = (o: string) => setNhap((m) => {
+    const n = { ...m };
+    if (co) n[o] = co; else delete n[o];
+    return n;
+  });
+  const luu = async () => {
+    const phong: Record<string, string[]> = {};
+    const doMoi: string[] = [];
+    Object.entries(nhap).forEach(([o, p]) => { if (p === DO) doMoi.push(o); else (phong[p] ||= []).push(o); });
+    if (await goiPost("/api/hoc-hoi/so-do-nha/khoanh", { camera: cam, phong, do: doMoi })) {
+      toast.success("Đã lưu vùng anh khoanh — bot dùng vùng này thay bài tự đọc");
+      setSua(false);
+      await xong();
+    }
+  };
+  const boKhoanh = async () => {
+    if (!window.confirm("Bỏ vùng anh đã khoanh cho camera này, quay về bài bot tự đọc?")) return;
+    if (await goiPost("/api/hoc-hoi/so-do-nha/khoanh", { camera: cam, phong: {}, do: [] })) {
+      toast.success("Đã bỏ khoanh");
+      setSua(false);
+      await xong();
+    }
+  };
+
   if (khong) return <p className="text-xs text-muted-foreground">Chưa có ảnh camera này — bấm «Chụp lại camera».</p>;
   if (!url) return <p className="text-xs text-muted-foreground">Đang tải ảnh…</p>;
-  const o = Object.entries(thay).flatMap(([p, ds]) => ds.map((ten) => ({ p, ten })));
+  const o: { p: string; ten: string }[] = sua
+    ? Object.entries(nhap).map(([ten, p]) => ({ p, ten }))
+    : [...Object.entries(thay).flatMap(([p, ds]) => ds.map((ten) => ({ p, ten }))), ...doDac.map((ten) => ({ p: DO, ten }))];
+  const mau = (p: string) => (p === DO ? "#6b7280" : mauPhong[p] || "#888");
+  const tenO = (c: number, h: number) => `${String.fromCharCode(65 + c)}${h + 1}`;
   return (
     <div className="space-y-1">
-      <div className="relative inline-block max-w-full">
+      {sua && (
+        <div className="flex flex-wrap items-center gap-1 text-xs">
+          <span className="text-muted-foreground">Cọ:</span>
+          {[...phongDs, DO, ""].map((p) => (
+            <button key={p || "_xoa"} type="button" onClick={() => setCo(p)}
+              className={`rounded px-2 py-0.5 ${co === p ? "ring-2 ring-primary" : "border"}`}>
+              {p && <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm" style={{ background: mau(p) }} />}
+              {p === DO ? "Đồ đạc (không ai đứng)" : p || "Xoá"}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="relative inline-block max-w-full touch-none select-none"
+        onPointerUp={() => setDangKeo(false)} onPointerLeave={() => setDangKeo(false)}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={url} alt={cam} className="block max-h-80 max-w-full rounded" />
-        {to && o.map(({ p, ten }) => {
+        <img src={url} alt={cam} className="block max-h-80 max-w-full rounded" draggable={false} />
+        {(to || sua) && o.map(({ p, ten }) => {
           const m = /^([A-Z])(\d{1,2})$/.exec(ten);
           if (!m) return null;
           const c = m[1].charCodeAt(0) - 65, h = Number(m[2]) - 1;
           return (
-            <div key={`${p}-${ten}`} title={`${ten}: ${p}`} className="absolute"
+            <div key={`${p}-${ten}`} title={`${ten}: ${p === DO ? "đồ đạc" : p}`} className="pointer-events-none absolute"
               style={{ left: `${(c / luoi.cot) * 100}%`, top: `${(h / luoi.hang) * 100}%`,
-                width: `${100 / luoi.cot}%`, height: `${100 / luoi.hang}%`,
-                background: mauPhong[p] || "#888", opacity: 0.35 }} />
+                width: `${100 / luoi.cot}%`, height: `${100 / luoi.hang}%`, background: mau(p), opacity: 0.4 }} />
+          );
+        })}
+        {sua && Array.from({ length: luoi.cot * luoi.hang }, (_, i) => {
+          const c = i % luoi.cot, h = Math.floor(i / luoi.cot), ten = tenO(c, h);
+          return (
+            <div key={ten} title={ten} className="absolute cursor-crosshair border border-white/10"
+              style={{ left: `${(c / luoi.cot) * 100}%`, top: `${(h / luoi.hang) * 100}%`,
+                width: `${100 / luoi.cot}%`, height: `${100 / luoi.hang}%` }}
+              onPointerDown={(e) => { e.preventDefault(); setDangKeo(true); to1(ten); }}
+              onPointerEnter={() => { if (dangKeo) to1(ten); }} />
           );
         })}
       </div>
-      {o.length > 0 && (
-        <button type="button" className="text-xs text-muted-foreground underline" onClick={() => setTo(!to)}>
-          {to ? "Ẩn ô tô màu" : "Hiện ô tô màu"}
-        </button>
-      )}
+      <div className="flex flex-wrap gap-2 text-xs">
+        {!sua ? (
+          <>
+            <Button size="sm" variant="outline" onClick={batDauSua}><Pencil className="mr-1 h-4 w-4" />Khoanh / sửa ô</Button>
+            {o.length > 0 && (
+              <button type="button" className="text-muted-foreground underline" onClick={() => setTo(!to)}>
+                {to ? "Ẩn ô tô màu" : "Hiện ô tô màu"}
+              </button>
+            )}
+            {daKhoanh && <button type="button" className="text-destructive underline" onClick={() => void boKhoanh()}>Bỏ vùng đã khoanh</button>}
+          </>
+        ) : (
+          <>
+            <Button size="sm" onClick={() => void luu()}><Check className="mr-1 h-4 w-4" />Lưu vùng khoanh</Button>
+            <Button size="sm" variant="ghost" onClick={() => setSua(false)}>Huỷ</Button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -221,11 +302,17 @@ export function SoDoNha() {
   const moTa = so.mo_ta || [];
   const camTen = Array.from(new Set([
     ...(hien?.camera || []).map((c) => c.ten),
+    ...Object.keys(so.chu_khoanh || {}),
     ...moTa.filter((m) => m.nguon.startsWith("anh:")).map((m) => m.nguon.slice(4)),
   ]));
+  const khoanhDs = so.chu_khoanh || {};
+  const phongDs = Array.from(new Set([
+    ...(hien?.phong || []).map((p) => p.ten),
+    ...Object.values(khoanhDs).flatMap((k) => Object.keys(k.phong || {})),
+  ]));
   const mauPhong: Record<string, string> = {};
-  (hien?.phong || []).forEach((p, i) => { mauPhong[p.ten] = MAU[i % MAU.length]; });
-  const loiChu = moTa.filter((m) => !m.nguon.startsWith("anh:"));
+  phongDs.forEach((p, i) => { mauPhong[p] = MAU[i % MAU.length]; });
+  const loiChu = moTa.filter((m) => !m.nguon.startsWith("anh:") && !m.nguon.startsWith("khoanh:"));
   const dsCho = Object.entries(cho);
 
   return (
@@ -288,13 +375,21 @@ export function SoDoNha() {
 
       {/* 2. Từng camera: ảnh + ô theo phòng + lời tả */}
       {camTen.map((cam) => {
-        const thay = hien?.camera?.find((c) => c.ten === cam)?.thay || {};
+        const kh = khoanhDs[cam];
+        const thay = (kh?.phong && Object.keys(kh.phong).length ? kh.phong : null)
+          || hien?.camera?.find((c) => c.ten === cam)?.thay || {};
         const doc = [...moTa].reverse().find((m) => m.nguon === `anh:${cam}`);
-        const khoanh = moTa.filter((m) => !m.nguon.startsWith("anh:") && m.noi_dung.includes(cam));
+        const khoanh = moTa.filter((m) => !m.nguon.startsWith("anh:") && !m.nguon.startsWith("khoanh:")
+          && m.noi_dung.includes(cam));
         return (
           <div key={cam} className="space-y-2 rounded border p-3">
-            <div className="font-medium">📷 {cam}</div>
-            <AnhCamera cam={cam} thay={thay} mauPhong={mauPhong} luoi={luoi} />
+            <div className="font-medium">📷 {cam}
+              <span className={`ml-2 text-xs ${kh ? "text-sky-600" : "text-muted-foreground"}`}>
+                {kh ? "vùng anh khoanh" : "bot tự đọc"}
+              </span>
+            </div>
+            <AnhCamera cam={cam} thay={thay} doDac={kh?.do || []} mauPhong={mauPhong} luoi={luoi} phongDs={phongDs}
+              daKhoanh={!!kh} xong={tai} />
             <div className="text-xs">
               {Object.keys(thay).length ? (
                 Object.entries(thay).map(([p, o]) => (
