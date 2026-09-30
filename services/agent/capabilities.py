@@ -1154,6 +1154,31 @@ def _h_so_do_nha(args: dict, ctx: dict) -> dict:
             "Em chưa có sơ đồ nhà nào được anh xác nhận. Anh mô tả giúp em nhé."}
 
 
+def _h_cai_kich_hoat(args: dict, ctx: dict) -> dict:
+    """Chủ nhà chỉnh CÁCH bot tự bật/tắt một thiết bị (mốc «ở lại», phút tắt khi vắng) — `kich_hoat_nha`.
+
+    30/09/2026 chủ máy nhắn «giảm thời gian 3 phút xuống 15s ở quạt phòng khách»: không có tool này, model gọi
+    nhầm ha_call_service → fan.set_preset_mode → HA lỗi 500."""
+    from services import kich_hoat_nha
+
+    o_lai = args.get("o_lai_giay")
+    vang = args.get("vang_phut")
+    if o_lai is None and vang is None:
+        return {"text": "Anh muốn chỉnh gì ạ: thời gian «ở lại» trước khi bật, hay số phút vắng thì tắt?"}
+    kq = kich_hoat_nha.cai_bang_loi(str(args.get("thiet_bi") or ""),
+                                    o_lai_giay=float(o_lai) if o_lai is not None else None,
+                                    vang_phut=float(vang) if vang is not None else None)
+    if not kq["ok"]:
+        return {"text": f"Em chưa chỉnh được: {kq['loi']}"}
+    phan = []
+    if o_lai is not None:
+        phan.append(f"có người ở lại {float(o_lai):g} giây là em xét bật" if float(o_lai)
+                    else "mốc «ở lại» về lại số em tự học")
+    if vang is not None:
+        phan.append(f"vắng {float(vang):g} phút thì tắt")
+    return {"text": f"Dạ, {kq['ten']}: " + "; ".join(phan) + "."}
+
+
 def _h_kich_ban_nha(args: dict, ctx: dict) -> dict:
     """Kịch bản nhà (`services/kich_ban_nha.py`): bot dựng tình huống cho từng thiết bị từ sơ đồ nhà,
     xét cách đang cài có đúng không, hỏi chủ nhà từng câu; chủ nhà trả lời câu «❓ KB…»."""
@@ -7402,6 +7427,18 @@ CAPABILITIES: dict[str, Capability] = {
             "ghi_chu": {"type": "string", "description": "viec='cham': chỗ sai chủ nhà chỉ ra."},
             "so": {"type": "integer", "description": "Số #N của bài sơ đồ nếu chủ nhà nêu."}},
             "required": ["viec"]}),
+    "cai_kich_hoat": Capability(
+        name="cai_kich_hoat", risk=READ, handler=_h_cai_kich_hoat,
+        emoji="⚙️", label="Chỉnh cách bot tự bật/tắt thiết bị",
+        description=("Chủ nhà chỉnh CÁCH BOT TỰ BẬT/TẮT một thiết bị bot đang điều khiển: thời gian «có người ở lại» "
+                     "trước khi bật/hỏi («giảm 3 phút xuống 15s ở quạt phòng khách» → o_lai_giay=15; «để bot tự học» "
+                     "→ 0), số phút vắng rồi tắt («vắng 5 phút thì tắt đèn trần» → vang_phut=5). KHÔNG phải lệnh bật/"
+                     "tắt hay đổi mức thiết bị (đó là control_home / ha_call_service)."),
+        parameters={"type": "object", "properties": {
+            "thiet_bi": {"type": "string", "description": "Tên thiết bị như chủ nhà gọi, vd «quạt phòng khách»."},
+            "o_lai_giay": {"type": "number", "description": "Giây có người ở lại trước khi bật/hỏi; 0 = bot tự học."},
+            "vang_phut": {"type": "number", "description": "Số phút vắng liền thì tắt."}},
+            "required": ["thiet_bi"]}),
     "kich_ban_nha": Capability(
         name="kich_ban_nha", risk=READ, handler=_h_kich_ban_nha,
         emoji="🧭", label="Tình huống nhà — bot tự dựng và hỏi",
@@ -8412,7 +8449,7 @@ _CAP_GROUP: dict[str, str] = {
     "write_code": "code",
     "home_status": "homeassistant", "control_home": "homeassistant",
     "ghi_du_kien": "homeassistant", "tra_loi_bot_nha": "homeassistant", "so_do_nha": "homeassistant",
-    "kich_ban_nha": "homeassistant",
+    "kich_ban_nha": "homeassistant", "cai_kich_hoat": "homeassistant",
     "describe_device": "homeassistant",
     # MQTT cùng nhóm quyền với Home Assistant: ai được điều khiển nhà thì được
     # điều khiển qua cả hai đường, không phải tích thêm ô riêng.

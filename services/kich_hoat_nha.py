@@ -251,7 +251,8 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
                  tat_khi_sang: dict[str, Any] | None = None,
                  luat_chu: list[dict[str, Any]] | None = None,
                  im_lang: bool | None = None,
-                 hoi_de_hoc: bool | None = None) -> dict[str, Any]:
+                 hoi_de_hoc: bool | None = None,
+                 o_lai_giay: float | None = None) -> dict[str, Any]:
     """Chủ máy sửa sơ đồ: bật/tắt, cho TỰ LÀM ngay, BỎ nguồn, đặt khung giờ NGOẠI LỆ
     (``{"hanh_dong": "on"|"off", "tu": "HH:MM", "den": "HH:MM", "thu"?: [0..6]}`` hoặc
     ĐI THEO LỊCH SINH HOẠT ``{"hanh_dong", "lich": "<mã mục lịch>"}`` — trong khung đó
@@ -280,6 +281,8 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
         tat_khi_sang = _kiem_tat_khi_sang(tat_khi_sang)
     if luat_chu is not None:
         luat_chu = _kiem_luat_chu(luat_chu)
+    if o_lai_giay is not None and o_lai_giay != 0 and not 5 <= float(o_lai_giay) <= 3600:
+        raise ValueError("Mốc «ở lại»: 5–3600 giây (0 = để bot tự học).")
     _gop_guong()
     tb = _chinh(tb)          # tích công tắc gốc hay đèn bọc thì cũng là một thiết bị
     with _khoa:
@@ -298,6 +301,13 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
             cu["luat_chu"] = luat_chu
         if im_lang is not None:
             cu["im_lang"] = bool(im_lang)
+        if o_lai_giay is not None:
+            if float(o_lai_giay):
+                cu["o_lai_giay"] = float(o_lai_giay)
+            else:
+                cu.pop("o_lai_giay", None)          # 0 = trả về số bot tự học
+            with _khoa:
+                _o_lai_da_phat.pop(tb, None)
         if hoi_de_hoc is not None:
             cu["hoi_de_hoc"] = bool(hoi_de_hoc)
             d["mo_hinh"].pop(tb, None)          # thêm/bỏ nguồn «ở lại» là phải học lại
@@ -796,6 +806,18 @@ _o_lai_xet_luc: dict[str, float] = {}
 _o_lai_da_phat: dict[str, float] = {}
 
 
+def phut_o_lai(tb: str) -> float | None:
+    """Mốc «ở lại» đang dùng: số CHỦ NHÀ đặt (`o_lai_giay`) thắng số bot tự học (`mo_hinh.o_lai.phut`).
+
+    Chủ máy 30/09/2026 (nhắn bot trong nhóm): "Giảm thời gian 3 phút xuống 15s ở quạt phòng khách" — lúc đó bot
+    không có cách chỉnh nên gọi nhầm `fan.set_preset_mode`. Điều chủ máy đặt luôn thắng điều máy học."""
+    giay = (_nap()["thiet_bi"].get(tb) or {}).get("o_lai_giay")
+    if giay:
+        return float(giay) / 60
+    p = (((_nap()["mo_hinh"].get(tb) or {}).get("o_lai")) or {}).get("phut")
+    return float(p) if p is not None else None
+
+
 def _chuoi_nhi_phan(ro: sqlite3.Connection, ma: str, tu: float, den: float) -> tuple[list[float], list[str]]:
     """Trạng thái (chữ thường) của ``ma`` theo thời gian, kể cả giá trị đang có lúc ``tu``."""
     if _cbg.la_ghep(ma):
@@ -906,13 +928,14 @@ def _xet_o_lai(tb: str) -> None:
         cu.cancel()
     try:
         ol = ((_nap()["mo_hinh"].get(tb) or {}).get("o_lai")) or {}
-        if ol.get("phut") is None or not (_nap()["thiet_bi"].get(tb) or {}).get("hoi_de_hoc"):
+        phut = phut_o_lai(tb)
+        if phut is None or not ol.get("cam_bien") or not (_nap()["thiet_bi"].get(tb) or {}).get("hoi_de_hoc"):
             return
         luc = time.time()
         o = _o_lai_luc(tb, luc)
         if o is None:
             return
-        con = o[0] + float(ol["phut"]) * 60 - luc
+        con = o[0] + phut * 60 - luc
         if con > 0:
             t = threading.Timer(con + 1, _xet_o_lai, args=(tb,))
             t.daemon = True
@@ -937,7 +960,7 @@ def _theo_o_lai(ma: str, gt: str, ds: dict[str, dict[str, Any]]) -> None:
     luc = time.time()
     for tb, cd in ds.items():
         ol = ((_nap()["mo_hinh"].get(tb) or {}).get("o_lai")) or {}
-        if not cd.get("hoi_de_hoc") or ol.get("phut") is None or ma not in (ol.get("cam_bien") or []):
+        if not cd.get("hoi_de_hoc") or phut_o_lai(tb) is None or ma not in (ol.get("cam_bien") or []):
             continue
         with _khoa:
             if tb in _hen_o_lai or luc - _o_lai_xet_luc.get(tb, 0.0) < O_LAI_XET_GIAY:
@@ -1496,7 +1519,8 @@ def xet(tb: str, hd: str, nguon: str, luc: float) -> dict[str, Any]:
                 "ly_do": f"nghi báo ảo: {_kiem_ao_cua(tb)['gio']} giờ qua không có dấu hiệu người nào"}
     if hoc_hoi:
         return {"lam": "hoi", "p": p, "x": x,
-                "ly_do": f"đã ở {x[PHUT_DA_O]:.0f} phút; em chưa đủ tin nên hỏi anh để học"}
+                "ly_do": (f"đã ở {x[PHUT_DA_O]:.0f} phút" if x[PHUT_DA_O] >= 1 else f"đã ở {x[PHUT_DA_O] * 60:.0f} giây")
+                + "; em chưa đủ tin nên hỏi anh để học"}
     if khung:
         return {"lam": "hoi", "p": p, "x": x, "ly_do": f"{ten_khung}: anh đặt luôn hỏi"}
     if cach == "hoi":
@@ -2606,6 +2630,7 @@ def tong_quan() -> list[dict[str, Any]]:
                    "im_lang": bool(cd.get("im_lang")),
                    "hoi_de_hoc": bool(cd.get("hoi_de_hoc")),
                    "muc": mh.get("muc") or None, "nhieu": mh.get("nhieu") or None,
+                   "o_lai_giay": cd.get("o_lai_giay"),
                    "o_lai": ({"phut": mh["o_lai"].get("phut"), "lan": mh["o_lai"].get("lan", 0),
                               "cam_bien": [{"ma": m, "ten": ten_ha.get(m, m)} for m in mh["o_lai"].get("cam_bien") or []]}
                              if mh.get("o_lai") else None),
@@ -2688,6 +2713,40 @@ def _nguong_cay(nut: dict[str, Any], key: str) -> float | None:
                 return round(float(n["nguong"]), 1)
         tang = [c for n in tang if "key" in n for c in (n["trai"], n["phai"])]
     return None
+
+
+def tim_thiet_bi(ten: str) -> str | None:
+    """Tên chủ nhà gọi («quạt phòng khách») hoặc mã → thiết bị bot đang điều khiển. Không khớp / khớp nhiều thì None."""
+    ten = str(ten or "").strip()
+    ds = ds_thiet_bi()
+    if ten in ds:
+        return ten
+    th = _ten_ha()
+
+    def bo_dau(x: str) -> str:
+        return "".join(c for c in unicodedata.normalize("NFD", x.lower()) if unicodedata.category(c) != "Mn")
+    k = bo_dau(ten)
+    khop = [tb for tb in ds if bo_dau(th.get(tb, "")) == k] or [tb for tb in ds if k and k in bo_dau(th.get(tb, tb))]
+    return khop[0] if len(khop) == 1 else None
+
+
+def cai_bang_loi(ten: str, *, o_lai_giay: float | None = None, vang_phut: float | None = None) -> dict[str, Any]:
+    """Chủ nhà chỉnh CÁCH bot tự bật/tắt một thiết bị bằng lời (tool `cai_kich_hoat`): mốc «ở lại» (giây, 0 = bot
+    tự học), số phút vắng rồi tắt. Trả {ok, thiet_bi, ten, …} hoặc {ok: False, loi}."""
+    tb = tim_thiet_bi(ten)
+    if not tb:
+        return {"ok": False, "loi": f"không rõ thiết bị «{ten}» — em điều khiển: "
+                                   + ", ".join(_ten_ha().get(t, t) for t in ds_thiet_bi())}
+    cd = ds_thiet_bi()[tb]
+    tv = None
+    if vang_phut is not None:
+        tv = {**(cd.get("tat_khi_vang") or {}), "phut": int(round(float(vang_phut)))}
+        tv.setdefault("bat", bool(tv.get("cam_bien")))
+    try:
+        dat_thiet_bi(tb, o_lai_giay=o_lai_giay, tat_khi_vang=tv)
+    except ValueError as exc:
+        return {"ok": False, "loi": str(exc)}
+    return {"ok": True, "thiet_bi": tb, "ten": _ten_ha().get(tb, tb), "o_lai_giay": o_lai_giay, "vang_phut": vang_phut}
 
 
 def _reset_for_tests(duong: Path) -> None:

@@ -1295,3 +1295,34 @@ def test_muc_khi_bat_hoc_theo_nhiet_do(kh, monkeypatch):
     assert kh._la_lua_chon("high") and not kh._la_lua_chon("66") and not kh._la_lua_chon("[255, 147, 41]")
     kh._nap()["mo_hinh"][QUAT] = {"muc": {**m, "moc": [[27.0, "[255, 1, 2]", 5]]}}
     assert kh._chon_muc(QUAT) is None
+
+
+def test_chu_nha_dat_moc_o_lai_bang_loi(kh, monkeypatch):
+    """30/09/2026 chủ máy nhắn «Giảm thời gian 3 phút xuống 15s ở quạt phòng khách» — bot không có cách chỉnh nên gọi
+    nhầm fan.set_preset_mode. Nay: số chủ nhà đặt thắng số bot tự học; 0 = trả về tự học."""
+    monkeypatch.setattr(kh, "_ten_ha", lambda: {DEN: "Đèn phòng ngủ", "fan.phong_khach": "Quạt phòng khách"})
+    kh.dat_thiet_bi(DEN, bat=True)
+    kh.dat_thiet_bi("fan.phong_khach", bat=True, hoi_de_hoc=True)
+    kh._nap()["mo_hinh"]["fan.phong_khach"] = {"o_lai": {"phut": 3.3, "cam_bien": [NGU]}}
+    assert kh.phut_o_lai("fan.phong_khach") == 3.3
+    assert kh.tim_thiet_bi("quat phong khach") == "fan.phong_khach" and kh.tim_thiet_bi("Quạt") == "fan.phong_khach"
+    assert kh.tim_thiet_bi("điều hoà") is None
+    kq = kh.cai_bang_loi("quạt phòng khách", o_lai_giay=15)
+    assert kq["ok"] and kq["thiet_bi"] == "fan.phong_khach"
+    assert kh.phut_o_lai("fan.phong_khach") == 0.25
+    assert not kh.cai_bang_loi("quạt phòng khách", o_lai_giay=2)["ok"], "dưới 5 giây là chập chờn radar"
+    assert "không rõ thiết bị" in kh.cai_bang_loi("tivi", o_lai_giay=15)["loi"]
+    kh.cai_bang_loi("quạt phòng khách", o_lai_giay=0)
+    assert kh.phut_o_lai("fan.phong_khach") == 3.3
+    kh.dat_thiet_bi(DEN, tat_khi_vang={"bat": True, "cam_bien": [NGU], "phut": 3})
+    assert kh.cai_bang_loi("đèn phòng ngủ", vang_phut=7)["ok"]
+    assert kh.ds_thiet_bi()[DEN]["tat_khi_vang"]["phut"] == 7 and kh.ds_thiet_bi()[DEN]["tat_khi_vang"]["cam_bien"] == [NGU]
+
+
+def test_tool_cai_kich_hoat(kh, monkeypatch):  # noqa: F811
+    from services.agent import capabilities as cap
+    monkeypatch.setattr(kh, "_ten_ha", lambda: {"fan.phong_khach": "Quạt phòng khách"})
+    kh.dat_thiet_bi("fan.phong_khach", bat=True, hoi_de_hoc=True)
+    r = cap.CAPABILITIES["cai_kich_hoat"].handler({"thiet_bi": "quạt phòng khách", "o_lai_giay": 15}, {})
+    assert "Quạt phòng khách: có người ở lại 15 giây" in r["text"]
+    assert kh.ds_thiet_bi()["fan.phong_khach"]["o_lai_giay"] == 15.0

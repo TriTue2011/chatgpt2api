@@ -85,6 +85,8 @@ type ThietBi = {
   /** Chưa đủ tin thì hỏi để học — lúc có người Ở LẠI đủ `o_lai.phut` phút (bot tự rút). */
   hoi_de_hoc?: boolean;
   o_lai?: { phut: number | null; lan: number; cam_bien: { ma: string; ten: string }[] } | null;
+  /** Mốc «ở lại» chủ nhà đặt (giây) — thắng số bot tự học; trống = bot tự học. */
+  o_lai_giay?: number | null;
   /** Mức khi bật bot tự học theo nhiệt độ cùng khu (rỗng = chưa đủ mẫu → bật như cũ). */
   muc?: { truong?: string; cam_bien?: string; n?: number; moc?: [number, string, number][] } | null;
   /** Nghi nhiễu: sóng báo có mà camera cùng khu không thấy ai quá `phut` phút → chụp lại bằng YOLO. */
@@ -388,6 +390,15 @@ function MotThietBi({ tb, taiLai, doiMa, lich }: {
                   <input type="checkbox" checked={!!tb.hoi_de_hoc} onChange={(e) => void dat({ hoi_de_hoc: e.target.checked })} />
                   Chưa đủ tin thì hỏi anh để học (lúc có người ở lại)
                 </label>
+                {tb.hoi_de_hoc ? (
+                  <label className="flex items-center gap-2"
+                    title="Có người ở lại liền bấy nhiêu giây thì bot xét bật / hỏi. Để trống là bot tự học từ lần anh tự bật.">
+                    Anh đặt mốc «ở lại»:
+                    <input type="number" min={5} max={3600} className="w-20 rounded border bg-background px-1"
+                      defaultValue={tb.o_lai_giay ?? ""} placeholder="tự học"
+                      onBlur={(e) => void dat({ o_lai_giay: Number(e.target.value) || 0 })} /> giây
+                  </label>
+                ) : null}
                 {tb.hoi_de_hoc && tb.o_lai ? (
                   <div className="text-muted-foreground">
                     {tb.o_lai.phut != null
