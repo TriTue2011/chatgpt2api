@@ -252,7 +252,8 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
                  luat_chu: list[dict[str, Any]] | None = None,
                  im_lang: bool | None = None,
                  hoi_de_hoc: bool | None = None,
-                 o_lai_giay: float | None = None) -> dict[str, Any]:
+                 o_lai_giay: float | None = None,
+                 roi_giay: float | None = None) -> dict[str, Any]:
     """Chủ máy sửa sơ đồ: bật/tắt, cho TỰ LÀM ngay, BỎ nguồn, đặt khung giờ NGOẠI LỆ
     (``{"hanh_dong": "on"|"off", "tu": "HH:MM", "den": "HH:MM", "thu"?: [0..6]}`` hoặc
     ĐI THEO LỊCH SINH HOẠT ``{"hanh_dong", "lich": "<mã mục lịch>"}`` — trong khung đó
@@ -283,6 +284,8 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
         luat_chu = _kiem_luat_chu(luat_chu)
     if o_lai_giay is not None and o_lai_giay != 0 and not 5 <= float(o_lai_giay) <= 3600:
         raise ValueError("Mốc «ở lại»: 5–3600 giây (0 = để bot tự học).")
+    if roi_giay is not None and roi_giay != 0 and not 5 <= float(roi_giay) <= 14400:
+        raise ValueError("Thời gian «rời đi»: 5–14400 giây (0 = để bot tự học).")
     _gop_guong()
     tb = _chinh(tb)          # tích công tắc gốc hay đèn bọc thì cũng là một thiết bị
     with _khoa:
@@ -301,13 +304,20 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
             cu["luat_chu"] = luat_chu
         if im_lang is not None:
             cu["im_lang"] = bool(im_lang)
-        if o_lai_giay is not None:
-            if float(o_lai_giay):
-                cu["o_lai_giay"] = float(o_lai_giay)
+        # Hai thời gian chủ nhà đặt — ở lại (trước khi bật/hỏi) và rời đi (vắng bao lâu thì tắt) — cùng một cách:
+        # giây, thắng số bot học, 0 = trả về số bot tự học.
+        for khoa, gt in (("o_lai_giay", o_lai_giay), ("roi_giay", roi_giay)):
+            if gt is None:
+                continue
+            if float(gt):
+                cu[khoa] = float(gt)
             else:
-                cu.pop("o_lai_giay", None)          # 0 = trả về số bot tự học
+                cu.pop(khoa, None)
+        if o_lai_giay is not None:
             with _khoa:
                 _o_lai_da_phat.pop(tb, None)
+        if roi_giay is not None:
+            _hen_tat_huy(tb)
         if hoi_de_hoc is not None:
             cu["hoi_de_hoc"] = bool(hoi_de_hoc)
             d["mo_hinh"].pop(tb, None)          # thêm/bỏ nguồn «ở lại» là phải học lại
@@ -1869,7 +1879,7 @@ def _theo_vang(ma: str, gt: str, ds: dict[str, dict[str, Any]]) -> None:
             # số phút, chỉ chờ một nhịp quan sát rồi xét lại (`_tat_vi_vang` kiểm lại mọi thứ).
             # Bot chọn «chỉ khi đi ngang» (`roi_phut`) thì người đã ở lâu hơn — LƯU TRÚ — giữ nguyên.
             han = _han_tat.get(tb)
-            if (_deu_vang(cb) and han is not None and han - time.time() > ROI_GIAY
+            if (not cd.get("roi_giay") and _deu_vang(cb) and han is not None and han - time.time() > ROI_GIAY
                     and roi_sai_quanh_gio(tb, time.time())[0] < _roi_sai_toi_da()
                     and _di_ngang(tb, cb, tv.get("roi_phut"))):
                 _hen_tat_luc(tb, ROI_GIAY)
@@ -1906,8 +1916,12 @@ MAT_DAU_MAU = 5
 
 
 def phut_vang(cd: dict[str, Any], luc: float) -> float:
-    """Số phút chờ «tắt khi vắng» khi phòng trống từ ``luc``: lớn nhất trong số chủ máy đặt, số
-    bot học cho giờ đó, và lần nới gần nhất vì tắt nhầm (còn hiệu lực tới lượt học sau)."""
+    """Số phút chờ «tắt khi vắng» khi phòng trống từ ``luc``. Chủ nhà đặt thời gian RỜI ĐI (`roi_giay`) thì dùng
+    đúng số đó — thắng số bot học, cùng cách với mốc «ở lại» (chủ máy 30/09/2026: "thời gian rời đi, thời gian ở
+    lại đều setting được như nhau cho từng thiết bị"). Chưa đặt: lớn nhất trong mức sàn, số bot học cho giờ đó,
+    và lần nới gần nhất vì tắt nhầm (còn hiệu lực tới lượt học sau)."""
+    if cd.get("roi_giay"):
+        return float(cd["roi_giay"]) / 60
     goc = float((cd.get("tat_khi_vang") or {}).get("phut") or MAC_DINH_VANG_PHUT)
     h = str(datetime.fromtimestamp(luc, _TZ).hour)
     hoc = float((cd.get("cho_vang") or {}).get(h) or 0)
@@ -2630,7 +2644,7 @@ def tong_quan() -> list[dict[str, Any]]:
                    "im_lang": bool(cd.get("im_lang")),
                    "hoi_de_hoc": bool(cd.get("hoi_de_hoc")),
                    "muc": mh.get("muc") or None, "nhieu": mh.get("nhieu") or None,
-                   "o_lai_giay": cd.get("o_lai_giay"),
+                   "o_lai_giay": cd.get("o_lai_giay"), "roi_giay": cd.get("roi_giay"),
                    "o_lai": ({"phut": mh["o_lai"].get("phut"), "lan": mh["o_lai"].get("lan", 0),
                               "cam_bien": [{"ma": m, "ten": ten_ha.get(m, m)} for m in mh["o_lai"].get("cam_bien") or []]}
                              if mh.get("o_lai") else None),
@@ -2730,23 +2744,18 @@ def tim_thiet_bi(ten: str) -> str | None:
     return khop[0] if len(khop) == 1 else None
 
 
-def cai_bang_loi(ten: str, *, o_lai_giay: float | None = None, vang_phut: float | None = None) -> dict[str, Any]:
-    """Chủ nhà chỉnh CÁCH bot tự bật/tắt một thiết bị bằng lời (tool `cai_kich_hoat`): mốc «ở lại» (giây, 0 = bot
-    tự học), số phút vắng rồi tắt. Trả {ok, thiet_bi, ten, …} hoặc {ok: False, loi}."""
+def cai_bang_loi(ten: str, *, o_lai_giay: float | None = None, roi_giay: float | None = None) -> dict[str, Any]:
+    """Chủ nhà chỉnh CÁCH bot tự bật/tắt một thiết bị bằng lời (tool `cai_kich_hoat`): thời gian «ở lại» và thời
+    gian «rời đi», cùng một cách — giây, 0 = bot tự học. Trả {ok, thiet_bi, ten, …} hoặc {ok: False, loi}."""
     tb = tim_thiet_bi(ten)
     if not tb:
         return {"ok": False, "loi": f"không rõ thiết bị «{ten}» — em điều khiển: "
                                    + ", ".join(_ten_ha().get(t, t) for t in ds_thiet_bi())}
-    cd = ds_thiet_bi()[tb]
-    tv = None
-    if vang_phut is not None:
-        tv = {**(cd.get("tat_khi_vang") or {}), "phut": int(round(float(vang_phut)))}
-        tv.setdefault("bat", bool(tv.get("cam_bien")))
     try:
-        dat_thiet_bi(tb, o_lai_giay=o_lai_giay, tat_khi_vang=tv)
+        dat_thiet_bi(tb, o_lai_giay=o_lai_giay, roi_giay=roi_giay)
     except ValueError as exc:
         return {"ok": False, "loi": str(exc)}
-    return {"ok": True, "thiet_bi": tb, "ten": _ten_ha().get(tb, tb), "o_lai_giay": o_lai_giay, "vang_phut": vang_phut}
+    return {"ok": True, "thiet_bi": tb, "ten": _ten_ha().get(tb, tb), "o_lai_giay": o_lai_giay, "roi_giay": roi_giay}
 
 
 def _reset_for_tests(duong: Path) -> None:

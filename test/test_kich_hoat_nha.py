@@ -1314,9 +1314,17 @@ def test_chu_nha_dat_moc_o_lai_bang_loi(kh, monkeypatch):
     assert "không rõ thiết bị" in kh.cai_bang_loi("tivi", o_lai_giay=15)["loi"]
     kh.cai_bang_loi("quạt phòng khách", o_lai_giay=0)
     assert kh.phut_o_lai("fan.phong_khach") == 3.3
+    # Thời gian RỜI ĐI cùng cách: giây, thắng số bot học (chủ máy: "đều setting được như nhau cho từng thiết bị").
     kh.dat_thiet_bi(DEN, tat_khi_vang={"bat": True, "cam_bien": [NGU], "phut": 3})
-    assert kh.cai_bang_loi("đèn phòng ngủ", vang_phut=7)["ok"]
-    assert kh.ds_thiet_bi()[DEN]["tat_khi_vang"]["phut"] == 7 and kh.ds_thiet_bi()[DEN]["tat_khi_vang"]["cam_bien"] == [NGU]
+    cd = kh.ds_thiet_bi()[DEN]
+    cd["cho_vang"] = {str(h): 9.0 for h in range(24)}
+    assert kh.phut_vang(cd, time.time()) == 9.0, "chưa đặt: số bot học"
+    assert kh.cai_bang_loi("đèn phòng ngủ", roi_giay=15)["ok"]
+    cd = kh.ds_thiet_bi()[DEN]
+    assert cd["roi_giay"] == 15.0 and kh.phut_vang(cd, time.time()) == 0.25, "đã đặt: đúng số anh đặt, thắng số học"
+    assert not kh.cai_bang_loi("đèn phòng ngủ", roi_giay=1)["ok"]
+    kh.cai_bang_loi("đèn phòng ngủ", roi_giay=0)
+    assert "roi_giay" not in kh.ds_thiet_bi()[DEN]
 
 
 def test_tool_cai_kich_hoat(kh, monkeypatch):  # noqa: F811
