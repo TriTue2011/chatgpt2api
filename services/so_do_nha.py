@@ -526,8 +526,11 @@ def model_anh() -> str:
     return str(nhin_nha._muc("so_do").get("model_anh") or "").strip() or MODEL_ANH_MAC_DINH
 
 
-def _goi_thi_giac(noi: str, jpeg: bytes, max_tokens: int = 1500) -> str:
-    """Một lượt gọi model đọc ảnh sơ đồ (`model_anh`) với một ảnh. Lỗi thì ném RuntimeError."""
+def _goi_thi_giac(noi: str, jpeg: bytes, max_tokens: int = 4000) -> str:
+    """Một lượt gọi model đọc ảnh sơ đồ (`model_anh`) với một ảnh. Lỗi thì ném RuntimeError.
+
+    ``max_tokens`` 4000: lưới 16×12 = 192 ô, bài chia hai phòng dài gần 1000 token; đo 30/09/2026 mức 1500 làm
+    gemini-3.6-flash (model có suy nghĩ) trả «{}» ở Cam bếp, Cam phòng khách — nới ra thì đọc đúng mốc ngay."""
     from services.agent.runtime import call_model, content_of
 
     url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()
