@@ -139,6 +139,10 @@ class SilenceTests(unittest.TestCase):
 
 class StreamSynthesizeCacheTests(unittest.TestCase):
     def setUp(self) -> None:
+        # Tầng đĩa có test riêng (DiskCacheTests) — ở đây chỉ xét RAM, và không đụng thư mục dữ liệu thật.
+        khong_dia = mock.patch.object(tts_cache, "_cache_dia", return_value=None)
+        khong_dia.start()
+        self.addCleanup(khong_dia.stop)
         tts_cache.clear()
         self.addCleanup(tts_cache.clear)
         self.calls: list[str] = []
@@ -214,7 +218,8 @@ class CacheKeyTests(unittest.TestCase):
 
 class ConfigDefaultsTests(unittest.TestCase):
     def test_defaults(self) -> None:
-        with mock.patch.object(vcfg, "_sub", return_value={}):
+        with mock.patch.object(vcfg, "_sub", return_value={}), \
+                mock.patch.object(vcfg, "hang_may", return_value="trung_binh"):
             self.assertEqual(vcfg.tts_cache_mb(), 64)
             self.assertEqual(vcfg.tts_sentence_silence_ms(), 350)
             self.assertEqual(vcfg.tts_silence_jitter_percent(), 25)
@@ -234,7 +239,8 @@ class ConfigDefaultsTests(unittest.TestCase):
     def test_garbage_falls_back_to_default(self) -> None:
         with mock.patch.object(vcfg, "_sub", return_value={
                 "cache_mb": "rac", "sentence_silence_ms": "rac",
-                "clause_silence_ms": "rac", "silence_jitter_percent": "rac"}):
+                "clause_silence_ms": "rac", "silence_jitter_percent": "rac"}), \
+                mock.patch.object(vcfg, "hang_may", return_value="trung_binh"):
             self.assertEqual(vcfg.tts_cache_mb(), 64)
             self.assertEqual(vcfg.tts_sentence_silence_ms(), 350)
             self.assertEqual(vcfg.tts_clause_silence_ms(), 0)
@@ -243,3 +249,69 @@ class ConfigDefaultsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DiskCacheTests(unittest.TestCase):
+    """Tầng đĩa (ý từ wyoming-vietnamese #23, 30/09/2026): c2a khởi động lại ở MỖI lần triển khai, cache RAM mất sạch."""
+
+    def setUp(self) -> None:
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        from pathlib import Path
+        self.dir = Path(self.tmp.name)
+
+    def test_luu_ben_qua_khoi_dong_lai_ca_hai_kieu(self) -> None:
+        d = tts_cache.DiskAudioCache(self.dir, max_bytes=10_000)
+        luong = [(22050, b"\x01\x02" * 10), (22050, b"\x00" * 8)]
+        self.assertTrue(d.put(b"k1", b"RIFFwav") and d.put(b"k2", luong))
+        moi = tts_cache.DiskAudioCache(self.dir, max_bytes=10_000)          # như sau khi khởi động lại
+        self.assertEqual(moi.get(b"k1"), b"RIFFwav")
+        self.assertEqual(moi.get(b"k2"), luong)
+        self.assertIsNone(moi.get(b"khong"))
+
+    def test_han_muc_bo_tep_dung_lau_nhat_va_tep_hong(self) -> None:
+        d = tts_cache.DiskAudioCache(self.dir, max_bytes=100, max_item_bytes=60)
+        d.put(b"a", b"x" * 40)
+        time.sleep(0.01)
+        d.put(b"b", b"y" * 40)
+        time.sleep(0.01)
+        d.get(b"a")                                  # a vừa dùng → b cũ nhất
+        time.sleep(0.01)
+        d.put(b"c", b"z" * 40)
+        self.assertEqual((d.get(b"b"), d.get(b"a") is not None, d.get(b"c") is not None), (None, True, True))
+        self.assertFalse(d.put(b"to", b"q" * 80), "quá trần mỗi tệp thì không ghi")
+        (self.dir / (b"a".hex() + ".bin")).write_bytes(b"rac")
+        self.assertIsNone(d.get(b"a"), "tệp hỏng: trượt cache, không vỡ")
+
+    def test_ram_truot_thi_lay_tu_dia_va_cache_mb_0_tat_ca_hai(self) -> None:
+        d = tts_cache.DiskAudioCache(self.dir, max_bytes=10_000)
+        with mock.patch.object(tts_cache, "_cache_dia", return_value=d):
+            tts_cache.clear()
+            tts_cache.put(b"kk", b"RIFFabc", size_bytes=7)
+            tts_cache._cache().clear()                       # RAM mất (khởi động lại)
+            self.assertEqual(tts_cache.get(b"kk"), b"RIFFabc")
+            self.assertIn("disk", tts_cache.stats())
+            tts_cache.clear()
+        with mock.patch.object(vcfg, "tts_cache_mb", return_value=0):
+            self.assertIsNone(tts_cache._cache_dia())
+
+    def test_phien_ban_cach_doc_nam_trong_khoa(self) -> None:
+        k1 = tts_cache.key("wav", "xin chào", "v", "")
+        tts_cache._phien_ban = "khac"
+        try:
+            self.assertNotEqual(k1, tts_cache.key("wav", "xin chào", "v", ""), "sửa luật đọc là bỏ bản cũ trên đĩa")
+        finally:
+            tts_cache._phien_ban = None
+
+
+class HangMayTests(unittest.TestCase):
+    def test_hang_theo_ram_va_mac_dinh_cache(self) -> None:
+        g = 1024 ** 3
+        for ram, hang, mb, dia in ((1 * g, "yeu", 16, 128), (4 * g, "trung_binh", 64, 256),
+                                    (11 * g, "manh", 128, 512), (None, "trung_binh", 64, 256)):
+            with mock.patch.object(vcfg, "ram_con_trong", return_value=ram), \
+                    mock.patch.object(vcfg, "_sub", return_value={}):
+                self.assertEqual((vcfg.hang_may(), vcfg.tts_cache_mb(), vcfg.tts_cache_disk_mb()), (hang, mb, dia))
+        with mock.patch.object(vcfg, "_sub", return_value={"cache_disk_mb": 0}):
+            self.assertEqual(vcfg.tts_cache_disk_mb(), 0, "cấu hình tay thắng hạng máy")

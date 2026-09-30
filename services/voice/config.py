@@ -674,19 +674,85 @@ def tts_warmup() -> bool:
     return bool(v)
 
 
+def ram_con_trong() -> int | None:
+    """Byte RAM tiến trình này còn dùng được: nhỏ nhất giữa MemAvailable của máy và (giới hạn − đang dùng) của MỌI
+    cgroup trên đường của tiến trình (v2 ``memory.max``/``memory.current``, v1 ``limit_in_bytes``/``usage_in_bytes``).
+    Container/LXC hay thấy RAM cả máy chủ dù bị giới hạn — cùng lẽ với ``effective_cpu_count``."""
+    con: list[int] = []
+    try:
+        for dong in Path("/proc/meminfo").read_text(encoding="ascii").splitlines():
+            if dong.startswith("MemAvailable:"):
+                con.append(int(dong.split()[1]) * 1024)
+    except (OSError, ValueError, IndexError):
+        pass
+    goc = Path("/sys/fs/cgroup")
+    try:
+        duong = [x.split(":", 2) for x in Path("/proc/self/cgroup").read_text(encoding="utf-8").splitlines()]
+    except OSError:
+        duong = []
+    for _id, bo, rel in (x for x in duong if len(x) == 3):
+        if bo == "":
+            tep = ("memory.max", "memory.current", goc)
+        elif "memory" in bo.split(","):
+            tep = ("memory.limit_in_bytes", "memory.usage_in_bytes", goc / "memory")
+        else:
+            continue
+        cur = tep[2] / rel.lstrip("/")
+        while True:
+            try:
+                han = int((cur / tep[0]).read_text().strip())
+                dung = int((cur / tep[1]).read_text().strip())
+                if 0 < han < (1 << 60):
+                    con.append(max(0, han - dung))
+            except (OSError, ValueError):
+                pass
+            if cur == tep[2] or tep[2] not in cur.parents:
+                break
+            cur = cur.parent
+    return min(con) if con else None
+
+
+#: Hạng máy theo RAM còn dùng được — ý từ wyoming-vietnamese #23 (DeviceTier), cùng ngưỡng 2 / 6 GB.
+HANG_MAY = ("yeu", "trung_binh", "manh")
+#: (MB cache RAM, MB cache đĩa) mặc định theo hạng — cấu hình tay (cache_mb, cache_disk_mb) luôn thắng.
+_CACHE_THEO_HANG = {"yeu": (16, 128), "trung_binh": (64, 256), "manh": (128, 512)}
+
+
+def hang_may() -> str:
+    """"yeu" (< 2 GB RAM còn dùng được), "trung_binh" (< 6 GB), "manh". Không đo được thì "trung_binh"."""
+    ram = ram_con_trong()
+    if ram is None:
+        return "trung_binh"
+    return "yeu" if ram < 2 * 1024**3 else "trung_binh" if ram < 6 * 1024**3 else "manh"
+
+
 def tts_cache_mb() -> int:
-    """Trần RAM (MB) cho cache audio TTS. 0 = tắt. Mặc định 64 MB.
+    """Trần RAM (MB) cho cache audio TTS. 0 = tắt. Mặc định theo hạng máy (16 / 64 / 128 MB).
 
     Trợ lý nhà lặp lại vài chục câu ("Đã bật đèn phòng khách"...) — đọc lần hai
     trở đi lấy thẳng từ cache, không tốn CPU. Xem services/voice/tts_cache.py.
     """
+    mac_dinh = _CACHE_THEO_HANG[hang_may()][0]
     raw = _sub("tts").get("cache_mb")
     if raw is None or str(raw).strip() == "":
-        return 64
+        return mac_dinh
     try:
         return max(0, min(int(raw), 512))
     except (TypeError, ValueError):
-        return 64
+        return mac_dinh
+
+
+def tts_cache_disk_mb() -> int:
+    """Trần ĐĨA (MB) cho cache audio TTS lưu bền qua khởi động lại. 0 = tắt. Mặc định theo hạng máy
+    (128 / 256 / 512 MB)."""
+    mac_dinh = _CACHE_THEO_HANG[hang_may()][1]
+    raw = _sub("tts").get("cache_disk_mb")
+    if raw is None or str(raw).strip() == "":
+        return mac_dinh
+    try:
+        return max(0, min(int(raw), 4096))
+    except (TypeError, ValueError):
+        return mac_dinh
 
 
 def tts_paragraph_silence_ms() -> int:
