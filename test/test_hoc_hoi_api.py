@@ -341,3 +341,34 @@ class DapAnAnhEndpointTest(unittest.TestCase):
         f.assert_called_once_with("Cam bếp", "{}")
         self.assertTrue(d["ok"])
         ve.assert_called_once()
+
+
+class NhatKyKichHoatTest(unittest.TestCase):
+    """Chủ máy 30/09/2026: lịch sử kích hoạt kèm nguyên nhân bật / tắt / không làm."""
+
+    def setUp(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from services import nhat_ky_kich_hoat as nk
+        self.client, self._bo_qua = _app()
+        self.addCleanup(self._bo_qua.stop)
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        nk._reset_for_tests(Path(self._tmp.name) / "nk.sqlite")
+        self.addCleanup(nk._reset_for_tests, nk._DB_PATH)
+        nk.ghi("light.den_tran", "on", "khong", nguon="Radar phòng khách có người vào", ly_do="chỉ chắc 9%",
+               dieu_kien={"giờ": 17.35, "p": 0.09})
+        nk.ghi("light.den_tran", "on", "nguoi", ly_do="người tự bật")
+        nk.ghi("fan.quat", "on", "lam", ly_do="luật bot học")
+
+    def test_loc_theo_thiet_bi_va_ket_qua(self) -> None:
+        with mock.patch("services.kich_hoat_nha._ten_ha", return_value={"light.den_tran": "Đèn trần"}):
+            d = self.client.get("/api/hoc-hoi/kich-hoat/nhat-ky",
+                                params={"thiet_bi": "light.den_tran", "ket_qua": "khong"}).json()
+        self.assertTrue(d["ok"])
+        self.assertEqual(len(d["nhat_ky"]), 1)
+        x = d["nhat_ky"][0]
+        self.assertEqual((x["ten"], x["ly_do"], x["dieu_kien"]["p"]), ("Đèn trần", "chỉ chắc 9%", 0.09))
+        with mock.patch("services.kich_hoat_nha._ten_ha", return_value={}):
+            self.assertEqual(len(self.client.get("/api/hoc-hoi/kich-hoat/nhat-ky").json()["nhat_ky"]), 3)

@@ -24,6 +24,7 @@ import { HieuThietBi } from "./components/hieu-thiet-bi";
 import { SoDo } from "./components/so-do";
 import { SoDoNha } from "./components/so-do-nha";
 import { KichHoat } from "./components/kich-hoat";
+import { NhatKyKichHoat } from "./components/nhat-ky-kich-hoat";
 import { LichSinhHoat } from "./components/lich-sinh-hoat";
 import { GoiY } from "./components/goi-y";
 import { NepSinhHoat } from "./components/nep-sinh-hoat";
@@ -57,6 +58,9 @@ function HocHoiContent() {
           </SettingsSection>
           <SettingsSection title="Bật/tắt thiết bị" tuKhoa="bat tat thiet bi kich hoat luat ngoai le tu lam bao ao vang">
             <KichHoat />
+          </SettingsSection>
+          <SettingsSection title="Nhật ký kích hoạt" tuKhoa="nhat ky lich su kich hoat bat tat khong lam ly do nguon dieu kien">
+            <NhatKyKichHoat />
           </SettingsSection>
           <SettingsSection title="Gợi ý theo nếp nhà" tuKhoa="du doan goi y cham dung sai">
             <GoiY />

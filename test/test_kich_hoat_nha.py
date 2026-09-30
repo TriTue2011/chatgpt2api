@@ -40,8 +40,9 @@ def kh(tmp_path, monkeypatch):
     dd._reset_for_tests()
     monkeypatch.setattr(dd, "_DB_PATH", tmp_path / "dd.sqlite")
     kich_hoat_nha._reset_for_tests(tmp_path / "kh.json")
-    from services import lich_sinh_hoat
+    from services import lich_sinh_hoat, nhat_ky_kich_hoat
     lich_sinh_hoat._reset_for_tests(tmp_path / "lsh.json")
+    nhat_ky_kich_hoat._reset_for_tests(tmp_path / "nk.sqlite")
     monkeypatch.setattr(kich_hoat_nha, "_trang_thai_ha", lambda: TT)
     monkeypatch.setattr(kich_hoat_nha, "_so_do", lambda tb: (set(), set()))   # sơ đồ rỗng → tự dò
     goi: list[tuple] = []
@@ -1363,3 +1364,22 @@ def test_nguon_chet_boc_cam_bien_ghep_toi_thuc_the_that(kh, tmp_path, monkeypatc
     kh._bao_nguon_chet("light.cua_so")
     kh._bao_nguon_chet("light.cua_so")
     assert len(gui) == 1 and gui[0][0] == "nha.canh_bao" and "Ti vi" in gui[0][1], "mỗi nguồn một tin mỗi ngày"
+
+
+def test_nhat_ky_kich_hoat_ghi_lam_khong_va_nguoi(kh, monkeypatch):
+    """Chủ máy 30/09/2026: "Thêm lịch sử kích hoạt thiết bị, kèm nguyên nhân … tắt hay bật, hoặc không thực
+    hiện, thời gian nào" — lần bot IM cũng phải để lại dấu vết."""
+    from services import nhat_ky_kich_hoat as nk
+    luat = {"hanh_dong": "on", "khi": [f"{NGU} có người vào"], "neu": [], "ten": "Vào phòng ngủ"}
+    kh._xu_ly_chu(DEN, luat, f"{NGU} có người vào", time.time())
+    assert kh.goi, "luật anh đặt thì tự làm"
+    ds = nk.doc(DEN)
+    assert ds[0]["ket_qua"] == "lam" and ds[0]["hanh_dong"] == "on"
+    assert "Vào phòng ngủ" in ds[0]["ly_do"] and "Hiện diện phòng ngủ" in ds[0]["nguon"]
+    # Đèn đã bật sẵn: không làm, nói rõ vì sao.
+    monkeypatch.setattr(kh, "_trang_thai_mot", lambda ma: "on")
+    kh._xu_ly_chu(DEN, luat, f"{NGU} có người vào", time.time() + 400)
+    assert nk.doc(DEN)[0]["ket_qua"] == "khong" and "«on» sẵn" in nk.doc(DEN)[0]["ly_do"]
+    kh._nguoi_lam(DEN, "off", time.time() + 500)
+    assert nk.doc(DEN)[0]["ket_qua"] == "nguoi"
+    assert [x["ket_qua"] for x in nk.doc(DEN, ket_qua="khong")] == ["khong"]

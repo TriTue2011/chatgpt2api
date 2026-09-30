@@ -706,6 +706,23 @@ def create_router() -> APIRouter:
         except Exception as exc:
             return _loi(exc, "kích hoạt")
 
+    @router.get("/api/hoc-hoi/kich-hoat/nhat-ky")
+    async def kich_hoat_nhat_ky(thiet_bi: str = "", gio: float = 24, ket_qua: str = "", gioi_han: int = 300,
+                                authorization: str | None = Header(default=None)):
+        """Nhật ký kích hoạt: bot bật / tắt / hỏi / KHÔNG làm (kèm nguồn, lý do, điều kiện) và lần người tự
+        bật tắt — mới nhất trước. ket_qua: lam | hoi | khong | nguoi (trống = tất cả)."""
+        require_admin(authorization)
+        try:
+            from services import kich_hoat_nha, nhat_ky_kich_hoat as nk
+            ds = await asyncio.to_thread(nk.doc, thiet_bi.strip() or None, gio=max(0.1, min(gio, 24 * 14)),
+                                         ket_qua=ket_qua if ket_qua in nk.KET_QUA else None, gioi_han=gioi_han)
+            ten = await asyncio.to_thread(kich_hoat_nha._ten_ha)
+            for x in ds:
+                x["ten"] = ten.get(x["thiet_bi"], x["thiet_bi"])
+            return {"ok": True, "nhat_ky": ds}
+        except Exception as exc:
+            return _loi(exc, "nhật ký kích hoạt")
+
     @router.post("/api/hoc-hoi/kich-hoat/dat")
     async def kich_hoat_dat(body: dict, authorization: str | None = Header(default=None)):
         """Chủ máy sửa một thiết bị. body: {thiet_bi, bat?, tu_lam?, bo_nguon?, ngoai_le?, kiem_ao?,

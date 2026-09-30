@@ -512,21 +512,32 @@ def _xu_ly_chu(tb: str, luat: dict[str, Any], nguon: str, luc: float) -> None:
 
     hd = luat["hanh_dong"]
     try:
+        ten_luat = f"luật anh đặt «{luat.get('ten') or ''}»"
         with _khoa_xet:
-            if _trang_thai_mot(tb) in (hd, *_KHONG_RO):
+            tt = _trang_thai_mot(tb)
+            if tt in (hd, *_KHONG_RO):
+                _nk(tb, hd, "khong", nguon, f"{ten_luat}: thiết bị đang «{tt}» sẵn", luc=luc)
                 return
             if _vua_lam(tb, hd) or _nguoi_vua_cham(tb, luc):
+                _nk(tb, hd, "khong", nguon, f"{ten_luat}: vừa có người / bot bật tắt — tránh làm dồn", luc=luc)
                 return
             if nguon.endswith(" vắng") and _trang_thai_mot(nguon.split(" ")[0]) != "off":
+                _nk(tb, hd, "khong", nguon, f"{ten_luat}: cảm biến đã thấy người lại", luc=luc)
                 return
             if any(x.get("hanh_dong") == hd and x.get("cach", "khong") == "khong" and _khung_dang(x, luc)
                    for x in (_nap()["thiet_bi"].get(tb) or {}).get("ngoai_le") or []):
+                _nk(tb, hd, "khong", nguon, f"{ten_luat}: đang trong khung giờ anh đặt không làm", luc=luc)
                 return
             ok, ly_do = _dieu_kien_chu(tb, luat)
             logger.info({"event": "kich_hoat_luat_chu", "thiet_bi": tb, "hanh_dong": hd, "nguon": nguon,
                          "lam": ok, "ly_do": ly_do})
-            if not ok or not _lam(tb, hd, tu_lam=True):
+            if not ok:
+                _nk(tb, hd, "khong", nguon, f"{ten_luat}: điều kiện chưa đủ — {'; '.join(ly_do)}", luc=luc)
                 return
+            if not _lam(tb, hd, tu_lam=True):
+                _nk(tb, hd, "khong", nguon, f"{ten_luat}: lệnh tới thiết bị không thành", luc=luc)
+                return
+            _nk(tb, hd, "lam", nguon, "; ".join([ten_luat, *ly_do]), luc=luc)
         vi = "; ".join([f"{_ten_nguon(nguon, _ten_ha())}", *ly_do])
         id_ = dd.ghi_nhan(_ten_tt(tb, hd), hd, 1.0, {"nguon": vi, BEN_VUNG: 1, "luat_chu": 1}, "tu_lam")
         _bao_tu_lam(tb, f"🤖 #{id_} Em đã {_TEN_HD[hd].lower()} {_ten_tb(tb)} ({vi}).\nĐúng hay sai "
@@ -1547,6 +1558,26 @@ def _bao_tu_lam(tb: str, noi_dung: str) -> None:
         thong_bao.gui("nha.goi_y", noi_dung)
 
 
+def _nk(tb: str, hd: str, ket_qua: str, nguon: str = "", ly_do: str = "",
+        dieu_kien: dict[str, Any] | None = None, luc: float | None = None) -> None:
+    """Ghi nhật ký kích hoạt (`nhat_ky_kich_hoat`): bật / tắt / hỏi / không làm, nguồn, lý do, điều kiện."""
+    from services import nhat_ky_kich_hoat as nk
+    try:
+        ten_nguon = _ten_nguon(nguon, _ten_ha()) if nguon else ""
+    except Exception:  # noqa: BLE001
+        ten_nguon = nguon
+    nk.ghi(tb, hd, ket_qua, nguon=ten_nguon, ly_do=ly_do, dieu_kien=dieu_kien, luc=luc)
+
+
+def _dk(q: dict[str, Any]) -> dict[str, Any]:
+    """Điều kiện của một lần `xet` để ghi nhật ký: xác suất + đặc trưng (giờ, độ sáng…), bỏ cột one-hot nguồn."""
+    ra: dict[str, Any] = {k: round(v, 2) for k, v in (q.get("x") or {}).items()
+                          if not k.startswith("[") and isinstance(v, (int, float))}
+    if q.get("p") is not None:
+        ra["p"] = round(float(q["p"]), 2)
+    return ra
+
+
 def _ten_tb(tb: str) -> str:
     return _ten_ha().get(tb, tb)
 
@@ -1683,6 +1714,7 @@ def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
         # mọi thiết bị khác phải xếp hàng hàng chục giây (soát lỗi 30/09/2026). Chỉ nhìn khi luật định làm.
         if hd == "on" and xet(tb, hd, nguon, luc)["lam"] != "im" and _dinh_vi(tb, nguon) == "":
             logger.info({"event": "kich_hoat_dinh_vi_chan", "thiet_bi": tb, "nguon": nguon})
+            _nk(tb, hd, "khong", nguon, "định vị: camera thấy người ở khu khác, không phải khu này", luc=luc)
             with _khoa:
                 ds = _nap().setdefault("dinh_vi", [])
                 ds.append({"luc": luc, "thiet_bi": tb, "nguon": nguon, "ket_qua": "cho"})
@@ -1691,17 +1723,25 @@ def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
             return
         with _khoa_xet:
             st = ha_client.get_state(tb) or {}
-            if str(st.get("state") or "").lower() in (hd, *_KHONG_RO):
+            tt = str(st.get("state") or "").lower()
+            if tt in (hd, *_KHONG_RO):
+                _nk(tb, hd, "khong", nguon, f"thiết bị đang «{tt}» sẵn", luc=luc)
                 return
-            if _dang_cho(tb) or _vua_lam(tb, hd):
+            if _dang_cho(tb):
+                _nk(tb, hd, "khong", nguon, "đang chờ anh trả lời câu hỏi trước", luc=luc)
+                return
+            if _vua_lam(tb, hd):
+                _nk(tb, hd, "khong", nguon, "vừa bật/tắt xong — tránh làm dồn", luc=luc)
                 return
             # Cảm biến hay báo mất người 1–2 phút dù người vẫn ở đó (chủ máy 26/09/2026;
             # đo phòng ngủ 30 ngày: 270/605 lần tắt-rồi-bật-lại ngắn dưới 3 phút). "Vắng"
             # đã chờ VANG giây; tới lúc làm mà cảm biến đã thấy người lại thì thôi.
             if nguon.endswith(" vắng") and _trang_thai_mot(nguon.split(" ")[0]) != "off":
+                _nk(tb, hd, "khong", nguon, "cảm biến đã thấy người lại", luc=luc)
                 return
             q = xet(tb, hd, nguon, luc)
             if q["lam"] == "im":
+                _nk(tb, hd, "khong", nguon, str(q.get("ly_do") or ""), _dk(q), luc)
                 if "báo ảo" in str(q.get("ly_do")):
                     logger.info({"event": "kich_hoat_bao_ao", "thiet_bi": tb, "nguon": nguon})
                     with _khoa:
@@ -1714,10 +1754,13 @@ def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
             nhan = {"nguon": nguon, **{k: round(v, 2) for k, v in q["x"].items() if not k.startswith("[")}}
             if q["lam"] == "tu_lam":
                 if not _lam(tb, hd, tu_lam=True):
+                    _nk(tb, hd, "khong", nguon, "lệnh tới thiết bị không thành", _dk(q), luc)
                     return
                 id_ = dd.ghi_nhan(_ten_tt(tb, hd), hd, q["p"], nhan, "tu_lam")
+                _nk(tb, hd, "lam", nguon, f"luật bot học, chắc {q['p']:.0%}", _dk(q), luc)
             else:
                 id_ = dd.ghi_nhan(_ten_tt(tb, hd), hd, q["p"], nhan, "hoi")
+                _nk(tb, hd, "hoi", nguon, str(q.get("ly_do") or f"chắc {q['p']:.0%} — hỏi anh"), _dk(q), luc)
         if q["lam"] == "tu_lam":
             # Chủ máy 26/09/2026: "Đáng lẽ đưa ra lựa chọn đúng hay sai chứ".
             _bao_tu_lam(tb,
@@ -1885,6 +1928,7 @@ def _nguoi_lam(tb: str, gt: str, luc: float) -> None:
       `du_doan_nha` không bắt được: nó tra lịch sử theo tên sổ ``tb#on``, không phải mã
       thiết bị)."""
     from services import du_doan_nha as dd
+    _nk(tb, gt, "nguoi", "", "người tự bật/tắt (công tắc, app, giọng nói)", luc=luc)
     cho = _dang_cho(tb)
     if cho and cho["hanh_dong"] == gt:
         dd.ghi_dung(int(cho["id"]))
@@ -2184,11 +2228,17 @@ def _tat_vi_vang(tb: str) -> None:
         cd = ds_thiet_bi().get(tb) or {}
         tv = cd.get("tat_khi_vang") or {}
         luc = time.time()
-        if not tv.get("bat") or not _deu_vang(list(tv.get("cam_bien") or [])):
+        nguon_vang = "tắt khi vắng: " + ", ".join(_ten_ha().get(m, m) for m in tv.get("cam_bien") or [])
+        if not tv.get("bat"):
+            return
+        if not _deu_vang(list(tv.get("cam_bien") or [])):
+            _nk(tb, "off", "khong", "", f"{nguon_vang} — cảm biến lại thấy người", luc=luc)
             return
         if str((ha_client.get_state(tb) or {}).get("state") or "").lower() != "on":
             return
         if _nguoi_vua_cham(tb, luc) or _vua_lam(tb, "off", ca_chieu_nguoc=False):
+            _nk(tb, "off", "khong", "", f"{nguon_vang} — hoãn {HEN_LAI} giây: vừa có người / bot bật tắt",
+                luc=luc)
             _hen_tat_luc(tb, HEN_LAI)       # chặn tạm — vẫn vắng thì lát nữa xét lại
             return
         nhin_lai = ""
@@ -2197,13 +2247,18 @@ def _tat_vi_vang(tb: str) -> None:
             thay = _nhin_lai(list(tv["nhin"]), boi_canh_nha.phong_cua(tb))
             logger.info({"event": "kich_hoat_nhin_lai", "thiet_bi": tb, "camera": tv["nhin"], "thay": thay})
             if thay is None or thay:
+                _nk(tb, "off", "khong", "", f"{nguon_vang} — nhìn lại camera: "
+                    + (f"{thay} còn thấy người" if thay else "không nhìn được camera") + f", xét lại sau {HEN_LAI} giây",
+                    luc=luc)
                 _hen_tat_luc(tb, HEN_LAI)   # thấy người, hoặc không nhìn được — lát nữa xét lại
                 return
             nhin_lai = f"ngoại vi báo có thể còn người, em nhìn lại {', '.join(tv['nhin'])}: không thấy ai"
         if any(x.get("hanh_dong") == "off" and x.get("cach", "khong") == "khong"
                and _khung_dang(x, luc) for x in cd.get("ngoai_le") or []):
+            _nk(tb, "off", "khong", "", f"{nguon_vang} — đang trong khung giờ anh đặt không tắt", luc=luc)
             return
         if not _lam(tb, "off", tu_lam=True):
+            _nk(tb, "off", "khong", "", f"{nguon_vang} — lệnh tới thiết bị không thành", luc=luc)
             return
         troi = _troi_sang(tb, cd)
         nhan: dict[str, Any] = {}
@@ -2220,6 +2275,8 @@ def _tat_vi_vang(tb: str) -> None:
         if nhin_lai:
             vi += f"; {nhin_lai}"
         id_ = dd.ghi_nhan(_ten_tt(tb, "off"), "off", 1.0, {"nguon": vi, BEN_VUNG: 1, **nhan}, "tu_lam")
+        _nk(tb, "off", "lam", "", f"{nguon_vang} — {vi}",
+            {"phut_cho": phut, **({"lux_troi": round(troi)} if troi is not None else {})}, luc)
         _bao_tu_lam(tb, f"🤖 #{id_} Em đã tắt {_ten_tb(tb)} ({vi}).\nĐúng hay sai ạ? Anh trả "
                         f"lời «đúng» hoặc «sai» — sai thì em bật lại ngay. Không trả lời trong "
                         f"{CHAM_TU_LAM // 60} phút là em tính đúng.")
