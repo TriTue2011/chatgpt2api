@@ -122,3 +122,13 @@ def test_de_bay_duong_di_frigate():
                 "duong": {"Cam bếp": [["C3", "F5", 40], ["A1", "B2", 25]], "Cam cửa": []}}, [], [])
     assert "C2. ĐƯỜNG ĐI" in de and "- Cam bếp: C3→F5 (40), A1→B2 (25)" in de and "Cam cửa" not in de
     assert "C2. ĐƯỜNG ĐI" not in sd.de({"phong": {}, "cung_bao": [], "camera": {}, "cua": {}, "ten": {}}, [], [])
+
+
+def test_model_doc_anh_rieng_mac_dinh_claude(monkeypatch):
+    """Chủ máy chọn 30/09/2026: Claude cho riêng việc đọc ảnh sơ đồ (ChatGPT miễn phí bịa phòng không có trong
+    khung); đổi được trên web (`nhin_nha.so_do.model_anh`)."""
+    from services import nhin_nha
+    monkeypatch.setattr(nhin_nha, "_muc", lambda ten: {})
+    assert sd.model_anh() == "claude/auto"
+    monkeypatch.setattr(nhin_nha, "_muc", lambda ten: {"model_anh": " gemini_free/x "} if ten == "so_do" else {})
+    assert sd.model_anh() == "gemini_free/x"

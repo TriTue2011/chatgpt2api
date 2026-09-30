@@ -515,13 +515,23 @@ def mo_ta_vat(v: Any, rong: int, cao: int) -> str:
             f"{o_cua(x1 / rong, y1 / cao)}–{o_cua(min(x2 / rong, 0.999), min(y2 / cao, 0.999))}")
 
 
+#: Model đọc ảnh sơ đồ nhà khi chủ máy chưa đặt `nhin_nha.so_do.model_anh`. Chủ máy chọn 30/09/2026 sau khi đo
+#: trên ảnh thật: ChatGPT miễn phí (đầu combo «AI vision») bịa phòng không có trong khung (gán «bếp» cho tủ giày,
+#: bàn ăn phòng khách); Claude và Gemini thì không, Claude bám hình dạng sàn sát nhất.
+MODEL_ANH_MAC_DINH = "claude/auto"
+
+
+def model_anh() -> str:
+    from services import nhin_nha
+    return str(nhin_nha._muc("so_do").get("model_anh") or "").strip() or MODEL_ANH_MAC_DINH
+
+
 def _goi_thi_giac(noi: str, jpeg: bytes, max_tokens: int = 1500) -> str:
-    """Một lượt gọi model thị giác (nhánh «vision») với một ảnh. Lỗi thì ném RuntimeError."""
-    from services.agent.branches import branch_model
+    """Một lượt gọi model đọc ảnh sơ đồ (`model_anh`) với một ảnh. Lỗi thì ném RuntimeError."""
     from services.agent.runtime import call_model, content_of
 
     url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()
-    r = call_model(branch_model("vision"), [{"role": "user", "content": [
+    r = call_model(model_anh(), [{"role": "user", "content": [
         {"type": "text", "text": noi}, {"type": "image_url", "image_url": {"url": url}}]}],
         timeout=180, max_tokens=max_tokens,
         # Cùng khuôn lời gọi học của bot (`hieu_thiet_bi_nha._goi_model`): xin JSON, tắt mọi tích hợp.
