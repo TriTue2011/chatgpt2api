@@ -652,10 +652,15 @@ def _chi_muc_registry(areas: list[dict], ents: list[dict], devs: list[dict]) -> 
     # công tắc Zigbee nhiều kênh chung thiết bị (phòng ngủ: l1 = đèn, l2 = điều hoà).
     entity_mirror: dict[str, str] = {}
     entity_wrapper: dict[str, str] = {}      # cả hai thực thể của cặp → thực thể BỌC
+    # Loại thực thể do CHÍNH tích hợp khai: "config" = cài đặt (công tắc bật dò chuyển động của camera…),
+    # "diagnostic" = chẩn đoán; không có = thực thể chính (cảm biến quan sát, đèn…). Thiếu mục = thực thể chính.
+    entity_category: dict[str, str] = {}
     for e in ents:
         eid = e.get("entity_id")
         if not eid:
             continue
+        if e.get("entity_category"):
+            entity_category[eid] = str(e["entity_category"])
         boc = ((e.get("options") or {}).get("switch_as_x") or {}).get("entity_id")
         if isinstance(boc, str) and "." in boc:
             entity_mirror[eid] = boc
@@ -678,7 +683,7 @@ def _chi_muc_registry(areas: list[dict], ents: list[dict], devs: list[dict]) -> 
     return {"entity_area": entity_area, "area_names": area_names,
             "entity_aliases": entity_aliases, "entity_platform": entity_platform,
             "entity_device_ids": entity_device_ids, "entity_mirror": entity_mirror,
-            "entity_wrapper": entity_wrapper}
+            "entity_wrapper": entity_wrapper, "entity_category": entity_category}
 
 
 def get_ha_area_index(use_cache: bool = True) -> dict[str, Any]:

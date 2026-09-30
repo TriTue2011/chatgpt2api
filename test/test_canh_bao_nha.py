@@ -423,3 +423,39 @@ class MatKetNoiTest(unittest.TestCase):
         self.assertIn("2 thực thể", ra[0]["chi_tiet"])
         self.assertIn("imou_life", ra[0]["chi_tiet"])
         self.assertEqual(ra[0]["loai"], "mat_ket_noi")
+
+
+class ThietBiConSongTest(unittest.TestCase):
+    """30/09/2026: «🔴 chết hẳn — Ban-Cong Motion» trong khi cùng camera vẫn báo người/tiếng tới 19:57."""
+
+    def _chay(self, hong, idx, cuoi):
+        import services.canh_bao_nha as m
+        from services import ha_client, lich_su_nha
+        with mock.patch.object(ha_client, "get_ha_area_index", return_value=idx), \
+                mock.patch.object(lich_su_nha, "lan_doi_cuoi", side_effect=lambda ma: {k: v for k, v in cuoi.items() if k in ma}):
+            return [h["thiet_bi"] for h in m.thiet_bi_con_song(hong)]
+
+    def test_thiet_bi_con_song_thi_khong_bao_chet_cai_dat_khong_bao_gio_hong(self) -> None:
+        cam = ["frigate:ban_cong"]
+        idx = {"entity_device_ids": {"binary_sensor.ban_cong_motion": cam, "binary_sensor.ban_cong_person": cam,
+                                     "switch.ban_cong_motion": cam, "sensor.ban_cong_fps": cam,
+                                     "binary_sensor.cua_so": ["z:1"], "sensor.cua_so_pin": ["z:1"]},
+               "entity_category": {"switch.ban_cong_motion": "config", "sensor.ban_cong_fps": "diagnostic",
+                                   "sensor.cai_dat": "config", "sensor.cua_so_pin": "diagnostic"}}
+        hong = [{"thiet_bi": "binary_sensor.ban_cong_motion", "loai": "chet", "lan_cuoi_tot": 100.0},
+                {"thiet_bi": "sensor.cai_dat", "loai": "chet", "lan_cuoi_tot": 100.0},
+                {"thiet_bi": "binary_sensor.cua_so", "loai": "chet", "lan_cuoi_tot": 100.0}]
+        # Anh em CHÍNH của camera đổi sau lần cuối → camera sống; cảm biến cửa sổ chỉ có pin (chẩn đoán) → vẫn báo.
+        self.assertEqual(self._chay(hong, idx, {"binary_sensor.ban_cong_person": 500.0, "sensor.cua_so_pin": 900.0}),
+                         ["binary_sensor.cua_so"])
+        # Anh em cũng im từ trước đó → cả thiết bị chết → vẫn báo.
+        self.assertEqual(self._chay(hong[:1], idx, {"binary_sensor.ban_cong_person": 50.0}),
+                         ["binary_sensor.ban_cong_motion"])
+
+    def test_do_giu_nguyen_va_khong_co_so_thiet_bi_thi_khong_doan(self) -> None:
+        cam = ["frigate:bep"]
+        idx = {"entity_device_ids": {"sensor.bep_lux": cam, "binary_sensor.bep_person": cam}}
+        hong = [{"thiet_bi": "sensor.bep_lux", "loai": "do", "lan_cuoi_tot": 100.0}]
+        self.assertEqual(self._chay(hong, idx, {"binary_sensor.bep_person": 500.0}), ["sensor.bep_lux"])
+        hong = [{"thiet_bi": "binary_sensor.x", "loai": "chet", "lan_cuoi_tot": 100.0}]
+        self.assertEqual(self._chay(hong, {}, {}), ["binary_sensor.x"])

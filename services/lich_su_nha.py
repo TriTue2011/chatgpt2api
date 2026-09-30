@@ -1138,6 +1138,17 @@ def _im_lau_nhat(conn: sqlite3.Connection, k: tuple[str, str], tu: float, den: f
     return max((b - a for a, b in zip(moc, moc[1:])), default=0.0)
 
 
+def lan_doi_cuoi(ma: list[str]) -> dict[str, float]:
+    """{mã: lần ĐỔI giá trị gần nhất} theo ``su_kien`` (chỉ ghi khi giá trị đổi), bỏ unavailable/unknown —
+    mất kết nối rồi có lại không phải là thiết bị vừa quan sát được gì."""
+    if not ma:
+        return {}
+    with _khoa_db:
+        return {r[0]: float(r[1]) for r in _db().execute(
+            f"SELECT thiet_bi, MAX(ts) FROM su_kien WHERE thiet_bi IN ({','.join('?' * len(ma))})"
+            " AND lower(gia_tri) NOT IN ('unavailable','unknown') GROUP BY thiet_bi", list(ma))}
+
+
 def soi_hong(so_ngay: int = 7) -> list[dict[str, Any]]:
     """Cảm biến chết / đơ / chập chờn.
 

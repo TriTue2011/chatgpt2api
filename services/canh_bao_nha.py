@@ -283,7 +283,56 @@ def con_ton_tai(hong: list[dict[str, Any]]) -> list[dict[str, Any]]:
     hong = [h for h in hong if "/" not in str(h.get("thiet_bi") or "")
             or str(h.get("thiet_bi")).split("/")[0] not in goc_khai or h.get("thiet_bi") in con_khai]
 
-    return hong
+    return thiet_bi_con_song(hong)
+
+
+def thiet_bi_con_song(hong: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Xét «chết» theo THIẾT BỊ, không theo từng thực thể; thực thể CÀI ĐẶT thì không bao giờ là hỏng.
+
+    Chủ máy 30/09/2026 với tin «🔴 chết hẳn — Ban-Cong Motion»: "Vẫn chưa phân biệt được đâu là cảm biến
+    setting, đâu là cảm biến thay đổi". Đo lúc đó: `binary_sensor.ban_cong_motion` (Frigate) im từ 18:03 29/09,
+    nhưng CÙNG camera ấy `…_person_occupancy` và `…_speech_sound` đổi 400+ lần tới 19:57 hôm nay; công tắc
+    cài đặt `switch.ban_cong_motion` vẫn bật. Camera sống — tín hiệu im là do cách tích hợp/cài đặt phát nó
+    (`bep_motion` cũng chưa bật lần nào suốt 9 ngày dù bếp ngày nào cũng có người), không phải hỏng.
+
+    Nguyên tắc, không danh sách: (1) HA tự khai loại thực thể — `entity_category == "config"` là cài đặt,
+    đứng im là bình thường. (2) Lỗi «chết» (im hẳn, không tin nào) của thực thể thuộc một thiết bị mà một
+    thực thể CHÍNH khác của cùng thiết bị đó còn ĐỔI giá trị sau lần đổi cuối của nó → thiết bị còn sống,
+    không báo. «Đơ» (vẫn gửi mà số đứng yên) giữ nguyên: thiết bị sống mà số đo kẹt vẫn là hỏng thật.
+    Không có sổ thiết bị của HA thì để nguyên, không đoán."""
+    from services import ha_client, lich_su_nha
+
+    try:
+        idx = ha_client.get_ha_area_index() or {}
+    except Exception:  # noqa: BLE001
+        return hong
+    tb_cua = idx.get("entity_device_ids") or {}
+    loai_tt = idx.get("entity_category") or {}
+    hong = [h for h in hong if loai_tt.get(str(h.get("thiet_bi") or "")) != "config"]
+    anh_em: dict[tuple, list[str]] = {}
+    for ma, ids in tb_cua.items():
+        if ids and ma not in loai_tt:
+            anh_em.setdefault(tuple(ids), []).append(ma)
+
+    def cua(h: dict[str, Any]) -> list[str]:
+        return [m for m in anh_em.get(tuple(tb_cua.get(h["thiet_bi"]) or ()), []) if m != h["thiet_bi"]]
+
+    chet = [h for h in hong if h.get("loai") == "chet" and cua(h)]
+    if not chet:
+        return hong
+    try:
+        cuoi = lich_su_nha.lan_doi_cuoi(sorted({m for h in chet for m in cua(h)}))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning({"event": "canh_bao_anh_em_loi", "error": str(exc)[:200]})
+        return hong
+    bo = set()
+    for h in chet:
+        song = [m for m in cua(h) if cuoi.get(m, 0.0) > float(h.get("lan_cuoi_tot") or 0.0)]
+        if song:
+            bo.add(id(h))
+            logger.info({"event": "canh_bao_bo_vi_thiet_bi_con_song", "thiet_bi": h["thiet_bi"],
+                         "anh_em": song[:3]})
+    return [h for h in hong if id(h) not in bo]
 
 
 # ── Mất kết nối (thực thể HA đang `unavailable`) ────────────────────────────
