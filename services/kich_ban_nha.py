@@ -117,19 +117,25 @@ def _viec_dang_cai(tb: str, cd: dict[str, Any], mh: dict[str, Any], ten: dict[st
             luat = [x for x in m.get("luat") or [] if x.get("p", 0) >= kh.P_HOI][:3]
             dong += [f"{chu} (bot học, {'tự làm' if kh._duoc_tu_lam(tb, hd) else 'hỏi trước'}): khi "
                      + ", ".join(x["neu"]) for x in luat] or [f"{chu}: luật học không có nhánh đủ chắc"]
-        elif hd == "on" and cd.get("hoi_de_hoc") and (mh.get("o_lai") or {}).get("phut") is not None:
-            dong.append(f"BẬT: có người ở lại ≥ {mh['o_lai']['phut']} phút (hợp các cảm biến "
-                        + ", ".join(cb(x) for x in mh["o_lai"].get("cam_bien") or []) + ") thì HỎI anh để học")
+        elif hd == "on" and cd.get("hoi_de_hoc") and kh.phut_o_lai(tb) is not None:
+            moc = (f"{cd['o_lai_giay']} giây (anh đặt)" if cd.get("o_lai_giay")
+                   else f"{mh['o_lai']['phut']} phút (bot học)")
+            dong.append(f"BẬT: có người ở lại ≥ {moc} (hợp các cảm biến "
+                        + ", ".join(cb(x) for x in (mh.get("o_lai") or {}).get("cam_bien") or [])
+                        + ") thì HỎI anh để học")
         elif hd == "on":
             dong.append("BẬT: chưa tự bật (luật học chưa đủ tin)")
     tv = cd.get("tat_khi_vang") or {}
     if tv.get("bat"):
-        cho = sorted({round(kh.phut_vang(cd, time.time() + h * 3600)) for h in range(24)})
-        x = (f"TẮT KHI VẮNG: {' hoặc '.join(cb(m) for m in tv.get('cam_bien') or [])} báo vắng liền "
-             f"{cho[0]}–{cho[-1]} phút (bot tự học theo giờ)")
+        if cd.get("roi_giay"):
+            cho_tat = f"{cd['roi_giay']} giây (anh đặt)"
+        else:
+            cho = sorted({round(kh.phut_vang(cd, time.time() + h * 3600)) for h in range(24)})
+            cho_tat = f"{cho[0]}–{cho[-1]} phút (bot tự học theo giờ)"
+        x = f"TẮT KHI VẮNG: {' hoặc '.join(cb(m) for m in tv.get('cam_bien') or [])} báo vắng liền {cho_tat}"
         if tv.get("giu") and tv.get("nhin"):
             x += f"; lúc {cb(tv['giu'])} thì chụp {', '.join(tv['nhin'])} đếm người trước khi tắt"
-        if tv.get("roi"):
+        if tv.get("roi") and not cd.get("roi_giay"):
             x += (f"; vắng mà {cb(tv['roi'])} (người sang khu khác) thì tắt sau 1 phút"
                   + (f", chỉ khi người mới ở ≤ {tv['roi_phut']:g} phút" if tv.get("roi_phut") else ""))
         dong.append(x)
