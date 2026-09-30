@@ -2273,7 +2273,8 @@ def _execute(cap: "caps.Capability", args: dict, user_id: str, *, user_text: str
            "auto_approve": auto_approve, "is_admin": is_admin}
     risk = str(getattr(cap, "risk", "") or "").lower()
     try:
-        raw = cap.handler(args, ctx)
+        with run_journal.do("tool", cap.name):
+            raw = cap.handler(args, ctx)
     except Exception as exc:  # report, never crash the turn
         logger.exception("agent: capability %s failed", cap.name)
         try:
@@ -2468,6 +2469,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # ThreadPoolExecutor, mà `pool.submit` KHÔNG mang ContextVar sang thread mới.
     _MA_TIN_VAO.set(str(message_id or ""))
     t0 = _time.time()
+    run_journal.bat_dau_do()
     tools_used: list[str] = []
     steps_done = 0
     run_status = "ok"
@@ -2554,6 +2556,8 @@ def _orchestrate_locked(user_text: str, user_id: str,
                         "agent": "Agent",
                     }.get(run_kind, "Agent"),
                     "groups": groups,
+                    # Thời gian từng khâu (chuẩn bị / model / tool / còn lại) — xem `run_journal.bat_dau_do`.
+                    "thoi_gian": run_journal.tong_ket_do(),
                     **(meta_them or {}),
                 },
                 source_kind=source_kind,

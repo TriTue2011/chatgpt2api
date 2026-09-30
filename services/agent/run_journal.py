@@ -18,6 +18,9 @@ import sqlite3
 import threading
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Optional
 
@@ -37,6 +40,63 @@ _EXTRA_COLS: tuple[tuple[str, str], ...] = (
     ("dest_model", "TEXT NOT NULL DEFAULT ''"),
     ("request_id", "TEXT NOT NULL DEFAULT ''"),
 )
+
+
+# ── Đo thời gian từng khâu của một lượt bot ───────────────────────────────────
+# Chủ máy 30/09/2026 (học Hermes Agent: đo từng khâu trước rồi mới sửa): lượt Zalo một bước mất trung vị
+# 9,9 s trong khi gọi thẳng Codex 6,4 s — không biết phần còn lại nằm ở đâu vì chưa khâu nào được đo.
+# ContextVar: lượt bot chạy trọn trong một thread (`_orchestrate_locked`), mọi lời gọi model / tool của nó
+# cùng thread; ngoài lượt bot (API, HA) thì không đo — `do()` không làm gì.
+_moc_cv: ContextVar[dict[str, Any] | None] = ContextVar("run_moc", default=None)
+#: Giữ tối đa ngần này mốc mỗi lượt trong meta.
+MOC_TOI_DA = 40
+
+
+def bat_dau_do() -> None:
+    """Bắt đầu đo một lượt bot (gọi ở đầu lượt, cùng thread với lượt)."""
+    _moc_cv.set({"t0": time.monotonic(), "moc": [], "trong_tool": 0})
+
+
+@contextmanager
+def do(loai: str, ten: str) -> Iterator[None]:
+    """Đo một khâu (``loai`` = "model" | "tool") của lượt đang đo; không có lượt nào thì không làm gì.
+    Model gọi BÊN TRONG một tool (tool chụp ảnh gọi model thị giác…) mang ``trong_tool`` — khỏi tính trùng."""
+    d = _moc_cv.get()
+    if d is None:
+        yield
+        return
+    bd = time.monotonic()
+    trong = d["trong_tool"] > 0
+    if loai == "tool":
+        d["trong_tool"] += 1
+    try:
+        yield
+    finally:
+        if loai == "tool":
+            d["trong_tool"] -= 1
+        m = {"loai": loai, "ten": str(ten or "")[:60], "tu_ms": int((bd - d["t0"]) * 1000),
+             "ms": int((time.monotonic() - bd) * 1000), "_bd": bd}
+        if trong:
+            m["trong_tool"] = 1
+        d["moc"].append(m)
+
+
+def tong_ket_do() -> dict[str, Any] | None:
+    """Tổng kết lượt đang đo: chuẩn bị (đầu lượt → khâu đầu tiên), model, tool, phần còn lại (ms) + các mốc.
+    Gọi xong là thôi đo (thread của lượt còn được dùng lại cho lượt sau)."""
+    d = _moc_cv.get()
+    if d is None:
+        return None
+    _moc_cv.set(None)
+    tong = int((time.monotonic() - d["t0"]) * 1000)
+    # Theo lúc bắt đầu CHƯA làm tròn: khâu bao ngoài (tool) bắt đầu trước khâu nó chứa (model trong tool).
+    moc = [{k: v for k, v in m.items() if k != "_bd"} for m in sorted(d["moc"], key=lambda m: m["_bd"])]
+    ngoai = [m for m in moc if not m.get("trong_tool")]
+    model = sum(m["ms"] for m in ngoai if m["loai"] == "model")
+    tool = sum(m["ms"] for m in ngoai if m["loai"] == "tool")
+    chuan_bi = ngoai[0]["tu_ms"] if ngoai else tong
+    return {"tong_ms": tong, "chuan_bi_ms": chuan_bi, "model_ms": model, "tool_ms": tool,
+            "con_lai_ms": max(0, tong - chuan_bi - model - tool), "moc": moc[:MOC_TOI_DA]}
 
 
 def _cfg() -> dict[str, Any]:

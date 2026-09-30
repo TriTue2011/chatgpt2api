@@ -150,7 +150,14 @@ def _base() -> str:
     return (b + "/chat/completions") if b else _LOCAL
 
 
-def call_model(
+def call_model(model: str, messages: list[dict[str, Any]], **kwargs: Any) -> dict[str, Any]:
+    """Gọi model (xem `_call_model`) — trong lượt bot thì đo thời gian lời gọi (`run_journal.do`)."""
+    from services.agent import run_journal
+    with run_journal.do("model", model):
+        return _call_model(model, messages, **kwargs)
+
+
+def _call_model(
     model: str,
     messages: list[dict[str, Any]],
     *,
