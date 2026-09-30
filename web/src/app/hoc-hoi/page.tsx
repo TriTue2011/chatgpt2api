@@ -22,6 +22,7 @@ import { BoLocCaiDat } from "@/components/settings-filter";
 import { TongQuan } from "./components/tong-quan";
 import { HieuThietBi } from "./components/hieu-thiet-bi";
 import { SoDo } from "./components/so-do";
+import { SoDoNha } from "./components/so-do-nha";
 import { KichHoat } from "./components/kich-hoat";
 import { LichSinhHoat } from "./components/lich-sinh-hoat";
 import { GoiY } from "./components/goi-y";
@@ -47,6 +48,9 @@ function HocHoiContent() {
           </SettingsSection>
           <SettingsSection title="Sơ đồ kích hoạt" tuKhoa="nhan to chinh ngoai vi dieu kien tich bot dieu khien">
             <SoDo />
+          </SettingsSection>
+          <SettingsSection title="Sơ đồ nhà — ảnh camera" tuKhoa="so do nha anh camera luoi o dap an chup">
+            <SoDoNha />
           </SettingsSection>
           <SettingsSection title="Lịch sinh hoạt cả nhà" tuKhoa="lich sinh hoat ngu day di lam vang nha an toi thu">
             <LichSinhHoat />

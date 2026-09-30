@@ -1112,6 +1112,19 @@ def _h_so_do_nha(args: dict, ctx: dict) -> dict:
     from services import so_do_nha
 
     viec = str(args.get("viec") or "xem").strip().lower()
+    if viec == "dap_an_anh":
+        # Nhà không có model đọc ảnh: người dùng tự đọc ảnh lưới bằng app của họ rồi gửi đáp án lại.
+        cho = so_do_nha.cho_dap_an()
+        cam = str(args.get("camera") or "").strip() or (next(iter(cho)) if len(cho) == 1 else "")
+        if not cam:
+            return {"text": "Anh ghi giúp em tên camera: «đáp án ảnh <tên camera>: {…}» ạ. Đang chờ: "
+                            + (", ".join(cho) or "không có ảnh nào")}
+        kq = so_do_nha.nhan_dap_an_anh(cam, str(args.get("noi_dung") or ""))
+        if not kq.get("ok"):
+            return {"text": f"Đáp án ảnh {cam} chưa dùng được: {kq.get('loi')}. Anh kiểm lại rồi gửi em nhé."}
+        threading.Thread(target=so_do_nha.giai_va_bao, name="so-do-nha", daemon=True).start()
+        return {"text": f"Dạ, em ghi cách chia ô của {cam}: " + "; ".join(f"{p} {len(o)} ô" for p, o in kq["thay"].items())
+                        + ". Em đang vẽ lại sơ đồ." + (f" Còn chờ: {', '.join(kq['con_cho'])}." if kq["con_cho"] else "")}
     if viec == "chup_camera":
         # Chủ máy 29/09/2026: "dùng cam để đo theo mô tả của tôi. Chụp ảnh mà phân tích" — bot chụp,
         # kẻ lưới, YOLO khoanh đồ vật, model thị giác chia ô theo phòng rồi vẽ lại sơ đồ.
@@ -7378,9 +7391,11 @@ CAPABILITIES: dict[str, Capability] = {
                      "Chấm sơ đồ bot vẽ («sơ đồ đúng rồi», «sai, bếp có vách kính») → viec='cham'. "
                      "Bảo CHỤP ẢNH camera để phân tích / đo khu vực theo mô tả («chụp cam bếp phân tích», "
                      "«dùng cam để đo») → viec='chup_camera' (camera = tên camera nếu nêu; nếu câu có cả mô tả "
-                     "thì gọi viec='mo_ta' TRƯỚC rồi mới chup_camera). Hỏi sơ đồ nhà → viec='xem'."),
+                     "thì gọi viec='mo_ta' TRƯỚC rồi mới chup_camera). Người dùng gửi «đáp án ảnh <camera>: {…}» "
+                     "(tự đọc ảnh lưới bằng app khác) → viec='dap_an_anh' (camera, noi_dung = nguyên phần JSON). "
+                     "Hỏi sơ đồ nhà → viec='xem'."),
         parameters={"type": "object", "properties": {
-            "viec": {"type": "string", "enum": ["mo_ta", "cham", "xem", "chup_camera"]},
+            "viec": {"type": "string", "enum": ["mo_ta", "cham", "xem", "chup_camera", "dap_an_anh"]},
             "camera": {"type": "string", "description": "viec='chup_camera': tên camera (bỏ trống = mọi camera)."},
             "noi_dung": {"type": "string", "description": "Lời chủ nhà mô tả/trả lời, giữ đúng ý."},
             "dung": {"type": "boolean", "description": "viec='cham': sơ đồ đúng hay sai."},

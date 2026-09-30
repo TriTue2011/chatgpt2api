@@ -291,7 +291,7 @@ export function NhinNhaCard() {
             <div className="flex items-center gap-2 text-sm"
               title="Bot chụp camera, kẻ lưới, rồi model này nhìn ảnh để chia ô theo phòng cho sơ đồ nhà. Đo 30/09: ChatGPT miễn phí hay bịa phòng không có trong khung; Claude bám sàn sát nhất.">
               <span>Model đọc ảnh sơ đồ nhà</span>
-              <Input className="h-8 w-56" placeholder="claude/auto" value={nn.so_do?.model_anh || ""}
+              <Input className="h-8 w-56" placeholder="claude/auto — «thu_cong» để tự làm" value={nn.so_do?.model_anh || ""}
                 onChange={(e) => setNn({ ...nn, so_do: { ...nn.so_do, model_anh: e.target.value } })} />
             </div>
             {oSo("Ngưỡng vật thể", nn.yolo?.nguong, 0.35,

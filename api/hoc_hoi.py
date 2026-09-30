@@ -799,6 +799,24 @@ def create_router() -> APIRouter:
         except Exception as exc:
             return _loi(exc, "đọc ảnh camera")
 
+    @router.get("/api/hoc-hoi/so-do-nha/cho-anh")
+    async def so_do_nha_cho_anh(authorization: str | None = Header(default=None)):
+        """Ảnh camera đang chờ người dùng tự đọc (không có model đọc ảnh): ảnh lưới + lệnh để dán vào app khác."""
+        require_admin(authorization)
+        from services import so_do_nha
+        return {"ok": True, "cho": so_do_nha.cho_dap_an()}
+
+    @router.post("/api/hoc-hoi/so-do-nha/dap-an-anh")
+    async def so_do_nha_dap_an_anh(body: dict, authorization: str | None = Header(default=None)):
+        """Người dùng gửi lại đáp án đã kiểm (JSON app khác trả). body: {camera, dap_an}. Đúng khuôn thì ghi
+        vào sơ đồ và bot vẽ lại (chạy nền)."""
+        require_admin(authorization)
+        from services import so_do_nha
+        kq = so_do_nha.nhan_dap_an_anh(str(body.get("camera") or ""), str(body.get("dap_an") or ""))
+        if kq.get("ok"):
+            asyncio.get_running_loop().run_in_executor(None, so_do_nha.giai_va_bao)
+        return kq
+
     # ── Kịch bản nhà: bot dựng tình huống cho từng thiết bị, hỏi chủ nhà từng câu (`kich_ban_nha`) ──
     @router.get("/api/hoc-hoi/kich-ban")
     async def kich_ban_xem(authorization: str | None = Header(default=None)):

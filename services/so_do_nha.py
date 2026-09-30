@@ -593,19 +593,82 @@ def doc_anh_camera(ten: str) -> dict[str, Any]:
                    + ["CHỦ NHÀ MÔ TẢ:"] + ([f"- {x}" for x in mo_ta] or ["- (chưa có)"]))
     if ha_client._URL_CO_MAT_KHAU.search(de):
         return {"ok": False, "loi": "đề có chuỗi dạng tài khoản:mật khẩu — bỏ lượt"}
-    data = ht._doc_json(_goi_thi_giac(huong + "\n\n---\n\n" + de, luoi))
+    lenh = huong + "\n\n---\n\n" + de
+    loi_model = ""
+    if model_anh() != THU_CONG:
+        try:
+            tho: str | None = _goi_thi_giac(lenh, luoi)
+        except RuntimeError as exc:
+            tho, loi_model = None, str(exc)[:160]
+    else:
+        tho = None
+    if tho is None:
+        # Không có model đọc ảnh (nhà không có Claude…) hoặc chủ nhà chọn tự làm: xuất ẢNH + LỆNH để người dùng
+        # dán vào app của họ, thấy đúng thì gửi đáp án lại (chủ máy 30/09/2026).
+        return {"ok": False, "thu_cong": True, "camera": ten_that, "luoi": luoi, "loi": loi_model,
+                **_cho_dap_an(ten_that, lenh, luoi, dem, ban)}
+    data = ht._doc_json(tho)
     k = kiem_anh(data, phong) if data is not None else "không đọc được JSON"
     if isinstance(k, str):
         logger.warning({"event": "so_do_nha_anh_loai", "camera": ten_that, "loi": k})
         return {"ok": False, "camera": ten_that, "loi": k}
-    noi = (f"Ảnh {ten_that} (bot đọc ảnh chụp{' ĐÊM đen trắng' if dem else ''} đã kẻ lưới {COT}×{HANG}, YOLO khoanh "
-           f"đồ vật, chắc {round(100 * k['chac'])}%; hướng dẫn {ban}): "
-           + ("; ".join(f"{p}: ô {', '.join(o)}" for p, o in k["thay"].items()) or "không thấy phòng nào trong nhà")
-           + (f". Mốc: {k['moc']}" if k["moc"] else ""))
-    them_mo_ta(noi, nguon=f"anh:{ten_that}", thay_cu=True)
+    _ghi_bai_anh(ten_that, k, dem, f"bot đọc, hướng dẫn {ban}")
     logger.info({"event": "so_do_nha_anh", "camera": ten_that, "thay": k["thay"], "vat": len(vat)})
     return {"ok": True, "camera": ten_that, **k, "dem": dem, "luoi": luoi,
             "vat": [mo_ta_vat(v, rong, cao) for v in vat[:25]]}
+
+
+#: Đặt `nhin_nha.so_do.model_anh` = giá trị này: không gọi model — luôn xuất ảnh + lệnh cho người dùng tự làm.
+THU_CONG = "thu_cong"
+
+
+def _ghi_bai_anh(ten: str, k: dict[str, Any], dem: bool, ai_doc: str) -> None:
+    noi = (f"Ảnh {ten} ({ai_doc}; ảnh chụp{' ĐÊM đen trắng' if dem else ''} kẻ lưới {COT}×{HANG}, YOLO khoanh đồ vật, "
+           f"chắc {round(100 * k['chac'])}%): "
+           + ("; ".join(f"{p}: ô {', '.join(o)}" for p, o in k["thay"].items()) or "không thấy phòng nào trong nhà")
+           + (f". Mốc: {k['moc']}" if k["moc"] else ""))
+    them_mo_ta(noi, nguon=f"anh:{ten}", thay_cu=True)
+
+
+def _cho_dap_an(ten: str, lenh: str, luoi: bytes, dem: bool, ban: str) -> dict[str, Any]:
+    """Lưu phiếu CHỜ ĐÁP ÁN của một camera: ảnh lưới (đường tải) + lệnh đầy đủ. Trả {anh_url, lenh}."""
+    try:
+        from services.protocol.conversation import save_image_bytes
+        url = save_image_bytes(luoi)
+    except Exception:  # noqa: BLE001 — không lưu được vào thư viện ảnh thì vẫn còn tệp trong _ANH_DIR
+        url = ""
+    lenh_du = (lenh + "\n\n(Ảnh đính kèm là khung hình camera đã kẻ lưới. CHỈ trả JSON đúng khuôn ở trên.)")
+    with _khoa:
+        d = _nap()
+        d.setdefault("cho_anh", {})[ten] = {"luc": time.time(), "anh_url": url, "lenh": lenh_du, "dem": dem,
+                                            "huong_dan": ban}
+        _luu(d)
+    return {"anh_url": url, "lenh": lenh_du}
+
+
+def cho_dap_an() -> dict[str, dict[str, Any]]:
+    """Các camera đang chờ người dùng gửi đáp án (tự đọc ảnh bằng app khác)."""
+    return dict(so().get("cho_anh") or {})
+
+
+def nhan_dap_an_anh(ten: str, dap_an: str) -> dict[str, Any]:
+    """Người dùng tự đọc ảnh (ChatGPT / Gemini / Claude của họ) rồi dán đáp án: kiểm khuôn GIỐNG HỆT lúc bot tự
+    đọc, ghi vào sổ như một bài đọc ảnh, bỏ phiếu chờ. Sai khuôn thì trả lỗi để họ sửa, phiếu vẫn giữ."""
+    from services import hieu_thiet_bi_nha as ht
+    cho = cho_dap_an()
+    if ten not in cho:
+        return {"ok": False, "loi": f"không có ảnh nào của «{ten}» đang chờ đáp án"}
+    data = ht._doc_json(str(dap_an or ""))
+    k = kiem_anh(data, _ten_phong()) if data is not None else "không đọc được JSON (dán nguyên phần {…} app trả)"
+    if isinstance(k, str):
+        return {"ok": False, "loi": k}
+    _ghi_bai_anh(ten, k, bool(cho[ten].get("dem")), "người dùng tự đọc bằng app khác, gửi lại")
+    with _khoa:
+        d = _nap()
+        (d.get("cho_anh") or {}).pop(ten, None)
+        _luu(d)
+    logger.info({"event": "so_do_nha_anh_thu_cong", "camera": ten, "thay": k["thay"]})
+    return {"ok": True, "camera": ten, **k, "con_cho": sorted(cho_dap_an())}
 
 
 def doc_anh_va_ve(cameras: list[str] | None = None) -> dict[str, Any]:
@@ -624,6 +687,15 @@ def doc_anh_va_ve(cameras: list[str] | None = None) -> dict[str, Any]:
 
     loi = []
     for x in ra:
+        if x.get("thu_cong"):
+            # Không model nào đọc được: gửi ẢNH LƯỚI + cách tự làm; lệnh đầy đủ dài nên để trên web / API.
+            tin = (f"📷 {x['camera']} — em chưa có model đọc ảnh"
+                   + (f" ({x['loi']})" if x.get("loi") else "") + ".\nAnh tự làm giúp em: mở trang Học hỏi → «Sơ đồ nhà — "
+                   "ảnh chờ đáp án», chép LỆNH + ảnh này vào ChatGPT / Gemini / Claude của anh; thấy chia ô đúng thì dán "
+                   f"đáp án (phần {{…}}) vào ô ở đó, hoặc nhắn cho em «đáp án ảnh {x['camera']}: {{…}}».")
+            x.pop("luoi", None)
+            thong_bao.gui("hoc_hoi.hieu_thiet_bi", tin, anh_url=x.get("anh_url") or "")
+            continue
         if not x.get("ok"):
             loi.append(f"• {x['camera']}: chưa đọc được — {x.get('loi')}")
             continue

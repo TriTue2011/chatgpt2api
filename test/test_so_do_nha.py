@@ -132,3 +132,42 @@ def test_model_doc_anh_rieng_mac_dinh_claude(monkeypatch):
     assert sd.model_anh() == "claude/auto"
     monkeypatch.setattr(nhin_nha, "_muc", lambda ten: {"model_anh": " gemini_free/x "} if ten == "so_do" else {})
     assert sd.model_anh() == "gemini_free/x"
+
+
+def test_khong_co_model_doc_anh_thi_xuat_anh_va_lenh_nguoi_dung_tu_lam(so, tmp_path, monkeypatch):
+    """Chủ máy 30/09/2026: "với người không có claude thì xuất ảnh kèm promt để người dùng tự xử lý, sau khi thấy
+    đúng thì gửi lại đáp án cho bot"."""
+    import numpy as np
+
+    from services import camera_nha, ha_client, hieu_thiet_bi_nha as ht, nhin_nha, yolo_nha
+    from services.protocol import conversation
+    anh = np.full((600, 800, 3), (10, 90, 200), np.uint8)
+    monkeypatch.setattr(so, "_ANH_DIR", tmp_path / "anh")
+    monkeypatch.setattr(camera_nha, "chup", lambda ten, timeout=20.0: (ten, b"jpeg"))
+    monkeypatch.setattr(yolo_nha, "doc_anh", lambda b: anh)
+    monkeypatch.setattr(nhin_nha, "vat_the", lambda a: [])
+    monkeypatch.setattr(so, "_ten_phong", lambda: ["Bếp", "Phòng khách"])
+    monkeypatch.setattr(ht, "huong_dan", lambda ten: ("HƯỚNG DẪN ĐỌC ẢNH", "v1"))
+    monkeypatch.setattr(ha_client, "get_states", lambda: [])
+    monkeypatch.setattr(conversation, "save_image_bytes", lambda b: "http://x/images/luoi.jpg")
+
+    def model_hong(noi, jpeg):
+        raise RuntimeError("model thị giác lỗi: không có claude")
+    monkeypatch.setattr(so, "_goi_thi_giac", model_hong)
+    r = so.doc_anh_camera("Cam bếp")
+    assert r["thu_cong"] and "không có claude" in r["loi"] and r["anh_url"] == "http://x/images/luoi.jpg"
+    cho = so.cho_dap_an()["Cam bếp"]
+    assert cho["lenh"].startswith("HƯỚNG DẪN ĐỌC ẢNH") and "CAMERA: Cam bếp" in cho["lenh"] and "CHỈ trả JSON" in cho["lenh"]
+    # Đáp án sai khuôn: trả lỗi, phiếu còn.
+    assert "không có trong nhà" in so.nhan_dap_an_anh("Cam bếp", '{"thay": {"Sân": ["A1"]}}')["loi"]
+    assert "Cam bếp" in so.cho_dap_an()
+    assert not so.nhan_dap_an_anh("Cam cửa", "{}")["ok"]
+    kq = so.nhan_dap_an_anh("Cam bếp", 'App trả: ```json\n{"thay": {"Bếp": ["E4", "F5"]}, "chac": 0.8}\n```')
+    assert kq["ok"] and kq["thay"] == {"Bếp": ["E4", "F5"]} and kq["con_cho"] == []
+    mt = [x for x in so.so()["mo_ta"] if x["nguon"] == "anh:Cam bếp"]
+    assert len(mt) == 1 and "người dùng tự đọc" in mt[0]["noi_dung"] and "Bếp: ô E4, F5" in mt[0]["noi_dung"]
+    # Chọn «thu_cong»: không gọi model.
+    from services import nhin_nha as nn
+    monkeypatch.setattr(nn, "_muc", lambda ten: {"model_anh": "thu_cong"} if ten == "so_do" else {})
+    monkeypatch.setattr(so, "_goi_thi_giac", lambda *a: (_ for _ in ()).throw(AssertionError("không được gọi model")))
+    assert so.doc_anh_camera("Cam bếp")["thu_cong"] and "Cam bếp" in so.cho_dap_an()

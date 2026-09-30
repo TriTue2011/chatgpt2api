@@ -325,3 +325,19 @@ class SoDoVaKichBanEndpointTest(unittest.TestCase):
         self.assertEqual(d, {"ok": True, "id": 3, "so": 2, "loi": None})
         with mock.patch("services.kich_ban_nha.so", return_value={"lan": [], "hoi": []}):
             self.assertEqual(self.client.get("/api/hoc-hoi/kich-ban").json(), {"ok": True, "lan": [], "hoi": []})
+
+
+class DapAnAnhEndpointTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client, self._bo_qua = _app()
+        self.addCleanup(self._bo_qua.stop)
+
+    def test_xem_cho_va_gui_dap_an(self) -> None:
+        with mock.patch("services.so_do_nha.cho_dap_an", return_value={"Cam bếp": {"lenh": "L", "anh_url": "u"}}):
+            self.assertEqual(self.client.get("/api/hoc-hoi/so-do-nha/cho-anh").json()["cho"]["Cam bếp"]["lenh"], "L")
+        with mock.patch("services.so_do_nha.nhan_dap_an_anh", return_value={"ok": True, "thay": {}}) as f, \
+                mock.patch("services.so_do_nha.giai_va_bao") as ve:
+            d = self.client.post("/api/hoc-hoi/so-do-nha/dap-an-anh", json={"camera": "Cam bếp", "dap_an": "{}"}).json()
+        f.assert_called_once_with("Cam bếp", "{}")
+        self.assertTrue(d["ok"])
+        ve.assert_called_once()
