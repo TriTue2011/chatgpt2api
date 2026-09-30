@@ -568,32 +568,41 @@ def kiem_anh(data: Any, phong: list[str]) -> dict[str, Any] | str:
             "vi_sao": str(data.get("vi_sao") or "")[:500]}
 
 
+def lenh_doc_anh(ten: str, jpeg: bytes, mo_ta: list[str]) -> tuple[str, bytes, bool, list[Any], tuple[int, int], str]:
+    """Lệnh cho model đọc ảnh một camera: kẻ lưới + YOLO khoanh đồ vật + lời chủ nhà ``mo_ta``.
+    Trả (lệnh, ảnh lưới, ảnh đêm?, đồ vật, (rộng, cao), phiên bản hướng dẫn). Dùng chung cho đường chạy thật
+    và bộ đề luyện đọc ảnh (`services/de_luyen/doc_anh_camera.py`) để hai bên không lệch nhau."""
+    from services import hieu_thiet_bi_nha as ht, nhin_nha, yolo_nha
+
+    anh = yolo_nha.doc_anh(jpeg)
+    cao, rong = anh.shape[:2]
+    vat = nhin_nha.vat_the(anh)
+    dem = la_anh_dem(anh)
+    luoi = ve_luoi(anh, vat)
+    huong, ban = ht.huong_dan("doc_anh_camera")
+    de = "\n".join([f"CAMERA: {ten}",
+                    f"PHÒNG trong nhà (chỉ dùng đúng các tên này): {', '.join(_ten_phong())}",
+                    f"ẢNH: khung hình đã kẻ lưới {COT}×{HANG} — ô {mau_o()}, tên ô ghi ở góc trên-trái mỗi ô; "
+                    "hộp đỏ là đồ vật YOLO thấy."
+                    + (" ẢNH ĐÊM (hồng ngoại, đen trắng — không thấy màu)." if dem else ""),
+                    "YOLO thấy:"] + [f"- {mo_ta_vat(v, rong, cao)}" for v in vat[:25]] + (["- (không thấy gì)"] if not vat else [])
+                   + ["CHỦ NHÀ MÔ TẢ:"] + ([f"- {x}" for x in mo_ta] or ["- (chưa có)"]))
+    return huong + "\n\n---\n\n" + de, luoi, dem, vat, (rong, cao), ban
+
+
 def doc_anh_camera(ten: str) -> dict[str, Any]:
     """Chụp ``ten``, kẻ lưới + YOLO khoanh đồ vật, bot (model thị giác) chia ô theo phòng; kết quả vào sổ
     thành lời mô tả nguồn «anh:<camera>» (thay bản đọc cũ của camera đó)."""
     from services import camera_nha, ha_client, hieu_thiet_bi_nha as ht, nhin_nha, yolo_nha
 
     ten_that, jpeg = camera_nha.chup(ten, timeout=20.0)
-    anh = yolo_nha.doc_anh(jpeg)
-    cao, rong = anh.shape[:2]
-    vat = nhin_nha.vat_the(anh)
-    dem = la_anh_dem(anh)
-    luoi = ve_luoi(anh, vat)
+    mo_ta = [x["noi_dung"] for x in so()["mo_ta"] if not str(x.get("nguon") or "").startswith("anh:")]
+    lenh, luoi, dem, vat, (rong, cao), ban = lenh_doc_anh(ten_that, jpeg, mo_ta)
     _ANH_DIR.mkdir(parents=True, exist_ok=True)
     (_ANH_DIR / f"{ten_that}.jpg").write_bytes(luoi)
     phong = _ten_phong()
-    mo_ta = [x["noi_dung"] for x in so()["mo_ta"] if not str(x.get("nguon") or "").startswith("anh:")]
-    huong, ban = ht.huong_dan("doc_anh_camera")
-    de = "\n".join([f"CAMERA: {ten_that}",
-                    f"PHÒNG trong nhà (chỉ dùng đúng các tên này): {', '.join(phong)}",
-                    f"ẢNH: khung hình đã kẻ lưới {COT}×{HANG} — ô {mau_o()}, tên ô ghi ở góc trên-trái mỗi ô; "
-                    "hộp đỏ là đồ vật YOLO thấy."
-                    + (" ẢNH ĐÊM (hồng ngoại, đen trắng — không thấy màu)." if dem else ""),
-                    "YOLO thấy:"] + [f"- {mo_ta_vat(v, rong, cao)}" for v in vat[:25]] + (["- (không thấy gì)"] if not vat else [])
-                   + ["CHỦ NHÀ MÔ TẢ:"] + ([f"- {x}" for x in mo_ta] or ["- (chưa có)"]))
-    if ha_client._URL_CO_MAT_KHAU.search(de):
+    if ha_client._URL_CO_MAT_KHAU.search(lenh):
         return {"ok": False, "loi": "đề có chuỗi dạng tài khoản:mật khẩu — bỏ lượt"}
-    lenh = huong + "\n\n---\n\n" + de
     loi_model = ""
     if model_anh() != THU_CONG:
         try:
