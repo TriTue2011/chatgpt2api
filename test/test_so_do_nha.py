@@ -124,12 +124,12 @@ def test_de_bay_duong_di_frigate():
     assert "C2. ĐƯỜNG ĐI" not in sd.de({"phong": {}, "cung_bao": [], "camera": {}, "cua": {}, "ten": {}}, [], [])
 
 
-def test_model_doc_anh_rieng_mac_dinh_claude(monkeypatch):
-    """Chủ máy chọn 30/09/2026: Claude cho riêng việc đọc ảnh sơ đồ (ChatGPT miễn phí bịa phòng không có trong
-    khung); đổi được trên web (`nhin_nha.so_do.model_anh`)."""
+def test_model_doc_anh_rieng_mac_dinh_gemini(monkeypatch):
+    """Chủ máy chọn 30/09/2026 theo bộ đề ảnh thật: Gemini 3.6 flash đạt 4/4 camera, Claude 2/4; đổi được trên web
+    (`nhin_nha.so_do.model_anh`)."""
     from services import nhin_nha
     monkeypatch.setattr(nhin_nha, "_muc", lambda ten: {})
-    assert sd.model_anh() == "claude/auto"
+    assert sd.model_anh() == "gemini_free/gemini-3.6-flash"
     monkeypatch.setattr(nhin_nha, "_muc", lambda ten: {"model_anh": " gemini_free/x "} if ten == "so_do" else {})
     assert sd.model_anh() == "gemini_free/x"
 

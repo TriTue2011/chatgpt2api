@@ -518,7 +518,10 @@ def mo_ta_vat(v: Any, rong: int, cao: int) -> str:
 #: Model đọc ảnh sơ đồ nhà khi chủ máy chưa đặt `nhin_nha.so_do.model_anh`. Chủ máy chọn 30/09/2026 sau khi đo
 #: trên ảnh thật: ChatGPT miễn phí (đầu combo «AI vision») bịa phòng không có trong khung (gán «bếp» cho tủ giày,
 #: bàn ăn phòng khách); Claude và Gemini thì không, Claude bám hình dạng sàn sát nhất.
-MODEL_ANH_MAC_DINH = "claude/auto"
+#: Đổi lại 30/09/2026 chiều theo bộ đề ảnh thật (`de_luyen/doc_anh_camera`, đáp án = vùng chủ máy khoanh): Gemini
+#: 3.6 flash đạt 4/4 camera cả hai lượt (tìm đúng mốc «thùng gỗ xanh» mà Claude không thấy), Claude đạt 2/4 và
+#: hay 429. Chủ máy chọn đổi.
+MODEL_ANH_MAC_DINH = "gemini_free/gemini-3.6-flash"
 
 
 def model_anh() -> str:
