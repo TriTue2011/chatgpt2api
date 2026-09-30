@@ -1,33 +1,114 @@
 "use client";
 
 /**
- * Sơ đồ nhà — ảnh camera CHỜ ĐÁP ÁN. Nhà không có model đọc ảnh (vd không có Claude), hoặc chọn «thu_cong» ở
- * thẻ Nhìn nhà: bot xuất ảnh đã kẻ lưới + LỆNH đầy đủ; người dùng chép vào ChatGPT / Gemini / Claude của họ, thấy
- * chia ô đúng thì dán đáp án (JSON) lại đây — bot kiểm khuôn như lúc tự đọc rồi vẽ lại sơ đồ (chủ máy 30/09/2026).
+ * Sơ đồ nhà — thứ bot đang hiểu về nhà: kiểu nhà, phòng nào thông / có vách với phòng nào, cửa chính, và từng
+ * camera thấy phòng nào (tô ô lên chính ảnh lưới bot đã nhìn, kèm lời bot tả ảnh và lời chủ nhà khoanh). Chủ
+ * máy 30/09/2026: "sơ đồ nhà không thấy hiển thị gì, mô tả của từng bức ảnh" — bản cũ chỉ có mục ảnh chờ đáp án.
  *
- * Backend: api/hoc_hoi.py (/api/hoc-hoi/so-do-nha/cho-anh, /dap-an-anh, /chup-camera) → services/so_do_nha.py.
+ * Ảnh CHỜ ĐÁP ÁN: nhà không có model đọc ảnh (hoặc chọn «thu_cong» ở thẻ Nhìn nhà) thì bot xuất ảnh đã kẻ lưới +
+ * LỆNH; người dùng chép vào ChatGPT / Gemini / Claude của họ rồi dán đáp án (JSON) lại đây.
+ *
+ * Backend: api/hoc_hoi.py (/api/hoc-hoi/so-do-nha, /anh, /cham, /mo-ta, /giai, /cho-anh, /dap-an-anh,
+ * /chup-camera) → services/so_do_nha.py.
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Camera, Copy, Send } from "lucide-react";
+import { Camera, Check, Copy, RefreshCw, Send, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { httpRequest } from "@/lib/request";
-import { layGet } from "./lib";
+import { httpRequest, request } from "@/lib/request";
+import { goiPost, layGet } from "./lib";
 
 type Cho = { luc: number; anh_url: string; lenh: string; dem?: boolean };
+type Phong = { ten: string; loai?: string; thong_voi?: string[]; vach_voi?: string[] };
+type CamSo = { ten: string; thay?: Record<string, string[]> };
+type SoDo = {
+  kieu?: string;
+  so_tang?: number | null;
+  phong?: Phong[];
+  cua_chinh?: { vao?: string };
+  camera?: CamSo[];
+  hoi_chu_nha?: string[];
+  chac?: number;
+  vi_sao?: string;
+};
+type Bai = { id: number; luc: number; gia_tri: SoDo; ket_qua: "cho" | "dung" | "sai"; ghi_chu?: string };
+type MoTa = { luc: number; nguon: string; noi_dung: string };
+type SoData = { mo_ta?: MoTa[]; bai?: Bai[]; ap?: (SoDo & { id: number }) | null; luoi?: { cot: number; hang: number } };
+
+const TEN_KIEU: Record<string, string> = {
+  chung_cu: "Chung cư", nha_pho: "Nhà phố", biet_thu: "Nhà vườn / biệt thự", van_phong: "Văn phòng",
+  xuong: "Xưởng", nha_dat: "Nhà đất", khong_ro: "Chưa rõ kiểu nhà",
+};
+// Màu tô ô theo thứ tự phòng — đủ khác nhau trên ảnh camera sáng lẫn tối.
+const MAU = ["#ef4444", "#3b82f6", "#22c55e", "#eab308", "#a855f7", "#f97316", "#06b6d4", "#ec4899"];
+
+const gio = (t: number) => new Date(t * 1000).toLocaleString("vi-VN");
+
+/** Ảnh lưới của một camera (tải kèm xác thực) + ô tô màu theo phòng. */
+function AnhCamera({ cam, thay, mauPhong, luoi }: {
+  cam: string; thay: Record<string, string[]>; mauPhong: Record<string, string>; luoi: { cot: number; hang: number };
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [khong, setKhong] = useState(false);
+  const [to, setTo] = useState(true);
+
+  useEffect(() => {
+    let bo = "";
+    request.get(`/api/hoc-hoi/so-do-nha/anh?camera=${encodeURIComponent(cam)}`, { responseType: "blob" })
+      .then((r) => { bo = URL.createObjectURL(r.data as Blob); setUrl(bo); })
+      .catch(() => setKhong(true));
+    return () => { if (bo) URL.revokeObjectURL(bo); };
+  }, [cam]);
+
+  if (khong) return <p className="text-xs text-muted-foreground">Chưa có ảnh camera này — bấm «Chụp lại camera».</p>;
+  if (!url) return <p className="text-xs text-muted-foreground">Đang tải ảnh…</p>;
+  const o = Object.entries(thay).flatMap(([p, ds]) => ds.map((ten) => ({ p, ten })));
+  return (
+    <div className="space-y-1">
+      <div className="relative inline-block max-w-full">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={url} alt={cam} className="block max-h-80 max-w-full rounded" />
+        {to && o.map(({ p, ten }) => {
+          const m = /^([A-Z])(\d{1,2})$/.exec(ten);
+          if (!m) return null;
+          const c = m[1].charCodeAt(0) - 65, h = Number(m[2]) - 1;
+          return (
+            <div key={`${p}-${ten}`} title={`${ten}: ${p}`} className="absolute"
+              style={{ left: `${(c / luoi.cot) * 100}%`, top: `${(h / luoi.hang) * 100}%`,
+                width: `${100 / luoi.cot}%`, height: `${100 / luoi.hang}%`,
+                background: mauPhong[p] || "#888", opacity: 0.35 }} />
+          );
+        })}
+      </div>
+      {o.length > 0 && (
+        <button type="button" className="text-xs text-muted-foreground underline" onClick={() => setTo(!to)}>
+          {to ? "Ẩn ô tô màu" : "Hiện ô tô màu"}
+        </button>
+      )}
+    </div>
+  );
+}
 
 export function SoDoNha() {
+  const [so, setSo] = useState<SoData>({});
   const [cho, setCho] = useState<Record<string, Cho>>({});
   const [dapAn, setDapAn] = useState<Record<string, string>>({});
   const [dangChup, setDangChup] = useState(false);
+  const [dangVe, setDangVe] = useState(false);
+  const [ghiChu, setGhiChu] = useState("");
+  const [moTaMoi, setMoTaMoi] = useState("");
 
   const tai = useCallback(async () => {
     try {
-      const r = await layGet<{ cho?: Record<string, Cho> }>("/api/hoc-hoi/so-do-nha/cho-anh");
-      setCho(r.cho || {});
+      const [s, c] = await Promise.all([
+        layGet<SoData>("/api/hoc-hoi/so-do-nha"),
+        layGet<{ cho?: Record<string, Cho> }>("/api/hoc-hoi/so-do-nha/cho-anh"),
+      ]);
+      setSo(s);
+      setCho(c.cho || {});
     } catch { /* mất mạng một nhịp — bấm lại */ }
   }, []);
   useEffect(() => { void tai(); }, [tai]);
@@ -45,6 +126,41 @@ export function SoDoNha() {
     }
   };
 
+  const veLai = async () => {
+    setDangVe(true);
+    try {
+      const r = await httpRequest<{ ok?: boolean; loi?: string; id?: number }>("/api/hoc-hoi/so-do-nha/giai",
+        { method: "POST", body: {} });
+      if (r?.ok) toast.success(`Bot đã vẽ lại — bài #${r.id}`);
+      else toast.error(r?.loi || "Bot chưa vẽ được");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Không vẽ được");
+    } finally {
+      setDangVe(false);
+      await tai();
+    }
+  };
+
+  const cham = async (id: number, dung: boolean) => {
+    if (!dung && !ghiChu.trim()) {
+      toast.error("Ghi vài chữ sai ở đâu để bot vẽ lại cho đúng");
+      return;
+    }
+    if (await goiPost("/api/hoc-hoi/so-do-nha/cham", { id, dung, ghi_chu: ghiChu })) {
+      toast.success(dung ? "Đã dùng sơ đồ này" : "Đã ghi — bấm «Vẽ lại» để bot vẽ theo lời chấm");
+      setGhiChu("");
+      await tai();
+    }
+  };
+
+  const themMoTa = async () => {
+    if (await goiPost("/api/hoc-hoi/so-do-nha/mo-ta", { noi_dung: moTaMoi })) {
+      toast.success("Đã ghi — lần vẽ sau bot đọc cả câu này");
+      setMoTaMoi("");
+      await tai();
+    }
+  };
+
   const gui = async (cam: string) => {
     const r = await httpRequest<{ ok?: boolean; loi?: string }>("/api/hoc-hoi/so-do-nha/dap-an-anh", {
       method: "POST", body: { camera: cam, dap_an: dapAn[cam] || "" },
@@ -57,39 +173,162 @@ export function SoDoNha() {
     }
   };
 
-  const ds = Object.entries(cho);
+  const bai = so.bai || [];
+  const moi = bai.length ? bai[bai.length - 1] : null;
+  // Hiện sơ đồ ĐANG DÙNG; chưa có thì hiện bài mới nhất để chấm.
+  const hien: SoDo | null = so.ap || moi?.gia_tri || null;
+  const trangThai = so.ap
+    ? `Đang dùng (bài #${so.ap.id})`
+    : moi ? `Bài #${moi.id} — ${moi.ket_qua === "cho" ? "chờ chấm" : moi.ket_qua === "sai" ? "đã chấm SAI" : "đúng"}`
+      : "";
+  const chuaCham = moi && moi.ket_qua === "cho" ? moi : null;
+  const luoi = so.luoi || { cot: 16, hang: 12 };
+  const moTa = so.mo_ta || [];
+  const camTen = Array.from(new Set([
+    ...(hien?.camera || []).map((c) => c.ten),
+    ...moTa.filter((m) => m.nguon.startsWith("anh:")).map((m) => m.nguon.slice(4)),
+  ]));
+  const mauPhong: Record<string, string> = {};
+  (hien?.phong || []).forEach((p, i) => { mauPhong[p.ten] = MAU[i % MAU.length]; });
+  const loiChu = moTa.filter((m) => !m.nguon.startsWith("anh:"));
+  const dsCho = Object.entries(cho);
+
   return (
-    <div className="space-y-3 text-sm">
-      <p className="text-xs text-muted-foreground">
-        Bot chụp camera, kẻ lưới rồi chia ô theo phòng. Nhà không có model đọc ảnh (hoặc chọn «thu_cong» ở thẻ Nhìn
-        nhà) thì ảnh nằm đây: chép LỆNH, gửi kèm ẢNH vào ChatGPT / Gemini / Claude của anh, thấy chia ô đúng thì dán
-        nguyên phần JSON {"{…}"} app trả vào ô rồi gửi. Có thể nhắn cho bot «đáp án ảnh &lt;camera&gt;: {"{…}"}».
-      </p>
-      <Button size="sm" variant="outline" onClick={() => void chup()} disabled={dangChup}>
-        <Camera className="mr-1 h-4 w-4" />{dangChup ? "Đang chụp…" : "Chụp lại camera"}
-      </Button>
-      {ds.length === 0 && <p className="text-xs text-muted-foreground">Không có ảnh nào chờ đáp án.</p>}
-      {ds.map(([cam, x]) => (
-        <div key={cam} className="space-y-2 rounded border p-2">
-          <div className="font-medium">{cam}{x.dem ? " — ảnh đêm, đen trắng" : ""}</div>
-          {x.anh_url && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <a href={x.anh_url} target="_blank" rel="noreferrer"><img src={x.anh_url} alt={cam} className="max-h-72 rounded" /></a>
-          )}
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline"
-              onClick={() => { void navigator.clipboard.writeText(x.lenh); toast.success("Đã chép lệnh"); }}>
-              <Copy className="mr-1 h-4 w-4" />Chép lệnh
-            </Button>
-            <span className="text-xs text-muted-foreground">{x.lenh.length} ký tự</span>
+    <div className="space-y-4 text-sm">
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" onClick={() => void chup()} disabled={dangChup}>
+          <Camera className="mr-1 h-4 w-4" />{dangChup ? "Đang chụp… (vài phút)" : "Chụp lại camera"}
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => void veLai()} disabled={dangVe}>
+          <RefreshCw className={`mr-1 h-4 w-4 ${dangVe ? "animate-spin" : ""}`} />{dangVe ? "Đang vẽ…" : "Vẽ lại sơ đồ"}
+        </Button>
+      </div>
+
+      {/* 1. Sơ đồ */}
+      {!hien ? (
+        <p className="text-xs text-muted-foreground">Bot chưa vẽ sơ đồ nào — bấm «Vẽ lại sơ đồ».</p>
+      ) : (
+        <div className="space-y-2 rounded border p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">
+              {TEN_KIEU[hien.kieu || ""] || hien.kieu}{hien.so_tang ? `, ${hien.so_tang} tầng` : ""}
+            </span>
+            <span className={`text-xs ${so.ap ? "text-emerald-600" : "text-amber-600"}`}>{trangThai}</span>
+            {hien.chac != null && <span className="text-xs text-muted-foreground">bot chắc {Math.round(hien.chac * 100)}%</span>}
           </div>
-          <Textarea className="min-h-[80px] font-mono text-xs" placeholder='Dán đáp án: {"thay": {"Bếp": ["C4", …]}, …}'
-            value={dapAn[cam] || ""} onChange={(e) => setDapAn({ ...dapAn, [cam]: e.target.value })} />
-          <Button size="sm" onClick={() => void gui(cam)} disabled={!(dapAn[cam] || "").trim()}>
-            <Send className="mr-1 h-4 w-4" />Gửi đáp án cho bot
-          </Button>
+          <ul className="space-y-0.5">
+            {(hien.phong || []).map((p) => (
+              <li key={p.ten} className="flex flex-wrap items-center gap-x-2">
+                <span className="inline-block h-3 w-3 rounded-sm" style={{ background: mauPhong[p.ten] }} />
+                <b>{p.ten}</b>
+                {p.thong_voi?.length ? <span>— thông {p.thong_voi.join(", ")}</span> : null}
+                {p.vach_voi?.length ? <span className="text-muted-foreground">— có vách với {p.vach_voi.join(", ")}</span> : null}
+              </li>
+            ))}
+            {hien.cua_chinh?.vao ? <li>🚪 Cửa chính mở vào <b>{hien.cua_chinh.vao}</b></li> : null}
+          </ul>
+          {hien.vi_sao ? <p className="text-xs text-muted-foreground">Bot giải thích: {hien.vi_sao}</p> : null}
+          {hien.hoi_chu_nha?.length ? (
+            <div className="text-xs">
+              <div className="text-muted-foreground">Bot cần anh xác nhận:</div>
+              <ol className="list-decimal pl-5">{hien.hoi_chu_nha.map((q) => <li key={q}>{q}</li>)}</ol>
+            </div>
+          ) : null}
+          {chuaCham && (
+            <div className="space-y-2 border-t pt-2">
+              <Textarea className="min-h-[60px] text-xs" value={ghiChu} onChange={(e) => setGhiChu(e.target.value)}
+                placeholder="Sai ở đâu? Vd: «Cam bếp: ô E4, F4 là phòng khách», «bếp có cửa ra ban công»" />
+              <div className="flex gap-2">
+                <Button size="sm" onClick={() => void cham(chuaCham.id, true)}>
+                  <Check className="mr-1 h-4 w-4" />Đúng — dùng sơ đồ này
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => void cham(chuaCham.id, false)}>
+                  <X className="mr-1 h-4 w-4" />Sai
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
-      ))}
+      )}
+
+      {/* 2. Từng camera: ảnh + ô theo phòng + lời tả */}
+      {camTen.map((cam) => {
+        const thay = hien?.camera?.find((c) => c.ten === cam)?.thay || {};
+        const doc = [...moTa].reverse().find((m) => m.nguon === `anh:${cam}`);
+        const khoanh = moTa.filter((m) => !m.nguon.startsWith("anh:") && m.noi_dung.includes(cam));
+        return (
+          <div key={cam} className="space-y-2 rounded border p-3">
+            <div className="font-medium">📷 {cam}</div>
+            <AnhCamera cam={cam} thay={thay} mauPhong={mauPhong} luoi={luoi} />
+            <div className="text-xs">
+              {Object.keys(thay).length ? (
+                Object.entries(thay).map(([p, o]) => (
+                  <div key={p}>
+                    <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm" style={{ background: mauPhong[p] || "#888" }} />
+                    <b>{p}</b>: {o.length} ô
+                  </div>
+                ))
+              ) : <div className="text-muted-foreground">Sơ đồ: camera này không thấy phòng nào trong nhà.</div>}
+            </div>
+            {doc && (
+              <p className="whitespace-pre-wrap text-xs">
+                <span className="text-muted-foreground">Bot tả ảnh ({gio(doc.luc)}):</span> {doc.noi_dung}
+              </p>
+            )}
+            {khoanh.map((m) => (
+              <p key={m.luc} className="whitespace-pre-wrap text-xs">
+                <span className="text-sky-600">Chủ nhà ({gio(m.luc)}):</span> {m.noi_dung}
+              </p>
+            ))}
+          </div>
+        );
+      })}
+
+      {/* 3. Lời chủ nhà tả nhà */}
+      <div className="space-y-2 rounded border p-3">
+        <div className="font-medium">Lời chủ nhà mô tả ({loiChu.length})</div>
+        <ul className="max-h-64 space-y-1 overflow-y-auto text-xs">
+          {loiChu.map((m) => (
+            <li key={m.luc}><span className="text-muted-foreground">{gio(m.luc)}:</span> {m.noi_dung}</li>
+          ))}
+        </ul>
+        <Textarea className="min-h-[60px] text-xs" value={moTaMoi} onChange={(e) => setMoTaMoi(e.target.value)}
+          placeholder="Tả thêm, vd «phòng học có cửa ra phòng khách, không thông»" />
+        <Button size="sm" variant="outline" onClick={() => void themMoTa()} disabled={!moTaMoi.trim()}>
+          <Send className="mr-1 h-4 w-4" />Ghi mô tả
+        </Button>
+      </div>
+
+      {/* 4. Ảnh chờ đáp án (nhà không có model đọc ảnh) */}
+      {dsCho.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            Ảnh chờ anh đọc hộ: chép LỆNH, gửi kèm ẢNH vào ChatGPT / Gemini / Claude của anh, thấy chia ô đúng thì
+            dán nguyên phần JSON {"{…}"} app trả vào ô rồi gửi. Có thể nhắn bot «đáp án ảnh &lt;camera&gt;: {"{…}"}».
+          </p>
+          {dsCho.map(([cam, x]) => (
+            <div key={cam} className="space-y-2 rounded border p-2">
+              <div className="font-medium">{cam}{x.dem ? " — ảnh đêm, đen trắng" : ""}</div>
+              {x.anh_url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <a href={x.anh_url} target="_blank" rel="noreferrer"><img src={x.anh_url} alt={cam} className="max-h-72 rounded" /></a>
+              )}
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline"
+                  onClick={() => { void navigator.clipboard.writeText(x.lenh); toast.success("Đã chép lệnh"); }}>
+                  <Copy className="mr-1 h-4 w-4" />Chép lệnh
+                </Button>
+                <span className="text-xs text-muted-foreground">{x.lenh.length} ký tự</span>
+              </div>
+              <Textarea className="min-h-[80px] font-mono text-xs" placeholder='Dán đáp án: {"thay": {"Bếp": ["C4", …]}, …}'
+                value={dapAn[cam] || ""} onChange={(e) => setDapAn({ ...dapAn, [cam]: e.target.value })} />
+              <Button size="sm" onClick={() => void gui(cam)} disabled={!(dapAn[cam] || "").trim()}>
+                <Send className="mr-1 h-4 w-4" />Gửi đáp án cho bot
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

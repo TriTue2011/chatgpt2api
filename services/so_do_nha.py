@@ -744,8 +744,21 @@ def _cho_dap_an(ten: str, lenh: str, luoi: bytes, dem: bool, ban: str) -> dict[s
 
 
 def cho_dap_an() -> dict[str, dict[str, Any]]:
-    """Các camera đang chờ người dùng gửi đáp án (tự đọc ảnh bằng app khác)."""
-    return dict(so().get("cho_anh") or {})
+    """Các camera đang chờ người dùng gửi đáp án (tự đọc ảnh bằng app khác). Phiếu của camera đã có bản đọc
+    MỚI HƠN phiếu thì không còn việc: 30/09/2026 hai phiếu lúc 08:1x nằm lại trên web cả ngày dù bot đã đọc
+    xong hai camera đó ngay sau (bản cũ chỉ bỏ phiếu ở lần đọc kế tiếp)."""
+    d = so()
+    doc_luc = {str(x["nguon"])[4:]: float(x.get("luc") or 0) for x in d["mo_ta"]
+               if str(x.get("nguon") or "").startswith("anh:")}
+    return {k: v for k, v in (d.get("cho_anh") or {}).items() if float(v.get("luc") or 0) > doc_luc.get(k, 0)}
+
+
+def anh_luoi(ten: str) -> Path | None:
+    """Ảnh lưới mới nhất bot đã đọc của camera ``ten`` (None nếu chưa có). Chỉ nhận tên khớp đúng một tệp
+    trong thư mục ảnh — tên lạ (``../``) không bao giờ thành đường dẫn."""
+    if not _ANH_DIR.is_dir():
+        return None
+    return next((f for f in _ANH_DIR.glob("*.jpg") if f.stem == ten), None)
 
 
 def nhan_dap_an_anh(ten: str, dap_an: str) -> dict[str, Any]:

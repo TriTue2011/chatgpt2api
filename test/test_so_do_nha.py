@@ -279,3 +279,28 @@ def test_model_sau_chi_thay_khi_model_dau_hong(so, monkeypatch):
     monkeypatch.setattr(so, "_goi_thi_giac", model2)
     k, loi = so.doc_nhieu_lan("lệnh", b"", ["Bếp"])
     assert goi == ["g", "c", "c", "c"] and k["thay"] == {"Bếp": ["C1"]} and k["so_lan"] == 3 and "429" in loi
+
+
+def test_phieu_cho_cu_hon_ban_doc_thi_an(so, tmp_path, monkeypatch):
+    """30/09/2026: phiếu 08:1x của Cam cửa, Cam phòng khách nằm lại trên web cả ngày dù bot đọc xong ngay sau."""
+    from services.protocol import conversation
+    monkeypatch.setattr(conversation, "save_image_bytes", lambda b: "u")
+    monkeypatch.setattr(so.time, "time", lambda: 100.0)
+    so._cho_dap_an("Cam cửa", "lệnh", b"", False, "v1")
+    so._cho_dap_an("Cam bếp", "lệnh", b"", False, "v1")
+    monkeypatch.setattr(so.time, "time", lambda: 200.0)
+    so.them_mo_ta("Ảnh Cam cửa: không thấy phòng nào", nguon="anh:Cam cửa")
+    assert sorted(so.cho_dap_an()) == ["Cam bếp"]
+    monkeypatch.setattr(so.time, "time", lambda: 300.0)
+    so._cho_dap_an("Cam cửa", "lệnh", b"", False, "v1")
+    assert sorted(so.cho_dap_an()) == ["Cam bếp", "Cam cửa"]
+
+
+def test_anh_luoi_chi_nhan_ten_co_tep(so, tmp_path, monkeypatch):
+    monkeypatch.setattr(so, "_ANH_DIR", tmp_path / "anh")
+    assert so.anh_luoi("Cam bếp") is None
+    (tmp_path / "anh").mkdir()
+    (tmp_path / "anh" / "Cam bếp.jpg").write_bytes(b"x")
+    (tmp_path / "bi_mat.jpg").write_bytes(b"y")
+    assert so.anh_luoi("Cam bếp").read_bytes() == b"x"
+    assert so.anh_luoi("../bi_mat") is None and so.anh_luoi("") is None

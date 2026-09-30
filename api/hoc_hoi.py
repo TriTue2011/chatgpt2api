@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, HTTPException, Response
 
 from api.support import require_admin
 
@@ -771,7 +771,17 @@ def create_router() -> APIRouter:
         """Sổ sơ đồ nhà: lời chủ nhà mô tả, các bài bot vẽ, sơ đồ đang dùng."""
         require_admin(authorization)
         from services import so_do_nha
-        return {"ok": True, **so_do_nha.so()}
+        return {"ok": True, **so_do_nha.so(), "luoi": {"cot": so_do_nha.COT, "hang": so_do_nha.HANG}}
+
+    @router.get("/api/hoc-hoi/so-do-nha/anh")
+    async def so_do_nha_anh(camera: str = "", authorization: str | None = Header(default=None)):
+        """Ảnh lưới mới nhất bot đã đọc của một camera (JPEG), để web tô ô theo phòng lên trên."""
+        require_admin(authorization)
+        from services import so_do_nha
+        f = so_do_nha.anh_luoi(camera)
+        if f is None:
+            raise HTTPException(status_code=404, detail="Chưa có ảnh camera này.")
+        return Response(content=f.read_bytes(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
     @router.post("/api/hoc-hoi/so-do-nha/mo-ta")
     async def so_do_nha_mo_ta(body: dict, authorization: str | None = Header(default=None)):

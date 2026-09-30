@@ -327,6 +327,29 @@ class SoDoVaKichBanEndpointTest(unittest.TestCase):
             self.assertEqual(self.client.get("/api/hoc-hoi/kich-ban").json(), {"ok": True, "lan": [], "hoi": []})
 
 
+class AnhLuoiEndpointTest(unittest.TestCase):
+    """30/09/2026 chủ máy: «sơ đồ nhà không thấy hiển thị gì, mô tả của từng bức ảnh» — web cần ảnh lưới."""
+
+    def setUp(self) -> None:
+        self.client, self._bo_qua = _app()
+        self.addCleanup(self._bo_qua.stop)
+
+    def test_tra_anh_va_404_ten_la(self) -> None:
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "Cam bếp.jpg").write_bytes(b"\xff\xd8anh")
+            with mock.patch("services.so_do_nha._ANH_DIR", Path(tmp)):
+                r = self.client.get("/api/hoc-hoi/so-do-nha/anh", params={"camera": "Cam bếp"})
+                self.assertEqual((r.status_code, r.content, r.headers["content-type"]), (200, b"\xff\xd8anh", "image/jpeg"))
+                for ten in ("../Cam bếp", "Cam cửa", ""):
+                    self.assertEqual(self.client.get("/api/hoc-hoi/so-do-nha/anh", params={"camera": ten}).status_code, 404)
+
+    def test_xem_so_do_kem_kich_thuoc_luoi(self) -> None:
+        with mock.patch("services.so_do_nha.so", return_value={"mo_ta": [], "bai": [], "ap": None}):
+            self.assertEqual(self.client.get("/api/hoc-hoi/so-do-nha").json()["luoi"], {"cot": 16, "hang": 12})
+
+
 class DapAnAnhEndpointTest(unittest.TestCase):
     def setUp(self) -> None:
         self.client, self._bo_qua = _app()
