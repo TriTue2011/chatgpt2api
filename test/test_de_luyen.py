@@ -37,25 +37,47 @@ def test_cham():
     assert de_luyen.cham({**bai, "roi_khi_o_duoi": 10}, {"roi_khi_o_duoi_mot_trong": [1, 3]}) != []
 
 
-@pytest.mark.parametrize("d", __import__("services.de_luyen.sinh_kich_ban", fromlist=["DE"]).DE,
-                         ids=lambda d: d["ten"])
-def test_de_tinh_huong_dung_khuon(d):
-    """Bộ đề dựng tình huống (mọi kiểu nơi chốn): đề đúng khuôn tầng kịch bản, thiết bị trong đáp án có trong đề,
-    và bộ chấm nhận một bài làm đúng."""
+_NOI = ("chung_cu", "nha_pho", "biet_thu", "van_phong", "xuong")
+_KB = [(n, d) for n in _NOI for d in __import__(f"services.de_luyen.sinh_kich_ban_{n}", fromlist=["DE"]).DE]
+
+
+@pytest.fixture
+def huong_repo(monkeypatch):
+    """Hướng dẫn đọc thẳng bản gốc trong repo (không đụng bản chạy thật trong DATA_DIR)."""
+    from pathlib import Path
+
+    from services import hieu_thiet_bi_nha as ht
+    goc = Path(__file__).resolve().parents[1] / "services" / "huong_dan_hoc"
+    monkeypatch.setattr(ht, "huong_dan", lambda ten="": ((goc / f"{ten}.md").read_text(encoding="utf-8"), ten))
+
+
+@pytest.mark.parametrize("n,d", _KB, ids=[f"{n}:{d['ten']}" for n, d in _KB])
+def test_de_tinh_huong_dung_khuon(n, d, huong_repo):
+    """Bộ đề dựng tình huống theo NƠI: đề đúng khuôn (thiết bị đang xét, danh mục chung + riêng của nơi), thiết bị
+    trong đáp án có trong đề, bộ chấm nhận một bài làm đúng và bắt bài bỏ sót."""
     from services import kich_ban_nha
-    from services.de_luyen import sinh_kich_ban as sk
-    de = sk.de_cho(d)
-    assert "C. THIẾT BỊ" in de and "B2. AI Ở NHÀ" in de
+    from services.de_luyen import _kich_ban as kb
+    assert d["uv"]["noi"] == n
+    huong, _ = kich_ban_nha.huong_dan_cho(n)
+    ma = kich_ban_nha.danh_muc(huong)
+    assert "vao" in ma and "an_ninh" in ma and len(ma) > 13, "danh mục = chung + riêng của nơi"
+    de = kb.de_cho(d)
+    assert "THIẾT BỊ ĐANG XÉT" in de and "DANH MỤC phải đi qua" in de and "B2. AI Ở NHÀ" in de
     for y in d["dap_an"].get("phai_co") or []:
-        assert y["thiet_bi"] in de
+        assert y["thiet_bi"] in d["uv"]["thiet_bi"]
+        for m in ([y["loai"]] if isinstance(y.get("loai"), str) else y.get("loai") or []):
+            assert m in ma, f"{d['ten']}: đáp án nhắc mã {m} không có trong danh mục của {n}"
+
     def mot(v, mac_dinh):
         return (v[0] if isinstance(v, list) else v) if v else mac_dinh
-    bai = {"kich_ban": [{"thiet_bi": y["thiet_bi"], "tinh_huong": y["tu"][0], "cam_bien_thay": "",
-                         "nen": mot(y.get("nen"), "bat"), "hien_tai": mot(y.get("hien_tai"), "sai"), "vi_sao": "",
-                         "hoi": None}
-                        for y in d["dap_an"].get("phai_co") or []]
-           + [{"thiet_bi": next(iter(d["uv"]["thiet_bi"])), "tinh_huong": "hỏi", "cam_bien_thay": "", "nen": "hoi",
-               "hien_tai": "khong_ro", "vi_sao": "", "hoi": nhom[0]} for nhom in d["dap_an"].get("phai_hoi_ve") or []]}
-    k = kich_ban_nha.kiem(bai, d["uv"])
-    assert isinstance(k, dict) and sk.cham_cho(k, d["dap_an"]) == []
-    assert sk.cham_cho({"kich_ban": []}, d["dap_an"]) != []
+    bai = {"kich_ban": [{"thiet_bi": y["thiet_bi"], "loai": mot(y.get("loai"), "vao"), "tinh_huong": y["tu"][0],
+                         "cam_bien_thay": "", "nen": mot(y.get("nen"), "bat"), "hien_tai": mot(y.get("hien_tai"), "sai"),
+                         "vi_sao": "", "hoi": None} for y in d["dap_an"].get("phai_co") or []]
+           + [{"thiet_bi": next(iter(d["uv"]["thiet_bi"])), "loai": "rieng", "tinh_huong": "hỏi", "cam_bien_thay": "",
+               "nen": "hoi", "hien_tai": "khong_ro", "vi_sao": "", "hoi": nhom[0]}
+              for nhom in d["dap_an"].get("phai_hoi_ve") or []],
+           "khong_ap_dung": [], "thieu": {}}
+    assert kb.cham_cho(bai, d["dap_an"]) == []
+    assert kb.cham_cho({"kich_ban": [], "khong_ap_dung": [], "thieu": {}}, d["dap_an"]) != []
+    if d["dap_an"].get("phu_du"):
+        assert kb.cham_cho({**bai, "thieu": {"x": ["vao"]}}, d["dap_an"]) != [], "bỏ sót danh mục là sai"

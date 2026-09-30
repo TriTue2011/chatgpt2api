@@ -15,6 +15,7 @@ sổ mô tả của sơ đồ nhà (mọi tầng học đọc nó) và vào đ�
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from pathlib import Path
@@ -31,6 +32,33 @@ _NEN_DOC = {"bat": "bật", "tat": "tắt", "giu": "giữ nguyên", "khong_lam":
             "bao": "báo anh"}
 #: Tối đa câu hỏi mỗi lượt dựng — hỏi dồn thì chủ nhà không trả lời hết (chủ máy 11/09: "xác minh lần lượt").
 HOI_TOI_DA = 8
+#: Loại nơi — mỗi loại một phần hướng dẫn RIÊNG `sinh_kich_ban_<noi>.md` ghép sau phần chung (chủ máy
+#: 30/09/2026: "hướng dẫn theo từng địa điểm, gói gọn promt theo nó ví dụ chung cư").
+NOI = ("chung_cu", "nha_pho", "biet_thu", "van_phong", "xuong")
+#: Kiểu nhà trong sơ đồ (so_do_nha.KIEU) → loại nơi; "nha_dat" cũ coi như nhà phố.
+_KIEU_NOI = {"chung_cu": "chung_cu", "nha_pho": "nha_pho", "nha_dat": "nha_pho", "biet_thu": "biet_thu",
+             "van_phong": "van_phong", "xuong": "xuong"}
+_MA_RE = re.compile(r"^- `([a-z_]+)` —", re.MULTILINE)
+
+
+def noi_cua(kieu: Any) -> str:
+    """Loại nơi của kiểu nhà; chưa rõ thì ``""`` (chỉ dùng phần chung)."""
+    return _KIEU_NOI.get(str(kieu or ""), "")
+
+
+def huong_dan_cho(noi: str) -> tuple[str, str]:
+    """Phần chung + phần riêng của ``noi`` — đúng một nơi, không lẫn chuyện xưởng vào căn hộ."""
+    from services import hieu_thiet_bi_nha as ht
+    chung, b1 = ht.huong_dan("sinh_kich_ban")
+    if noi not in NOI:
+        return chung, b1
+    rieng, b2 = ht.huong_dan(f"sinh_kich_ban_{noi}")
+    return chung + "\n\n---\n\n" + rieng, f"{b1}+{b2}"
+
+
+def danh_muc(huong: str) -> list[str]:
+    """Mã loại tình huống bot PHẢI đi qua cho mỗi thiết bị — đọc thẳng từ hướng dẫn (một nguồn duy nhất)."""
+    return list(dict.fromkeys(_MA_RE.findall(huong)))
 
 
 # ── Sổ ──────────────────────────────────────────────────────────────────────
@@ -147,21 +175,25 @@ def do() -> dict[str, Any]:
                 "viec": _viec_dang_cai(tb, cd, d["mo_hinh"].get(tb) or {}, ten)}
            for tb, cd in sorted(d["thiet_bi"].items()) if cd.get("bat")}
     return {"so_do": so_do_nha.doc(s) if s else "", "so_do_chac": bool(ap), "phong": phong, "nguoi": nguoi,
-            "thiet_bi": tbs, "cham": so().get("cham") or [],
+            "noi": noi_cua((s or {}).get("kieu")), "thiet_bi": tbs, "cham": so().get("cham") or [],
             "mo_ta": [x["noi_dung"] for x in so_do["mo_ta"]]}
 
 
-def de(uv: dict[str, Any], da_hoi: list[dict[str, Any]]) -> str:
-    dong = [("A. SƠ ĐỒ NHÀ (đã chấm):" if uv["so_do_chac"] else "A. SƠ ĐỒ NHÀ (bot vẽ, CHƯA chấm):"),
+def de(uv: dict[str, Any], da_hoi: list[dict[str, Any]], tb: str, ma: list[str]) -> str:
+    x = uv["thiet_bi"][tb]
+    dong = [f"THIẾT BỊ ĐANG XÉT: {tb} | {x['ten']} | ở {x['khu']}",
+            f"DANH MỤC phải đi qua (mỗi mã: tình huống hoặc khong_ap_dung): {', '.join(ma)}", "",
+            ("A. SƠ ĐỒ NHÀ (đã chấm):" if uv["so_do_chac"] else "A. SƠ ĐỒ NHÀ (bot vẽ, CHƯA chấm):"),
             uv["so_do"] or "(chưa có)", "\nB. CẢM BIẾN THEO PHÒNG:"]
     dong += [f"- {p}: {', '.join(ds)}" for p, ds in sorted(uv["phong"].items())] or ["(không có)"]
     dong += ["\nB2. AI Ở NHÀ — người và điện thoại/máy người cầm (home = ở nhà, not_home = đi vắng; cả nhà "
              "not_home mà trong nhà có người là bất thường):"]
     dong += [f"- {x}" for x in uv.get("nguoi") or []] or ["(không có — bot không biết lúc nào cả nhà vắng)"]
-    dong.append("\nC. THIẾT BỊ và việc ĐANG CÀI (bộ kích hoạt sẽ làm đúng như thế):")
-    for tb, x in uv["thiet_bi"].items():
-        dong.append(f"- {tb} | {x['ten']} | ở {x['khu']}")
-        dong += [f"    {v}" for v in x["viec"]]
+    dong.append("\nC. THIẾT BỊ và việc ĐANG CÀI (bộ kích hoạt sẽ làm đúng như thế) — ĐANG XÉT thiết bị đánh ►; "
+                "thiết bị khác chỉ để biết quanh nó có gì:")
+    for m, y in uv["thiet_bi"].items():
+        dong.append(f"{'►' if m == tb else '-'} {m} | {y['ten']} | ở {y['khu']}")
+        dong += [f"    {v}" for v in y["viec"]] if m == tb else []
     dong += ["\nD. CHỦ NHÀ MÔ TẢ (kể cả bot đọc ảnh camera — dòng «Ảnh …»):"] + ([f"- {x}" for x in uv["mo_ta"]]
                                                                                  or ["(chưa có)"])
     if da_hoi:
@@ -169,9 +201,9 @@ def de(uv: dict[str, Any], da_hoi: list[dict[str, Any]]) -> str:
         dong += [f"- {x['cau']} → {x.get('tra_loi') or '(chưa trả lời)'}" for x in da_hoi[-20:]]
     if uv.get("cham"):
         dong += ["\nF. LỜI CHẤM các lần dựng trước (bài học — đừng lặp lại chỗ bị chấm sai):"]
-        dong += [f"- ({'chủ nhà' if x['cham_boi'] == 'chu_may' else 'giáo viên'} chấm "
-                 f"{'ĐÚNG' if x['dung'] else 'SAI'}) {x['thiet_bi']} — «{x['tinh_huong']}»: {x['ghi_chu']}"
-                 for x in uv["cham"][-15:]]
+        dong += [f"- ({'chủ nhà' if c['cham_boi'] == 'chu_may' else 'giáo viên'} chấm "
+                 f"{'ĐÚNG' if c['dung'] else 'SAI'}) {c['thiet_bi']} — «{c['tinh_huong']}»: {c['ghi_chu']}"
+                 for c in uv["cham"][-15:]]
     return "\n".join(dong)
 
 
@@ -194,56 +226,101 @@ def cham(lan_id: int, so_thu_tu: int, dung: bool, *, cham_boi: str, ghi_chu: str
     return True
 
 
-def kiem(data: Any, uv: dict[str, Any]) -> dict[str, Any] | str:
-    """Loại bài sai khuôn; đúng/sai về nội dung là việc chủ nhà và giáo viên."""
-    if not isinstance(data, dict) or not isinstance(data.get("kich_ban"), list) or not data["kich_ban"]:
+def kiem(data: Any, tb: str, ma: list[str]) -> dict[str, Any] | str:
+    """Loại bài sai khuôn (mã ngoài danh mục, giá trị lạ); đúng/sai về nội dung là việc người chấm."""
+    if not isinstance(data, dict) or not isinstance(data.get("kich_ban"), list):
         return "phải là JSON có «kich_ban»: [ … ]"
-    ra = []
+    ra, kad = [], []
     for x in data["kich_ban"]:
         if not isinstance(x, dict):
             return "mỗi kịch bản là một object"
-        if x.get("thiet_bi") not in uv["thiet_bi"]:
-            return f"thiết bị không có trong đề: {x.get('thiet_bi')!r}"
+        if x.get("loai") not in ma:
+            return f"«loai» phải là mã trong danh mục: {x.get('loai')!r}"
         if x.get("nen") not in NEN or x.get("hien_tai") not in HIEN_TAI:
             return f"«nen» phải thuộc {NEN}, «hien_tai» thuộc {HIEN_TAI}"
         if not str(x.get("tinh_huong") or "").strip():
             return "thiếu «tinh_huong»"
-        ra.append({"thiet_bi": x["thiet_bi"], "tinh_huong": str(x["tinh_huong"])[:300],
+        ra.append({"thiet_bi": tb, "loai": x["loai"], "tinh_huong": str(x["tinh_huong"])[:300],
                    "cam_bien_thay": str(x.get("cam_bien_thay") or "")[:300], "nen": x["nen"],
                    "hien_tai": x["hien_tai"], "vi_sao": str(x.get("vi_sao") or "")[:300],
                    "hoi": (str(x["hoi"]).strip()[:300] or None) if x.get("hoi") else None})
-    return {"kich_ban": ra, "tom_tat": str(data.get("tom_tat") or "")[:500]}
+    for x in data.get("khong_ap_dung") or []:
+        if isinstance(x, dict) and x.get("loai") in ma:
+            kad.append({"thiet_bi": tb, "loai": x["loai"], "vi_sao": str(x.get("vi_sao") or "")[:200]})
+    return {"kich_ban": ra, "khong_ap_dung": kad, "tom_tat": str(data.get("tom_tat") or "")[:300]}
+
+
+def thieu(k: dict[str, Any], ma: list[str]) -> list[str]:
+    """Mã danh mục chưa có tình huống lẫn lời «không áp dụng» — bot bỏ sót."""
+    co = {x["loai"] for x in k["kich_ban"]} | {x["loai"] for x in k["khong_ap_dung"]}
+    return [m for m in ma if m not in co]
+
+
+def giai_mot(uv: dict[str, Any], tb: str, huong: str, model: str, da_hoi: list[dict[str, Any]]) -> dict[str, Any] | str:
+    """Bot dựng tình huống cho MỘT thiết bị. Thiếu mã nào của danh mục thì hỏi lại ĐÚNG những mã đó một lần
+    (chủ máy 30/09/2026: "tránh bỏ sót, tránh nhầm, thiếu tình huống với chỉ 1 thiết bị")."""
+    from services import hieu_thiet_bi_nha as ht
+    from services.thoi_quen_nha import _hoi_bot
+
+    ma = danh_muc(huong)
+    dde = de(uv, da_hoi, tb, ma)
+    b = _hoi_bot(ht, model, huong, dde)
+    k = kiem(b, tb, ma) if not isinstance(b, str) else b
+    if isinstance(k, str):
+        return k
+    con = thieu(k, ma)
+    if con:
+        bo_sung = (dde + "\n\nBÀI EM VỪA LÀM:\n" + json.dumps(b, ensure_ascii=False)
+                   + f"\n\nEM ĐÃ BỎ SÓT các mã: {', '.join(con)}. Trả lại JSON ĐẦY ĐỦ: giữ mọi tình huống đã có, "
+                   "thêm tình huống (hoặc khong_ap_dung kèm vì sao) cho TỪNG mã còn thiếu.")
+        b2 = _hoi_bot(ht, model, huong, bo_sung)
+        k2 = kiem(b2, tb, ma) if not isinstance(b2, str) else b2
+        if isinstance(k2, dict) and len(thieu(k2, ma)) < len(con):
+            k = k2
+    k["thieu"] = thieu(k, ma)
+    return k
 
 
 # ── Dựng, báo, hỏi ──────────────────────────────────────────────────────────
 def giai() -> dict[str, Any]:
-    """Bot dựng kịch bản. Ghi sổ một lượt + các câu hỏi (chưa gửi)."""
+    """Bot dựng kịch bản cho TỪNG thiết bị (mỗi thiết bị một lượt gọi). Ghi sổ một lượt + câu hỏi (chưa gửi)."""
     from services import hieu_thiet_bi_nha as ht
-    from services.thoi_quen_nha import _hoi_bot
 
     uv = do()
     if not uv["thiet_bi"]:
         return {"ok": False, "loi": "chưa có thiết bị nào bot điều khiển"}
-    huong, ban = ht.huong_dan("sinh_kich_ban")
-    b = _hoi_bot(ht, ht._model(), huong, de(uv, so()["hoi"]))
-    k = kiem(b, uv) if not isinstance(b, str) else b
-    if isinstance(k, str):
-        logger.warning({"event": "kich_ban_loai", "loi": k})
-        return {"ok": False, "loi": k}
+    huong, ban = huong_dan_cho(uv["noi"])
+    model = ht._model()
+    kq: dict[str, Any] = {"kich_ban": [], "khong_ap_dung": [], "thieu": {}, "loi": {}, "tom_tat": []}
+    for tb in uv["thiet_bi"]:
+        k = giai_mot(uv, tb, huong, model, so()["hoi"])
+        if isinstance(k, str):
+            kq["loi"][tb] = k
+            logger.warning({"event": "kich_ban_loai", "thiet_bi": tb, "loi": k})
+            continue
+        kq["kich_ban"] += k["kich_ban"]
+        kq["khong_ap_dung"] += k["khong_ap_dung"]
+        if k["thieu"]:
+            kq["thieu"][tb] = k["thieu"]
+        if k["tom_tat"]:
+            kq["tom_tat"].append(f"{uv['thiet_bi'][tb]['ten']}: {k['tom_tat']}")
+    if not kq["kich_ban"]:
+        return {"ok": False, "loi": "; ".join(f"{t}: {l}" for t, l in kq["loi"].items())[:300]}
+    kq["tom_tat"] = " ".join(kq["tom_tat"])[:1500]
     with _khoa:
         d = _nap()
         id_ = max((x["id"] for x in d["lan"]), default=0) + 1
-        d["lan"] = (d["lan"] + [{"id": id_, "luc": time.time(), "huong_dan": ban, **k}])[-10:]
+        d["lan"] = (d["lan"] + [{"id": id_, "luc": time.time(), "huong_dan": ban, "noi": uv["noi"], **kq}])[-10:]
         da = {x["cau"] for x in d["hoi"]}
         so_hoi = max((x["so"] for x in d["hoi"]), default=0)
-        for x in k["kich_ban"]:
+        for x in kq["kich_ban"]:
             if x["hoi"] and x["hoi"] not in da and sum(1 for h in d["hoi"] if h["lan"] == id_) < HOI_TOI_DA:
                 so_hoi += 1
                 d["hoi"].append({"so": so_hoi, "lan": id_, "thiet_bi": x["thiet_bi"], "tinh_huong": x["tinh_huong"],
                                  "cau": x["hoi"], "gui_luc": None, "tra_loi": None})
                 da.add(x["hoi"])
         _luu(d)
-    return {"ok": True, "id": id_, "uv": uv, **k}
+    return {"ok": True, "id": id_, "uv": uv, **kq}
 
 
 def gui_cau_tiep() -> str:
@@ -276,6 +353,8 @@ def bao(kq: dict[str, Any]) -> str:
         dem = {h: sum(1 for _, x in ds if x["hien_tai"] == h) for h in HIEN_TAI}
         dong.append(f"• {ten[tb]}: ✓{dem['dung']} ✗{dem['sai']} ?{dem['khong_ro']}")
         dong += [f"   ✗ [{i}] {x['tinh_huong']} → nên {_NEN_DOC[x['nen']]}" for i, x in ds if x["hien_tai"] == "sai"][:3]
+    if kq.get("thieu"):
+        dong.append("Còn bỏ sót: " + "; ".join(f"{ten.get(t, t)} ({', '.join(m)})" for t, m in kq["thieu"].items()))
     dong.append("Em nhận định sai chỗ nào anh nói, vd «tình huống 3 sai, quạt đó ...» — em ghi làm bài học.")
     return "\n".join(dong)
 

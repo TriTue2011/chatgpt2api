@@ -66,7 +66,7 @@ DE: list[dict[str, Any]] = [
                 "Phòng ngủ": _p(["binary_sensor.radar_ngu"])},
                [{"a": "Phòng khách", "b": "Bếp", "ty_le": 0.5}, {"a": "Phòng ngủ", "b": "Phòng khách", "ty_le": 0.03}],
                {}, {"binary_sensor.cua_chinh": {"Phòng khách": 90, "(không phòng nào)": 40}}),
-     "dap_an": {"kieu": "nha_dat", "so_tang": 3, "thong": [["Phòng khách", "Bếp"]],
+     "dap_an": {"kieu": "nha_pho", "so_tang": 3, "thong": [["Phòng khách", "Bếp"]],
                 "khong_thong": [["Phòng ngủ", "Phòng khách"]], "cua_vao": "Phòng khách"}},
 
     {"ten": "chua_co_mo_ta_bang_chung_mo_ho",
@@ -107,7 +107,8 @@ def cham_cho(bai: dict[str, Any] | str, dap_an: dict[str, Any]) -> list[str]:
 
     def thong(a: str, b: str) -> bool:
         return b in (phong.get(a) or {}).get("thong_voi", []) or a in (phong.get(b) or {}).get("thong_voi", [])
-    if "kieu" in dap_an and bai.get("kieu") != dap_an["kieu"]:
+    if "kieu" in dap_an and bai.get("kieu") != dap_an["kieu"] and not (
+            dap_an["kieu"] == "nha_pho" and bai.get("kieu") == "nha_dat"):    # tên cũ của nhà phố vẫn nhận
         loi.append(f"kieu phải là {dap_an['kieu']}, bài: {bai.get('kieu')}")
     if "so_tang" in dap_an and bai.get("so_tang") != dap_an["so_tang"]:
         loi.append(f"so_tang phải là {dap_an['so_tang']}, bài: {bai.get('so_tang')}")

@@ -19,7 +19,7 @@ def kb(kh, tmp_path, monkeypatch):  # noqa: F811
     monkeypatch.setattr(ha_client, "get_states", lambda: TT)
     monkeypatch.setattr(ha_client, "get_ha_area_index", lambda: {"entity_platform": {}})
     monkeypatch.setattr(boi_canh_nha, "phong_cua", lambda ma: "Phòng ngủ" if ma in (DEN, NGU) else "")
-    monkeypatch.setattr(ht, "huong_dan", lambda ten: ("HƯỚNG DẪN", "v1"))
+    monkeypatch.setattr(ht, "huong_dan", lambda ten: ("- `vao` — vào khu\n- `o_lai` — ở lại", "v1"))
     monkeypatch.setattr(ht, "_model", lambda: "m")
     tin: list[str] = []
     monkeypatch.setattr(ht, "bao_nhom", lambda t: tin.append(t) or 1)
@@ -29,21 +29,38 @@ def kb(kh, tmp_path, monkeypatch):  # noqa: F811
     cam_bien_ghep._reset_for_tests(tmp_path / "cbg.json")
 
 
-def _bai(hoi: list[str | None]) -> dict:
-    return {"kich_ban": [{"thiet_bi": DEN, "tinh_huong": f"tình huống {i}", "cam_bien_thay": "radar",
+def _bai(hoi: list[str | None], loai: tuple[str, ...] = ("vao", "o_lai")) -> dict:
+    return {"kich_ban": [{"loai": loai[i % len(loai)], "tinh_huong": f"tình huống {i}", "cam_bien_thay": "radar",
                           "nen": "tat", "hien_tai": "sai" if i == 0 else "khong_ro", "vi_sao": "", "hoi": h}
                          for i, h in enumerate(hoi)], "tom_tat": "đèn phòng ngủ thiếu"}
 
 
 def test_de_bay_viec_dang_cai_va_kiem_bai(kb):
     uv = kb.do()
-    de = kb.de(uv, [])
+    ma = ["vao", "o_lai"]
+    de = kb.de(uv, [], DEN, ma)
+    assert de.startswith(f"THIẾT BỊ ĐANG XÉT: {DEN} | Đèn phòng ngủ | ở Phòng ngủ")
+    assert "DANH MỤC phải đi qua (mỗi mã: tình huống hoặc khong_ap_dung): vao, o_lai" in de
     assert "Hiện diện phòng ngủ (sóng/chuyển động)" in de
-    assert f"- {DEN} | Đèn phòng ngủ | ở Phòng ngủ" in de and "TẮT KHI VẮNG: Hiện diện phòng ngủ báo vắng liền 3–3 phút" in de
+    assert f"► {DEN} | Đèn phòng ngủ | ở Phòng ngủ" in de and "TẮT KHI VẮNG: Hiện diện phòng ngủ báo vắng liền 3–3 phút" in de
     assert "BẬT: chưa tự bật" in de
-    assert isinstance(kb.kiem(_bai([None]), uv), dict)
-    assert "không có trong đề" in kb.kiem({"kich_ban": [{**_bai([None])["kich_ban"][0], "thiet_bi": "light.la"}]}, uv)
-    assert "«nen»" in kb.kiem({"kich_ban": [{**_bai([None])["kich_ban"][0], "nen": "bat_nhe"}]}, uv)
+    k = kb.kiem(_bai([None]), DEN, ma)
+    assert isinstance(k, dict) and k["kich_ban"][0]["thiet_bi"] == DEN and kb.thieu(k, ma) == ["o_lai"]
+    assert "«loai»" in kb.kiem({"kich_ban": [{**_bai([None])["kich_ban"][0], "loai": "la"}]}, DEN, ma)
+    assert "«nen»" in kb.kiem({"kich_ban": [{**_bai([None])["kich_ban"][0], "nen": "bat_nhe"}]}, DEN, ma)
+    k = kb.kiem({**_bai([None]), "khong_ap_dung": [{"loai": "o_lai", "vi_sao": "không ai ngồi đây"}]}, DEN, ma)
+    assert kb.thieu(k, ma) == []
+
+
+def test_bo_sot_danh_muc_thi_hoi_lai_dung_ma_thieu(kb, monkeypatch):
+    """Chủ máy 30/09/2026: "tránh bỏ sót … thiếu tình huống với chỉ 1 thiết bị" — thiếu mã nào hỏi lại mã đó."""
+    from services import thoi_quen_nha
+    de: list[str] = []
+    tra = [_bai([None], loai=("vao",)), _bai([None, None])]
+    monkeypatch.setattr(thoi_quen_nha, "_hoi_bot", lambda ht, m, h, d: de.append(d) or tra[len(de) - 1])
+    k = kb.giai_mot(kb.do(), DEN, "- `vao` — x\n- `o_lai` — y", "m", [])
+    assert len(de) == 2 and "EM ĐÃ BỎ SÓT các mã: o_lai" in de[1] and k["thieu"] == []
+    assert kb.noi_cua("chung_cu") == "chung_cu" and kb.noi_cua("nha_dat") == "nha_pho" and kb.noi_cua("khong_ro") == ""
 
 
 def test_hoi_tung_cau_tra_loi_vao_so_do_roi_hoi_cau_ke(kb, monkeypatch):

@@ -91,9 +91,17 @@ def luyen(ten: str, huong: str, *, lan: int = 1, chi: list[str] | None = None) -
         if chi and d["ten"] not in chi:
             continue
         # Bộ nào có khuôn đề / cách chấm riêng thì tự khai `de_cho` / `cham_cho`.
-        de = bo.de_cho(d) if hasattr(bo, "de_cho") else tang.de(d["uv"], d["ten_tb"], d["dan"])
+        de = ("" if hasattr(bo, "giai_de") else bo.de_cho(d) if hasattr(bo, "de_cho")
+              else tang.de(d["uv"], d["ten_tb"], d["dan"]))
         chm = getattr(bo, "cham_cho", cham)
         for i in range(lan):
+            if hasattr(bo, "giai_de"):
+                # Bộ nào giải nhiều lượt (vd dựng tình huống: từng thiết bị + lượt bổ sung mã bỏ sót) thì tự
+                # giải, đúng như lúc chạy thật; hướng dẫn tự ghép theo loại nơi của đề.
+                k = bo.giai_de(d, model)
+                chm = getattr(bo, "cham_cho", cham)
+                ra.append({"de": d["ten"], "lan": i, "loi": chm(k, d["dap_an"]), "vi_sao": ""})
+                continue
             b = _hoi_bot(ht, model, huong, de)
             k = tang.kiem(b, d["uv"]) if not isinstance(b, str) else b
             ra.append({"de": d["ten"], "lan": i, "loi": chm(k, d["dap_an"]),

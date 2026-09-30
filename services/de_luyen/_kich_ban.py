@@ -1,5 +1,9 @@
-"""Bộ đề LUYỆN cho hướng dẫn `sinh_kich_ban.md` — dựng tình huống ở MỌI kiểu nơi chốn: căn hộ, nhà phố,
-văn phòng, xưởng, nhà có người già, cổng ngoài trời.
+"""Phần CHUNG của các bộ đề luyện dựng tình huống — mỗi loại nơi một mô-đun `sinh_kich_ban_<noi>.py` (trùng
+tên phần hướng dẫn riêng của nơi đó), lấy đề của nơi mình từ `TAT_CA` ở đây.
+
+Chủ máy 30/09/2026: "đề luyện kèm theo bạn phải train, bạn phải hướng dẫn, và hướng dẫn theo từng địa điểm,
+gói gọn promt theo nó ví dụ chung cư … bot phải biết mình làm gì, tránh bỏ sót, tránh nhầm, thiếu tình
+huống với chỉ 1 thiết bị". Bot giải TỪNG thiết bị (`kich_ban_nha.giai_mot`, có lượt bổ sung mã bỏ sót).
 
 Chủ máy 30/09/2026: "tham khảo cộng đồng mạng rộng hơn, không bó hẹp trong ý tưởng ngôi nhà của tôi,
 ngoài trời, xưởng, cơ quan, khu công nghiệp, dự đoán hành vi, theo dõi trộm, báo hướng di chuyển, báo
@@ -14,6 +18,8 @@ giả ngoài trời) — đáp án là bot phải tự thấy chỗ hổng đó 
   phai_hoi_ve: [[chữ, …], …] — mỗi nhóm: có câu hỏi chứa ít nhất một chữ của nhóm.
   khong_nen: [{"thiet_bi", "nen"}] — không tình huống nào của thiết bị đó được chọn `nen` này.
   khong_nen_tu: [{"thiet_bi", "nen", "tu"}] — như trên nhưng chỉ tình huống chứa một trong các chữ.
+  phu_du: True — mọi thiết bị phải phủ ĐỦ danh mục (không còn mã bỏ sót sau lượt bổ sung).
+  (phai_co nhận thêm "loai": mã hoặc danh sách mã.)
 """
 
 from __future__ import annotations
@@ -25,11 +31,16 @@ TANG = "services.kich_ban_nha"
 
 def _uv(so_do: str, phong: dict[str, list[str]], thiet_bi: dict[str, tuple[str, str, list[str]]],
         mo_ta: list[str] | None = None, chac: bool = True, nguoi: list[str] | None = None) -> dict[str, Any]:
+    # Loại nơi đọc từ dòng đầu sơ đồ — cùng cách `kich_ban_nha` đọc kiểu nhà.
+    dau = so_do.split(",")[0].split("\n")[0].strip().lower()
+    noi = {"chung cư": "chung_cu", "nhà phố": "nha_pho", "nhà vườn": "biet_thu", "văn phòng": "van_phong",
+           "xưởng": "xuong"}.get(dau, "")
     return {"so_do": so_do, "so_do_chac": chac, "phong": phong, "mo_ta": mo_ta or [], "nguoi": nguoi or [],
+            "noi": noi, "cham": [],
             "thiet_bi": {tb: {"ten": t, "khu": k, "viec": v} for tb, (t, k, v) in thiet_bi.items()}}
 
 
-DE: list[dict[str, Any]] = [
+TAT_CA: list[dict[str, Any]] = [
     {"ten": "nha_tam_cua_kin_ngoi_yen",
      "tinh_huong": "Ong trong hộp: nhà tắm có cửa và cảm biến cửa; người tắm/ngồi yên, radar mất dấu — đang cài tắt "
                    "khi radar vắng 3 phút nên tắt đèn trước mặt người.",
@@ -138,7 +149,7 @@ DE: list[dict[str, Any]] = [
 # minh". Mỗi đề một bẫy hay gặp ngoài đời mà cách cài thông thường bỏ sót.
 _TAT_RADAR = "TẮT KHI VẮNG: {cb} báo vắng liền {p}–{p} phút (bot tự học theo giờ)"
 
-DE += [
+TAT_CA += [
     {"ten": "thu_cung_kich_cam_bien_chuyen_dong",
      "tinh_huong": "Nhà nuôi mèo: cảm biến chuyển động (PIR) phòng khách bắt cả mèo đi đêm — đèn bật cho mèo.",
      "uv": _uv("chung cư, 1 tầng\n• Phòng khách — thông Bếp",
@@ -318,8 +329,26 @@ DE += [
 
 
 def de_cho(d: dict[str, Any]) -> str:
+    """Đề của thiết bị ĐẦU của đề luyện (xem khuôn)."""
     from services import kich_ban_nha
-    return kich_ban_nha.de(d["uv"], [])
+    huong, _ = kich_ban_nha.huong_dan_cho(d["uv"]["noi"])
+    return kich_ban_nha.de(d["uv"], [], next(iter(d["uv"]["thiet_bi"])), kich_ban_nha.danh_muc(huong))
+
+
+def giai_de(d: dict[str, Any], model: str) -> dict[str, Any] | str:
+    """Bot giải đề luyện ĐÚNG như lúc chạy thật: từng thiết bị, có lượt bổ sung mã bỏ sót."""
+    from services import kich_ban_nha
+    huong, _ = kich_ban_nha.huong_dan_cho(d["uv"]["noi"])
+    gop: dict[str, Any] = {"kich_ban": [], "khong_ap_dung": [], "thieu": {}}
+    for tb in d["uv"]["thiet_bi"]:
+        k = kich_ban_nha.giai_mot(d["uv"], tb, huong, model, [])
+        if isinstance(k, str):
+            return f"{tb}: {k}"
+        gop["kich_ban"] += k["kich_ban"]
+        gop["khong_ap_dung"] += k["khong_ap_dung"]
+        if k["thieu"]:
+            gop["thieu"][tb] = k["thieu"]
+    return gop
 
 
 def _chu(x: dict[str, Any]) -> str:
@@ -334,8 +363,11 @@ def cham_cho(bai: dict[str, Any] | str, dap_an: dict[str, Any]) -> list[str]:
     def khop(gia_tri: str, mong: Any) -> bool:
         return mong is None or (gia_tri in mong if isinstance(mong, (list, tuple)) else gia_tri == mong)
 
+    if dap_an.get("phu_du") and bai.get("thieu"):
+        loi.append(f"bỏ sót danh mục: {bai['thieu']}")
     for y in dap_an.get("phai_co") or []:
         if not any(x["thiet_bi"] == y["thiet_bi"] and khop(x["hien_tai"], y.get("hien_tai"))
+                   and khop(x.get("loai", ""), y.get("loai"))
                    and khop(x["nen"], y.get("nen")) and any(t.lower() in _chu(x) for t in y["tu"]) for x in kb):
             loi.append(f"thiếu tình huống {y}")
     hoi = [str(x.get("hoi") or "").lower() for x in kb]
