@@ -88,6 +88,8 @@ type ThietBi = {
   /** Thời gian chủ nhà đặt (giây) — thắng số bot tự học; trống = bot tự học. */
   o_lai_giay?: number | null;
   roi_giay?: number | null;
+  /** Nguồn luật / cảm biến vắng đang không báo được (HA unavailable lâu, hoặc đã gỡ) — việc tự làm đang chết. */
+  nguon_chet?: { ma: string; ten: string; vi: string }[];
   /** Mức khi bật bot tự học theo nhiệt độ cùng khu (rỗng = chưa đủ mẫu → bật như cũ). */
   muc?: { truong?: string; cam_bien?: string; n?: number; moc?: [number, string, number][] } | null;
   /** Nghi nhiễu: sóng báo có mà camera cùng khu không thấy ai quá `phut` phút → chụp lại bằng YOLO. */
@@ -357,6 +359,18 @@ function MotThietBi({ tb, taiLai, doiMa, lich }: {
           <RefreshCw className={`mr-1 size-3.5 ${dangHoc ? "animate-spin" : ""}`} /> Học lại
         </Button>
       </div>
+
+      {tb.nguon_chet && tb.nguon_chet.length > 0 && (
+        <div className="rounded border border-destructive/50 p-2 text-xs text-destructive">
+          ⚠️ Việc tự bật/tắt thiết bị này đang KHÔNG chạy được — nguồn nó dựa vào không báo nữa:
+          <ul className="ml-4 list-disc">
+            {tb.nguon_chet.map((x) => (
+              <li key={x.ma}>{x.ten} <span className="font-mono">({x.ma})</span>: {x.vi}</li>
+            ))}
+          </ul>
+          Xem lại thiết bị / tích hợp đó trong Home Assistant, hoặc đổi luật sang nguồn khác.
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-3 text-xs"
         title="Anh đặt thì bot dùng đúng số này (thắng số bot tự học); để trống là bot tự học. Đơn vị: giây.">

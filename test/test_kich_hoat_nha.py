@@ -1334,3 +1334,32 @@ def test_tool_cai_kich_hoat(kh, monkeypatch):  # noqa: F811
     r = cap.CAPABILITIES["cai_kich_hoat"].handler({"thiet_bi": "quạt phòng khách", "o_lai_giay": 15}, {})
     assert "Quạt phòng khách: có người ở lại 15 giây" in r["text"]
     assert kh.ds_thiet_bi()["fan.phong_khach"]["o_lai_giay"] == 15.0
+
+
+def test_nguon_chet_boc_cam_bien_ghep_toi_thuc_the_that(kh, tmp_path, monkeypatch):
+    """Đo 30/09/2026: luật «Xem tivi» của Đèn cửa sổ dựa vào tivi LG qua cảm biến ghép; tivi LG «unavailable» từ
+    29/09 — luật chết mà không ai được báo. Nguồn chết phải lộ ra theo THIẾT BỊ bị ảnh hưởng, và báo chủ nhà."""
+    from services import cam_bien_ghep as cbg, ha_client, thong_bao
+
+    TV = "media_player.lg_tv"
+    cu = datetime.fromtimestamp(time.time() - 2 * 86400, timezone.utc).isoformat()
+    moi = datetime.fromtimestamp(time.time() - 600, timezone.utc).isoformat()
+    st = [{"entity_id": TV, "state": "unavailable", "last_changed": cu, "attributes": {"friendly_name": "Ti vi"}},
+          {"entity_id": NGU, "state": "unavailable", "last_changed": moi, "attributes": {}},
+          {"entity_id": BEP, "state": "off", "last_changed": cu, "attributes": {}}]
+    monkeypatch.setattr(ha_client, "get_states", lambda: st)
+    cbg._reset_for_tests(tmp_path / "ghep.json")
+    cbg.dat("binary_sensor.c2a_xem", "Xem tivi", {"va": [{"ma": TV, "la": ["on"]}, {"ma": BEP}]})
+    kh.dat_thiet_bi("light.cua_so", bat=True, luat_chu=[
+        {"hanh_dong": "on", "khi": ["binary_sensor.c2a_xem có người vào"], "ten": "Xem tivi"}])
+    kh.dat_thiet_bi(DEN, bat=True, tat_khi_vang={"bat": True, "phut": 3,
+                                                 "cam_bien": [NGU, "binary_sensor.da_go"]})
+    assert kh.nguon_chet("light.cua_so") == [{"ma": TV, "ten": "Ti vi", "vi": kh.nguon_chet("light.cua_so")[0]["vi"]}]
+    assert "unavailable" in kh.nguon_chet("light.cua_so")[0]["vi"], "cảm biến ghép bóc tới tivi; BEP còn sống"
+    # NGU mới «unavailable» 10 phút: chưa tính chết; mã không còn trong HA thì chết ngay.
+    assert [x["ma"] for x in kh.nguon_chet(DEN)] == ["binary_sensor.da_go"]
+    gui: list[tuple[str, str]] = []
+    monkeypatch.setattr(thong_bao, "gui", lambda nhom, tin, **k: gui.append((nhom, tin)))
+    kh._bao_nguon_chet("light.cua_so")
+    kh._bao_nguon_chet("light.cua_so")
+    assert len(gui) == 1 and gui[0][0] == "nha.canh_bao" and "Ti vi" in gui[0][1], "mỗi nguồn một tin mỗi ngày"

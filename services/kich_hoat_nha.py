@@ -745,6 +745,78 @@ def _ten_ha() -> dict[str, str]:
             for s in _trang_thai_ha()}
 
 
+#: Nguồn đứng ở trạng thái «không rõ» (unavailable, unknown) lâu hơn ngần này thì coi là CHẾT: luật dựa vào nó
+#: không chạy được nữa. 6 giờ: dài hơn một lần HA / tích hợp khởi động lại, ngắn hơn một ngày mất việc.
+NGUON_CHET_GIAY = 6 * 3600
+#: Mỗi nguồn chết của mỗi thiết bị báo chủ nhà tối đa một lần trong ngần này giây.
+BAO_NGUON_CHET_LAI = 24 * 3600
+
+
+def nguon_chet(tb: str, st: list[dict[str, Any]] | None = None) -> list[dict[str, str]]:
+    """Thực thể GỐC mà việc tự bật/tắt ``tb`` dựa vào nhưng đang không báo được: HA để «unavailable»/«unknown»
+    ≥ ``NGUON_CHET_GIAY``, hoặc không còn trong HA. Cảm biến ghép bóc tới thực thể gốc.
+
+    Đo 30/09/2026: luật «Xem tivi» của Đèn cửa sổ, Đèn tủ lạnh dựa vào tivi LG (qua cảm biến ghép
+    `c2a_tivi_phong_khach`); tivi LG thôi báo từ 20/09, «unavailable» từ 29/09 — luật không chạy lần nào, tối
+    28/09 tivi bật 2 giờ mà đèn không động, và không ai được báo. Bộ báo mất kết nối (`canh_bao_nha`) báo theo
+    THIẾT BỊ, không nói thiết bị chết làm hỏng luật nào."""
+    cd = ds_thiet_bi().get(tb) or {}
+    goc: set[str] = set()
+    for l in cd.get("luat_chu") or []:
+        goc |= {str(n).split(" ")[0] for n in l.get("khi") or []}
+        for d in l.get("neu") or []:
+            goc |= {str(d[k]) for k in ("cam_bien", "co_mat") if d.get(k)}
+    goc |= {str(m) for m in (cd.get("tat_khi_vang") or {}).get("cam_bien") or []}
+    ghep = _cbg.ds()
+    la: set[str] = set()
+    for m in goc:                   # cảm biến ghép chỉ ghép thực thể thật (`cam_bien_ghep._kiem`)
+        la |= _cbg.thanh_phan(ghep[m]["bieu_thuc"]) if m in ghep else {m}
+    if st is None:
+        from services import ha_client
+        st = list(ha_client.get_states() or [])
+    theo_ma = {str(x["entity_id"]): x for x in st}
+    ra = []
+    for m in sorted(la):
+        x = theo_ma.get(m)
+        if x is None:
+            ra.append({"ma": m, "ten": m, "vi": "không còn trong Home Assistant (đổi tên hoặc đã gỡ?)"})
+            continue
+        tt = str(x.get("state") or "").lower()
+        if tt not in _KHONG_RO:
+            continue
+        try:
+            tu = datetime.fromisoformat(str(x.get("last_changed"))).timestamp()
+        except (TypeError, ValueError):
+            continue
+        if time.time() - tu >= NGUON_CHET_GIAY:
+            ten = str((x.get("attributes") or {}).get("friendly_name") or m)
+            ra.append({"ma": m, "ten": ten,
+                       "vi": f"«{tt}» từ {datetime.fromtimestamp(tu, _TZ):%d/%m %H:%M}"})
+    return ra
+
+
+def _bao_nguon_chet(tb: str) -> None:
+    """Báo chủ nhà (nhóm cảnh báo, kể cả thiết bị đặt «im lặng») khi luật của ``tb`` mất nguồn — mỗi nguồn
+    một lần mỗi ``BAO_NGUON_CHET_LAI``."""
+    from services import thong_bao
+    chet = nguon_chet(tb)
+    if not chet:
+        return
+    luc = time.time()
+    with _khoa:
+        da = _nap().setdefault("bao_nguon_chet", {})
+        moi = [x for x in chet if luc - float(da.get(f"{tb}|{x['ma']}") or 0) >= BAO_NGUON_CHET_LAI]
+        for x in moi:
+            da[f"{tb}|{x['ma']}"] = luc
+        if moi:
+            _luu()
+    if moi:
+        thong_bao.gui("nha.canh_bao", f"⚠️ {_ten_tb(tb)}: việc tự bật/tắt đang KHÔNG chạy được — nguồn nó dựa vào "
+                      "không báo nữa:\n" + "\n".join(f"• {x['ten']}: {x['vi']}" for x in moi)
+                      + "\nAnh xem lại thiết bị / tích hợp đó trong Home Assistant, hoặc đổi luật sang nguồn khác.")
+        logger.warning({"event": "kich_hoat_nguon_chet", "thiet_bi": tb, "nguon": [x["ma"] for x in moi]})
+
+
 def _lop(dc: tuple[str, ...]) -> set[str]:
     return {str(s["entity_id"]) for s in _trang_thai_ha()
             if (s.get("attributes") or {}).get("device_class") in dc}
@@ -1235,6 +1307,10 @@ def _hoc_nen(tb: str) -> None:
             hoc(tb)
         except Exception as exc:  # noqa: BLE001
             logger.warning({"event": "kich_hoat_hoc_loi", "thiet_bi": tb, "error": str(exc)[:200]})
+        try:
+            _bao_nguon_chet(tb)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning({"event": "kich_hoat_nguon_chet_loi", "thiet_bi": tb, "error": str(exc)[:200]})
         finally:
             with _khoa:
                 _dang_hoc.discard(tb)
@@ -2607,6 +2683,11 @@ def tong_quan() -> list[dict[str, Any]]:
     _gop_guong()
     d = _nap()
     ten_ha = _ten_ha()
+    try:
+        from services import ha_client
+        st_ha = list(ha_client.get_states() or [])
+    except Exception:  # noqa: BLE001
+        st_ha = []
     hien_dien = _lop(_LOP_HIEN_DIEN)
     cua = sorted(_lop(_LOP_CUA))
     ra = []
@@ -2641,6 +2722,8 @@ def tong_quan() -> list[dict[str, Any]]:
                    "bo_nguon": [{"ma": n, "ten": _ten_nguon(n, ten_ha)} for n in cd.get("bo_nguon") or []],
                    "ngoai_le": cd.get("ngoai_le") or [], "hoc_luc": mh.get("luc"), "huong": huong,
                    "luat_chu": cd.get("luat_chu") or [], "hay_bat": mh.get("hay_bat") or {},
+                   # Nguồn luật / cảm biến vắng đang không báo được → việc tự làm của thiết bị này đang chết.
+                   "nguon_chet": nguon_chet(tb, st_ha) if st_ha else [],
                    "im_lang": bool(cd.get("im_lang")),
                    "hoi_de_hoc": bool(cd.get("hoi_de_hoc")),
                    "muc": mh.get("muc") or None, "nhieu": mh.get("nhieu") or None,
