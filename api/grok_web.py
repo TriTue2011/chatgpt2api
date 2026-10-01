@@ -22,7 +22,8 @@ import urllib.error
 import uuid
 from typing import Any, Iterator
 
-import requests
+#: Giây im lặng tối đa giữa hai thông điệp của máy chủ trước khi coi phiên là treo.
+_IM_TOI_DA = 45
 
 _MODES = {
     "fast": "fast",
@@ -44,10 +45,6 @@ def _config():
 def _logger():
     from utils.log import logger
     return logger
-
-
-def _cfg() -> dict[str, Any]:
-    return (_config().data.get("providers") or {}).get("grok_web") or {}
 
 
 def _cookie_file():
@@ -85,73 +82,6 @@ def hop_van_ban(messages: list[dict[str, Any]] | None) -> str:
     return "\n\n".join(parts).strip()
 
 
-def _solver_cfg() -> dict[str, str]:
-    providers = _config().data.get("providers") or {}
-    for name in ("grok_web", "gemini_web_api", "gemini_web", "flow"):
-        c = providers.get(name) or {}
-        raw = str(c.get("captcha_solver_url") or "").strip()
-        if raw:
-            from services.captcha import captcha_base
-            return {"url": captcha_base(raw), "api_key": str(c.get("captcha_solver_api_key") or "")}
-    return {"url": "", "api_key": ""}
-
-
-def _profiles() -> list[str]:
-    cfg = _cfg()
-    found: list[str] = []
-    for entry in (cfg.get("accounts") or []):
-        if isinstance(entry, dict):
-            p = str(entry.get("profile") or "").strip()
-            if p and p not in found:
-                found.append(p)
-    profs = cfg.get("profiles")
-    if isinstance(profs, list):
-        for p in profs:
-            p = str(p).strip()
-            if p and p not in found:
-                found.append(p)
-    try:
-        from services.account_service import account_group, account_service
-        for acc in account_service.list_accounts():
-            if not isinstance(acc, dict) or account_group(acc) != "grok_web":
-                continue
-            p = str(acc.get("profile") or acc.get("email") or acc.get("name") or "").strip()
-            if p and p not in found:
-                found.append(p)
-    except Exception:
-        pass
-    return [p for p in found if not p.endswith("-default") and not p.endswith("_default")]
-
-
-def _fetch_solver(profile: str) -> dict[str, str]:
-    sc = _solver_cfg()
-    if not sc["url"] or not profile:
-        return {}
-    headers = {"Authorization": f"Bearer {sc['api_key']}"} if sc["api_key"] else {}
-    try:
-        r = requests.get(
-            f"{sc['url']}/v1/grok-web/{profile}/session",
-            headers=headers,
-            timeout=20,
-        )
-        try:
-            if r.status_code != 200:
-                _logger().info({
-                    "event": "grok_web_cookie_bo",
-                    "profile": profile,
-                    "status": r.status_code,
-                })
-                return {}
-            cookies = (r.json() or {}).get("cookies") or {}
-            if cookies.get("sso"):
-                return {str(k): str(v) for k, v in cookies.items() if v}
-        finally:
-            r.close()
-    except Exception as exc:
-        _logger().info({"event": "grok_web_cookie_loi", "profile": profile, "error": str(exc)[:120]})
-    return {}
-
-
 def _file_cookies() -> dict[str, str]:
     path = _cookie_file()
     try:
@@ -176,9 +106,13 @@ def tai_cookie() -> dict[str, str]:
 
 
 def _ws_send(tls, obj: dict) -> None:
-    data = json.dumps(obj, separators=(",", ":")).encode()
+    _ws_frame(tls, 0x1, json.dumps(obj, separators=(",", ":")).encode())
+
+
+def _ws_frame(tls, opcode: int, data: bytes) -> None:
+    """Một khung client → server (RFC 6455: client PHẢI che mặt nạ)."""
     mask = os.urandom(4)
-    header = bytearray([0x81])
+    header = bytearray([0x80 | opcode])
     n = len(data)
     if n < 126:
         header.append(0x80 | n)
@@ -192,31 +126,63 @@ def _ws_send(tls, obj: dict) -> None:
     tls.sendall(bytes(header) + mask + masked)
 
 
-def _ws_recv(tls, buf: bytes) -> tuple[tuple[int, bytes] | None, bytes]:
-    while len(buf) < 2:
+def _doc_du(tls, buf: bytes, n: int) -> bytes | None:
+    """Đọc tới khi ``buf`` đủ ``n`` byte. Máy chủ đóng kết nối giữa chừng thì None — `recv` trả b"" mãi mãi,
+    vòng `while len(buf) < n: buf += recv()` cũ quay vô hạn."""
+    while len(buf) < n:
         chunk = tls.recv(8192)
         if not chunk:
+            return None
+        buf += chunk
+    return buf
+
+
+def _ws_recv_khung(tls, buf: bytes) -> tuple[tuple[bool, int, bytes] | None, bytes]:
+    """Một khung: (FIN, opcode, payload)."""
+    b = _doc_du(tls, buf, 2)
+    if b is None:
+        return None, buf
+    buf = b
+    fin, opcode, ln, i = bool(buf[0] & 0x80), buf[0] & 0x0F, buf[1] & 0x7F, 2
+    if ln in (126, 127):
+        i = 4 if ln == 126 else 10
+        b = _doc_du(tls, buf, i)
+        if b is None:
             return None, buf
-        buf += chunk
-    opcode = buf[0] & 0x0F
-    ln = buf[1] & 0x7F
-    i = 2
-    if ln == 126:
-        while len(buf) < 4:
-            buf += tls.recv(8192)
-        ln = struct.unpack("!H", buf[2:4])[0]
-        i = 4
-    elif ln == 127:
-        while len(buf) < 10:
-            buf += tls.recv(8192)
-        ln = struct.unpack("!Q", buf[2:10])[0]
-        i = 10
-    while len(buf) < i + ln:
-        chunk = tls.recv(8192)
-        if not chunk:
-            break
-        buf += chunk
-    return (opcode, buf[i:i + ln]), buf[i + ln:]
+        buf = b
+        ln = struct.unpack("!H", buf[2:4])[0] if i == 4 else struct.unpack("!Q", buf[2:10])[0]
+    b = _doc_du(tls, buf, i + ln)
+    if b is None:
+        return None, buf
+    buf = b
+    return (fin, opcode, buf[i:i + ln]), buf[i + ln:]
+
+
+def _ws_recv(tls, buf: bytes) -> tuple[tuple[int, bytes] | None, bytes]:
+    """Một THÔNG ĐIỆP trọn vẹn: ghép khung phân mảnh (opcode 0 nối tiếp tới FIN), trả lời ping bằng pong. Trước
+    đây khung nối tiếp bị bỏ nên một sự kiện JSON dài bị cắt đôi rồi rơi im lặng ở `json.loads`, còn ping không ai
+    đáp thì máy chủ đóng kết nối giữa câu trả lời dài."""
+    tin: tuple[int, bytearray] | None = None
+    while True:
+        khung, buf = _ws_recv_khung(tls, buf)
+        if khung is None:
+            return None, buf
+        fin, opcode, payload = khung
+        if opcode == 0x9:
+            _ws_frame(tls, 0xA, payload)
+            continue
+        if opcode == 0xA:
+            continue
+        if opcode == 0x8:
+            return (opcode, payload), buf
+        if opcode == 0x0:
+            if tin is None:
+                continue                # nối tiếp mà không có khung đầu — bỏ
+            tin[1].extend(payload)
+        else:
+            tin = (opcode, bytearray(payload))
+        if fin:
+            return (tin[0], bytes(tin[1])), buf
 
 
 def _user_id(cookies: dict[str, str]) -> str:
@@ -270,12 +236,16 @@ def _la_loi_phien(exc: BaseException) -> bool:
 
 
 def stream_chat(prompt: str, mode: str, cookies: dict[str, str] | None = None) -> Iterator[str]:
-    """Sinh từng mảnh chữ. Hết phiên thì mở lại hồ sơ Firefox một lần."""
+    """Sinh từng mảnh chữ. Hết phiên thì mở lại hồ sơ Firefox một lần — chỉ khi CHƯA gửi chữ nào: thử lại sau khi
+    đã gửi nửa câu thì người gọi nhận câu trả lời lặp đầu."""
+    da_gui = False
     try:
-        yield from _stream_chat(prompt, mode, cookies)
+        for manh in _stream_chat(prompt, mode, cookies):
+            da_gui = True
+            yield manh
         return
     except Exception as exc:
-        if cookies is not None or not _la_loi_phien(exc):
+        if da_gui or cookies is not None or not _la_loi_phien(exc):
             raise
         from api.grok_firefox import lam_moi
         lam_moi()
@@ -304,12 +274,15 @@ def _stream_chat(prompt: str, mode: str, cookies: dict[str, str] | None) -> Iter
             f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n"
             "Origin: https://grok.com\r\n"
             "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.0\r\n"
-            "Accept-Language: zh-CN,zh;q=0.9,en;q=0.8\r\n"
+            "Accept-Language: vi-VN,vi;q=0.9,en;q=0.8\r\n"
             f"Cookie: {jar}\r\n\r\n"
         ).encode())
         data = b""
         while b"\r\n\r\n" not in data:
-            data += tls.recv(8192)
+            chunk = tls.recv(8192)
+            if not chunk:
+                raise RuntimeError("Grok web đóng kết nối trước khi bắt tay websocket xong")
+            data += chunk
         head, _, rest = data.partition(b"\r\n\r\n")
         status = head.split(b"\r\n", 1)[0]
         if b" 101 " not in status:
@@ -341,11 +314,14 @@ def _stream_chat(prompt: str, mode: str, cookies: dict[str, str] | None) -> Iter
         attached = False
         sent = False
         session_id = ""
-        deadline = time.time() + 45
+        # Hạn tính từ lần CUỐI có dữ liệu, không phải từ lúc mở: hạn cứng 45 giây cũ cắt câu trả lời dài (expert,
+        # heavy) rồi trả phần dở như đã xong.
+        deadline = time.time() + _IM_TOI_DA
         while time.time() < deadline:
             frame, buf = _ws_recv(tls, buf)
             if not frame:
                 break
+            deadline = time.time() + _IM_TOI_DA
             opcode, payload = frame
             if opcode == 8:
                 break
@@ -397,6 +373,7 @@ def _stream_chat(prompt: str, mode: str, cookies: dict[str, str] | None) -> Iter
                 })
         if not sent:
             raise RuntimeError("Grok web không mở được phiên chat")
+        raise RuntimeError("Grok web ngắt giữa câu trả lời (không có response.done)")
     finally:
         try:
             tls.close()
