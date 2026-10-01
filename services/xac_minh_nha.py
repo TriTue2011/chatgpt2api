@@ -18,7 +18,14 @@ chỉ bày đủ dữ kiện và kiểm biên (mã có thật trong đề); ch�
 
 from __future__ import annotations
 
+import json
+import threading
+import time
+from pathlib import Path
 from typing import Any
+
+from services.config import DATA_DIR
+from utils.log import logger
 
 #: Loại nguồn — tên bày trong đề, cùng điều nó CHỨNG MINH được (bot đọc ở hướng dẫn).
 LOAI = {
@@ -107,3 +114,210 @@ def kiem(data: Any, uv: dict[str, Any]) -> dict[str, Any] | str:
         chac = 0.0
     ra.update(chac=round(chac, 2), vi_sao=str(data.get("vi_sao") or "")[:500])
     return ra
+
+
+# ── Chạy thật (B3): đề nhà thật, giải, chấm, áp, xác minh lúc sống ─────────
+_PATH = Path(DATA_DIR) / "agent" / "xac_minh_nha.json"
+_khoa = threading.RLock()
+_dl: dict[str, Any] | None = None
+#: Cảm biến báo có người quá ngần này phần 3 ngày qua là KẸT (ghi chú cho bot, cùng số `so_do_nha._KET`).
+_KET = 0.98
+_DUOI_NGUOI_FRIGATE = "_person_occupancy"
+
+
+def _nap() -> dict[str, Any]:
+    global _dl
+    if _dl is None:
+        try:
+            _dl = json.loads(_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _dl = {}
+        _dl.setdefault("bai", {})
+    return _dl
+
+
+def _luu() -> None:
+    _PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(_nap(), ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(_PATH)
+
+
+def so() -> dict[str, Any]:
+    with _khoa:
+        return json.loads(json.dumps(_nap()))
+
+
+def ap(tb: str) -> dict[str, Any] | None:
+    """Bài ĐANG ÁP của thiết bị = bài mới nhất đã chấm ĐÚNG (chưa chấm thì không áp — giáo viên / chủ máy chấm)."""
+    with _khoa:
+        return next((b["gia_tri"] for b in reversed(_nap()["bai"].get(tb) or []) if b.get("ket_qua") == "dung"), None)
+
+
+def _camera_thay() -> dict[str, list[str]]:
+    """Camera → khu nó thấy: chủ nhà khoanh trên ảnh trước, không có thì bài sơ đồ gần nhất của bot (chưa chấm)."""
+    from services import camera_nha, so_do_nha
+    k = so_do_nha.khoanh()
+    moi = next((b["gia_tri"] for b in reversed(so_do_nha.so().get("bai") or []) if b.get("ket_qua") != "sai"), {})
+    ve = {c.get("ten"): list((c.get("thay") or {}).keys()) for c in (moi or {}).get("camera") or []}
+    return {str(c["name"]): list(((k.get(str(c["name"])) or {}).get("phong") or {}).keys()) or ve.get(str(c["name"])) or []
+            for c in camera_nha.danh_sach()}
+
+
+def do(tb: str) -> dict[str, Any]:
+    """Đề NHÀ THẬT cho một thiết bị — cùng khuôn `de` của bộ đề luyện."""
+    import sqlite3
+    from services import (boi_canh_nha, cam_bien_ghep, du_doan_nha as dd, ha_client, kich_hoat_nha as kh,
+                          lich_sinh_hoat, lich_su_nha, so_do_nha, vung_khoang_cach)
+    st = ha_client.get_states() or []
+    nen = (ha_client.get_ha_area_index() or {}).get("entity_platform") or {}
+    ten = {str(s["entity_id"]): str((s.get("attributes") or {}).get("friendly_name") or s["entity_id"]) for s in st}
+    khu = boi_canh_nha.phong_cua(tb) or "chưa xếp khu"
+    bao_ao = {m for cd in (kh._nap().get("mo_hinh") or {}).values() for m in ((cd.get("nhieu") or {}).get("song") or [])}
+    den = time.time()
+    ro = sqlite3.connect(f"file:{lich_su_nha._DB_PATH}?mode=ro", uri=True, timeout=10.0)
+    nguon: list[dict[str, str]] = []
+    try:
+        from services.co_nguoi_nha import _dong
+        for s in st:
+            ma, a = str(s["entity_id"]), s.get("attributes") or {}
+            mien, lop = ma.split(".")[0], a.get("device_class")
+            if mien == "binary_sensor" and lop in kh._LOP_HIEN_DIEN and not cam_bien_ghep.la_ghep(ma):
+                fr = nen.get(ma) == "frigate"
+                loai = ("camera_nguoi" if ma.endswith(_DUOI_NGUOI_FRIGATE) else "chuyen_dong") if fr else \
+                       ("chuyen_dong" if lop == "motion" else "hien_dien")
+                ghi = [ten.get(ma, ma)] + (["của camera Frigate — chuyển động khung hình, không phải người"]
+                                           if fr and loai == "chuyen_dong" else [])
+                ts, gt = _dong(ro, ma, den - 3 * 86400, den)
+                if ts and _ti_le(ts, gt, den - 3 * 86400, den) > _KET:
+                    ghi.append("KẸT «có người» 3 ngày nay")
+                if ma in bao_ao:
+                    ghi.append("hay báo ẢO (báo có người mà camera không thấy ai)")
+                nguon.append({"ma": ma, "loai": loai, "khu": boi_canh_nha.phong_cua(ma) or "", "ghi_chu": "; ".join(ghi)})
+            elif mien in ("device_tracker", "person"):
+                nguon.append({"ma": ma, "loai": "mang", "khu": "", "ghi_chu": ten.get(ma, ma)})
+    finally:
+        ro.close()
+    vung = vung_khoang_cach.ds()
+    for x in vung_khoang_cach.cap_radar():
+        v = vung.get(x["ma"]) or {}
+        nguon.append({"ma": x["ma"], "loai": "khoang_cach", "khu": x["khu"],
+                      "ghi_chu": (f"cùng radar {ten.get(x['radar'], x['radar'])}; vùng khu đã học: "
+                                  f"{'dưới' if v.get('huong') == 'duoi' else 'từ'} {v.get('nguong')} m, tách đúng "
+                                  f"{round(100 * float(v.get('dung') or 0))}%") if v.get("dat")
+                                 else f"cùng radar {ten.get(x['radar'], x['radar'])}; CHƯA học được vùng"})
+    camera = [{"ten": c, "thay": t, "ghi_chu": "theo vùng chủ nhà khoanh / sơ đồ bot vẽ"}
+              for c, t in _camera_thay().items()]
+    ket_qua = []
+    for hd, ten_hd in (("on", "bật"), ("off", "tắt")):
+        r = [x for x in kh._nhan_da_cham(tb, hd) if x[0] > den - 14 * 86400]
+        lam = [x for x in r if x[1].endswith(":tu_lam")]
+        hoi = [x for x in r if x[1].endswith(":hoi")]
+        if lam:
+            ket_qua.append(f"14 ngày: tự {ten_hd} {len(lam)} lần, sai {sum(x[1].startswith('sai') for x in lam)}")
+        if hoi:
+            ket_qua.append(f"14 ngày: hỏi {ten_hd} {len(hoi)} lần, không ai trả lời "
+                           f"{sum(x[1].startswith('lo') for x in hoi)}")
+    return {"tb": tb, "khu": khu, "loai_tb": tb.split(".")[0], "noi": "",
+            "nguy_hiem": dd._cam_tu_lam(f"{tb} {ten.get(tb, '')}"), "nguon": nguon, "camera": camera,
+            "lich": lich_sinh_hoat.doc_cho_bot(), "ket_qua": ket_qua, "so_do": so_do_nha.doan_de(khu),
+            "ten_tb": ten.get(tb, tb)}
+
+
+def _ti_le(ts: list[float], gt: list[str], tu: float, den: float) -> float:
+    bat, a = 0.0, None
+    for t, g in zip(ts, gt):
+        if g == "on" and a is None:
+            a = max(t, tu)
+        elif g != "on" and a is not None:
+            bat += max(0.0, t - a)
+            a = None
+    if a is not None:
+        bat += den - a
+    return bat / max(1.0, den - tu)
+
+
+def _dan(tb: str) -> list[str]:
+    with _khoa:
+        return [f"({'giáo viên ' if b.get('cham_boi') == 'claude' else ''}chấm "
+                f"{'đúng' if b['ket_qua'] == 'dung' else 'sai'}) {b['ghi_chu']}"
+                for b in (_nap()["bai"].get(tb) or []) if b.get("ghi_chu") and b.get("ket_qua") in ("dung", "sai")][-5:]
+
+
+def giai(chi: list[str]) -> dict[str, Any]:
+    """Bot giải bài xác minh cho từng thiết bị trong ``chi``; ghi sổ ở trạng thái chờ chấm."""
+    from services import hieu_thiet_bi_nha as ht
+    from services.thoi_quen_nha import _hoi_bot
+    huong, ban = ht.huong_dan("chon_xac_minh")
+    model = ht._model()
+    ra, loi = [], []
+    for tb in chi:
+        uv = do(tb)
+        b = _hoi_bot(ht, model, huong, de(uv, uv["ten_tb"], _dan(tb)))
+        k = kiem(b, uv) if not isinstance(b, str) else b
+        if isinstance(k, str):
+            loi.append({"thiet_bi": tb, "loi": k})
+            continue
+        with _khoa:
+            ds = _nap()["bai"].setdefault(tb, [])
+            id_ = max((x["id"] for v in _nap()["bai"].values() for x in v), default=0) + 1
+            ds.append({"id": id_, "luc": time.time(), "huong_dan": ban, "gia_tri": k, "ket_qua": "cho"})
+            del ds[:-10]
+            _luu()
+        ra.append({"thiet_bi": tb, "id": id_, "gia_tri": k})
+    return {"ok": True, "bai": ra, "loi": loi}
+
+
+def cham(tb: str, id_: int, dung: bool, *, cham_boi: str, ghi_chu: str = "") -> bool:
+    with _khoa:
+        b = next((x for x in _nap()["bai"].get(tb) or [] if x["id"] == int(id_)), None)
+        if b is None:
+            return False
+        b.update(ket_qua="dung" if dung else "sai", cham_boi=cham_boi, ghi_chu=str(ghi_chu or "")[:300],
+                 cham_luc=time.time())
+        _luu()
+    logger.info({"event": "xac_minh_cham", "thiet_bi": tb, "id": id_, "dung": dung, "cham_boi": cham_boi})
+    return True
+
+
+def xac_minh(nguon: list[str], khu: str) -> tuple[bool | None, str]:
+    """Lúc sống: có người trong ``khu`` không, theo các nguồn bài đã chọn. True = có nguồn THẤY người; False = nguồn
+    nhìn được và không thấy ai; None = không nguồn nào trả lời được (camera lỗi, khoảng cách chưa học…)."""
+    from services import camera_nha, ha_client, kich_hoat_nha as kh, vung_khoang_cach
+    cam = {str(c["name"]) for c in camera_nha.danh_sach()}
+    tt = {str(s["entity_id"]): str(s.get("state") or "").lower() for s in kh._trang_thai_ha()}
+    da_xem: list[str] = []
+    for m in nguon:
+        if m in cam:
+            thay = kh._nhin_lai([m], khu)
+            if thay:
+                return True, f"{m}: {thay}"
+            if thay == "":
+                da_xem.append(m)
+        elif m.startswith("sensor."):
+            v = vung_khoang_cach.vi_tri(m, (ha_client.get_state(m) or {}).get("state"))
+            if v:
+                return True, f"khoảng cách radar trong vùng {khu}"
+            if v is False:
+                da_xem.append(m)
+        elif m.startswith("binary_sensor."):
+            if tt.get(m) == "on":
+                return True, f"{m} báo có người"
+            if tt.get(m) == "off":
+                da_xem.append(m)
+    return (False, "không nguồn nào thấy người: " + ", ".join(da_xem)) if da_xem else (None, "không nguồn nào nhìn được")
+
+
+def nguon_luc(huong: dict[str, Any], luc: float) -> list[str]:
+    """Nguồn xác minh của một chiều lúc ``luc``: `xac_minh`, cộng `lech_lich` khi lịch nói cả nhà VẮNG hay NGỦ mà
+    vẫn có chuyện cần bật/tắt — giờ lệch lịch (chủ máy: "vợ tôi đôi khi làm buổi chiều, sáng có ở nhà")."""
+    from services import lich_sinh_hoat
+    ds = list(huong.get("xac_minh") or [])
+    if huong.get("lech_lich") and (lich_sinh_hoat.ca_nha("vang", luc) or lich_sinh_hoat.ca_nha("ngu", luc)):
+        ds += [m for m in huong["lech_lich"] if m not in ds]
+    return ds
+
+
+def _reset_for_tests(duong: Path) -> None:
+    global _dl, _PATH
+    _dl, _PATH = None, duong

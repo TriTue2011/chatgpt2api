@@ -94,6 +94,21 @@ def trong_vung(ma: str, gia_tri: Any) -> bool:
     return v < m["nguong"] if m["huong"] == "duoi" else v >= m["nguong"]
 
 
+def vi_tri(ma: str, gia_tri: Any) -> bool | None:
+    """Ba trạng thái cho việc XÁC MINH (`xac_minh_nha`): True = radar đang đo một người trong vùng khu, False = đo
+    được nhưng ở ngoài vùng (khu bên cạnh), None = không biết (chưa học đạt, số 0, không phải số)."""
+    m = _nap().get(str(ma))
+    if not m or not m.get("dat"):
+        return None
+    try:
+        v = float(gia_tri)
+    except (TypeError, ValueError):
+        return None
+    if v <= 0:
+        return None
+    return v < m["nguong"] if m["huong"] == "duoi" else v >= m["nguong"]
+
+
 def nguong(trong: list[float], ngoai: list[float]) -> dict[str, Any]:
     """Ngưỡng tách số đo lúc người TRONG khu với lúc người ở khu bên cạnh, theo độ đúng CÂN BẰNG (hai nhãn
     nặng như nhau — nhãn đông không được lấn)."""

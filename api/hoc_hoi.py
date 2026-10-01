@@ -839,6 +839,39 @@ def create_router() -> APIRouter:
         except Exception as exc:
             return _loi(exc, "chọn có người thật")
 
+    @router.get("/api/hoc-hoi/xac-minh")
+    async def xac_minh_xem(authorization: str | None = Header(default=None)):
+        """Bài XÁC MINH của từng thiết bị (bot tự kiểm trước khi bật/tắt) — bài chấm đúng mới được áp."""
+        require_admin(authorization)
+        from services import xac_minh_nha
+        return {"ok": True, **xac_minh_nha.so()}
+
+    @router.post("/api/hoc-hoi/xac-minh/giai")
+    async def xac_minh_giai(body: dict, authorization: str | None = Header(default=None)):
+        """Bot giải bài xác minh cho các thiết bị. body: {thiet_bi: [mã]} — gọi model, vài chục giây mỗi thiết bị."""
+        require_admin(authorization)
+        from services import xac_minh_nha
+        chi = [str(x) for x in (body or {}).get("thiet_bi") or []]
+        if not chi:
+            return {"ok": False, "error": "thiet_bi phải là danh sách mã thiết bị."}
+        try:
+            return await asyncio.to_thread(xac_minh_nha.giai, chi)
+        except Exception as exc:
+            return _loi(exc, "giải bài xác minh")
+
+    @router.post("/api/hoc-hoi/xac-minh/cham")
+    async def xac_minh_cham(body: dict, authorization: str | None = Header(default=None)):
+        """Chấm một bài. body: {thiet_bi, id, dung, ghi_chu?, cham_boi?: chu_may|claude}. Đúng → áp ngay (chạy trong
+        tiến trình app); sai → lời ghi chú thành CHỦ NHÀ DẶN cho lần giải sau."""
+        require_admin(authorization)
+        from services import xac_minh_nha
+        cham_boi = str(body.get("cham_boi") or "chu_may")
+        if cham_boi not in ("chu_may", "claude"):
+            return {"ok": False, "error": "cham_boi là chu_may hoặc claude."}
+        ok = xac_minh_nha.cham(str(body.get("thiet_bi") or ""), int(body.get("id") or 0), bool(body.get("dung")),
+                               cham_boi=cham_boi, ghi_chu=str(body.get("ghi_chu") or ""))
+        return {"ok": ok} if ok else {"ok": False, "error": "Không có bài đó."}
+
     @router.post("/api/hoc-hoi/so-do-nha/cham")
     async def so_do_nha_cham(body: dict, authorization: str | None = Header(default=None)):
         """Chấm một bài vẽ sơ đồ; đúng thì áp. body: {id, dung, ghi_chu, cham_boi?}."""

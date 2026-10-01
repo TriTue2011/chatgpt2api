@@ -1706,6 +1706,71 @@ def _duoc_tu_lam(tb: str, hd: str) -> bool:
             and dd.sai_gan_day(ten) < dd._SAI_TUT_CAP)
 
 
+def _xac_minh_truoc_hoi(tb: str, hd: str, nguon: str, luc: float) -> tuple[str, bool | None, str] | None:
+    """(cách hỏi bài chọn, có người?, mô tả) khi luật định HỎI BẬT và bài xác minh đã áp có nguồn; None khi không
+    cần. Thiết bị nguy hiểm (bài «luôn hỏi») không bao giờ tự xác minh để tự làm."""
+    if hd != "on":
+        return None
+    from services import boi_canh_nha, xac_minh_nha
+    bai = xac_minh_nha.ap(tb)
+    if not bai or bai["bat"].get("hoi") == "luon":
+        return None
+    nguon_xm = xac_minh_nha.nguon_luc(bai["bat"], luc)
+    if not nguon_xm or xet(tb, hd, nguon, luc)["lam"] != "hoi":
+        return None
+    co, mo_ta = xac_minh_nha.xac_minh(nguon_xm, boi_canh_nha.phong_cua(tb))
+    logger.info({"event": "kich_hoat_xac_minh_bat", "thiet_bi": tb, "nguon": nguon, "co_nguoi": co, "mo_ta": mo_ta})
+    return str(bai["bat"].get("hoi") or ""), co, mo_ta
+
+
+#: Bật NGAY rồi KIỂM LẠI theo chu kỳ khi bài xác minh chọn `bat.kiem_lai` (cảm biến khu hay báo ảo) — tối đa ngần
+#: này lần (`xac_minh_nha.KIEM_LAI_GIAY` mỗi lần); thấy người một lần là thôi.
+KIEM_LAI_LAN = 15
+_hen_kl: dict[str, threading.Timer] = {}
+
+
+def _hen_kiem_lai(tb: str, lan: int) -> None:
+    from services import xac_minh_nha
+    bai = xac_minh_nha.ap(tb)
+    if not bai or not bai["bat"].get("kiem_lai") or lan >= KIEM_LAI_LAN:
+        return
+    t = threading.Timer(xac_minh_nha.KIEM_LAI_GIAY, _kiem_lai, args=(tb, lan))
+    t.daemon = True
+    with _khoa:
+        cu = _hen_kl.pop(tb, None)
+        if cu:
+            cu.cancel()
+        _hen_kl[tb] = t
+    t.start()
+
+
+def _kiem_lai(tb: str, lan: int) -> None:
+    """Chủ máy 01/10/2026 (đèn ban công, radar hay báo ảo): "bật là luôn luôn nhưng sau khi kiểm tra lại cảm biến
+    thấy nhiễu … cần cảnh báo và dùng cam không có người thì tắt đi … chu kỳ 2p 1 lần", "kết hợp với cảm biến
+    frigate", "kèm theo yolo"."""
+    from services import boi_canh_nha, ha_client, thong_bao, xac_minh_nha
+    try:
+        bai = xac_minh_nha.ap(tb)
+        luc = time.time()
+        if (not bai or str((ha_client.get_state(tb) or {}).get("state") or "").lower() != "on"
+                or _nguoi_vua_cham(tb, luc)):
+            return
+        co, mo_ta = xac_minh_nha.xac_minh(list(bai["bat"].get("kiem_lai") or []), boi_canh_nha.phong_cua(tb))
+        logger.info({"event": "kich_hoat_kiem_lai", "thiet_bi": tb, "lan": lan, "co_nguoi": co, "mo_ta": mo_ta})
+        if co:
+            return
+        if co is None:
+            _hen_kiem_lai(tb, lan + 1)
+            return
+        if _lam(tb, "off", tu_lam=True):
+            _nk(tb, "off", "lam", "", f"kiểm lại sau khi bật: {mo_ta} — tắt, cảm biến có thể báo ảo", luc=luc)
+            thong_bao.gui("nha.canh_bao", f"⚠️ Em vừa tắt {_ten_tb(tb)}: bật vì cảm biến báo có người, nhưng kiểm "
+                                          f"lại thì {mo_ta}. Cảm biến khu {boi_canh_nha.phong_cua(tb) or ''} có thể "
+                                          "đang báo ảo — anh xem giúp em.")
+    except Exception as exc:  # noqa: BLE001 — một lượt kiểm hỏng không được làm chết luồng hẹn giờ
+        logger.warning({"event": "kich_hoat_kiem_lai_loi", "thiet_bi": tb, "error": str(exc)[:200]})
+
+
 def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
     from services import du_doan_nha as dd, ha_client, thong_bao
 
@@ -1721,6 +1786,8 @@ def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
                 del ds[:-BAO_AO_GIU]
                 _luu()
             return
+        # Định HỎI bật mà bài xác minh có nguồn → tự kiểm trước (chụp camera mất vài giây — làm NGOÀI `_khoa_xet`).
+        xm_bat = _xac_minh_truoc_hoi(tb, hd, nguon, luc)
         with _khoa_xet:
             st = ha_client.get_state(tb) or {}
             tt = str(st.get("state") or "").lower()
@@ -1750,6 +1817,14 @@ def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
                         del ds[:-BAO_AO_GIU]
                         _luu()
                 return
+            if q["lam"] == "hoi" and xm_bat is not None:
+                hoi, co, mo_ta = xm_bat
+                if co and not dd._cam_tu_lam(_ten_tt(tb, hd)):
+                    q = {**q, "lam": "tu_lam", "ly_do": f"em tự xác minh: {mo_ta}"}
+                elif co is False and hoi == "khong":
+                    _nk(tb, hd, "khong", nguon, f"tự xác minh không thấy người ({mo_ta}) — không bật, không hỏi",
+                        _dk(q), luc)
+                    return
             vi = (_nap()["mo_hinh"][tb][hd].get("ten") or {}).get(nguon, nguon)
             nhan = {"nguon": nguon, **{k: round(v, 2) for k, v in q["x"].items() if not k.startswith("[")}}
             if q["lam"] == "tu_lam":
@@ -1757,15 +1832,17 @@ def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
                     _nk(tb, hd, "khong", nguon, "lệnh tới thiết bị không thành", _dk(q), luc)
                     return
                 id_ = dd.ghi_nhan(_ten_tt(tb, hd), hd, q["p"], nhan, "tu_lam")
-                _nk(tb, hd, "lam", nguon, f"luật bot học, chắc {q['p']:.0%}", _dk(q), luc)
+                _nk(tb, hd, "lam", nguon, q.get("ly_do") or f"luật bot học, chắc {q['p']:.0%}", _dk(q), luc)
             else:
                 id_ = dd.ghi_nhan(_ten_tt(tb, hd), hd, q["p"], nhan, "hoi")
                 _nk(tb, hd, "hoi", nguon, str(q.get("ly_do") or f"chắc {q['p']:.0%} — hỏi anh"), _dk(q), luc)
         if q["lam"] == "tu_lam":
+            if hd == "on":
+                _hen_kiem_lai(tb, 0)
             # Chủ máy 26/09/2026: "Đáng lẽ đưa ra lựa chọn đúng hay sai chứ".
             _bao_tu_lam(tb,
                         f"🤖 #{id_} Em đã {_TEN_HD[hd].lower()} {_ten_tb(tb)} (vì {vi}, em chắc "
-                        f"{q['p']:.0%}).\nĐúng hay sai ạ? Anh trả lời «đúng» hoặc «sai» — sai thì em "
+                        f"{q['p']:.0%}{'; ' + q['ly_do'] if q.get('ly_do') else ''}).\nĐúng hay sai ạ? Anh trả lời «đúng» hoặc «sai» — sai thì em "
                         f"{_TEN_HD[_NGUOC[hd]].lower()} lại ngay. Không trả lời trong "
                         f"{CHAM_TU_LAM // 60} phút là em tính đúng.")
         elif not thong_bao.gui("nha.goi_y",
@@ -2253,6 +2330,19 @@ def _tat_vi_vang(tb: str) -> None:
                 _hen_tat_luc(tb, HEN_LAI)   # thấy người, hoặc không nhìn được — lát nữa xét lại
                 return
             nhin_lai = f"ngoại vi báo có thể còn người, em nhìn lại {', '.join(tv['nhin'])}: không thấy ai"
+        # Bài XÁC MINH bot đã giải và được chấm đúng (`xac_minh_nha`, chủ máy 01/10/2026: "xác nhận đúng hay không
+        # nên dùng qua các ngoại vi như cảm biến, camera, yolo"): nguồn nào còn thấy người trong khu thì chưa tắt.
+        from services import boi_canh_nha, xac_minh_nha
+        bai = xac_minh_nha.ap(tb)
+        if bai and xac_minh_nha.nguon_luc(bai["tat"], luc):
+            co, mo_ta = xac_minh_nha.xac_minh(xac_minh_nha.nguon_luc(bai["tat"], luc), boi_canh_nha.phong_cua(tb))
+            logger.info({"event": "kich_hoat_xac_minh_tat", "thiet_bi": tb, "co_nguoi": co, "mo_ta": mo_ta})
+            if co:
+                _nk(tb, "off", "khong", "", f"{nguon_vang} — tự xác minh: {mo_ta}, xét lại sau {HEN_LAI} giây",
+                    luc=luc)
+                _hen_tat_luc(tb, HEN_LAI)
+                return
+            nhin_lai = (nhin_lai + "; " if nhin_lai else "") + f"tự xác minh: {mo_ta}"
         if any(x.get("hanh_dong") == "off" and x.get("cach", "khong") == "khong"
                and _khung_dang(x, luc) for x in cd.get("ngoai_le") or []):
             _nk(tb, "off", "khong", "", f"{nguon_vang} — đang trong khung giờ anh đặt không tắt", luc=luc)
