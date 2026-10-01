@@ -453,7 +453,9 @@ export default function ChatPage() {
           if (data === "[DONE]") continue;
           try {
             const json = JSON.parse(data);
-            const delta = json.choices?.[0]?.delta?.content;
+            // Máy chủ báo lỗi giữa luồng (hết lượt, mọi tài khoản hỏng…) — hiện ra, đừng để bong bóng trống.
+            const loi = json.error ? `⚠️ ${json.error.message || json.error}` : "";
+            const delta = loi ? (assistantContent ? `\n\n${loi}` : loi) : json.choices?.[0]?.delta?.content;
             if (delta) {
               if (ttft === undefined) ttft = Date.now() - startTimeRef.current;
               assistantContent += delta;

@@ -769,6 +769,8 @@ class ClaudeFreeBackend:
             _logger().error({"event": "claude_stream_error", "error": str(exc)})
             if not sent_role:
                 yield _openai_chunk(actual_model, cid, created, {"role": "assistant", "content": f"[claude error] {exc}"})
+            else:
+                raise   # đứt giữa câu: báo lỗi, đừng để nửa câu trông như đã trả lời xong
         finally:
             try:
                 response.close()

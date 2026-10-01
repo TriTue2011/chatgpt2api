@@ -4270,7 +4270,9 @@ def _wrap_mcp_stream(
                        "chunks_collected": len(chunks)})
         for c in chunks:
             yield c
-        return
+        # Ném tiếp để `sse_json_stream` gửi khung lỗi: nuốt ở đây thì khách chỉ nhận [DONE], tưởng
+        # model trả lời rỗng (02/10/2026: Grok hết lượt → bong bóng chat trống).
+        raise
 
     # Merged tool calls (name + full arguments), ordered by index.
     final_tool_calls: list | None = (

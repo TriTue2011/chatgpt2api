@@ -152,3 +152,35 @@ class TestDangTraLoi:
         assert [tc["function"]["arguments"]
                 for tc in lines[0]["message"]["tool_calls"]] == [
                     {"phong": "bep"}, {"phong": "ngu"}]
+
+
+class TestLoiGiuaLuong:
+    """Luồng hỏng (hết lượt, mọi tài khoản hỏng) phải ra LỖI — đo 02/10/2026: lỗi bị nuốt, khách nhận câu rỗng
+    như thành công (chat web hiện bong bóng trống, HA đọc im)."""
+
+    @staticmethod
+    def _hong():
+        yield {"choices": [{"delta": {"content": ""}}]}
+        raise RuntimeError("Grok web: usage_limit_reached")
+
+    def test_ollama_tra_khuon_loi_khong_tra_cau_rong(self, monkeypatch):
+        from api import ollama_compat as oc
+
+        monkeypatch.setattr(oc, "require_identity", lambda _auth: {"id": "chu-nha"})
+        monkeypatch.setattr(oc.openai_v1_chat_complete, "handle", lambda _payload: self._hong())
+        app = FastAPI()
+        app.include_router(oc.create_router())
+        with TestClient(app) as client:
+            response = client.post("/api/chat", headers={"Authorization": "Bearer test"},
+                                   json={"model": "gw/fast", "stream": True,
+                                         "messages": [{"role": "user", "content": "xin chào"}]})
+        lines = [json.loads(line) for line in response.text.splitlines() if line]
+        assert "usage_limit_reached" in lines[-1].get("error", "")
+        assert not any(x.get("done") for x in lines), "không được kết thúc như đã trả lời xong"
+
+    def test_boc_mcp_nem_tiep_de_sse_gui_khung_loi(self):
+        from services.protocol.openai_v1_chat_complete import _wrap_mcp_stream
+        from utils.helper import sse_json_stream
+
+        ra = "".join(sse_json_stream(_wrap_mcp_stream(self._hong(), [], None, {})))
+        assert "usage_limit_reached" in ra and '"error"' in ra

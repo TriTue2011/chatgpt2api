@@ -219,6 +219,9 @@ def create_router() -> APIRouter:
                                            "done": False}, ensure_ascii=False) + "\n").encode()
             except Exception as exc:
                 logger.warning({"event": "ollama_stream_loi", "error": str(exc)[:150]})
+                # Khuôn lỗi của Ollama — trả câu rỗng thì HA tưởng xong, loa im mà không ai biết vì sao.
+                yield (json.dumps({"error": str(exc)[:300]}, ensure_ascii=False) + "\n").encode()
+                return
             yield (json.dumps(_tra_loi(model, ""), ensure_ascii=False) + "\n").encode()
 
         return StreamingResponse(_phat(), media_type="application/x-ndjson")
