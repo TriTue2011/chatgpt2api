@@ -109,6 +109,17 @@ def chay(ip: str, cong: int, user: str) -> int:
             return 4
         cb_t = C.CFUNCTYPE(None, C.c_int, C.c_void_p, C.c_uint, C.c_ubyte, C.c_void_p)
         cb = cb_t(lambda *_a: None)         # bỏ tiếng mic camera gửi về
+        # Nghe ngoại lệ đàm thoại (EXCEPTION_AUDIOEXCHANGE = 0x8001) — camera rớt mạng giữa bài thì SDK báo ở đây.
+        kenh_hong = [-1]
+        ngoai_le_t = C.CFUNCTYPE(None, C.c_uint, C.c_int, C.c_int, C.c_void_p)
+
+        def _ngoai_le(loai, _uid, kenh, _u):
+            if loai == 0x8001:
+                kenh_hong[0] = kenh
+        ngoai_le = ngoai_le_t(_ngoai_le)
+        if hasattr(sdk, "NET_DVR_SetExceptionCallBack_V30"):
+            sdk.NET_DVR_SetExceptionCallBack_V30(0, None, ngoai_le, None)
+        sdk.NET_DVR_VoiceComSendData.restype = C.c_int
         sdk.NET_DVR_StartVoiceCom_MR_V30.restype = C.c_int
         bao.write(f"SAN {ma} {tan_so}\n")
         vao = sys.stdin.buffer
@@ -131,6 +142,7 @@ def chay(ip: str, cong: int, user: str) -> int:
             n = struct.unpack(">I", dau)[0]
             if n == MO_KENH:
                 if h < 0:
+                    kenh_hong[0] = -1
                     h = sdk.NET_DVR_StartVoiceCom_MR_V30(uid, 1, cb, None)
                 bao.write("OK\n" if h >= 0 else
                           f"LOI camera không mở kênh đàm thoại (mã {sdk.NET_DVR_GetLastError()})\n")
@@ -150,7 +162,14 @@ def chay(ip: str, cong: int, user: str) -> int:
             cho = t0 + da_phat - time.monotonic()
             if cho > 0:
                 time.sleep(cho)
-            sdk.NET_DVR_VoiceComSendData(h, C.c_char_p(khung), n)
+            # Kiểm kết quả gửi (issue #2 của dahua_talk: bỏ qua nó thì camera rớt mạng mà vẫn «đang phát» 44 phút).
+            gui_duoc = sdk.NET_DVR_VoiceComSendData(h, C.c_char_p(khung), n)
+            if not gui_duoc or kenh_hong[0] == h:
+                bao.write(f"LOI gửi tiếng hỏng (mã {sdk.NET_DVR_GetLastError()})\n" if not gui_duoc
+                          else "LOI camera rớt kênh đàm thoại (ngoại lệ 0x8001)\n")
+                sdk.NET_DVR_StopVoiceCom(h)
+                h = -1                      # khung còn lại của lượt bị bỏ; vẫn giữ đăng nhập
+                continue
             da_phat += 1024 / tan_so if ma == "AAC" else n / 8000
         dong_kenh()
         return 0

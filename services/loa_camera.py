@@ -63,6 +63,14 @@ _KHOI = 640
 
 _khoa: dict[str, threading.Lock] = {}
 _khoa_chung = threading.Lock()
+#: Tên camera → số phiên đang phát / lúc loa dứt tiếng gần nhất (monotonic). Mọi đường phát (``phat``, ``PhatLuong``,
+#: bộ đàm) đều ghi vào đây, nên vệ tinh che mic theo TRẠNG THÁI LOA chứ không theo danh sách ai đang gọi loa
+#: (dahua_talk issue #3: câu trả lời phát qua đường khác lọt mic rồi tự đánh thức lặp lại).
+_dang_phat: dict[str, int] = {}
+_het_tieng: dict[str, float] = {}
+#: Che mic sau khi loa dứt, theo kiểu loa: EZVIZ (HCNetSDK) nhả kênh ~1,24 s sau tiếng cuối (đo H6C 29/09/2026),
+#: còn đuôi tiếng trong đệm camera; Imou/Dahua dứt gần như ngay.
+CHE_MIC_GIAY = {"hik": 1.8, "": 0.5}
 
 #: Cờ bắt buộc cho MỌI ffmpeg đọc tiếng theo luồng từ ống dẫn. Thiếu chúng, ffmpeg
 #: gom tiếng để dò định dạng trước khi nhả byte nào — đo 24/09/2026 trong c2a:
@@ -210,7 +218,9 @@ class KenhNoi:
         self.sub.sendall(_khung(_A1))
         self._trang_thai(True)
         for s in (self.ctrl, self.sub):
-            s.settimeout(None)
+            # KHÔNG settimeout(None): camera thôi nhận (đầy cửa sổ TCP) thì sendall chặn mãi, lượt phát kẹt — cùng lớp
+            # lỗi dahua_talk 0.9.0 (loa kẹt «playing» 3 giờ, 30/09/2026).
+            s.settimeout(self.het_gio)
             self._luong.append(threading.Thread(target=self._xa, args=(s,), name="loa-cam-doc",
                                                 daemon=True))
         self._luong.append(threading.Thread(target=self._giu, name="loa-cam-giu", daemon=True))
@@ -227,11 +237,13 @@ class KenhNoi:
 
     def _xa(self, s: socket.socket) -> None:
         """Đọc bỏ những gì camera gửi về (trả lời, tiếng mic) cho bộ đệm khỏi đầy."""
-        try:
-            while not self._dung.is_set():
+        while not self._dung.is_set():
+            try:
                 _doc_khung(s)
-        except (OSError, ConnectionError):
-            pass
+            except TimeoutError:
+                continue            # camera im một lúc là thường — chỉ để luồng còn thấy cờ dừng
+            except (OSError, ConnectionError):
+                return
 
     def _giu(self) -> None:
         while not self._dung.wait(1.0):
@@ -354,6 +366,7 @@ class KenhNoi8086:
         self._dung = threading.Event()
         self._luong: list[threading.Thread] = []
         self._khoa_gui = threading.Lock()
+        self._loi: BaseException | None = None
 
     def __enter__(self) -> "KenhNoi8086":
         try:
@@ -368,6 +381,10 @@ class KenhNoi8086:
 
     # bắt tay -------------------------------------------------------------------
     def _play(self, track: int, *, sdp: bytes = b"", them: str = "") -> int:
+        self.s.sendall(self._yeu_cau(track, sdp=sdp, them=them))
+        return self._doc_tra_loi()
+
+    def _yeu_cau(self, track: int, *, sdp: bytes = b"", them: str = "") -> bytes:
         nonce = "".join(_CHU_NONCE[b % len(_CHU_NONCE)] for b in os.urandom(32))
         tao = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         bi_mat = self.mk
@@ -383,8 +400,7 @@ class KenhNoi8086:
             dong += ["Accpet-Sdp: Private", "Private-Type: application/sdp",
                      f"Private-Length: {len(sdp)}"]
         self._cseq += 1
-        self.s.sendall(("\r\n".join(dong) + "\r\n\r\n").encode() + sdp)
-        return self._doc_tra_loi()
+        return ("\r\n".join(dong) + "\r\n\r\n").encode() + sdp
 
     def _doc_tra_loi(self) -> int:
         du = b""
@@ -435,7 +451,8 @@ class KenhNoi8086:
         self.s.settimeout(1.0)
         self._luong = [threading.Thread(target=self._xa, name="loa-cam-8086-doc", daemon=True),
                        threading.Thread(target=self._gui, args=(self._ff,), name="loa-cam-8086-gui",
-                                        daemon=True)]
+                                        daemon=True),
+                       threading.Thread(target=self._giu, name="loa-cam-8086-giu", daemon=True)]
         for t in self._luong:
             t.start()
 
@@ -449,6 +466,17 @@ class KenhNoi8086:
             except TimeoutError:
                 continue
             except OSError:
+                return
+
+    def _giu(self) -> None:
+        """Giữ phiên: gửi lại PLAY kênh nói mỗi ``GIU_PHIEN_GIAY`` (trả lời do ``_xa`` đọc bỏ). Đo 30/09/2026 trên
+        Imou thật: không gửi thì camera đóng kênh sau 71–115 s (nhạc im giữa bài); gửi mỗi 30 s thì 200 s vẫn chạy."""
+        while not self._dung.wait(GIU_PHIEN_GIAY):
+            try:
+                goi = self._yeu_cau(64, them="&talktype=talk")
+                with self._khoa_gui:
+                    self.s.sendall(goi)
+            except (OSError, AttributeError):
                 return
 
     def _gui(self, ff: subprocess.Popen) -> None:
@@ -473,14 +501,23 @@ class KenhNoi8086:
         except (OSError, ValueError, AttributeError) as exc:
             logger.warning({"event": "loa_camera_8086_gui_hong", "ip": self.ip,
                             "loi": str(exc)[:120]})
+            # Không thoát lặng: không ai đọc ffmpeg nữa → ống đầy → ``phat_pcm`` kẹt mãi ở stdin.write (đo 30/09/2026
+            # trên máy thật: luồng mux0 kẹt pipe_write, kết nối 8086 đã mất). Tắt ffmpeg để ``phat_pcm`` báo lỗi ngay.
+            self._loi = exc
+            if ff.poll() is None:
+                ff.kill()
 
     def phat_pcm(self, pcm: bytes) -> None:
         """PCM16 LE mono 16 kHz. Ghi vào bộ mã hoá; nhịp thời gian thực do luồng gửi giữ
         (ống đầy thì lệnh ghi tự chờ)."""
+        if self._loi is not None:
+            raise LoiLoa(f"camera thôi nhận tiếng cổng 8086 ({str(self._loi)[:80]})")
         try:
             self._ff.stdin.write(pcm)
             self._ff.stdin.flush()
         except (BrokenPipeError, ValueError) as exc:
+            if self._loi is not None:        # ffmpeg bị tắt vì camera thôi nhận — nói đúng nguyên nhân
+                raise LoiLoa(f"camera thôi nhận tiếng cổng 8086 ({str(self._loi)[:80]})") from exc
             raise LoiLoa(f"bộ mã hoá tiếng dừng giữa chừng ({str(exc)[:80]})") from exc
 
     def dong(self, cho: bool = True) -> None:
@@ -534,6 +571,8 @@ _HIK_MO_KENH = struct.pack(">I", 0xFFFFFFFF)
 #: Chương trình tiến trình con (Python + ctypes).
 _HIK_NOI = Path(__file__).with_name("hik_noi.py")
 _HIK_DONG_KENH = struct.pack(">I", 0)
+#: Gửi lại yêu cầu PLAY kênh nói 8086 mỗi ngần này giây — Imou tự đóng kênh sau 71–115 s nếu không (đo 30/09/2026).
+GIU_PHIEN_GIAY = 30.0
 KIEU_LOA = ("", "hik")
 
 
@@ -564,6 +603,8 @@ class _TroGiupHik:
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
         self._du = b""
         self.ranh_tu = time.monotonic()
+        # Thu dọn ngay khi tiến trình con tự thoát vì ngồi yên (không để <defunct>).
+        threading.Thread(target=self.p.wait, name="loa-cam-hik-don", daemon=True).start()
         dong = self._doc(_HIK_CHO_MO)
         if not dong.startswith("SAN "):
             self.close()
@@ -585,6 +626,22 @@ class _TroGiupHik:
             self._du += b
         dong, self._du = self._du.split(b"\n", 1)
         return dong.decode("utf-8", "replace").strip()
+
+    def loi_giua_luot(self) -> str:
+        """Đọc KHÔNG CHẶN kênh báo giữa lượt nói: dòng «LOI …» (gửi tiếng hỏng / camera rớt kênh) hoặc ""."""
+        fd = self.p.stdout.fileno()
+        while select.select([fd], [], [], 0)[0]:
+            b = os.read(fd, 4096)
+            if not b:
+                return "LOI tiến trình HCNetSDK đã thoát"
+            self._du += b
+        if b"\n" in self._du:
+            dong, _, con = self._du.partition(b"\n")
+            chu = dong.decode("utf-8", "replace").strip()
+            if chu.startswith("LOI"):
+                self._du = con
+                return chu
+        return ""
 
     def gui(self, b: bytes) -> None:
         try:
@@ -613,7 +670,10 @@ class _TroGiupHik:
             self.gui(_HIK_DONG_KENH)
         except LoiLoa:
             return False
-        xong = self._doc(cho) == "DONG"
+        het = time.monotonic() + cho
+        while (dong := self._doc(max(0.0, het - time.monotonic()))).startswith("LOI"):
+            pass                          # báo lỗi giữa lượt chưa ai đọc (lượt đã dừng vì nó) — bỏ qua, chờ DONG
+        xong = dong == "DONG"
         self.ranh_tu = time.monotonic()
         return xong
 
@@ -654,6 +714,7 @@ class KenhHik:
         self.ip, self.tg, self.tan_so = ip, tg, tg.tan_so
         self._t_dau: float | None = None
         self._da_ghi = 0.0
+        self._loi: BaseException | None = None
         ra = (["-c:a", "aac", "-b:a", "32k", "-f", "adts"] if tg.ma == "AAC" else
               ["-c:a", "pcm_mulaw" if tg.ma == "G711U" else "pcm_alaw",
                "-f", "mulaw" if tg.ma == "G711U" else "alaw"])
@@ -687,8 +748,17 @@ class KenhHik:
                     self.tg.gui(b"".join(struct.pack(">I", len(k)) + k for k in khung))
         except (OSError, ValueError, LoiLoa) as exc:
             logger.warning({"event": "loa_camera_hik_gui_hong", "ip": self.ip, "loi": str(exc)[:120]})
+            self._loi = exc                   # không thoát lặng — xem KenhNoi8086._gui
+            if ff.poll() is None:
+                ff.kill()
 
     def phat_pcm(self, pcm: bytes) -> None:
+        # Camera rớt mạng giữa bài: tiến trình con báo «LOI …» — dừng lượt thay vì phát vào kết nối chết (issue #2 của
+        # dahua_talk: loa «đang phát» 44 phút sau khi camera rớt).
+        if self._loi is not None:
+            raise LoiLoa(f"tiến trình HCNetSDK thôi nhận tiếng ({str(self._loi)[:80]})")
+        if loi := self.tg.loi_giua_luot():
+            raise LoiLoa(loi.removeprefix("LOI "))
         if self._t_dau is None:
             self._t_dau = time.monotonic()
         try:
@@ -824,6 +894,7 @@ def phat(ten: str, am_thanh: bytes) -> dict[str, Any]:
         khoa = _khoa.setdefault(ip, threading.Lock())
     t0 = time.monotonic()
     with khoa:
+        _bat_dau_phat(ten_that)
         try:
             kenh = mo_kenh(ip, user, mk, kieu_loa(cam))
             try:
@@ -836,10 +907,29 @@ def phat(ten: str, am_thanh: bytes) -> dict[str, Any]:
             raise
         except OSError as exc:
             raise LoiLoa(f"không nói được với camera ({str(exc)[:100]})") from exc
+        finally:
+            _het_phat(ten_that)
     giay = len(pcm) / (2 * kenh.tan_so)
     logger.info({"event": "loa_camera_phat", "camera": ten_that, "giay": round(giay, 1),
                  "tan_so": kenh.tan_so, "mat": round(time.monotonic() - t0, 1)})
     return {"ten": ten_that, "giay": round(giay, 1)}
+
+
+def _bat_dau_phat(ten: str) -> None:
+    with _khoa_chung:
+        _dang_phat[ten] = _dang_phat.get(ten, 0) + 1
+
+
+def _het_phat(ten: str) -> None:
+    with _khoa_chung:
+        _dang_phat[ten] = max(0, _dang_phat.get(ten, 0) - 1)
+        _het_tieng[ten] = time.monotonic()
+
+
+def loa_con_vang(ten: str, che_giay: float) -> bool:
+    """Loa camera ``ten`` đang phát, hoặc vừa dứt chưa quá ``che_giay`` — mic nên bỏ tiếng."""
+    with _khoa_chung:
+        return _dang_phat.get(ten, 0) > 0 or time.monotonic() < _het_tieng.get(ten, float("-inf")) + che_giay
 
 
 def lenh_doi_luong(rate: int, channels: int = 1, ra: int = _TAN_SO) -> list[str]:
@@ -867,6 +957,7 @@ class PhatLuong:
             self._khoa = _khoa.setdefault(ip, threading.Lock())
         self._khoa.acquire()
         self._giu_khoa = True
+        _bat_dau_phat(self.ten)
         try:
             try:
                 self._kenh = mo_kenh(ip, user, mk, kieu_loa(cam))
@@ -904,6 +995,10 @@ class PhatLuong:
         except (OSError, ValueError, LoiLoa) as exc:
             logger.warning({"event": "loa_camera_luong_hong", "camera": self.ten,
                             "loi": str(exc)[:120]})
+            # Không thoát lặng: không ai rút ffmpeg nữa → ống đầy → ``them`` kẹt ở stdin.write. Tắt nó để ``them``
+            # gặp ống vỡ và bỏ qua — cùng lớp lỗi KenhNoi8086._gui.
+            if self._ff.poll() is None:
+                self._ff.kill()
 
     def them(self, pcm: bytes) -> None:
         try:
@@ -931,6 +1026,7 @@ class PhatLuong:
             kenh.dong()
         if self._giu_khoa:
             self._giu_khoa = False
+            _het_phat(self.ten)
             self._khoa.release()
 
 

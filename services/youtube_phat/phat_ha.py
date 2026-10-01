@@ -16,6 +16,7 @@ dùng và khôi phục khi cần.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
@@ -331,6 +332,10 @@ def danh_sach(dung_bo_dem: bool = True) -> list[dict[str, Any]]:
             and not isinstance(a.get("media_duration"), bool) else None,
             "tieu_de": str(a.get("media_title") or ""),
             "muc_dang_phat": stream_target(a.get("media_content_id")),
+            # Loa báo nội dung KHÁC luồng của máy phát (TTS, nguồn khác, ứng dụng YouTube gốc): chỉ giữ dấu băm —
+            # media_content_id có thể mang mật khẩu (luồng camera) mà danh sách này đi ra web.
+            "ma_ngoai_bam": bam_noi_dung(a.get("media_content_id"))
+            if a.get("media_content_id") and stream_target(a.get("media_content_id")) is None else "",
             "nghe_si": str(a.get("media_artist") or a.get("media_channel") or ""),
             "an": eid in an,
             **kha_nang("cast" if thang else nen_tang.get(eid), a.get("device_class"), features),
@@ -348,16 +353,31 @@ def goi_loa(domain: str, service: str, data: dict[str, Any]) -> bool:
     return ha_client.call_service(domain, service, data)
 
 
-def dang_phat_bai(thiet_bi: dict[str, Any], item: dict[str, Any] | None) -> bool:
+def bam_noi_dung(ma: Any) -> str:
+    return hashlib.sha256(str(ma).encode()).hexdigest()[:16]
+
+
+def dang_phat_bai(thiet_bi: dict[str, Any], item: dict[str, Any] | None,
+                  tracker: dict[str, Any] | None = None) -> bool:
     """Loa đã báo đúng bài này chưa (theo `muc_dang_phat`).
 
     Vừa gửi bài mới, loa còn báo vị trí và thời lượng của bài cũ vài giây; đọc
     chúng như của bài mới làm video và thanh tiến độ nhảy tới giây cũ rồi mới
-    chạy lại từ đầu, và có thể tính nhầm bài cũ hết là bài mới hết."""
-    muc = thiet_bi.get("muc_dang_phat")
-    if not muc or not item:
+    chạy lại từ đầu, và có thể tính nhầm bài cũ hết là bài mới hết.
+
+    Nội dung KHÁC (TTS, nguồn khác) không phải bài của phiên — trước đây mọi thứ không phải luồng đều bị coi là
+    bài, nên một câu TTS trên loa đang nghỉ «hết bài» và nhạc tự bật (youtube issue #3, 30/09/2026). Tivi mở ứng
+    dụng YouTube gốc báo chính mã video nên vẫn khớp. Loa không báo gì thì chỉ tin khi chưa từng thấy luồng của
+    phiên trên nó (``tracker["luong_minh"]``)."""
+    if not item:
         return True
+    muc = thiet_bi.get("muc_dang_phat")
     ma = str(item.get("id") or "")
+    if not muc:
+        bam = thiet_bi.get("ma_ngoai_bam")
+        if bam:
+            return bool(ma) and bam in {bam_noi_dung(ma), bam_noi_dung(item.get("url") or "")}
+        return not (tracker or {}).get("luong_minh")
     return muc in {ma, str(item.get("url") or "")} or bool(ma and ma in muc)
 
 

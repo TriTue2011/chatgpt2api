@@ -161,8 +161,8 @@ def test_phat_luong_camera_rot_mang_bao_loi_loa() -> None:
 class Camera8086Gia:
     """Máy chủ 8086 giả: trả 200 cho các PLAY (hay 401 kèm realm lần đầu), gom khung tiếng."""
 
-    def __init__(self, doi_realm: bool = False, ma: int = 200) -> None:
-        self.doi_realm, self.ma = doi_realm, ma
+    def __init__(self, doi_realm: bool = False, ma: int = 200, cat_sau: int = 0) -> None:
+        self.doi_realm, self.ma, self.cat_sau = doi_realm, ma, cat_sau
         self.ln = socket.create_server(("127.0.0.1", 0))
         self.cong = self.ln.getsockname()[1]
         self.yeu_cau: list[str] = []
@@ -185,6 +185,9 @@ class Camera8086Gia:
                             break
                         self.khung.append(du[:dai])
                         du = du[dai:]
+                        if self.cat_sau and len(self.khung) >= self.cat_sau:
+                            c.close()                           # camera tự đóng kênh giữa bài (Imou ~71–115 s)
+                            return
                     elif b"\r\n\r\n" in du:
                         dau, _, du = du.partition(b"\r\n\r\n")
                         chu = dau.decode()
@@ -220,6 +223,46 @@ def test_kenh_8086_bat_tay_va_gui_aac_16k_dung_nhip():
     assert k0[6 + 0x17] == sum(k0[6:6 + 0x17]) & 0xFF        # tổng kiểm đầu DHAV
     assert k0[6 + 28] == 0xFF and k0[-8:-4] == b"dhav"         # thân là khung ADTS
     assert mat >= 0.9                                          # gửi đúng nhịp, không dồn
+
+
+@pytest.fixture
+def ffmpeg_gia(tmp_path, monkeypatch):
+    """ffmpeg giả: mỗi 2048 byte PCM nhả một khung ADTS (không cần ffmpeg thật)."""
+    import sys as _sys
+
+    ff = tmp_path / "bin" / "ffmpeg"
+    ff.parent.mkdir()
+    ff.write_text(f"#!{_sys.executable}\nimport sys\n"
+                  f"while d := sys.stdin.buffer.read(2048):\n"
+                  f"    sys.stdout.buffer.write({_ADTS!r}); sys.stdout.buffer.flush()\n")
+    ff.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{ff.parent}:{os.environ['PATH']}")
+
+
+def test_kenh_8086_camera_dong_giua_bai_thi_bao_loi_khong_ket(ffmpeg_gia):
+    # 30/09/2026 trên máy thật: camera đóng kết nối, luồng gửi thoát lặng, ống ffmpeg đầy, lượt phát kẹt
+    # mãi ở stdin.write («đang phát» hàng giờ). Nay phải báo LoiLoa trong vài giây.
+    import time
+    cam = Camera8086Gia(cat_sau=3)
+    k = lc.KenhNoi8086("127.0.0.1", "admin", "mk", cong=cam.cong).__enter__()
+    t0 = time.monotonic()
+    with pytest.raises(lc.LoiLoa, match="camera thôi nhận"):
+        while time.monotonic() - t0 < 20:
+            k.phat_pcm(b"\x00\x01" * 4096)
+    assert time.monotonic() - t0 < 10
+    k.dong(cho=False)
+
+
+def test_kenh_8086_giu_phien_bang_play_lap_lai(ffmpeg_gia, monkeypatch):
+    # Không gửi lại PLAY thì Imou cắt kênh sau 71–115 s; gửi mỗi 30 s thì 200 s vẫn chạy (đo 30/09/2026).
+    import time
+    monkeypatch.setattr(lc, "GIU_PHIEN_GIAY", 0.2)
+    cam = Camera8086Gia()
+    with lc.KenhNoi8086("127.0.0.1", "admin", "mk", cong=cam.cong) as k:
+        time.sleep(0.9)
+        k.phat_pcm(b"\x00\x01" * 2048)
+    giu = [y for y in cam.yeu_cau[3:] if "trackID=64&" in y and "talktype=talk" in y]
+    assert len(giu) >= 3 and len(set(y.split("Cseq: ")[1].split("\r")[0] for y in giu)) == len(giu)
 
 
 def test_kenh_8086_doi_realm_thi_bam_lai_mot_lan():
@@ -295,6 +338,8 @@ while len(d := sys.stdin.buffer.read(4)) == 4:
         mo = False; bao.write("DONG\\n")
     else:
         sys.stdin.buffer.read(k); n += 1
+        if os.environ.get("HIK_ROT") and n == 1 and mo:
+            mo = False; bao.write("LOI gửi tiếng hỏng (mã 10)\\n")
 nk.write("dang_xuat\\n")
 """)
     ffmpeg = tmp_path / "bin" / "ffmpeg"
@@ -359,3 +404,34 @@ def test_hik_chua_co_sdk_bao_cach_cai(tmp_path, monkeypatch):
 def test_kieu_loa_mac_dinh_la_imou():
     assert lc.kieu_loa({}) == "" and lc.kieu_loa({"loa_kieu": "hik"}) == "hik"
     assert lc.kieu_loa({"loa_kieu": "la"}) == ""
+
+
+def test_hik_camera_rot_giua_luot_thi_bao_loi(hik_gia, monkeypatch):
+    # dahua_talk issue #2: gửi tiếng hỏng mà không ai nghe → loa «đang phát» 44 phút sau khi camera rớt.
+    import time
+    monkeypatch.setenv("HIK_ROT", "1")
+    k = lc.mo_kenh("10.0.0.9", "admin", "MA", "hik")
+    t0 = time.monotonic()
+    with pytest.raises(lc.LoiLoa, match="mã 10"):
+        while time.monotonic() - t0 < 10:
+            k.phat_pcm(b"\x00\x01" * 2048)
+    k.dong()
+    assert "10.0.0.9" in lc._hik                 # vẫn nhận DONG → giữ đăng nhập cho lượt sau
+
+
+def test_phat_ghi_trang_thai_loa_ke_ca_khi_hong(monkeypatch):
+    # Nguồn che mic của vệ tinh: đang phát → vang; hỏng giữa chừng vẫn phải trả về «đã dứt», không kẹt «đang phát».
+    lc._dang_phat.clear(); lc._het_tieng.clear()
+    monkeypatch.setattr(lc, "_lay_cho_phat", lambda ten: ("Cam X", {}))
+    monkeypatch.setattr(lc, "dia_chi", lambda cam: ("10.0.0.7", "u", "p"))
+    monkeypatch.setattr(lc, "pcm_mono", lambda a, t: b"\x00\x00" * 160)
+    thay = []
+
+    def mo(*_a):
+        thay.append(lc.loa_con_vang("Cam X", 0))
+        raise ConnectionRefusedError("rớt")
+    monkeypatch.setattr(lc, "mo_kenh", mo)
+    with pytest.raises(lc.LoiLoa):
+        lc.phat("Cam X", b"wav")
+    assert thay == [True]
+    assert lc.loa_con_vang("Cam X", 5) and not lc.loa_con_vang("Cam X", 0)

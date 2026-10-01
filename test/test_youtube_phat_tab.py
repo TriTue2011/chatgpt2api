@@ -269,6 +269,74 @@ class PhienTheoNhomLoaTest(_CoSo):
             self.assertEqual([], tu_chuyen_bai.mot_vong(203.0))
             chuyen.assert_not_called()
 
+    def _vong(self, a, trang_thai, *moc):
+        """Chạy ``mot_vong`` ở các mốc thời gian, mỗi mốc một bản trạng thái loa ``a``."""
+        from services.youtube_phat import tu_chuyen_bai
+
+        kq = []
+        with patch.object(self.phat_ha, "danh_sach", side_effect=lambda dung_bo_dem=True: [
+                {"entity_id": a, "youtube": "am_thanh", "tua": True, **trang_thai[0]}]):
+            for luc, tt in moc:
+                trang_thai[0] = {"vi_tri": None, "thoi_luong": None, "muc_dang_phat": None, "ma_ngoai_bam": "", **tt}
+                kq.append(tu_chuyen_bai.mot_vong(luc))
+        return kq
+
+    def test_tts_tren_loa_khong_bao_thoi_luong_khong_bat_nhac(self) -> None:
+        # youtube issue #3 (22:42, 30/09/2026): TTS trên loa đang nghỉ bị coi là «bài» rồi «hết bài» → nhạc tự bật.
+        from services.youtube_phat import tu_chuyen_bai
+
+        tu_chuyen_bai._theo_doi.clear()
+        a = GOOGLE_HOME["entity_id"]
+        phien = self.phat_ha.phat("youtube", self.urls[0], [a], "http://x/yt", goi=self.goi)["phien"]
+        phien["item"]["duration"] = None
+        tts = {"trang_thai": "playing", "ma_ngoai_bam": self.phat_ha.bam_noi_dung("http://ha/api/tts_proxy/x.mp3")}
+        with patch.object(self.phat_ha, "chuyen_bai") as chuyen, \
+                patch.object(self.phat_ha, "phat_bai_trong_phien") as phat_lai:
+            self._vong(a, [{}], (100.0, tts), (104.0, {"trang_thai": "idle"}))
+        chuyen.assert_not_called()
+        phat_lai.assert_not_called()
+
+    def test_stop_tren_loa_khong_bao_thoi_luong_bo_loa_khong_nhay_bai(self) -> None:
+        # youtube issue #3: loa camera không báo media_duration/vị trí — Stop giữa bài từng nhảy sang bài kế.
+        from services.youtube_phat import tu_chuyen_bai
+
+        tu_chuyen_bai._theo_doi.clear()
+        a = GOOGLE_HOME["entity_id"]
+        self.phat_ha.phat("youtube", self.urls[0], [a], "http://x/yt", goi=self.goi)
+        dang = {"trang_thai": "playing", "muc_dang_phat": "dQw4w9WgXcQ"}
+        with patch.object(self.phat_ha, "chuyen_bai") as chuyen:
+            self._vong(a, [{}], (100.0, dang), (130.0, {"trang_thai": "idle"}))
+        chuyen.assert_not_called()
+        self.assertEqual([], self.phat_ha.cac_phien())          # phiên một loa: dừng là kết thúc
+
+        # Nghe hết (đếm từ lúc thấy phát, theo thời lượng của chính bài 200 s) thì vẫn chuyển bài.
+        tu_chuyen_bai._theo_doi.clear()
+        phien = self.phat_ha.phat("youtube", self.urls[0], [a], "http://x/yt", goi=self.goi)["phien"]
+        with patch.object(self.phat_ha, "chuyen_bai") as chuyen:
+            self._vong(a, [{}], (100.0, dang), (300.0, {"trang_thai": "idle"}))
+        chuyen.assert_called_once_with(phien["session_id"], 1)
+
+    def test_tts_chen_giua_bai_thi_phat_tiep_dung_giay(self) -> None:
+        # Chủ máy 30/09/2026: "đang phát nhạc, tts thì nhạc dừng không" — loa Google thay bài bằng TTS rồi im.
+        from services.youtube_phat import tu_chuyen_bai
+
+        tu_chuyen_bai._theo_doi.clear()
+        a = GOOGLE_HOME["entity_id"]
+        phien = self.phat_ha.phat("youtube", self.urls[0], [a], "http://x/yt", goi=self.goi)["phien"]
+        dang = {"trang_thai": "playing", "muc_dang_phat": "dQw4w9WgXcQ", "vi_tri": 50.0, "thoi_luong": 200.0}
+        tts = {"trang_thai": "playing", "ma_ngoai_bam": self.phat_ha.bam_noi_dung("http://ha/api/tts_proxy/x.mp3")}
+        with patch.object(self.phat_ha, "chuyen_bai") as chuyen, \
+                patch.object(self.phat_ha, "phat_bai_trong_phien") as phat_lai, \
+                patch.object(self.phat_ha, "goi_loa") as goi:
+            self._vong(a, [{}], (100.0, dang), (103.0, tts), (108.0, {"trang_thai": "idle"}))
+            phat_lai.assert_called_once()
+            self.assertEqual(phien["session_id"], phat_lai.call_args[0][0]["session_id"])
+            goi.assert_not_called()
+            self._vong(a, [{}], (110.0, {**dang, "vi_tri": 0.5}))
+        chuyen.assert_not_called()
+        goi.assert_called_once_with("media_player", "media_seek", {"entity_id": a, "seek_position": 53.0})
+        self.assertEqual([[a]], [p["output_entity_ids"] for p in self.phat_ha.cac_phien()])
+
     def test_tivi_mo_youtube_goc_khong_lam_loa_dan(self) -> None:
         from services.youtube_phat import tu_chuyen_bai
 

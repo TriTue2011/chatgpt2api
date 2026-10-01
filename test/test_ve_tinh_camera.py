@@ -96,6 +96,8 @@ def _sach():
     vt._tai.clear()
     vt._ket_noi.clear()
     LoaGia.ds.clear()
+    loa_camera._dang_phat.clear()
+    loa_camera._het_tieng.clear()
     yield
     vt._tai.clear()
     vt._ket_noi.clear()
@@ -350,6 +352,27 @@ def test_mic_bo_tieng_luc_ting_va_quen_tieng_cu_sau_khi_noi():
 
     truoc, dem, quen = asyncio.run(chay())
     assert (truoc, dem, quen) == (0, 1, 1)
+
+
+def test_mic_bo_tieng_khi_loa_phat_tu_duong_khac_va_che_them_theo_kieu_loa():
+    """dahua_talk issue #3: che mic theo TRẠNG THÁI LOA — bot đọc thông báo ra loa camera (không qua vệ tinh) thì
+    mic cũng phải bỏ tiếng, không thì chính câu thông báo lọt mic và đánh thức trợ lý."""
+    async def chay(kieu):
+        tai = _tai({"tro_ly_che_do": "c2a", "loa_kieu": kieu})
+        tai.bo_nghe = BoNgheGia(bat_o=99)
+        loa_camera._bat_dau_phat(TEN)              # như loa_camera.noi từ một tool khác đang phát
+        await tai.nhan_khuc(TO)
+        dang_phat = tai.bo_nghe.dem
+        loa_camera._het_phat(TEN)
+        await tai.nhan_khuc(TO)                    # vừa dứt: còn trong khoảng che
+        vua_dut = tai.bo_nghe.dem
+        loa_camera._het_tieng[TEN] -= loa_camera.CHE_MIC_GIAY[kieu] + 0.01
+        await tai.nhan_khuc(TO)
+        return dang_phat, vua_dut, tai.bo_nghe.dem
+
+    assert asyncio.run(chay("")) == (0, 0, 1)
+    assert asyncio.run(chay("hik")) == (0, 0, 1)
+    assert loa_camera.CHE_MIC_GIAY["hik"] > loa_camera.CHE_MIC_GIAY[""]
 
 
 # ── Mic, ting, lệnh ffmpeg ─────────────────────────────────────────────────

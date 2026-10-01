@@ -63,6 +63,8 @@ _MIC_IM_GIAY = 10.0
 #: Sau tiếng ting / sau lúc loa camera nói xong, mic còn bỏ tiếng ngần này giây (vang phòng,
 #: camera phát trễ). Đo 26/09/2026 trên dahua_talk.
 _DEM_SAU_NOI = 0.4
+#: Chờ ffmpeg mic thoát sau khi kill — quá thì bỏ qua, mở lại mic (không treo vòng đọc).
+_CHO_FFMPEG_THOAT = 5.0
 #: Bắt được từ gọi (chế độ ``ha``, c2a bắt) mà HA chưa trả chữ sau ngần này giây thì thôi gửi.
 _LUOT_HA_TOI_DA = 15.0
 #: Phát câu trả lời của HA: không nhận ``audio-stop`` sau ngần này giây kể từ khúc cuối thì coi
@@ -324,6 +326,13 @@ class _Tai:
         # Không gọi dat_lai() ở đây: bộ nghe có thể đang chạy trong luồng khác (to_thread).
         self._quen = True
 
+    def _loa_con_vang(self) -> bool:
+        """Loa camera này đang phát bất kỳ thứ gì (thông báo của bot, bộ đàm, câu trả lời HA) hoặc vừa dứt — theo
+        trạng thái loa, không chỉ lúc chính vệ tinh nói (dahua_talk issue #3)."""
+        from services import loa_camera
+
+        return loa_camera.loa_con_vang(self.ten, loa_camera.CHE_MIC_GIAY[loa_camera.kieu_loa(self.cam)])
+
     # đọc mic ------------------------------------------------------------------
     async def _doc_mic(self) -> None:
         from services import camera_nha
@@ -354,12 +363,16 @@ class _Tai:
             finally:
                 if proc.returncode is None:
                     proc.kill()
-                    await proc.wait()
+                # Có hạn (dahua_talk issue #4): ``wait`` chỉ xong khi mọi ống đóng — chờ mãi là vòng mic chết lặng.
+                try:
+                    await asyncio.wait_for(proc.wait(), _CHO_FFMPEG_THOAT)
+                except TimeoutError:
+                    logger.warning({"event": "ve_tinh_camera_mic_khong_thoat", "camera": self.ten})
             await asyncio.sleep(_MO_LAI_GIAY)
 
     async def nhan_khuc(self, khuc: bytes) -> None:
         """Một khúc mic: bỏ nếu đang chặn; chuyển cho người đang nhận; không thì dò từ gọi."""
-        if self._dang_noi or time.monotonic() < self._chan_toi:
+        if self._dang_noi or time.monotonic() < self._chan_toi or self._loa_con_vang():
             return
         if self._nhan is not None:
             self._nhan.put_nowait(khuc)
