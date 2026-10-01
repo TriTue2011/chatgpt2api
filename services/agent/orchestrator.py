@@ -2594,6 +2594,18 @@ def _orchestrate_locked(user_text: str, user_id: str,
     _co_trich_dan = bool(str(trich_dan or "").strip())
     picked = None
     _tin_da_chon = ""      # tiêu đề tin vừa được chọn bằng mã mục (mục 1.44)
+    # Ý người dùng ĐÃ CHỐT (chọn mã mục, hoặc bấm «để em viết thành bài» của
+    # luồng Facebook) và `user_text` từ đó là câu HỆ THỐNG dựng («Nói kỹ hơn về
+    # mục này: "<tiêu đề>"…»), không phải chữ họ gõ. Các đường tắt khớp chữ phía
+    # dưới (1.2–1.6) chỉ được đọc CHỮ NGƯỜI GÕ — cho chúng đọc tiêu đề tin hay
+    # nội dung bài là để chữ trong đó bị diễn giải thành lệnh.
+    #
+    # Đo thật 01/10 08:01 (Zalo): bản tin sáng gửi theo lịch, người dùng trích
+    # lại và gõ «B3» = "Khối mây khổng lồ gây mưa lớn bất thường đến 250 mm…".
+    # Bộ dò trạng thái nhà bỏ dấu thấy "khong" (khổng) + "bat" (bất) + "den"
+    # (đến = đèn) rồi đáp "Tất cả 9 đèn trong nhà đều đang tắt ạ." Cùng lớp với
+    # ca 09/09 ở `reminders.py` (lời dặn hệ thống lọt vào fast-path).
+    _y_da_chot = False
 
     # 0.0) TRÍCH DẪN + gõ một MÃ. Người dùng trích lại bản tin/danh sách cũ (mã
     # D1/E2… đã được HỆ THỐNG in vào chữ của tin) rồi gõ đúng mã đó → chọn thẳng
@@ -2611,6 +2623,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
             _chon_tr = None
         if _chon_tr:
             user_text = _chon_tr["cau_hoi"]
+            _y_da_chot = True
             if _chon_tr.get("nguon") == "tin":
                 _tin_da_chon = _chon_tr["noi_dung"]
             # Đã chọn mục từ tin trích → người dùng bỏ qua menu ask_choices (nếu
@@ -2671,6 +2684,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
             _chon_muc = _ml.resolve_reply(user_id, user_text)
             if _chon_muc:
                 user_text = _chon_muc["cau_hoi"]
+                _y_da_chot = True
                 if _chon_muc.get("nguon") == "tin":
                     _tin_da_chon = _chon_muc["noi_dung"]
         except Exception:
@@ -2781,7 +2795,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # model tự đoán chủ đề. Một mục thì tra thẳng; nhiều mục thì trả menu chọn.
     # Đặt sau resolve ask_choices để số người dùng bấm trong menu ở lượt trước
     # đã được đổi thành sentinel an toàn trước khi vào đây.
-    _topic_out = _tracked_topic_shortcut(user_text, user_id, allow)
+    _topic_out = None if _y_da_chot else _tracked_topic_shortcut(user_text, user_id, allow)
     if _topic_out is not None:
         out_topic = _finalize(user_id, _topic_out, ap_loi_dan=user_text)
         hist.append({"role": "assistant", "content": out_topic.get("text") or ""})
@@ -2907,6 +2921,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
             # sentinel `__fb_flow__:ai` — model đọc lại thấy rác.
             if _r and _r.get("ai"):
                 user_text = str(_r["ai"])
+                _y_da_chot = True
                 if hist and hist[-1].get("role") == "user":
                     hist[-1]["content"] = user_text
                 # Bài viết ra PHẢI quay về cổng duyệt, và không tin vào việc
@@ -2920,7 +2935,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # 1.4) Đường tắt LẤY MEDIA ĐÃ TẠO: xem chú thích ở `_tat_lay_media`. Chạy
     # TRƯỚC vòng agent vì việc này xác định hoàn toàn và model nhỏ không gọi
     # được tool. Vẫn tôn trọng phân quyền nhóm như mọi tool khác.
-    _tat = _tat_lay_media(user_text)
+    _tat = None if _y_da_chot else _tat_lay_media(user_text)
     if _tat and (allow is None or caps.group_of("library_media") in allow):
         try:
             _cap_lib = caps.get("library_media")
@@ -2945,7 +2960,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # 1.45) Đường tắt TIN TỨC — không để model hỏi lại "muốn bản tin dạng nào".
     # Tin MỚI dùng MCP vn_news (tổng hợp NHIỀU BÁO); tin ngày khác dùng
     # web_search vì MCP đọc RSS nên không lọc được theo ngày.
-    _loai_tin = _la_yeu_cau_tin_tuc(user_text)
+    _loai_tin = None if _y_da_chot else _la_yeu_cau_tin_tuc(user_text)
     if _loai_tin and (allow is None or "web" in allow):
         _kq_ws = None
         if _loai_tin == "moi":
@@ -3037,7 +3052,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # do chính code sinh nên phân tích chắc chắn — nhờ vậy CẢ BA bước (chọn model →
     # thời lượng → số lượng) đều ra tức thì, thay vì mỗi bước một lượt model ~10s.
     _nut = _doc_nut_menu_media(user_text)
-    _yc_media = None if _nut else _la_yeu_cau_tao_media(user_text)
+    _yc_media = None if (_nut or _y_da_chot) else _la_yeu_cau_tao_media(user_text)
     if _nut or _yc_media:
         if _nut:
             _kind, _args_media = _nut
@@ -3173,7 +3188,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # phải qua cổng duyệt y như đường thường — chỉ khác là câu hỏi duyệt dựng bằng
     # code nên ra ngay, và mang đúng loa/âm lượng người dùng vừa gõ.
     _yc_loa = _la_yeu_cau_phat_loa(user_text)
-    if _yc_loa and (allow is None or "tts_speaker" in allow):
+    if _yc_loa and not _y_da_chot and (allow is None or "tts_speaker" in allow):
         if approval_gate.is_blocked("announce_on_speaker", risk="change"):
             return {"text": "Chế độ chỉ-đọc: em không được phát ra loa ạ."}
         _cap_duyet = caps.get("announce_on_speaker")
@@ -3217,7 +3232,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # Đứng TRƯỚC 1.5: câu trả lời tên nơi («Hoàng Mai») ngay sau khi bot hỏi địa
     # danh mặc định phải được luồng này nhận, không để bộ dò nào của nhà thông
     # minh diễn giải trước.
-    if allow is None or "web" in allow:
+    if not _y_da_chot and (allow is None or "web" in allow):
         _tt_ra = None
         try:
             from services.agent import thoi_tiet as _tt
@@ -3255,7 +3270,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # provider — thiết bị phản ứng tức thì và chạy được cả khi không có provider
     # nào. Phần trả lời: thử nhờ model diễn đạt tự nhiên; không có provider /
     # lỗi → dùng luôn văn mẫu của fast-path.
-    if ha_fastpath and (allow is None or "homeassistant" in allow):
+    if ha_fastpath and (allow is None or "homeassistant" in allow) and not _y_da_chot:
         fp_text, fp_control, fp_bo_do = None, False, ""
         # MỐC GIỜ từng chặng, lưu vào `meta` của nhật ký lượt chạy. Lệnh "bật
         # đèn tủ lạnh, đèn cửa sổ" 13/09/2026 12:29 mất 22 giây, đèn đổi trạng
@@ -3422,7 +3437,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
     #
     # Vẫn qua bộ lọc chức năng đúng nhóm của tool `run_workflow` ("skills") —
     # đường tắt rút ngắn đường đi, không mở thêm quyền.
-    if agent_workflows.is_enabled() and (allow is None or "skills" in allow):
+    if not _y_da_chot and agent_workflows.is_enabled() and (allow is None or "skills" in allow):
         try:
             _wf_bat = agent_workflows.khop_tin_nhan(user_text)
         except Exception as exc:
