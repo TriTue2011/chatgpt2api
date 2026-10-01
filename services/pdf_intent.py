@@ -41,10 +41,15 @@ DICH = "dich"
 #: Lưu thẳng lên kho đám mây, không nạp RAG, không chuyển đổi. Chỉ hiện khi phạm
 #: vi đó đã khai «Lưu trữ online» — không thì nó là lựa chọn không làm được gì.
 LUU_ONLINE = "luu_online"
+#: Đối chiếu hóa đơn điện tử (XML gốc / PDF) với Excel danh mục — `services/hoa_don.py`. Hiện cho PDF, Excel
+#: và XML; gom đủ hai tệp của cùng người rồi đối chiếu (chủ máy 01/10/2026).
+DOI_CHIEU = "doi_chieu"
+#: Đuôi tệp CHỈ dùng để đối chiếu hóa đơn — menu của nó chỉ có lựa chọn đó.
+DUOI_HOA_DON: tuple[str, ...] = (".xml",)
 # legacy alias
 RAG = "rag"  # maps to rag_knowledge
 
-ALL_INTENTS = {RAG_KNOWLEDGE, RAG_TEACHER, WORD, EXCEL, TOM_TAT, LUU_ONLINE}
+ALL_INTENTS = {RAG_KNOWLEDGE, RAG_TEACHER, WORD, EXCEL, TOM_TAT, LUU_ONLINE, DOI_CHIEU}
 
 # Nhãn loại tài liệu — soi chiếu `sgk_taphuan.DOC_KIND_LABEL`, không giữ bảng thứ
 # hai (thêm loại một chỗ mà chỗ kia vẫn nhãn cũ là lỗi im lặng).
@@ -154,7 +159,7 @@ def pop_pending(key: str) -> dict | None:
 #: Tóm tắt thêm ở CUỐI, không chen vào giữa: số thứ tự các mục cũ là thứ
 #: người dùng đã quen gõ, đổi chỗ là họ bấm nhầm việc.
 INTENT_ORDER = (RAG_KNOWLEDGE, RAG_TEACHER, WORD, EXCEL, TOM_TAT, DICH,
-                LUU_ONLINE)
+                LUU_ONLINE, DOI_CHIEU)
 
 
 def y_dinh_da_moi(pend: dict | None, mac_dinh: set[str]) -> set[str]:
@@ -191,6 +196,9 @@ def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
         "nạp rag teacher", "nap rag teacher", "sách giáo khoa", "sach giao khoa",
     )):
         return RAG_TEACHER
+    # Trước «excel»: "đối chiếu với excel" là đối chiếu, không phải chuyển sang Excel.
+    if any(w in t for w in ("đối chiếu", "doi chieu", "hóa đơn", "hoá đơn", "hoa don")):
+        return DOI_CHIEU
     if any(w in t for w in ("excel", "xlsx", "bảng tính", "bang tinh", "spreadsheet", "csv")):
         return EXCEL
     if any(w in t for w in ("word", "docx", "chuyển word", "chuyen word", "convert word")):
@@ -350,6 +358,23 @@ def y_dinh_cho_office(allow: set[str] | None) -> set[str]:
             if i in (RAG_KNOWLEDGE, RAG_TEACHER, TOM_TAT, DICH, LUU_ONLINE)}
 
 
+def them_doi_chieu(intents: set[str], ten: str, allow: set[str] | None) -> set[str]:
+    """Tệp Office là BẢNG TÍNH (danh mục để đối chiếu hóa đơn) thì thêm «Đối chiếu hóa đơn» — .docx/.pptx thì
+    không: danh mục phải là bảng."""
+    if str(ten or "").strip().lower().endswith((".xlsx", ".xls", ".xlsm", ".csv")):
+        return set(intents) | ({DOI_CHIEU} & allowed_intents(allow))
+    return set(intents)
+
+
+def la_hoa_don(ten: str) -> bool:
+    return str(ten or "").strip().lower().endswith(DUOI_HOA_DON)
+
+
+def y_dinh_cho_hoa_don(allow: set[str] | None) -> set[str]:
+    """Tệp XML hóa đơn: chỉ đối chiếu (và lưu kho nếu kênh tự thêm)."""
+    return {i for i in allowed_intents(allow) if i == DOI_CHIEU}
+
+
 def allowed_intents(allow: set[str] | None) -> set[str]:
     """Ý định PDF theo bộ lọc thread.
 
@@ -374,8 +399,10 @@ def allowed_intents(allow: set[str] | None) -> set[str]:
     if "word" in allow:
         out.add(WORD)
         out.add(EXCEL)  # office conversion family
+        out.add(DOI_CHIEU)
     if "excel" in allow:
         out.add(EXCEL)
+        out.add(DOI_CHIEU)
     return out | _dich_neu_co()
 
 
@@ -437,7 +464,7 @@ def _cost_note(info: dict | None) -> str:
 def ask_text(name: str, intents: set[str], info: dict | None = None) -> str:
     """Câu hỏi ý định — chỉ các lựa chọn được phép (số 1..N khớp parse_intent)."""
     # Gọi đúng tên loại file: "Đã nhận PDF: bao-cao.docx" là sai hiển nhiên.
-    _loai = "Word/Excel" if la_office(name) else "PDF"
+    _loai = "Word/Excel" if la_office(name) else "hóa đơn XML" if la_hoa_don(name) else "PDF"
     lines = [f"📄 Đã nhận {_loai}: **{name}**", "Bạn muốn làm gì?"]
     catalog = {
         RAG_KNOWLEDGE: "📚 Nạp **RAG kiến thức** (tự phát hiện chủ đề → wiki)",
@@ -447,6 +474,7 @@ def ask_text(name: str, intents: set[str], info: dict | None = None) -> str:
         TOM_TAT: "✍️ **Tóm tắt** nội dung (không nạp vào kho nào)",
         DICH: "🌐 **Dịch tài liệu** (Việt ⇄ Anh, máy dịch tự dựng)",
         LUU_ONLINE: "☁️ **Lưu lên kho đám mây** (không nạp, không chuyển)",
+        DOI_CHIEU: "🧾 **Đối chiếu hóa đơn** với Excel danh mục (gửi đủ hai tệp)",
     }
     n = 1
     shown = 0

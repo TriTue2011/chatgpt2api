@@ -1431,8 +1431,9 @@ def _handle_pdf(chat_id: str, url: str, name: str = "",
                 allow: set[str] | None = None, user_id: str = "") -> None:
     """Nhận PDF → RAG kiến thức / teacher (Zalo Bot KHÔNG gửi Word/Excel)."""
     from services import pdf_intent as _pi
-    # Bỏ word/excel — API không sendDocument
-    intents = _pi.allowed_intents(allow) - {_pi.WORD, _pi.EXCEL}
+    # Bỏ word/excel — API không sendDocument; bỏ đối chiếu hóa đơn — Zalo Bot không nhận tệp Excel nên
+    # không bao giờ gom đủ cặp hóa đơn + danh mục.
+    intents = _pi.allowed_intents(allow) - {_pi.WORD, _pi.EXCEL, _pi.DOI_CHIEU}
     intents = _pi.them_luu_online(intents, "zalo", str(chat_id),
                                   user=str(user_id or ""))
     if not intents:
@@ -1528,6 +1529,14 @@ def _do_pdf_intent(
             )
             status = "blocked"
             err = "zalo_bot_no_file"
+            send_message(chat_id, reply)
+            return
+        if intent == _pi.DOI_CHIEU:
+            kind = "pdf_doi_chieu"
+            reply = ("🧾 Zalo Bot không nhận được tệp Excel danh mục nên chưa đối chiếu hóa đơn được ạ. "
+                     "Anh/chị gửi hóa đơn và Excel qua Zalo Cá nhân hoặc Telegram nhé.")
+            status = "blocked"
+            err = "zalo_bot_no_excel"
             send_message(chat_id, reply)
             return
         if intent == _pi.DICH:

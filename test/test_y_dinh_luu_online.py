@@ -105,7 +105,7 @@ class SoTrongMenuKhopSoGiaiRaTests(unittest.TestCase):
             tu_khoa = {pi.RAG_KNOWLEDGE: "RAG kiến thức", pi.RAG_TEACHER: "RAG teacher",
                        pi.WORD: "Word", pi.EXCEL: "Excel", pi.TOM_TAT: "Tóm tắt",
                        pi.DICH: "Dịch tài liệu",
-                       pi.LUU_ONLINE: "kho đám mây"}[y]
+                       pi.LUU_ONLINE: "kho đám mây", pi.DOI_CHIEU: "Đối chiếu hóa đơn"}[y]
             self.assertIn(tu_khoa, nhan[i - 1],
                           f"gõ {i} ra {y} nhưng màn hình ghi {nhan[i - 1]!r}")
 

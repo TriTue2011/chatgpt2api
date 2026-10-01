@@ -1246,6 +1246,11 @@ def _do_pdf_intent(
                     status = "error"
                     err = str(r.get("error") or "")[:150]
                 send_message(chat_id, reply)
+        elif intent == _pi.DOI_CHIEU:
+            kind = "pdf_doi_chieu"
+            from services import hoa_don as _hd
+            reply = _hd.nhan_tep(f"tg:{_bot_id()}:{chat_id}:{user_id or ''}", path, name)
+            send_message(chat_id, reply)
         elif intent == _pi.TOM_TAT:
             # Tóm tắt THUẦN: đọc file, trả bản tóm, KHÔNG nạp vào kho nào.
             kind = "pdf_tom_tat"
@@ -2171,6 +2176,7 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         # RAG, y như bên Zalo cá nhân. Khác hai chỗ: menu bỏ mục chuyển
         # Word/Excel, và file tạm giữ ĐÚNG đuôi thật cho markitdown nhận dạng.
         _la_office = _pi.la_office(doc_name)
+        _la_hd = _pi.la_hoa_don(doc_name)
         # Video/âm thanh gửi dạng TỆP → nghe ra chữ rồi dịch thành phụ đề.
         from services import video_asr as _va_d
         from services import video_dich as _vd_srt
@@ -2186,11 +2192,12 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
                 return
             _mo_menu_video(chat_id, user_id, _ddata, str(doc_name))
             return
-        if not str(doc_name).lower().endswith(".pdf") and not _la_office:
-            send_message(chat_id, "📎 Hiện chỉ hỗ trợ PDF, Word, Excel và "
-                                  f"PowerPoint. File: {doc_name}")
+        if not str(doc_name).lower().endswith(".pdf") and not _la_office and not _la_hd:
+            send_message(chat_id, "📎 Hiện chỉ hỗ trợ PDF, Word, Excel, "
+                                  f"PowerPoint và hóa đơn XML. File: {doc_name}")
             return
-        _pdf_intents = (_pi.y_dinh_cho_office(_allow) if _la_office
+        _pdf_intents = (_pi.them_doi_chieu(_pi.y_dinh_cho_office(_allow), doc_name, _allow) if _la_office
+                        else _pi.y_dinh_cho_hoa_don(_allow) if _la_hd
                         else _pi.allowed_intents(_allow))
         _pdf_intents = _pi.them_luu_online(
             _pdf_intents, "tg", str(chat_id), topic=str(_cur_topic() or ""),
@@ -2202,7 +2209,7 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         if not file_data:
             send_message(chat_id, "❌ Không thể tải file.")
             return
-        _duoi = ("." + str(doc_name).rsplit(".", 1)[-1].lower()) if _la_office else ".pdf"
+        _duoi = ("." + str(doc_name).rsplit(".", 1)[-1].lower()) if (_la_office or _la_hd) else ".pdf"
         # Khoá phải khớp TỪNG CHỮ với `_pkey` chỗ đọc bản chờ — tạo một đằng tra
         # một nẻo thì người dùng chọn số mãi không ra gì.
         _pdf_info = _pi.set_pending(f"tg:{_bot_id()}:{chat_id}:{user_id or ''}",

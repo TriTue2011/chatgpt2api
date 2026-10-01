@@ -673,7 +673,7 @@ class DaCamVaoNangLucBotTests(unittest.TestCase):
 
     MOI = ("office_so_sanh", "office_thong_ke", "office_thay_the",
            "office_tao_slide", "office_cat", "office_noi",
-           "office_thong_tin", "office_bao_cao")
+           "office_thong_tin", "office_bao_cao", "office_doi_chieu_hoa_don")
 
     def _src(self):
         return (GOC / "services" / "agent" / "capabilities.py").read_text("utf-8")

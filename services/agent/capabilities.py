@@ -6245,6 +6245,18 @@ def _h_office_so_sanh(args: dict, ctx: dict) -> dict:
     return {"text": (kq.get("bao_cao") or "") + them}
 
 
+def _h_office_doi_chieu_hoa_don(args: dict, ctx: dict) -> dict:
+    """Hóa đơn điện tử (XML gốc / PDF) ↔ Excel danh mục — services/hoa_don."""
+    from services import hoa_don, officecli
+    try:
+        hd = officecli.resolve_path(str(args.get("tep_hoa_don") or ""), must_exist=True)
+        dm = officecli.resolve_path(str(args.get("tep_danh_muc") or ""), must_exist=True)
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        return {"text": f"Không đối chiếu được: {exc}"}
+    kq = hoa_don.doi_chieu_tep(hd, dm, sheet=str(args.get("sheet") or ""))
+    return {"text": kq["bao_cao"] if kq["ok"] else f"Không đối chiếu được — {kq['error']}."}
+
+
 def _h_office_thong_ke(args: dict, ctx: dict) -> dict:
     from services import office_bo_sung as ob
     kq = ob.thong_ke_bang(str(args.get("tep") or ""),
@@ -8204,6 +8216,19 @@ CAPABILITIES: dict[str, Capability] = {
         workflow=("Dùng khi người dùng hỏi 'hai bản này khác nhau chỗ nào', "
                   "'so sánh bản cũ với bản mới'. Cả hai tệp phải nằm trong "
                   "workspace — office_files để xem có gì.")),
+    "office_doi_chieu_hoa_don": Capability(
+        name="office_doi_chieu_hoa_don", risk=READ, handler=_h_office_doi_chieu_hoa_don,
+        emoji="🧾", label="Đối chiếu hóa đơn",
+        description=("Đối chiếu hóa đơn điện tử Việt Nam (.xml gốc theo Thông tư 78, hoặc .pdf) với bảng "
+                     "danh mục Excel/CSV: tự kiểm phép tính trên hóa đơn, mặt hàng lệch số lượng / đơn giá / "
+                     "thành tiền / đơn vị, mặt hàng chỉ có một bên."),
+        parameters={"type": "object", "properties": {
+            "tep_hoa_don": {"type": "string", "description": "vd da_nhan/hoa_don_123.xml"},
+            "tep_danh_muc": {"type": "string", "description": "vd da_nhan/danh_muc.xlsx"},
+            "sheet": {"type": "string", "description": "sheet danh mục, để trống = tự tìm"}},
+            "required": ["tep_hoa_don", "tep_danh_muc"]},
+        workflow=("Hai tệp phải nằm trong workspace (office_files để xem; tệp người dùng gửi kèm lựa chọn "
+                  "«Đối chiếu hóa đơn» nằm trong da_nhan/). Có XML thì dùng XML, chắc hơn PDF.")),
     "office_thong_ke": Capability(
         name="office_thong_ke", risk=READ, handler=_h_office_thong_ke,
         emoji="📊", label="Thống kê bảng tính",
@@ -8503,7 +8528,7 @@ _CAP_GROUP: dict[str, str] = {
     "office_add": "office", "office_set": "office",
     "office_remove": "office", "office_batch": "office",
     "office_merge": "office", "office_send": "office",
-    "office_so_sanh": "office", "office_thong_ke": "office",
+    "office_so_sanh": "office", "office_thong_ke": "office", "office_doi_chieu_hoa_don": "office",
     "office_thay_the": "office", "office_tao_slide": "office",
     "office_cat": "office", "office_noi": "office",
     "office_thong_tin": "office", "office_bao_cao": "office",

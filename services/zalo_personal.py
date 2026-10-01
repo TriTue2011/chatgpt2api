@@ -2768,6 +2768,11 @@ def _do_pdf_intent(
                     send_message(thread_id, reply, thread_type)
             else:
                 send_message(thread_id, reply, thread_type)
+        elif intent == _pi.DOI_CHIEU:
+            kind = "pdf_doi_chieu"
+            from services import hoa_don as _hd
+            reply = _hd.nhan_tep(_skey_zalop(thread_id, thread_type, user_id), path, name)
+            send_message(thread_id, reply, thread_type)
         elif intent == _pi.TOM_TAT:
             # Tóm tắt THUẦN: đọc file, trả bản tóm tắt, KHÔNG nạp vào kho nào.
             # Khác `RAG_KNOWLEDGE` ở chỗ đó — mục cũ vừa tóm tắt vừa ghi wiki,
@@ -3787,8 +3792,10 @@ def _process_ai(ev: dict) -> None:
         # (đổi .docx sang .docx thì vô nghĩa), và file tạm phải giữ ĐÚNG đuôi
         # thật vì markitdown nhận dạng theo đuôi.
         _la_office = _pi.la_office(name)
-        if _la_pdf or _la_office:
-            intents = (_pi.y_dinh_cho_office(_allow) if _la_office
+        _la_hd = _pi.la_hoa_don(name)
+        if _la_pdf or _la_office or _la_hd:
+            intents = (_pi.them_doi_chieu(_pi.y_dinh_cho_office(_allow), name, _allow) if _la_office
+                       else _pi.y_dinh_cho_hoa_don(_allow) if _la_hd
                        else _pi.allowed_intents(_allow))
             intents = _pi.them_luu_online(
                 intents, "zalop", str(thread_id),
@@ -3800,7 +3807,7 @@ def _process_ai(ev: dict) -> None:
             if not data:
                 send_message(thread_id, "📄 Không tải được file.", thread_type)
                 return
-            _duoi = ("." + name.rsplit(".", 1)[-1].lower()) if _la_office else ".pdf"
+            _duoi = ("." + name.rsplit(".", 1)[-1].lower()) if (_la_office or _la_hd) else ".pdf"
             info = _pi.set_pending(pkey, data, name or "document.pdf", _duoi,
                                    intents=intents)
             send_message(thread_id,

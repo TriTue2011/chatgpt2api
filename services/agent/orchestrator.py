@@ -1385,7 +1385,7 @@ _KW_OFFICE = _re_mod.compile(
     r"\bword\b|\bexcel\b|power ?point|\bppt\b|docx|xlsx|pptx|\bslide\b|"
     r"bang tinh|bao cao|thong ke|so sanh (file|tai lieu|hai ban|hai file)|"
     r"tai lieu|bieu mau|mau bao cao|dien (vao|du lieu)|tron du lieu|"
-    r"tao (file|tep|bang)|ghep (file|tep|tai lieu)|cat (file|tai lieu)")
+    r"tao (file|tep|bang)|ghep (file|tep|tai lieu)|cat (file|tai lieu)|hoa don|doi chieu")
 _KW_TEACHER = _re_mod.compile(
     r"\bsgk\b|sach giao khoa|giao an|bai tap|cham (bai|diem)|de kiem tra|"
     r"\bquiz\b|hoc sinh|day (hoc|con|be|chau)|lop \d{1,2}|"
@@ -1614,7 +1614,8 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
      "(đọc: outline/text/stats/issues), office_create (tạo tệp trống), "
      "office_add / office_set / office_remove / office_batch (sửa nội dung), "
      "office_bao_cao (Excel/CSV → báo cáo .docx), office_thong_ke (thống kê "
-     "nhanh .xlsx/.csv), office_so_sanh (so hai tài liệu), office_thay_the "
+     "nhanh .xlsx/.csv), office_so_sanh (so hai tài liệu), office_doi_chieu_hoa_don "
+     "(hóa đơn điện tử XML/PDF ↔ Excel danh mục), office_thay_the "
      "(đổi cụm từ kể cả trong bảng), office_tao_slide (dàn ý → .pptx), "
      "office_merge (điền data vào mẫu), office_cat / office_noi (cắt/ghép). "
      "Soạn xong PHẢI gọi office_send để gửi tệp thật cho người dùng."),
