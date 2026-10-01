@@ -147,3 +147,49 @@ def test_cong_cu_bot_doc_trong_workspace(tmp_path, monkeypatch, xml):
     assert "Không đối chiếu được" in ra["text"]
     ra = caps._h_office_doi_chieu_hoa_don({"tep_hoa_don": "/etc/passwd", "tep_danh_muc": "hd.xml"}, {})
     assert "workspace" in ra["text"]
+
+
+# Chữ PDF trích ra đúng các tật đo được trên hóa đơn thật (01/10/2026, mẫu easyinvoice): tiêu đề «Tên hàng hóa» nằm
+# ngoài bảng, STT dính tên hàng, số lượng dính đơn giá, trang 2 thành một dòng chữ liền, gạch chân cắt giữa chữ.
+MD_PDF_LECH = """Ký hiệu *(Serial)*: 1C26TAA
+Tên hàng hóa, dịch vụ Thành tiền
+
+|STT|Đơn vị tính|Số lượng||Đơn giá||
+|---|---|---|---|---|---|
+|1 Băng dính trong bản 5cm|Cuộn||2 31.818,181818||63.636|
+|2 Pin AA-Energizer|Đôi||4 40.909,090909||163.636|
+|3 Dây thép 1,5 ly|Kg||2 45.454,545455||90.909|
+
+(1) (2) (3) (4) (5) (6)=(4)x(5) 4 Dây thép 1ly Kg 2 <u>40.909,090909</u> 81.818 5 MCB 2P - 20A Chiếc 3 200.000 600.000
+Cộng tiền hàng *(Sub total)*: 999.999 T<u>iền thuế GTGT (</u>*VAT amount)*: 99.999 Tổng cộng t<u>iền thanh toán (To</u>*tal payment)*: 1.099.998
+"""
+
+
+@can_excel
+def test_pdf_lech_cot_neo_theo_ten_danh_muc(tmp_path):
+    import pandas as pd
+    dm = tmp_path / "dm.xlsx"
+    pd.DataFrame([["STT", "Chủng loại vật tư", "ĐVT", "Đơn giá", "Số lượng", "Thành Tiền"],
+                  [1, "Băng dính trong bản 5cm", "Cuộn", 31818.181818, 2, 63636.363636],
+                  [2, "Pin AA - Energizer", "Đôi", 40909.090909, 4, 163636.363636],
+                  [3, "Dây thép 1ly", "Kg", 40909.090909, 2, 81818.181818],
+                  [4, "Dây thép 1,5 ly", "Kg", 45454.545455, 3, 136363.636364],
+                  [5, "MCB 2P - 20A", "Chiếc", 200000, 3, 600000]]).to_excel(dm, header=False, index=False)
+    pdf = tmp_path / "hd.pdf"
+    pdf.write_bytes(b"%PDF")
+    with mock.patch("services.pdf_intent.extract_markdown", return_value=MD_PDF_LECH):
+        kq = hd.doi_chieu_tep(pdf, dm)
+    bc = kq["bao_cao"]
+    assert kq["ok"] and "tìm từng tên hàng của danh mục" in bc
+    assert "| Dây thép 1,5 ly | số lượng | 2 | 3 |" in bc                     # «1,5 ly» không lẫn «1ly»
+    assert "Tiền hàng 999.999 + thuế 99.999 = thanh toán 1.099.998" in bc     # nhãn bị gạch chân cắt giữa chữ
+    assert "❌ tổng các dòng" not in bc                                       # tổng 5 dòng = 999.999 = cộng tiền hàng
+
+
+def test_danh_muc_ghi_gia_gom_thue_noi_thang():
+    h = {"nguon": "xml", "dong": [{"ten": f"Hàng {i}", "sl": 1.0, "dg": 1000.0 * i, "tt": 1000.0 * i}
+                                  for i in range(1, 5)], "tong": {}, "ban": {}}
+    d = {"dong": [{"ten": f"Hàng {i}", "sl": 1.0, "dg": 1100.0 * i, "tt": 1100.0 * i} for i in range(1, 5)]}
+    assert "ĐÃ GỒM thuế GTGT 10%" in hd.doi_chieu(h, d)
+    d["dong"][0]["dg"] = 1500.0                                                   # một dòng lệch thật → không gộp
+    assert "ĐÃ GỒM" not in hd.doi_chieu(h, d)
