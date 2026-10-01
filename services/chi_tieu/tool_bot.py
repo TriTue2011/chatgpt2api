@@ -8,6 +8,7 @@ khoản làm vượt tổng thay người dùng.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from services.chi_tieu import nghiep_vu as nv
@@ -53,6 +54,13 @@ def _meta_gui(user_id: str) -> dict[str, Any]:
 
 
 def xu_ly(args: dict, ctx: dict) -> dict:
+    """Khuôn tool c2a: bộ điều phối CHỈ đưa ``result["text"]`` cho model (orchestrator, vòng tool). Đo 02/10/2026:
+    trả dict không có "text" thì model nhận chuỗi rỗng — đã ghi sổ thật mà trả lời «còn [kết quả số dư từ sổ]»."""
+    kq = _xu_ly(args, ctx)
+    return {"text": json.dumps(kq, ensure_ascii=False, default=str), "du_lieu": kq}
+
+
+def _xu_ly(args: dict, ctx: dict) -> dict:
     user_id = str(ctx.get("user_id") or "")
     viec = str(args.get("viec") or "")
     try:

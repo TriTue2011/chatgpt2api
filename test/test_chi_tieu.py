@@ -183,16 +183,16 @@ def test_canh_bao_khong_gui_khi_chua_lien_ket_va_gui_loi_thi_thu_lai(so):
 
 def test_tool_bot_chi_cham_so_da_lien_ket(so):
     from services.chi_tieu import tool_bot
-    r = tool_bot.xu_ly({"viec": "ghi_chi", "hu": "Thiết Yếu", "so_tien": 50000}, {"user_id": "zalop_lạ"})
+    r = tool_bot._xu_ly({"viec": "ghi_chi", "hu": "Thiết Yếu", "so_tien": 50000}, {"user_id": "zalop_lạ"})
     assert "chưa có sổ" in r["loi"]
     m = nv.tao_ma_lien_ket(so)
-    assert tool_bot.xu_ly({"viec": "lien_ket", "ma": m["ma"]}, {"user_id": "zalop_7"})["da_lien_ket"]
-    r = tool_bot.xu_ly({"viec": "ghi_chi", "hu": "thiet yeu", "so_tien": 50000, "ghi_chu": "ăn trưa"},
+    assert tool_bot._xu_ly({"viec": "lien_ket", "ma": m["ma"]}, {"user_id": "zalop_7"})["da_lien_ket"]
+    r = tool_bot._xu_ly({"viec": "ghi_chi", "hu": "thiet yeu", "so_tien": 50000, "ghi_chu": "ăn trưa"},
                        {"user_id": "zalop_7"})
     assert r["da_ghi"] and r["hu"] == "Thiết Yếu"
-    assert tool_bot.xu_ly({"viec": "ghi_chi", "hu": "xx", "so_tien": 1}, {"user_id": "zalop_7"})["loi"]
-    assert tool_bot.xu_ly({"viec": "xem"}, {"user_id": "zalop_7"})["tong_da_chi"] == 50000
-    assert tool_bot.xu_ly({"viec": "bay"}, {"user_id": "zalop_7"})["loi"]
+    assert tool_bot._xu_ly({"viec": "ghi_chi", "hu": "xx", "so_tien": 1}, {"user_id": "zalop_7"})["loi"]
+    assert tool_bot._xu_ly({"viec": "xem"}, {"user_id": "zalop_7"})["tong_da_chi"] == 50000
+    assert tool_bot._xu_ly({"viec": "bay"}, {"user_id": "zalop_7"})["loi"]
 
 
 def test_tao_so_dong_thoi_chi_mot_so(tmp_path):
@@ -205,3 +205,13 @@ def test_tao_so_dong_thoi_chi_mot_so(tmp_path):
     for x in t:
         x.join()
     assert len(set(ra)) == 1 and len(kho.moi_so()) == 1
+
+
+def test_tool_bot_tra_text_cho_model(so):
+    """Bộ điều phối chỉ đưa result["text"] cho model — thiếu "text" thì model nhận rỗng rồi bịa số (đo 02/10)."""
+    import json
+    from services.chi_tieu import tool_bot
+    kho.gan_kenh("zalop_8", so, "", {}, "admin")
+    r = tool_bot.xu_ly({"viec": "ghi_chi", "hu": "Thiết Yếu", "so_tien": 15000}, {"user_id": "zalop_8"})
+    assert isinstance(r["text"], str) and json.loads(r["text"])["con_lai"] == r["du_lieu"]["con_lai"]
+    assert "Thiết Yếu" in r["text"]
