@@ -51,8 +51,58 @@ def test_kiem_va_cham_roi_ap(so):
 def test_de_luyen_dung_khuon(d):
     de = bo.de_cho(d)
     assert "A. PHÒNG" in de and "C. CAMERA" in de and "E. CHỦ NHÀ MÔ TẢ" in de
-    for a, b in d["dap_an"].get("thong", []) + d["dap_an"].get("khong_thong", []):
+    for a, b in (d["dap_an"].get("thong", []) + d["dap_an"].get("khong_thong", [])
+                 + d["dap_an"].get("loi_di", []) + d["dap_an"].get("khong_loi_di", [])):
         assert a in de and b in de
+
+
+def _chuoi(*doi: tuple[float, str]) -> tuple[list[float], list[str]]:
+    return [t for t, _ in doi], [g for _, g in doi]
+
+
+def test_loi_vao_nha_tam_qua_bep_ra_phong_khach():
+    """Chủ máy 01/10/2026: "bếp đang trống mà phát hiện trước phòng khách là từ nhà tắm". 30 lần: tắt đèn nhà
+    tắm → bếp có người → phòng khách có người; ngoài các lần ấy cả hai khu trống."""
+    ve = [3000.0 * i + 1000 for i in range(30)]
+    bep = _chuoi((0, "off"), *[x for t in ve for x in ((t + 10, "on"), (t + 200, "off"))])
+    pk = _chuoi((0, "off"), *[x for t in ve for x in ((t + 25, "on"), (t + 400, "off"))])
+    radar = [("binary_sensor.radar_bep", "Bếp"), ("binary_sensor.radar_pk", "Phòng khách")]
+    vao, khong_cb = sd._loi_vao(radar, {"binary_sensor.radar_bep": bep, "binary_sensor.radar_pk": pk},
+                                {"Nhà tắm": ve}, {}, {}, 0.0, 100000.0)
+    dh = {x: (p, q) for x, p, q in vao["Phòng khách"]["dau_hieu"]}
+    assert vao["Phòng khách"]["n"] == 30
+    assert dh["Bếp báo có người trước"][0] == 1.0 and dh["Bếp báo có người trước"][1] == 0.0
+    assert dh["Nhà tắm: người vừa tắt thiết bị"][0] == 1.0
+    assert "Phòng khách báo có người trước" not in {x for x, _, _ in vao["Bếp"]["dau_hieu"]}
+    assert khong_cb == {"Nhà tắm": {"Bếp": 30}}
+
+    de = sd.de({"phong": {}, "cung_bao": [], "camera": {}, "cua": {}, "ten": {}, "loi_vao": vao,
+                "khong_cb": khong_cb}, [], [])
+    assert "D2. LỐI VÀO" in de and "- vào Phòng khách (30 lần): Bếp báo có người trước 100% | nền 0,0%" in de
+    assert "D3. KHU KHÔNG CÓ CẢM BIẾN" in de and "- Nhà tắm: Bếp 30" in de
+
+
+def test_it_lan_vao_thi_khong_bay():
+    pk = _chuoi((0, "off"), (100, "on"), (200, "off"))
+    vao, khong_cb = sd._loi_vao([("binary_sensor.radar_pk", "Phòng khách")], {"binary_sensor.radar_pk": pk},
+                                {"Nhà tắm": [90.0]}, {}, {}, 0.0, 1000.0)
+    assert vao == {} and khong_cb == {}
+
+
+def test_cua_sang_kiem_ten_va_vao_doan_de(so):
+    uv = bo.DE[0]["uv"]
+    bai = {"kieu": "chung_cu", "phong": [{"ten": "Bếp", "vach_voi": ["Phòng ngủ"], "cua_sang": ["Phòng ngủ"]},
+                                          {"ten": "Phòng ngủ"}], "chac": 0.7}
+    k = so.kiem(bai, uv)
+    assert isinstance(k, dict)
+    assert "không có trong danh sách" in so.kiem({**bai, "phong": [{"ten": "Bếp", "cua_sang": ["Kho"]}]}, uv)
+    with so._khoa:
+        d = so._nap()
+        d["bai"].append({"id": 1, "luc": 0, "gia_tri": k, "ket_qua": "cho"})
+        so._luu(d)
+    assert so.cham(1, True, cham_boi="claude")
+    assert "- Bếp có CỬA đi thẳng sang: Phòng ngủ" in so.doan_de("Bếp")
+    assert "có cửa đi sang Phòng ngủ" in so.doc(k)
 
 
 def test_nhin_lai_chi_dem_nguoi_trong_vung_phong(so, monkeypatch):

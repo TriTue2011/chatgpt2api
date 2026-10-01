@@ -56,6 +56,19 @@ O_TOI_THIEU = 20
 DUONG_TOI_DA = 8
 #: Cửa mở rồi trong ngần này giây phòng nào có người đầu tiên.
 CUA_GIAY = 60
+#: LỐI VÀO (mục D2): khu trống ít nhất ngần này giây rồi có người mới tính là một lần «vào».
+VAO_SAU_TRONG = 60
+#: «Khu khác báo có người trước»: trong ngần này giây trước lúc vào.
+TRUOC_GIAY = 30
+#: «Khu khác hết người ngay sau»: radar tắt TRỄ — giữ vài chục giây tới vài phút sau khi người đi.
+ROI_GIAY = 180
+#: Khu KHÔNG có cảm biến hiện diện (nhà tắm, kho): người tắt thiết bị trong ngần này giây trước lúc vào.
+TAT_GIAY = 120
+#: Mốc nền: lấy mẫu mỗi ngần này giây lúc khu VẪN TRỐNG — dấu hiệu nào cũng có lúc trùng ngẫu nhiên
+#: (radar nhà bên nháy liên tục), chỉ so với nền mới biết nó có đi kèm lúc vào thật không.
+NEN_BUOC = 300
+#: Khu có ít hơn ngần này lần vào thì không bày.
+VAO_TOI_THIEU = 20
 #: Cảm biến báo có người quá ngần này thời gian là KẸT (cùng số `co_nguoi_nha._KET`).
 _KET = 0.98
 _LOP_HIEN_DIEN = ("occupancy", "presence", "motion")
@@ -174,6 +187,88 @@ def _luc(ts: list[float], gt: list[str], t: float) -> str:
     return gt[i] if i >= 0 else ""
 
 
+def _doi(ts: list[float], gt: list[str], tu_gt: str, sang_gt: str) -> list[tuple[float, float]]:
+    """Các lần đổi ``tu_gt`` → ``sang_gt``: (lúc đổi, đã ở ``tu_gt`` bao lâu)."""
+    return [(ts[i], ts[i] - ts[i - 1]) for i in range(1, len(ts)) if gt[i] == sang_gt and gt[i - 1] == tu_gt]
+
+
+def _co_trong(ds: list[float], a: float, b: float) -> bool:
+    i = bisect.bisect_left(ds, a)
+    return i < len(ds) and ds[i] <= b
+
+
+def _nguoi_tat(ro: sqlite3.Connection, may: list[str], tu: float, den: float) -> list[float]:
+    """Lúc NGƯỜI tắt một thiết bị trong nhóm (bỏ lần bot tự tắt — `do_ai`); đèn và công tắc gương của
+    nó tắt cùng lúc nên các lần cách nhau dưới 20 giây gộp làm một."""
+    ts = sorted(float(t) for m in may for (t,) in ro.execute(
+        "SELECT ts FROM su_kien WHERE thiet_bi=? AND truong='state' AND gia_tri='off' AND do_ai=0"
+        " AND ts>=? AND ts<?", (m, tu, den)))
+    gop: list[float] = []
+    for t in ts:
+        if not gop or t - gop[-1] > 20:
+            gop.append(t)
+    return gop
+
+
+def _loi_vao(radar: list[tuple[str, str]], dong: dict[str, tuple[list[float], list[str]]],
+             tat_khu: dict[str, list[float]], mo_cua: dict[str, list[float]], ten: dict[str, str],
+             tu: float, den: float) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Mục D2 (lối vào từng khu có radar) và D3 (khu không có cảm biến thông ra đâu).
+
+    Chỉ ĐẾM dấu hiệu, không kết luận: khu nào nối khu nào là việc của bot đọc đề. Đo 01/10/2026 trên nhà thật
+    (30 ngày): vào phòng khách thì «bếp báo có người trước» 8% so với nền 0,3%, «người vừa tắt đèn nhà tắm» 5%
+    so với 0,4% — đúng lời chủ nhà "bếp đang trống mà báo trước phòng khách là người từ nhà tắm ra"."""
+    bat = {m: [t for t, _ in _doi(*dong[m], "off", "on")] for m, _ in radar}
+    het = {m: [t for t, _ in _doi(*dong[m], "on", "off")] for m, _ in radar}
+
+    def dau_hieu(khu: str, t: float) -> set[str]:
+        ra = set()
+        for m, k in radar:
+            if k == khu:
+                continue
+            if _co_trong(bat[m], t - TRUOC_GIAY, t - 0.001):
+                ra.add(f"{k} báo có người trước")
+            if _co_trong(het[m], t - TRUOC_GIAY, t + ROI_GIAY):
+                ra.add(f"{k} hết người ngay sau")
+        ra |= {f"{k}: người vừa tắt thiết bị" for k, ds in tat_khu.items() if _co_trong(ds, t - TAT_GIAY, t + 10)}
+        ra |= {f"{ten.get(m, m)} vừa mở" for m, ds in mo_cua.items() if _co_trong(ds, t - CUA_GIAY, t)}
+        return ra
+
+    vao: dict[str, Any] = {}
+    for m, khu in radar:
+        lan = [t for t, lau in _doi(*dong[m], "off", "on") if lau >= VAO_SAU_TRONG and t >= tu]
+        if len(lan) < VAO_TOI_THIEU:
+            continue
+        dem = Counter(x for t in lan for x in dau_hieu(khu, t))
+        nen, n_nen, t = Counter(), 0, tu
+        ts, gt = dong[m]
+        while t < den - TRUOC_GIAY:
+            i = bisect.bisect_right(ts, t) - 1
+            if i >= 0 and gt[i] == "off" and t - ts[i] >= VAO_SAU_TRONG and (i + 1 >= len(ts) or ts[i + 1] > t + TRUOC_GIAY):
+                n_nen += 1
+                nen.update(dau_hieu(khu, t))
+            t += NEN_BUOC
+        if n_nen:
+            vao[khu] = {"n": len(lan), "dau_hieu": [[x, round(v / len(lan), 3), round(nen[x] / n_nen, 3)]
+                                                    for x, v in sorted(dem.items(), key=lambda i: (-i[1], i[0]))[:8]
+                                                    if v / len(lan) >= 0.03]}
+
+    # D3 — như mục D (cửa mở rồi phòng nào có người đầu tiên), cho khu không có cảm biến.
+    ra_dau: dict[str, Any] = {}
+    for khu, ds in tat_khu.items():
+        dem = Counter()
+        for t in ds:
+            dau: tuple[float, str] | None = None
+            for m, k in radar:
+                j = bisect.bisect_right(bat[m], t)
+                if j < len(bat[m]) and bat[m][j] <= t + CUA_GIAY and (dau is None or bat[m][j] < dau[0]):
+                    dau = (bat[m][j], k)
+            dem[dau[1] if dau else "(không khu nào — khu bên cạnh có thể đã có người sẵn)"] += 1
+        if sum(dem.values()) >= VAO_TOI_THIEU:
+            ra_dau[khu] = dict(dem)
+    return vao, ra_dau
+
+
 def do(den: float | None = None) -> dict[str, Any]:
     """Mọi bằng chứng cho đề. Không gọi được Frigate thì bỏ phần lưới camera (ghi lý do)."""
     from services import boi_canh_nha, cam_bien_ghep, camera_nha, ha_client, lich_su_nha
@@ -208,6 +303,9 @@ def do(den: float | None = None) -> dict[str, Any]:
     try:
         dong = {m: _dong(ro, m, tu, den) for m, _ in hien}
         dong_cua = {m: _dong(ro, m, tu, den) for m in cua}
+        co_radar = {k for _, k in hien}
+        tat_khu = {k: _nguoi_tat(ro, p["thiet_bi"], tu, den) for k, p in phong.items()
+                   if k not in co_radar and p["thiet_bi"]}
     finally:
         ro.close()
 
@@ -301,6 +399,10 @@ def do(den: float | None = None) -> dict[str, Any]:
                     j += 1
             cua_ra.setdefault(m, Counter())[dau[1] if dau else "(không phòng nào)"] += 1
 
+    # 4. Lối vào từng khu, và khu không có cảm biến thông ra đâu.
+    loi_vao, khong_cb = _loi_vao(radar, dong, tat_khu,
+                                 {m: [t for t, _ in _doi(*dong_cua[m], "off", "on")] for m in cua}, ten, tu, den)
+
     from services import kich_hoat_nha
     dinh_vi_sai = [f"{ten.get(x['thiet_bi'], x['thiet_bi'])} (khu {boi_canh_nha.phong_cua(x['thiet_bi'])}), nguồn "
                    f"{ten.get(x['nguon'].split(' ')[0], x['nguon'])}, lúc "
@@ -308,7 +410,7 @@ def do(den: float | None = None) -> dict[str, Any]:
                    for x in kich_hoat_nha._nap().get("dinh_vi") or [] if x.get("ket_qua") == "sai"]
     return {"phong": phong, "khu_radar": khu_ds, "ket": sorted(ket), "cung_bao": cung_bao, "camera": camera,
             "loi_camera": loi_camera, "cua": {m: dict(c) for m, c in cua_ra.items()}, "ten": ten, "duong": duong,
-            "dinh_vi_sai": dinh_vi_sai}
+            "dinh_vi_sai": dinh_vi_sai, "loi_vao": loi_vao, "khong_cb": khong_cb}
 
 
 # ── Đề ──────────────────────────────────────────────────────────────────────
@@ -341,6 +443,23 @@ def de(uv: dict[str, Any], mo_ta: list[str], dan: list[str]) -> str:
     dong += ["\nD. CỬA — mở ra rồi trong 60 giây phòng nào có người đầu tiên:"]
     dong += [f"- {ten.get(m, m)}: " + ", ".join(f"{k} {v}" for k, v in sorted(c.items(), key=lambda i: -i[1]))
              for m, c in uv["cua"].items()] or ["(không có cảm biến cửa)"]
+
+    def pt(x: float) -> str:
+        return f"{100 * x:.1f}".replace(".", ",") if x < 0.1 else str(round(100 * x))
+    if uv.get("loi_vao"):
+        dong += [f"\nD2. LỐI VÀO — khu đang trống ≥{VAO_SAU_TRONG} giây rồi có người: dấu hiệu nào đi kèm "
+                 f"(% số lần vào) so với MỐC NỀN (% lúc khu đó vẫn trống, lấy mẫu {NEN_BUOC // 60} phút một lần). "
+                 f"«báo có người trước» = trong {TRUOC_GIAY} giây trước; «hết người ngay sau» = radar khu đó tắt trong "
+                 f"{ROI_GIAY // 60} phút quanh lúc vào; «người vừa tắt thiết bị» = khu không có cảm biến, trong "
+                 f"{TAT_GIAY // 60} phút trước:"]
+        for k, v in sorted(uv["loi_vao"].items()):
+            dong.append(f"- vào {k} ({v['n']} lần): " + "; ".join(
+                f"{x} {pt(p)}% | nền {pt(q)}%" for x, p, q in v["dau_hieu"]))
+    if uv.get("khong_cb"):
+        dong += [f"\nD3. KHU KHÔNG CÓ CẢM BIẾN — người tắt thiết bị trong khu rồi trong {CUA_GIAY} giây khu nào báo "
+                 "có người đầu tiên (số lần):"]
+        dong += [f"- {k}: " + ", ".join(f"{x} {n}" for x, n in sorted(c.items(), key=lambda i: -i[1]))
+                 for k, c in sorted(uv["khong_cb"].items())]
     dong += ["\nE. CHỦ NHÀ MÔ TẢ:"] + ([f"- {x}" for x in mo_ta] or ["(chưa có)"])
     sai = uv.get("dinh_vi_sai") or []
     if sai:
@@ -375,7 +494,7 @@ def kiem(data: Any, uv: dict[str, Any]) -> dict[str, Any] | str:
             return "mỗi phòng phải có «ten»"
         ten_p.add(str(p["ten"]))
     for p in phong:
-        for k in ("thong_voi", "vach_voi"):
+        for k in ("thong_voi", "vach_voi", "cua_sang"):
             la = [x for x in p.get(k) or [] if x not in ten_p]
             if la:
                 return f"{p['ten']}.{k} nhắc phòng không có trong danh sách: {la!r}"
@@ -450,6 +569,8 @@ def doc(g: dict[str, Any]) -> str:
             x += f" — thông {', '.join(p['thong_voi'])}"
         if p.get("vach_voi"):
             x += f" — có vách với {', '.join(p['vach_voi'])}"
+        if p.get("cua_sang"):
+            x += f" — có cửa đi sang {', '.join(p['cua_sang'])}"
         dong.append(f"• {x}")
     if (g.get("cua_chinh") or {}).get("vao"):
         dong.append(f"• Cửa chính mở vào {g['cua_chinh']['vao']}")
@@ -942,6 +1063,8 @@ def doan_de(khu: str) -> list[str]:
             dong.append(f"- {khu} THÔNG với: {', '.join(p['thong_voi'])}")
         if p.get("vach_voi"):
             dong.append(f"- {khu} có VÁCH với: {', '.join(p['vach_voi'])}")
+        if p.get("cua_sang"):
+            dong.append(f"- {khu} có CỬA đi thẳng sang: {', '.join(p['cua_sang'])}")
     for c in s.get("camera") or []:
         o = (c.get("thay") or {}).get(khu)
         if o:

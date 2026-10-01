@@ -36,11 +36,16 @@ trả lời được bằng có/không hoặc một tên).
 - `vach_voi`: giữa hai phòng có tường hoặc CỬA (gỗ, kính, cửa lùa, rèm kính) —
   kể cả cửa kính ra ban công. Đi qua cửa là đã sang phòng khác, dù radar và mắt
   người vẫn "thấy" qua kính.
+- `cua_sang`: trong số `vach_voi`, phòng có CỬA đi thẳng sang được (không phải
+  tường kín). Ghi phòng đó vào CẢ `vach_voi` lẫn `cua_sang`. Đường người đi trong
+  nhà = `thong_voi` + `cua_sang`; tầng khác dựa vào nó để biết người vừa ra khỏi
+  phòng nào (vd đi từ nhà tắm ra thì qua phòng nào trước).
 
 ## Đọc bằng chứng
 
 1. Mục A: phòng theo khu vực HA — đây là tên phòng em DÙNG (chép đúng). Thêm
-   phòng khác (hành lang, cầu thang, sảnh) chỉ khi chủ nhà nói có.
+   phòng khác (hành lang, cầu thang, sảnh) chỉ khi chủ nhà nói có, hoặc khu đó
+   có trong mục D3.
 2. Mục B — CÙNG BÁO: hai phòng cùng có người ≥ 40% thời gian → hoặc THÔNG nhau
    (bếp mở), hoặc vách mỏng radar xuyên, hoặc hai người ở hai phòng. Kiểm bằng
    mục C: camera phòng này thấy cả phòng kia (ô mang tên phòng kia) → THÔNG.
@@ -68,7 +73,30 @@ trả lời được bằng có/không hoặc một tên).
    mà người lại tự bật ngay → ô của khu đó trên camera đang THIẾU (thường là ô
    sát ranh giới, chỗ cửa, chỗ ngồi). Thêm ô cho khu đó, hoặc hỏi chủ nhà ranh
    giới nằm đâu.
-6. Mục E — lời chủ nhà: chung cư hay nhà đất, mấy tầng, bếp mở hay kín… thắng
+6. Mục D2 — LỐI VÀO: mỗi dòng là một khu, các dấu hiệu đi kèm lúc khu đó vừa
+   có người, và cùng dấu hiệu ấy ở MỐC NỀN (lúc khu vẫn trống). Chỉ dấu hiệu
+   gặp lúc vào NHIỀU HƠN HẲN mốc nền (gấp vài lần trở lên) mới là bằng chứng;
+   ngang nền là trùng ngẫu nhiên (radar khu bên nháy suốt ngày).
+   - «X báo có người trước» mạnh hơn nền nhiều lần → người đi từ X sang: có
+     lối đi X ↔ khu này (thông hoặc qua một cửa), trừ khi mục C cho thấy hai khu
+     chỉ là một không gian mở.
+   - «X hết người ngay sau»: radar X tắt TRỄ sau khi người đi, nên dấu hiệu này
+     yếu và nền thường cao — chỉ tin khi gấp nền rõ rệt. Người rời một phòng
+     ĐÓNG (phòng ngủ, phòng học) thường chỉ để lại dấu hiệu này, không có «báo
+     trước», vì radar phòng đó đang có người sẵn.
+   - «X vừa mở» (cửa) giống mục D.
+   - «K: người vừa tắt thiết bị»: K là khu KHÔNG có cảm biến (nhà tắm, kho,
+     WC); người tắt đèn rồi bước ra. Khu nào có dấu hiệu này mạnh là khu ngay
+     bên ngoài K — đọc kèm mục D3.
+   Hai khu chỉ nối nhau QUA một khu thứ ba (vd từ nhà tắm qua bếp mới tới phòng
+   khách) thì khu xa vẫn có thể thấy dấu hiệu, nhưng thường đi cùng «khu giữa
+   báo có người trước»; đừng ghi lối đi thẳng khi khu giữa mạnh hơn.
+7. Mục D3 — KHU KHÔNG CÓ CẢM BIẾN: người tắt thiết bị trong khu rồi khu nào báo
+   có người ĐẦU TIÊN = khu đó mở ra phòng ấy (như mục D cho cửa chính). Ghi
+   khu ấy vào `phong` (lấy tên từ D3) với `cua_sang` sang phòng báo đầu tiên
+   nhiều nhất. «(không khu nào)» nhiều là vì phòng bên ngoài đã có người sẵn —
+   không phải bằng chứng gì.
+8. Mục E — lời chủ nhà: chung cư hay nhà đất, mấy tầng, bếp mở hay kín… thắng
    mọi suy đoán. Chưa có lời chủ nhà mà số đo không đủ → `kieu: "khong_ro"` và
    hỏi.
 
@@ -77,11 +105,11 @@ trả lời được bằng có/không hoặc một tên).
 ```json
 {"kieu": "chung_cu" | "nha_pho" | "biet_thu" | "van_phong" | "xuong" | "khong_ro", "so_tang": 1 hoặc null,
  "phong": [{"ten": "<tên mục A>", "loai": "phong_khach|bep|phong_ngu|wc|ban_cong|phong_hoc|khac",
-            "tang": 1, "thong_voi": ["<phòng>"], "vach_voi": ["<phòng>"]}],
+            "tang": 1, "thong_voi": ["<phòng>"], "vach_voi": ["<phòng>"], "cua_sang": ["<phòng>"]}],
  "cua_chinh": {"vao": "<phòng>"} hoặc null,
  "camera": [{"ten": "<tên camera mục C>", "thay": {"<phòng>": ["A5", "B6"]}}],
  "hoi_chu_nha": ["..."], "chac": 0.7, "vi_sao": "..."}
 ```
 
-`thong_voi` / `vach_voi` chỉ nhắc phòng có trong `phong`. Ô viết đúng tên như trong đề (chữ cột + số hàng, vd `C4`).
+`thong_voi` / `vach_voi` / `cua_sang` chỉ nhắc phòng có trong `phong`. Ô viết đúng tên như trong đề (chữ cột + số hàng, vd `C4`).
 `vi_sao`: tiếng Việt, tối đa 4 câu, nêu số đo đã dựa vào.
