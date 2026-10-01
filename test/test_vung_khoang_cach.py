@@ -110,3 +110,16 @@ def test_chi_khu_hay_bao_lay_moi_la_khu_ben_canh():
     ket = [(0.0, "on")]                                  # radar kẹt: báo bất kể camera thấy hay không
     kc = [(float(t), "4.4") for t in range(0, 200, 10)]
     assert vk.nguon_lay(kc, radar, [cam], {"bep": bep, "ngu": ngu, "ket": ket}) == ["bep"]
+
+
+def test_chu_may_dat_nguong_thang_so_bot_hoc(vk):
+    """01/10/2026: chủ máy chỉnh ngưỡng vùng trên web — số anh đặt thắng, kể cả khi bot chưa học đạt."""
+    _hoc_xong(vk, nguong=3.66, dat=False)
+    assert vk.vi_tri(KC, "3.0") is None and vk.trong_vung(KC, "5.0") is True
+    vk.dat_nguong(KC, 3.0)
+    assert vk.vi_tri(KC, "2.5") is True and vk.vi_tri(KC, "3.5") is False and vk.trong_vung(KC, "3.5") is False
+    assert vk.cho_de("Phòng khách")[0]["nguong"] == 3.0
+    vk.dat_nguong(KC, None)
+    assert vk.vi_tri(KC, "3.5") is None
+    with pytest.raises(ValueError):
+        vk.dat_nguong("sensor.khong_co", 2.0)

@@ -212,3 +212,27 @@ def test_giao_vien_cham_sai_thi_bot_giai_lai_va_thay_loi_cham(cn, kh):  # noqa: 
     d = next(x for x in ht.dang_hieu_luc() if x["id"] == d["id"])
     assert cn._can_giai(d, _t.time())
     assert ht.ghi_chu_cham("co_nguoi", QUAT) == ["(giáo viên chấm sai) thiếu loại lây radar bếp"]
+
+
+def test_chu_may_sua_tren_web_bot_khong_tu_de(cn, kh):  # noqa: F811
+    """01/10/2026: chủ máy muốn chỉnh «có người thật» trên web. Bài bot đã chấm TRƯỚC lần sửa không được đè lại; bài
+    chấm đúng SAU lần sửa thì thay được."""
+    import time as _t
+    from services import cam_bien_ghep, hieu_thiet_bi_nha as ht
+    kh.dat_thiet_bi(QUAT, bat=True, tat_khi_vang={"bat": True, "cam_bien": [R], "phut": 3})
+    d = _ket_luan(cn)
+    ht.sua_cham(d["id"], True, cham_boi="claude")
+    ht.ap_ket_luan()
+    vang = cn.ma_ghep(QUAT, "vang")
+    cn.sua_tay(QUAT, {"va": [{"ma": R}, {"khong": {"ma": B}}]})
+    assert cam_bien_ghep.ds()[vang]["bieu_thuc"] == {"va": [{"ma": R}, {"khong": {"ma": B}}]}
+    assert kh._nap()["thiet_bi"][QUAT]["tat_khi_vang"]["cam_bien"] == [vang]
+    assert cn.ap_dung() == [], "bài chấm trước lần sửa không đè"
+    with mock.patch.object(ht, "can_hoi", return_value=False):
+        assert cn.ap_dung() == [], "đủ thang tự quyết cũng không đè"
+    _t.sleep(0.01)
+    ht.sua_cham(d["id"], True, cham_boi="chu_may")              # chấm lại SAU lần sửa
+    assert [x["thiet_bi"] for x in cn.ap_dung()] == [QUAT]
+    assert cam_bien_ghep.ds()[vang]["bieu_thuc"] == d["gia_tri"]["co_nguoi"]
+    with pytest.raises(ValueError):
+        cn.sua_tay(QUAT, {"va": []})

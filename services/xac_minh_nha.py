@@ -201,10 +201,13 @@ def do(tb: str) -> dict[str, Any]:
     vung = vung_khoang_cach.ds()
     for x in vung_khoang_cach.cap_radar():
         v = vung.get(x["ma"]) or {}
+        vg = vung_khoang_cach.vung_dang_dung(v)
         nguon.append({"ma": x["ma"], "loai": "khoang_cach", "khu": x["khu"],
-                      "ghi_chu": (f"cùng radar {ten.get(x['radar'], x['radar'])}; vùng khu đã học: "
-                                  f"{'dưới' if v.get('huong') == 'duoi' else 'từ'} {v.get('nguong')} m, tách đúng "
-                                  f"{round(100 * float(v.get('dung') or 0))}%") if v.get("dat")
+                      "ghi_chu": (f"cùng radar {ten.get(x['radar'], x['radar'])}; vùng khu "
+                                  f"{'chủ nhà đặt' if v.get('nguong_chu') is not None else 'đã học'}: "
+                                  f"{'dưới' if vg[0] == 'duoi' else 'từ'} {vg[1]:g} m"
+                                  + ("" if v.get("nguong_chu") is not None
+                                     else f", tách đúng {round(100 * float(v.get('dung') or 0))}%")) if vg
                                  else f"cùng radar {ten.get(x['radar'], x['radar'])}; CHƯA học được vùng"})
     camera = [{"ten": c, "thay": t, "ghi_chu": "theo vùng chủ nhà khoanh / sơ đồ bot vẽ"}
               for c, t in _camera_thay().items()]
@@ -270,6 +273,34 @@ def giai(chi: list[str]) -> dict[str, Any]:
     return {"ok": True, "bai": ra, "loi": loi}
 
 
+def lua_chon(tb: str) -> dict[str, Any]:
+    """Cho trang web: bài đang áp và mọi nguồn chủ máy chọn được (đúng những mã bài bot được phép dùng)."""
+    uv = do(tb)
+    nguon = [{"ma": x["ma"], "loai": LOAI.get(x["loai"], x["loai"]), "khu": x.get("khu") or "",
+              "ten": str(x.get("ghi_chu") or x["ma"]).split(";")[0]} for x in uv["nguon"]]
+    nguon += [{"ma": c["ten"], "loai": LOAI["camera"], "khu": ", ".join(c.get("thay") or []), "ten": c["ten"]}
+              for c in uv["camera"]]
+    return {"ap": ap(tb), "nguon": nguon, "hoi": list(HOI), "nguy_hiem": bool(uv["nguy_hiem"])}
+
+
+def sua(tb: str, gia_tri: Any) -> dict[str, Any]:
+    """Chủ máy sửa bài trên web (01/10/2026: "các trạng thái, thông số kích hoạt tôi muốn chỉnh trên webui được"):
+    kiểm như bài bot giải (mã phải có trong đề của thiết bị), lưu thành bài chủ máy chấm ĐÚNG nên áp ngay; lần bot
+    giải sau đọc nó trong «chủ nhà dặn»."""
+    k = kiem(gia_tri, do(tb))
+    if isinstance(k, str):
+        raise ValueError(k)
+    with _khoa:
+        ds = _nap()["bai"].setdefault(tb, [])
+        id_ = max((x["id"] for v in _nap()["bai"].values() for x in v), default=0) + 1
+        ds.append({"id": id_, "luc": time.time(), "huong_dan": "chu_may", "gia_tri": k, "ket_qua": "dung",
+                   "cham_boi": "chu_may", "ghi_chu": "anh sửa trên web", "cham_luc": time.time()})
+        del ds[:-10]
+        _luu()
+    logger.info({"event": "xac_minh_chu_sua", "thiet_bi": tb, "id": id_})
+    return {"id": id_, "gia_tri": k}
+
+
 def cham(tb: str, id_: int, dung: bool, *, cham_boi: str, ghi_chu: str = "") -> bool:
     with _khoa:
         b = next((x for x in _nap()["bai"].get(tb) or [] if x["id"] == int(id_)), None)
@@ -306,7 +337,7 @@ def xac_minh(nguon: list[str], khu: str) -> tuple[bool | None, str]:
             # Radar đã học vùng khoảng cách: «có người» chỉ tính khi khoảng cách của CHÍNH nó không cho thấy người
             # đứng ngoài vùng — không thì người ở bếp làm radar phòng khách giữ đèn (đúng thứ khoảng cách để loại).
             ngoai = any(vung_khoang_cach.vi_tri(d, (ha_client.get_state(d) or {}).get("state")) is False
-                        for d, v in vung_khoang_cach.ds().items() if v.get("radar") == m and v.get("dat"))
+                        for d, v in vung_khoang_cach.ds().items() if v.get("radar") == m)
             if tt.get(m) == "on" and not ngoai:
                 return True, f"{m} báo có người"
             if tt.get(m) == "off" or ngoai:

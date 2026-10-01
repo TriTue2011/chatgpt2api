@@ -40,9 +40,9 @@ dòng `mã | tên | kiểu | giá trị | đổi/ngày | đổi quanh lúc bật
      một tính năng (vd "motion" của camera); pin, sóng (linkquality), điện áp,
      công suất; bộ đếm hệ thống.
 4. Trong số CÒN LẠI, chọn theo loại thiết bị:
-   - đèn: hiện diện, khoảng cách tới radar, đếm người, ánh sáng;
+   - đèn: hiện diện, khoảng cách tới radar, cửa ra vào, đếm người, ánh sáng;
    - quạt, điều hòa, máy sưởi, bình nóng lạnh: nhiệt độ, độ ẩm, hiện diện,
-     khoảng cách tới radar;
+     khoảng cách tới radar, cửa ra vào;
    - thiết bị khác người hay bật cùng (vd ti vi với loa).
 5. Dữ kiện nêu TÊN một ngoại vi ("cảm biến X") thì chọn đúng các mã có tên đó.
 6. Hiện diện: chọn nguồn tốt nhất của MỖI KIỂU có trong khu (đổi đều, có cả
@@ -53,11 +53,14 @@ dòng `mã | tên | kiểu | giá trị | đổi/ngày | đổi quanh lúc bật
 7. Mã có kiểu "khoảng cách người tới radar R" mà R là radar em đã chọn thì
    chọn kèm, vai trò `khoang_cach` — nó tách người trong khu với người khu bên
    cạnh mà R bắt lây. Kiểu ghi "vùng đã học" thì càng nên chọn.
-8. "Đếm người" chỉ là mã cho SỐ người (0, 1, 2…). Cùng một số đo có cả mã HA
+8. Kiểu "cửa ra vào" nằm trong khu của thiết bị thì chọn (vai trò
+   `thiet_bi`): người từ ngoài vào khu qua cửa đó — với đèn, quạt nó thường là
+   lúc người bật, TRƯỚC khi cảm biến hiện diện kịp báo. Cửa sổ thì không.
+9. "Đếm người" chỉ là mã cho SỐ người (0, 1, 2…). Cùng một số đo có cả mã HA
    (`miền.tên`) lẫn mã MQTT (có `/`) thì chọn mã HA — đừng vì trùng mà bỏ cả
    hai.
-9. Tối đa 6. Không có ngoại vi hợp lẽ thì để rỗng và nói vì sao.
-10. "Đổi quanh lúc bật/tắt" cao chỉ là manh mối phụ, không đủ để chọn.
+10. Tối đa 6. Không có ngoại vi hợp lẽ thì để rỗng và nói vì sao.
+11. "Đổi quanh lúc bật/tắt" cao chỉ là manh mối phụ, không đủ để chọn.
 
 ```json
 {"ngoai_vi": [{"ma": "...", "vai_tro": "hien_dien"}], "chac": 0.8, "vi_sao": "..."}

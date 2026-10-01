@@ -608,6 +608,31 @@ def _cai_tay(tb: str, cam_bien: list[str]) -> bool:
     return any(m.startswith(cam_bien_ghep.TIEN_TO) and m not in cua_tang for m in cam_bien)
 
 
+def sua_tay(tb: str, bieu_thuc: dict[str, Any]) -> dict[str, Any]:
+    """Chủ máy sửa «có người thật» của một thiết bị trên web (01/10/2026: "các trạng thái, thông số kích hoạt tôi muốn
+    chỉnh trên webui được"). Ghi đè biểu thức cảm biến ghép «vắng» của thiết bị và đưa nó vào «tắt khi vắng»; bài
+    bot giải sau đó KHÔNG tự đè — phải được chấm đúng sau lần sửa này (`ap_dung`)."""
+    from services import cam_bien_ghep, hieu_thiet_bi_nha as ht, kich_hoat_nha
+
+    tbs = _thiet_bi()
+    if tb not in tbs:
+        raise ValueError("Thiết bị chưa bật «tắt khi vắng».")
+    ma = ma_ghep(tb, "vang")
+    with _khoa:
+        cam_bien_ghep.dat(ma, f"Có người — {ht._ten_ha().get(tb) or tb}"[:60], bieu_thuc)
+        so = _nap_so()
+        tv = tbs[tb]["tat_khi_vang"]
+        da = so.get(tb) or {}
+        if list(tv.get("cam_bien") or []) != [ma]:
+            kich_hoat_nha.dat_thiet_bi(tb, tat_khi_vang={**tv, "cam_bien": [ma]})
+        # Không giữ mã bài cũ: biểu thức giờ là của chủ máy — bài đó chấm lại (đúng/sai) sau lần sửa là một quyết định mới.
+        so[tb] = {"id": None, "truoc": da.get("truoc") or tv.get("cam_bien") or [], "luc": time.time(),
+                  "chu_sua": True}
+        _luu_so(so)
+    logger.info({"event": "co_nguoi_chu_sua", "thiet_bi": tb, "bieu_thuc": bieu_thuc})
+    return cam_bien_ghep.ds()[ma]
+
+
 def ap_dung() -> list[dict[str, Any]]:
     """Đưa kết luận `co_nguoi` vào bộ kích hoạt. Gọi sau mỗi lượt giải và sau mỗi lần chấm.
 
@@ -641,6 +666,9 @@ def ap_dung() -> list[dict[str, Any]]:
                     lam.append({"thiet_bi": tb, "tra_lai": da["truoc"]})
                 continue
             if da.get("id") == d["id"]:
+                continue
+            # Chủ máy đã sửa trên web: chỉ một bài ĐƯỢC CHẤM ĐÚNG SAU lần sửa đó mới thay được.
+            if da.get("chu_sua") and not (d["ket_qua"] == "dung" and float(d.get("cham_luc") or 0) > da["luc"]):
                 continue
             if not (d["ket_qua"] == "dung" or (tu_quyet and not _cai_tay(tb, tv["cam_bien"]))):
                 continue

@@ -190,3 +190,18 @@ def test_xac_minh_bat_nhin_lai_mot_nhip_truoc_khi_ket_luan_vang(kh, xmn, monkeyp
     assert kh._xac_minh_truoc_hoi(DEN, "on", f"{NGU} có người vào", 0.0)[1] is True
     monkeypatch.setattr(kh, "_nhin_lai", lambda cams, khu="": "")
     assert kh._xac_minh_truoc_hoi(DEN, "on", f"{NGU} có người vào", 0.0)[1] is False, "nhìn lại vẫn trống: vắng"
+
+
+def test_chu_may_sua_bai_tren_web_ap_ngay(kh, xmn, monkeypatch):
+    """01/10/2026: chủ máy chỉnh bài xác minh trên web — kiểm như bài bot (mã phải có trong đề), áp ngay."""
+    monkeypatch.setattr(xmn, "do", lambda tb: {"nguon": [{"ma": NGU, "loai": "hien_dien", "ghi_chu": "Radar"}],
+                                               "camera": [{"ten": "Cam phòng ngủ", "thay": ["Phòng ngủ"]}],
+                                               "nguy_hiem": False})
+    bai = {**BAI_TAT, "tat": {**BAI_TAT["tat"], "xac_minh": ["Cam phòng ngủ", NGU]}}
+    kq = xmn.sua(DEN, bai)
+    assert xmn.ap(DEN)["tat"]["xac_minh"] == ["Cam phòng ngủ", NGU] and kq["id"] >= 1
+    assert xmn.so()["bai"][DEN][-1]["cham_boi"] == "chu_may"
+    with pytest.raises(ValueError):
+        xmn.sua(DEN, {**bai, "bat": {**bai["bat"], "xac_minh": ["Cam bếp"]}})
+    lc = xmn.lua_chon(DEN)
+    assert {x["ma"] for x in lc["nguon"]} == {NGU, "Cam phòng ngủ"} and lc["ap"] == xmn.ap(DEN)

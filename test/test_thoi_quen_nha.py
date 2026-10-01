@@ -133,6 +133,10 @@ class ThoiQuenNhaTest(unittest.TestCase):
             "zigbee2mqtt/Hiện diện ban công#presence"])
         self.assertEqual(uv["ngoai_vi"]["switch.ban_cong_motion"]["gia_tri"], "chỉ một giá trị: on",
                          "bot tự loại theo hướng dẫn — code chỉ ghi rõ")
+        self.assertEqual(uv["ngoai_vi"]["zigbee2mqtt/Hiện diện ban công#presence"]["quanh"], "100%")
+        de = self.tq.de_ngoai_vi(uv, ["THIẾT BỊ: switch.bep_center"], "Ban công")
+        self.assertIn("NGOẠI VI — khu vực Ban công:", de)
+        self.assertNotIn("hien_dien_bep", de, "khu Bếp bot không chọn thì không bày")
 
     def test_de_buoc_2_bay_nguon_da_im_va_khoang_cach_radar(self) -> None:
         """01/10/2026: đèn trần học theo radar tên cũ đã im 16 ngày — số đếm 30 ngày vẫn còn nên bot cứ chọn nó.
@@ -158,10 +162,19 @@ class ThoiQuenNhaTest(unittest.TestCase):
         self.assertIn("| lần cuối", de)
         self.assertIn("khoảng cách người tới radar binary_sensor.radar_bc; vùng đã học: người trong khu khi ≤ 3.6 m",
                       de)
-        self.assertEqual(uv["ngoai_vi"]["zigbee2mqtt/Hiện diện ban công#presence"]["quanh"], "100%")
-        de = self.tq.de_ngoai_vi(uv, ["THIẾT BỊ: switch.bep_center"], "Ban công")
-        self.assertIn("NGOẠI VI — khu vực Ban công:", de)
-        self.assertNotIn("hien_dien_bep", de, "khu Bếp bot không chọn thì không bày")
+
+    def test_de_buoc_2_bay_loai_thiet_bi_theo_device_class(self) -> None:
+        """01/10/2026: bài đèn trần bỏ sót cảm biến cửa chính (người bật 33/34 lần sau khi mở cửa) — đề chỉ ghi
+        «trạng thái». Nhận theo dấu hiệu HA khai, không theo tên."""
+        now = time.time()
+        self._nha(now)
+        kho = self.tq._doc_kho(now - 2 * 86400, now + 1)
+        bd = self.tq.ban_do_khu(kho, con_trong_ha=self.CON_TRONG_HA)
+        uv = self.tq.ung_vien("switch.bep_center", ["Bếp"], kho, bd, ten_ha={}, bo_ma=set(),
+                              lop_ha={"binary_sensor.hien_dien_bep": "door"})
+        self.assertEqual(uv["ngoai_vi"]["binary_sensor.hien_dien_bep"]["kieu"], "trạng thái — cửa ra vào")
+        uv = self.tq.ung_vien("switch.bep_center", ["Bếp"], kho, bd, ten_ha={}, bo_ma=set())
+        self.assertEqual(uv["ngoai_vi"]["binary_sensor.hien_dien_bep"]["kieu"], "trạng thái")
 
     # ── kiểm ở biên ────────────────────────────────────────────────────────
     UV = {"ma": "switch.bep_center", "khu_xem": ["Ban công"],
@@ -180,7 +193,7 @@ class ThoiQuenNhaTest(unittest.TestCase):
                 ({**tot, "ngoai_vi": [{"ma": "bia", "vai_tro": "hien_dien"}]}, "mã không có"),
                 ({**tot, "ngoai_vi": [{"ma": "b", "vai_tro": "doan_mo"}]}, "vai trò lạ"),
                 ({**tot, "ngoai_vi": [{"ma": "b", "vai_tro": "khac"}] * 2}, "mã lặp"),
-                ({**tot, "ngoai_vi": [{"ma": "b", "vai_tro": "khac"}] * 6}, "tối đa 5")):
+                ({**tot, "ngoai_vi": [{"ma": "b", "vai_tro": "khac"}] * 7}, "tối đa 6")):
             with self.subTest(ly_do):
                 self.assertIsInstance(self.tq.kiem(sai, self.UV), str)
 

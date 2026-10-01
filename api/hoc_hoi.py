@@ -726,7 +726,8 @@ def create_router() -> APIRouter:
     @router.post("/api/hoc-hoi/kich-hoat/dat")
     async def kich_hoat_dat(body: dict, authorization: str | None = Header(default=None)):
         """Chủ máy sửa một thiết bị. body: {thiet_bi, bat?, tu_lam?, bo_nguon?, ngoai_le?, kiem_ao?,
-        tat_khi_vang?, tat_khi_sang?, luat_chu?, im_lang?, hoi_de_hoc?, o_lai_giay?, roi_giay? (giây; 0 = bot tự học)} —
+        tat_khi_vang?, tat_khi_sang?, luat_chu?, im_lang?, hoi_de_hoc?, o_lai_giay?, roi_giay? (giây; 0 = bot tự học),
+        ghim? ({on|off: {điều kiện: ngưỡng}} — ngưỡng anh ghim cho luật bot học)} —
         khoá nào không gửi thì giữ nguyên."""
         require_admin(authorization)
         try:
@@ -744,7 +745,8 @@ def create_router() -> APIRouter:
                 im_lang=bool(body["im_lang"]) if "im_lang" in body else None,
                 hoi_de_hoc=bool(body["hoi_de_hoc"]) if "hoi_de_hoc" in body else None,
                 o_lai_giay=float(body["o_lai_giay"] or 0) if "o_lai_giay" in body else None,
-                roi_giay=float(body["roi_giay"] or 0) if "roi_giay" in body else None)
+                roi_giay=float(body["roi_giay"] or 0) if "roi_giay" in body else None,
+                ghim=body["ghim"] if isinstance(body.get("ghim"), dict) else None)
             return {"ok": True, "cai_dat": cd}
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
@@ -858,6 +860,61 @@ def create_router() -> APIRouter:
             return await asyncio.to_thread(xac_minh_nha.giai, chi)
         except Exception as exc:
             return _loi(exc, "giải bài xác minh")
+
+    @router.get("/api/hoc-hoi/xac-minh/lua-chon")
+    async def xac_minh_lua_chon(thiet_bi: str, authorization: str | None = Header(default=None)):
+        """Bài đang áp của MỘT thiết bị và mọi nguồn chủ máy chọn được khi sửa trên web."""
+        require_admin(authorization)
+        from services import xac_minh_nha
+        try:
+            return {"ok": True, **await asyncio.to_thread(xac_minh_nha.lua_chon, str(thiet_bi))}
+        except Exception as exc:
+            return _loi(exc, "đọc bài xác minh")
+
+    @router.post("/api/hoc-hoi/xac-minh/sua")
+    async def xac_minh_sua(body: dict, authorization: str | None = Header(default=None)):
+        """Chủ máy sửa bài xác minh. body: {thiet_bi, gia_tri: {bat, tat, tu_cham}} — áp ngay."""
+        require_admin(authorization)
+        from services import xac_minh_nha
+        try:
+            return {"ok": True, **await asyncio.to_thread(xac_minh_nha.sua, str(body.get("thiet_bi") or ""),
+                                                          body.get("gia_tri"))}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            return _loi(exc, "sửa bài xác minh")
+
+    @router.post("/api/hoc-hoi/co-nguoi/sua")
+    async def co_nguoi_sua(body: dict, authorization: str | None = Header(default=None)):
+        """Chủ máy sửa «có người thật» của một thiết bị. body: {thiet_bi, bieu_thuc} — áp ngay, bot không tự đè."""
+        require_admin(authorization)
+        from services import co_nguoi_nha
+        try:
+            return {"ok": True, "cam_bien": co_nguoi_nha.sua_tay(str(body.get("thiet_bi") or ""),
+                                                                 body.get("bieu_thuc"))}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            return _loi(exc, "sửa có người thật")
+
+    @router.get("/api/hoc-hoi/vung-khoang-cach")
+    async def vung_khoang_cach_xem(authorization: str | None = Header(default=None)):
+        """Vùng khoảng cách từng radar: số bot học và số anh đặt."""
+        require_admin(authorization)
+        from services import vung_khoang_cach
+        return {"ok": True, "vung": vung_khoang_cach.ds()}
+
+    @router.post("/api/hoc-hoi/vung-khoang-cach/dat")
+    async def vung_khoang_cach_dat(body: dict, authorization: str | None = Header(default=None)):
+        """Anh đặt ngưỡng vùng. body: {ma, nguong: số | null (trả về số bot học)}."""
+        require_admin(authorization)
+        from services import vung_khoang_cach
+        try:
+            ng = body.get("nguong")
+            return {"ok": True, "vung": vung_khoang_cach.dat_nguong(str(body.get("ma") or ""),
+                                                                   None if ng in (None, "") else float(ng))}
+        except (TypeError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
 
     @router.post("/api/hoc-hoi/xac-minh/cham")
     async def xac_minh_cham(body: dict, authorization: str | None = Header(default=None)):

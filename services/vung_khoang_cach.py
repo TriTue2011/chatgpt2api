@@ -79,11 +79,37 @@ def ds() -> dict[str, dict[str, Any]]:
         return {k: dict(v) for k, v in _nap().items()}
 
 
+def vung_dang_dung(m: dict[str, Any] | None) -> tuple[str, float] | None:
+    """(hướng, ngưỡng) đang dùng: số chủ máy đặt (`dat_nguong`) thắng số bot học; chưa học đạt mà chủ máy chưa đặt
+    thì None."""
+    if not m:
+        return None
+    if m.get("nguong_chu") is not None:
+        return str(m.get("huong") or "duoi"), float(m["nguong_chu"])
+    return (str(m["huong"]), float(m["nguong"])) if m.get("dat") else None
+
+
+def dat_nguong(ma: str, nguong: float | None) -> dict[str, Any]:
+    """Chủ máy đặt ngưỡng vùng trên web (None = trả về số bot học). Giữ qua mọi lần `hoc()`."""
+    with _khoa:
+        m = _nap().get(str(ma))
+        if m is None:
+            raise ValueError(f"{ma} không phải khoảng cách của radar nào bot biết.")
+        if nguong is None:
+            m.pop("nguong_chu", None)
+        else:
+            if not 0 < float(nguong) <= 50:
+                raise ValueError("Ngưỡng khoảng cách: 0–50.")
+            m["nguong_chu"] = round(float(nguong), 2)
+        _luu()
+        return dict(m)
+
+
 def trong_vung(ma: str, gia_tri: Any) -> bool:
     """Khoảng cách ``gia_tri`` của cảm biến ``ma`` có thể là người trong khu của radar không. Chưa học đạt,
     số 0, không phải số → True (không bao giờ vì thiếu hiểu biết mà nói «khu trống»)."""
-    m = _nap().get(str(ma))
-    if not m or not m.get("dat"):
+    vg = vung_dang_dung(_nap().get(str(ma)))
+    if vg is None:
         return True
     try:
         v = float(gia_tri)
@@ -91,14 +117,14 @@ def trong_vung(ma: str, gia_tri: Any) -> bool:
         return True
     if v <= 0:
         return True
-    return v < m["nguong"] if m["huong"] == "duoi" else v >= m["nguong"]
+    return v < vg[1] if vg[0] == "duoi" else v >= vg[1]
 
 
 def vi_tri(ma: str, gia_tri: Any) -> bool | None:
     """Ba trạng thái cho việc XÁC MINH (`xac_minh_nha`): True = radar đang đo một người trong vùng khu, False = đo
     được nhưng ở ngoài vùng (khu bên cạnh), None = không biết (chưa học đạt, số 0, không phải số)."""
-    m = _nap().get(str(ma))
-    if not m or not m.get("dat"):
+    vg = vung_dang_dung(_nap().get(str(ma)))
+    if vg is None:
         return None
     try:
         v = float(gia_tri)
@@ -106,7 +132,7 @@ def vi_tri(ma: str, gia_tri: Any) -> bool | None:
         return None
     if v <= 0:
         return None
-    return v < m["nguong"] if m["huong"] == "duoi" else v >= m["nguong"]
+    return v < vg[1] if vg[0] == "duoi" else v >= vg[1]
 
 
 def nguong(trong: list[float], ngoai: list[float]) -> dict[str, Any]:
@@ -270,6 +296,9 @@ def hoc(so_ngay: int = NGAY) -> dict[str, Any]:
                         "ke": ke, "n_trong": len(trong), "n_ngoai": len(ngoai), "dat": dat, "luc": time.time(),
                         **{k: t[k] for k in ("dung", "huong", "nguong") if k in t}}
     with _khoa:
+        for m, v in _nap().items():          # số chủ máy đặt sống qua lần học lại
+            if v.get("nguong_chu") is not None and m in ket:
+                ket[m]["nguong_chu"] = v["nguong_chu"]
         _nap().clear()
         _nap().update(ket)
         _luu()
@@ -279,8 +308,13 @@ def hoc(so_ngay: int = NGAY) -> dict[str, Any]:
 
 
 def cho_de(khu: str) -> list[dict[str, Any]]:
-    """Vùng đã học ĐẠT của radar trong ``khu`` — bày trong đề bài «có người thật»."""
-    return [{"ma": m, **v} for m, v in ds().items() if v.get("khu") == khu and v.get("dat")]
+    """Vùng đang dùng của radar trong ``khu`` (học đạt, hoặc chủ máy đặt) — bày trong đề bài «có người thật»."""
+    ra = []
+    for m, v in ds().items():
+        vg = vung_dang_dung(v)
+        if v.get("khu") == khu and vg:
+            ra.append({"ma": m, **v, "huong": vg[0], "nguong": vg[1]})
+    return ra
 
 
 def _reset_for_tests(duong: Path) -> None:

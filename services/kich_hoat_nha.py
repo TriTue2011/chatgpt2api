@@ -253,7 +253,8 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
                  im_lang: bool | None = None,
                  hoi_de_hoc: bool | None = None,
                  o_lai_giay: float | None = None,
-                 roi_giay: float | None = None) -> dict[str, Any]:
+                 roi_giay: float | None = None,
+                 ghim: dict[str, dict[str, float]] | None = None) -> dict[str, Any]:
     """Chủ máy sửa sơ đồ: bật/tắt, cho TỰ LÀM ngay, BỎ nguồn, đặt khung giờ NGOẠI LỆ
     (``{"hanh_dong": "on"|"off", "tu": "HH:MM", "den": "HH:MM", "thu"?: [0..6]}`` hoặc
     ĐI THEO LỊCH SINH HOẠT ``{"hanh_dong", "lich": "<mã mục lịch>"}`` — trong khung đó
@@ -282,6 +283,8 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
         tat_khi_sang = _kiem_tat_khi_sang(tat_khi_sang)
     if luat_chu is not None:
         luat_chu = _kiem_luat_chu(luat_chu)
+    if ghim is not None:
+        ghim = _kiem_ghim(ghim)
     if o_lai_giay is not None and o_lai_giay != 0 and not 5 <= float(o_lai_giay) <= 3600:
         raise ValueError("Mốc «ở lại»: 5–3600 giây (0 = để bot tự học).")
     if roi_giay is not None and roi_giay != 0 and not 5 <= float(roi_giay) <= 14400:
@@ -304,6 +307,11 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
             cu["luat_chu"] = luat_chu
         if im_lang is not None:
             cu["im_lang"] = bool(im_lang)
+        if ghim is not None:
+            if any(ghim.values()):
+                cu["ghim"] = ghim
+            else:
+                cu.pop("ghim", None)
         # Hai thời gian chủ nhà đặt — ở lại (trước khi bật/hỏi) và rời đi (vắng bao lâu thì tắt) — cùng một cách:
         # giây, thắng số bot học, 0 = trả về số bot tự học.
         for khoa, gt in (("o_lai_giay", o_lai_giay), ("roi_giay", roi_giay)):
@@ -404,6 +412,25 @@ NGAY_HAY_BAT = 60
 #: Mẫu (ô 5 phút) tối thiểu của một mức — ít hơn thì gộp hai mức lân cận; vẫn thiếu thì không làm.
 MAU_HAY_BAT = 12
 _NGUON_RE = re.compile(r"^binary_sensor\.[a-z0-9_]+ (có người vào|vắng)$")
+
+
+def _kiem_ghim(x: Any) -> dict[str, dict[str, float]]:
+    """``{"on"|"off": {điều kiện: ngưỡng}}`` — ngưỡng chủ máy ghim cho luật bot học (`dung_cay`)."""
+    if not isinstance(x, dict) or any(hd not in HANH_DONG or not isinstance(v, dict) for hd, v in x.items()):
+        raise ValueError("ghim là {on|off: {điều kiện: số}}.")
+    ra: dict[str, dict[str, float]] = {}
+    for hd, v in x.items():
+        for key, ng in v.items():
+            if not isinstance(key, str) or not key or len(key) > 200 or not _ghim_duoc(key):
+                raise ValueError(f"Không ghim được điều kiện «{key}» — chỉ giờ, số đo, số phút.")
+            try:
+                so = float(ng)
+            except (TypeError, ValueError):
+                raise ValueError(f"Ngưỡng của «{key}» phải là số.") from None
+            if not math.isfinite(so) or (key == "giờ" and not 0 <= so <= 24):
+                raise ValueError("Giờ ghim phải trong 0–24.")
+            ra.setdefault(hd, {})[key] = so
+    return ra
 
 
 def _kiem_luat_chu(x: Any) -> list[dict[str, Any]]:
@@ -603,6 +630,26 @@ def _so_do(tb: str) -> tuple[set[str], set[str]]:
             {m for m in ma if m.startswith("sensor.")})
 
 
+def ngoai_vi_cua(tb: str, ten_ha: dict[str, str]) -> dict[str, Any]:
+    """Ngoại vi trong sơ đồ của thiết bị, cho trang web sửa thẳng (`hieu_thiet_bi_nha.sua_so_do`): ``khoa`` là mã sổ
+    hiểu thiết bị xếp nó (có thể là mã gương), ``ds`` ngoại vi đang dùng, ``bo`` những mã chủ máy đã bỏ."""
+    try:
+        from services import ha_client, hieu_thiet_bi_nha as h
+        ma_cap = [m for m in (tb, ha_client.thuc_the_guong(tb)) if m]
+        nvh, hoc = h.ngoai_vi_hoc(), set(h.thiet_bi_hoc())
+        khoa = next((m for m in ma_cap if m in nvh), None) or next((m for m in ma_cap if m in hoc), tb)
+        ds = (nvh.get(khoa) or {}).get("ngoai_vi") or []
+        bo = list((h._doc_sua().get(khoa) or {}).get("nv_bo") or [])
+    except Exception as exc:  # noqa: BLE001 — sổ hỏng thì thẻ vẫn hiện, chỉ thiếu phần ngoại vi
+        logger.warning({"event": "kich_hoat_ngoai_vi_web_loi", "thiet_bi": tb, "error": str(exc)[:160]})
+        return {"khoa": tb, "ds": [], "bo": []}
+    return {"khoa": khoa,
+            "ds": [{"ma": str(x["ma"]), "ten": ten_ha.get(str(x["ma"])) or str(x.get("ten") or x["ma"]),
+                    "vai_tro": str(x.get("vai_tro") or ""), "cua_chu_may": bool(x.get("cua_chu_may")),
+                    "dung_duoc": "." in str(x["ma"]) and "/" not in str(x["ma"])} for x in ds],
+            "bo": [{"ma": m, "ten": ten_ha.get(m, m)} for m in bo]}
+
+
 # ── Cây quyết định nhỏ ─────────────────────────────────────────────────────
 def _ll(k: int, n: int) -> float:
     if n == 0:
@@ -611,8 +658,10 @@ def _ll(k: int, n: int) -> float:
     return -(k * math.log(p) + (n - k) * math.log(1 - p))
 
 
-def dung_cay(mau: list[tuple[dict[str, float], int]], sau: int = 0) -> dict[str, Any]:
-    """CART theo log-likelihood; lá mang xác suất Laplace (k+1)/(n+2)."""
+def dung_cay(mau: list[tuple[dict[str, float], int]], sau: int = 0,
+             ghim: dict[str, float] | None = None) -> dict[str, Any]:
+    """CART theo log-likelihood; lá mang xác suất Laplace (k+1)/(n+2). ``ghim``: ngưỡng chủ máy đặt cho một điều
+    kiện — cây chỉ được chia điều kiện ấy ĐÚNG ở số đó, lần học lại sau vẫn giữ (chủ máy 01/10/2026)."""
     n = len(mau)
     k = sum(y for _, y in mau)
     nut: dict[str, Any] = {"p": (k + 1) / (n + 2), "n": n, "k": k}
@@ -623,8 +672,8 @@ def dung_cay(mau: list[tuple[dict[str, float], int]], sau: int = 0) -> dict[str,
     for key in sorted(set().union(*(x.keys() for x, _ in mau))):
         gia = sorted({x[key] for x, _ in mau if key in x})
         buoc = max(1, len(gia) // 24)
-        for i in range(0, len(gia) - 1, buoc):
-            nguong = (gia[i] + gia[i + 1]) / 2
+        for nguong in ([float(ghim[key])] if ghim and key in ghim
+                       else [(gia[i] + gia[i + 1]) / 2 for i in range(0, len(gia) - 1, buoc)]):
             trai = [(x, y) for x, y in mau if x.get(key, -1e9) <= nguong]
             if len(trai) < LA_TOI_THIEU or n - len(trai) < LA_TOI_THIEU:
                 continue
@@ -637,7 +686,7 @@ def dung_cay(mau: list[tuple[dict[str, float], int]], sau: int = 0) -> dict[str,
     _, key, nguong = tot
     trai = [(x, y) for x, y in mau if x.get(key, -1e9) <= nguong]
     phai = [(x, y) for x, y in mau if x.get(key, -1e9) > nguong]
-    nut.update(key=key, nguong=nguong, trai=dung_cay(trai, sau + 1), phai=dung_cay(phai, sau + 1))
+    nut.update(key=key, nguong=nguong, trai=dung_cay(trai, sau + 1, ghim), phai=dung_cay(phai, sau + 1, ghim))
     return nut
 
 
@@ -666,12 +715,22 @@ def _dieu_kien_doc(key: str, nho_hon: bool, nguong: float, ten: dict[str, str]) 
     return f"{ten.get(key, key)} {'≤' if nho_hon else '>'} {nguong:.3g}"
 
 
-def luat(nut: dict[str, Any], ten: dict[str, str], duong: tuple[str, ...] = ()) -> list[dict[str, Any]]:
-    """Cây → luật đọc được: [{"neu": [...], "p", "k", "n"}]."""
+def luat(nut: dict[str, Any], ten: dict[str, str], duong: tuple[str, ...] = (),
+         dk: tuple[dict[str, Any], ...] = ()) -> list[dict[str, Any]]:
+    """Cây → luật đọc được: [{"neu": [...], "dk": [{"key", "nho_hon", "nguong"}], "p", "k", "n"}] — ``dk`` là cùng
+    các điều kiện ở dạng máy, để trang web cho chủ máy ghim ngưỡng (`dat_thiet_bi(ghim=…)`)."""
     if "key" not in nut:
-        return [{"neu": list(duong), "p": round(float(nut["p"]), 3), "k": nut["k"], "n": nut["n"]}]
-    return (luat(nut["trai"], ten, duong + (_dieu_kien_doc(nut["key"], True, nut["nguong"], ten),))
-            + luat(nut["phai"], ten, duong + (_dieu_kien_doc(nut["key"], False, nut["nguong"], ten),)))
+        return [{"neu": list(duong), "dk": list(dk), "p": round(float(nut["p"]), 3), "k": nut["k"], "n": nut["n"]}]
+    key, ng = nut["key"], nut["nguong"]
+    return (luat(nut["trai"], ten, duong + (_dieu_kien_doc(key, True, ng, ten),),
+                 dk + ({"key": key, "nho_hon": True, "nguong": ng, "ghim_duoc": _ghim_duoc(key)},))
+            + luat(nut["phai"], ten, duong + (_dieu_kien_doc(key, False, ng, ten),),
+                   dk + ({"key": key, "nho_hon": False, "nguong": ng, "ghim_duoc": _ghim_duoc(key)},)))
+
+
+def _ghim_duoc(key: str) -> bool:
+    """Điều kiện có NGƯỠNG để chủ máy ghim: giờ, số đo, phút. Nguồn kích hoạt («[…]») và lịch là có/không."""
+    return not key.startswith("[") and not key.startswith("lịch:")
 
 
 # ── Sự kiện nguồn ──────────────────────────────────────────────────────────
@@ -1162,7 +1221,7 @@ def hoc(tb: str) -> dict[str, Any]:
             mau.append(({**_dac_trung(t, ten_ol, ds_nguon, lux), **_dac_trung_o_lai(t, a, dong_ol)}, y, t))
         hoc_ = [(x, y) for x, y, t in mau if t < moc_thu]
         thu = [(x, y) for x, y, t in mau if t >= moc_thu]
-        cay = (dung_cay(hoc_) if sum(y for _, y in hoc_) >= NGUON_TOI_THIEU
+        cay = (dung_cay(hoc_, ghim=(cd.get("ghim") or {}).get(hd) or {}) if sum(y for _, y in hoc_) >= NGUON_TOI_THIEU
                else {"p": 0.0, "n": len(hoc_), "k": sum(y for _, y in hoc_)})
         theo_gio = [[0, 0] for _ in range(24)]
         for x, y in hoc_:
@@ -2875,6 +2934,7 @@ def tong_quan() -> list[dict[str, Any]]:
                    "bo_nguon": [{"ma": n, "ten": _ten_nguon(n, ten_ha)} for n in cd.get("bo_nguon") or []],
                    "ngoai_le": cd.get("ngoai_le") or [], "hoc_luc": mh.get("luc"), "huong": huong,
                    "luat_chu": cd.get("luat_chu") or [], "hay_bat": mh.get("hay_bat") or {},
+                   "ghim": cd.get("ghim") or {}, "ngoai_vi": ngoai_vi_cua(tb, ten_ha),
                    # Nguồn luật / cảm biến vắng đang không báo được → việc tự làm của thiết bị này đang chết.
                    "nguon_chet": nguon_chet(tb, st_ha) if st_ha else [],
                    "im_lang": bool(cd.get("im_lang")),

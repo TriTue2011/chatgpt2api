@@ -181,9 +181,14 @@ def kiem_khu(data: Any, ban_do: dict[str, Any]) -> dict[str, Any] | str:
             "vi_sao": str(data.get("vi_sao") or "")[:300]}
 
 
+#: `device_class` của HA → chữ bày trong cột kiểu: nhận ngoại vi theo dấu hiệu tích hợp khai, không theo tên.
+_LOP_DOC = {"door": "cửa ra vào", "garage_door": "cửa ra vào", "opening": "cửa (mở/đóng)", "window": "cửa sổ",
+            "occupancy": "hiện diện", "presence": "hiện diện", "motion": "chuyển động"}
+
+
 def ung_vien(ma_hoc: str, khu_xem: list[str], kho: dict[str, Any],
              ban_do: dict[str, list[tuple[str, str]]], *, ten_ha: dict[str, str],
-             bo_ma: set[str]) -> dict[str, Any]:
+             bo_ma: set[str], lop_ha: dict[str, str] | None = None) -> dict[str, Any]:
     """Ngoại vi TỪNG MÃ MỘT của các khu bot chọn, kèm số đo.
 
     `bo_ma` là các mã của CHÍNH thiết bị (cùng nhóm vật lý bot đã kết luận ở
@@ -219,7 +224,8 @@ def ung_vien(ma_hoc: str, khu_xem: list[str], kho: dict[str, Any],
               else ", ".join(f"{g[:24]} {round(100 * n / len(dong))}%" for g, n in hay))
         mt = [t for t, _ in dong]
         trung = sum(1 for t in moc if _co_trong(mt, t - _QUANH_GIAY, t + _QUANH_GIAY))
-        ngoai_vi[ma] = {"ten": ten, "khu_vuc": kv, "kieu": "trạng thái", "gia_tri": gt,
+        lop = _LOP_DOC.get(str((lop_ha or {}).get(tb) or ""))
+        ngoai_vi[ma] = {"ten": ten, "khu_vuc": kv, "kieu": f"trạng thái — {lop}" if lop else "trạng thái", "gia_tri": gt,
                         "doi_ngay": f"{len(dong) / so_ngay:.1f}",
                         "quanh": f"{round(100 * trung / len(moc))}%" if moc else "", "im": _im(kho, (tb, tr))}
     return {"ma": ma_hoc, "khu_xem": khu_xem, "ngoai_vi": ngoai_vi}
@@ -242,9 +248,10 @@ def _kieu_khoang_cach(ma: str) -> str:
     if not v:
         return ""
     s = f"khoảng cách người tới radar {v['radar']}"
-    if v.get("dat"):
-        s += (f"; vùng đã học: người trong khu khi {'≤' if v.get('huong') == 'duoi' else '>'} {v['nguong']:g} "
-              f"{v.get('don_vi') or ''}".rstrip())
+    vg = vung_khoang_cach.vung_dang_dung(v)
+    if vg:
+        s += (f"; vùng {'chủ nhà đặt' if v.get('nguong_chu') is not None else 'đã học'}: người trong khu khi "
+              f"{'≤' if vg[0] == 'duoi' else '>'} {vg[1]:g} {v.get('don_vi') or ''}".rstrip())
     return s
 
 
@@ -317,7 +324,9 @@ def giai(chi: list[str] | None = None, *, so_ngay: int = 30) -> dict[str, Any]:
     from services import du_doan_nha, ha_client, hieu_thiet_bi_nha as ht
 
     ds = [m for m in ht.thiet_bi_hoc() if not chi or m in chi]
-    con_trong_ha = {str(s.get("entity_id") or "") for s in (ha_client.get_states() or [])}
+    st_ha = ha_client.get_states() or []
+    con_trong_ha = {str(s.get("entity_id") or "") for s in st_ha}
+    lop_ha = {str(s.get("entity_id") or ""): str((s.get("attributes") or {}).get("device_class") or "") for s in st_ha}
     if not ds or not con_trong_ha:
         return {"ket_luan": [], "loi": [],
                 "bo_qua": "chưa có thiết bị được học hoặc HA chưa trả trạng thái"}
@@ -342,7 +351,7 @@ def giai(chi: list[str] | None = None, *, so_ngay: int = 30) -> dict[str, Any]:
         if isinstance(k1, str):
             loi.append({"ma": ma, "buoc": "khu vực", "loi": k1})
             continue
-        uv = ung_vien(ma, k1["khu_xem"], kho, ban_do, ten_ha=ten_ha, bo_ma=nhom.get(ma, set()))
+        uv = ung_vien(ma, k1["khu_xem"], kho, ban_do, ten_ha=ten_ha, bo_ma=nhom.get(ma, set()), lop_ha=lop_ha)
         dau = _dau_thiet_bi(ma, ten_ha, so_bat, so_tat, du_kien)
         b2 = _hoi_bot(ht, model, huong, de_ngoai_vi(uv, dau, k1["khu_vuc"]))
         k2 = kiem(b2, uv) if not isinstance(b2, str) else b2

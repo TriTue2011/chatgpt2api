@@ -16,8 +16,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { goiPost, layGet } from "./lib";
 import { docThu, THU, type MucLich } from "./lich-sinh-hoat";
+import { CoNguoiThat, DanhSachGhim, DieuKienLuat, NgoaiVi, XacMinh, type DieuKien, type Ghim, type NgoaiViTb } from "./chinh-tay";
 
-type Luat = { neu: string[]; p: number; k: number; n: number };
+type Luat = { neu: string[]; dk?: DieuKien[]; p: number; k: number; n: number };
 type Nguon = { ma: string; ten: string; so_lan?: number; du_chac?: number };
 type Huong = {
   nguon: Nguon[];
@@ -94,6 +95,9 @@ type ThietBi = {
   muc?: { truong?: string; cam_bien?: string; n?: number; moc?: [number, string, number][] } | null;
   /** Nghi nhiễu: sóng báo có mà camera cùng khu không thấy ai quá `phut` phút → chụp lại bằng YOLO. */
   nhieu?: { phut?: number | null; mau?: number } | null;
+  /** Ngưỡng anh ghim cho luật bot học — lần học sau cây vẫn chia đúng số này. */
+  ghim?: Ghim;
+  ngoai_vi?: NgoaiViTb;
 };
 type ThucThe = { ma: string; ten: string; lop: string };
 const CONG_TAC = "cong_tac";
@@ -312,8 +316,8 @@ function CapDo({ h, nguong, hoiDeHoc }: { h: Huong; nguong: ThietBi["nguong"]; h
   );
 }
 
-function MotThietBi({ tb, taiLai, doiMa, lich }: {
-  tb: ThietBi; taiLai: () => Promise<void>; doiMa: (c: string) => string; lich: MucLich[];
+function MotThietBi({ tb, taiLai, doiMa, tenCua, lich }: {
+  tb: ThietBi; taiLai: () => Promise<void>; doiMa: (c: string) => string; tenCua: (m: string) => string; lich: MucLich[];
 }) {
   const [dangHoc, setDangHoc] = useState(false);
   const [nl, setNl] = useState<NgoaiLe>({ hanh_dong: "on", tu: "21:00", den: "23:30", thu: [], cach: "hoi", ten: "" });
@@ -339,6 +343,15 @@ function MotThietBi({ tb, taiLai, doiMa, lich }: {
     }
   };
   const boMa = tb.bo_nguon.map((x) => x.ma);
+  const tenKhoa = (k: string) => (k === "giờ" ? "giờ" : tenCua(k));
+  const luuGhim = (hd: "on" | "off") => async (key: string, nguong: number | null) => {
+    const cu = { ...(tb.ghim?.[hd] || {}) };
+    if (nguong === null) delete cu[key];
+    else cu[key] = nguong;
+    if (await goiPost("/api/hoc-hoi/kich-hoat/dat", { thiet_bi: tb.thiet_bi, ghim: { ...(tb.ghim || {}), [hd]: cu } })) {
+      await hocLai();
+    }
+  };
 
   return (
     <div className="space-y-2 rounded-md border p-3 text-sm">
@@ -371,6 +384,8 @@ function MotThietBi({ tb, taiLai, doiMa, lich }: {
           Xem lại thiết bị / tích hợp đó trong Home Assistant, hoặc đổi luật sang nguồn khác.
         </div>
       )}
+
+      {tb.ngoai_vi ? <NgoaiVi nv={tb.ngoai_vi} thietBi={tb.thiet_bi} doiMa={doiMa} xong={taiLai} /> : null}
 
       <div className="flex flex-wrap items-center gap-3 text-xs"
         title="Anh đặt thì bot dùng đúng số này (thắng số bot tự học); để trống là bot tự học. Đơn vị: giây.">
@@ -470,11 +485,13 @@ function MotThietBi({ tb, taiLai, doiMa, lich }: {
               {h.luat.filter((l) => l.n > 0).slice(0, 5).map((l, i) => (
                 <li key={i} className={l.p >= P_HOI ? "font-medium" : "text-muted-foreground"}>
                   {l.p >= P_HOI ? "✔ " : "· "}
-                  {l.neu.length ? l.neu.join(" VÀ ") : "mọi lúc"} → {TEN_HD[hd].toLowerCase()} {Math.round(l.p * 100)}%
+                  <DieuKienLuat neu={l.neu} dk={l.dk} ghim={tb.ghim?.[hd] || {}} tenKhoa={tenKhoa} luuGhim={luuGhim(hd)} />
+                  {" "}→ {TEN_HD[hd].toLowerCase()} {Math.round(l.p * 100)}%
                   {" "}({l.k}/{l.n} lần)
                 </li>
               ))}
             </ul>
+            <DanhSachGhim ghim={tb.ghim?.[hd] || {}} tenKhoa={tenKhoa} luuGhim={luuGhim(hd)} />
           </div>
         );
       })}
@@ -482,6 +499,11 @@ function MotThietBi({ tb, taiLai, doiMa, lich }: {
       {tb.kiem_ao ? <KiemAo k={tb.kiem_ao} doiMa={doiMa} luu={(v) => dat({ kiem_ao: v })} /> : null}
       {tb.tat_khi_vang ? <TatKhiVang t={tb.tat_khi_vang} doiMa={doiMa} luu={(v) => dat({ tat_khi_vang: v })} /> : null}
       {tb.tat_khi_sang ? <TatKhiSang t={tb.tat_khi_sang} luu={(v) => dat({ tat_khi_sang: v })} /> : null}
+      {tb.tat_khi_vang?.bat ? (
+        <CoNguoiThat thietBi={tb.thiet_bi} camBien={tb.tat_khi_vang.cam_bien.map((x) => x.ma)} tenCua={tenCua}
+          doiMa={doiMa} xong={taiLai} />
+      ) : null}
+      <XacMinh thietBi={tb.thiet_bi} />
 
       <div className="space-y-1 border-t pt-2 text-xs">
         <div className="font-medium">Khung giờ của anh</div>
@@ -578,6 +600,7 @@ export function KichHoat() {
   }, [tai]);
 
   const doiMa = (chu: string) => thucThe.find((t) => t.ma === chu || t.ten === chu)?.ma ?? chu;
+  const tenCua = (ma: string) => thucThe.find((t) => t.ma === ma)?.ten ?? ma;
   const dangDieuKhien = ds.filter((tb) => tb.bat);
 
   return (
@@ -591,7 +614,7 @@ export function KichHoat() {
         hỏi anh trong nhóm học hỏi («có»/«không»), rõ là không thì im. Anh làm ngược lại trong 10 phút là bot ghi
         sai. Dưới mỗi thiết bị: kiểm báo ảo trước khi bật, tắt khi vắng, khung giờ của anh — đều sửa được.
       </p>
-      {dangDieuKhien.map((tb) => <MotThietBi key={tb.thiet_bi} tb={tb} taiLai={tai} doiMa={doiMa} lich={lich} />)}
+      {dangDieuKhien.map((tb) => <MotThietBi key={tb.thiet_bi} tb={tb} taiLai={tai} doiMa={doiMa} tenCua={tenCua} lich={lich} />)}
       {!dangDieuKhien.length ? (
         <p className="text-center text-xs text-muted-foreground">Chưa thiết bị nào — tích ở Sơ đồ kích hoạt để giao cho bot.</p>
       ) : null}

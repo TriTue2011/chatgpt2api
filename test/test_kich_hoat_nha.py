@@ -1383,3 +1383,19 @@ def test_nhat_ky_kich_hoat_ghi_lam_khong_va_nguoi(kh, monkeypatch):
     kh._nguoi_lam(DEN, "off", time.time() + 500)
     assert nk.doc(DEN)[0]["ket_qua"] == "nguoi"
     assert [x["ket_qua"] for x in nk.doc(DEN, ket_qua="khong")] == ["khong"]
+
+
+def test_chu_may_ghim_nguong_cay_giu_dung_so(kh):
+    """01/10/2026: chủ máy sửa điều kiện luật bot học trên web — lần học lại cây vẫn chia đúng số anh ghim."""
+    mau = [({"giờ": h + 0.5, "[a]": 1.0}, int(h >= 15)) for h in range(24) for _ in range(6)]
+    cay = kh.dung_cay(mau)
+    assert cay["key"] == "giờ" and 14 < cay["nguong"] < 16
+    cay = kh.dung_cay(mau, ghim={"giờ": 17.0})
+    assert cay["key"] == "giờ" and cay["nguong"] == 17.0
+    l = kh.luat(cay, {})
+    assert l[0]["dk"][0] == {"key": "giờ", "nho_hon": True, "nguong": 17.0, "ghim_duoc": True}
+    assert kh._kiem_ghim({"on": {"giờ": "17"}}) == {"on": {"giờ": 17.0}}
+    for sai in ({"on": {"[binary_sensor.a có người vào]": 1}}, {"on": {"giờ": 25}}, {"bat": {"giờ": 1}},
+                {"on": {"lịch:ngu": 1}}):
+        with pytest.raises(ValueError):
+            kh._kiem_ghim(sai)
