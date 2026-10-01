@@ -165,6 +165,10 @@ if ! docker build -f Dockerfile -t "$ANH:local-$SHA" -t "$ANH:latest" .; then
     exit 1
 fi
 noi "dựng xong"
+# Gắn tên giữ chỗ LẦN NỮA sau khi dựng: dựng mất ~10 phút, trong lúc đó Actions có thể đã dựng commit trước và
+# watchtower kéo nó về chạy — ảnh đó chỉ mang `:latest`, lệnh dựng vừa giật `:latest` sang ảnh mới nên nó mất tên duy
+# nhất rồi bị bước dọn bên dưới xoá → watchtower «No such image», container kẹt ở bản cũ (đo 02/10/2026 01:16).
+giu_ten_anh_dang_chay
 
 if [ "$DAY_ANH" -eq 0 ]; then
     noi "bỏ qua đẩy ảnh (--khong-day-anh). Ảnh đã có tại chỗ."
