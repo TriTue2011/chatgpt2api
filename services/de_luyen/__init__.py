@@ -30,6 +30,8 @@ def _ma(bt: Any, trong_khong: bool = False) -> dict[str, tuple[set[str], bool]]:
         return ra
     if "ma" in bt:
         return {str(bt["ma"]): ({str(x).lower() for x in bt.get("la", ["on"])}, trong_khong)}
+    if "khoang_cach" in bt:
+        return {str(bt["khoang_cach"]): (set(), trong_khong)}
     if "khong" in bt:
         return _ma(bt["khong"], True)
     for x in next(iter(bt.values()), []) or []:

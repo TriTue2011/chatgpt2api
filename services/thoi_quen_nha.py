@@ -742,6 +742,12 @@ def chay_mot_lan() -> dict[str, Any]:
             if ghi2["moi"] or ghi2["lap_lai"] or kq2["loi"]:
                 phan.append(_bao_so("đọc thói quen bật/tắt", kq2, ghi2))
 
+        # Học lại vùng khoảng cách của radar TRƯỚC: đề «có người thật» bày vùng vừa học.
+        from services import vung_khoang_cach
+        try:
+            ra["vung_khoang_cach"] = {m: v.get("dat") for m, v in vung_khoang_cach.hoc().items()}
+        except Exception as exc:  # noqa: BLE001 — không học được vùng thì đề thiếu mục G, bài vẫn chạy
+            logger.warning({"event": "vung_khoang_cach_hoc_loi", "loi": str(exc)[:160]})
         # Chọn "có người thật" cho việc tắt khi vắng — dùng khu vực vừa chọn ở trên.
         from services import co_nguoi_nha
         kq3, bao3 = co_nguoi_nha.chay(ht)

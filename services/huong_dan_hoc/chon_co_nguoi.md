@@ -47,6 +47,11 @@ Dùng cảm biến mục A (trong khu); cảm biến khu khác ở mục B chỉ
    camera C trong khu báo dưới 70% → R hay bắt lây người ở khu X. Khi đó thay
    R bằng `R VÀ KHÔNG X`, C vẫn nằm trong `hoac` ngoài cùng. Không có camera
    xác nhận thì KHÔNG loại lây: cùng báo có thể là hai người ở hai khu.
+3b. Đề có mục G (KHOẢNG CÁCH đã học) cho radar R trong khu → dùng `R VÀ {"khoang_cach": "<mã G>"}`
+   THAY cho loại lây `R VÀ KHÔNG X`: khoảng cách nói đúng người radar thấy đang ở khu này hay khu bên
+   cạnh, nên vẫn giữ được lúc hai người ở hai khu (loại lây thì bỏ mất lúc đó). Chủ nhà dặn tắt theo
+   khoảng cách thì BẮT BUỘC dùng. Không có mục G thì vẫn theo điều 3. Camera C vẫn nằm trong `hoac` ngoài
+   cùng.
 4. Đừng dùng cảm biến khu khác làm "có người" của khu này, trừ khi chủ nhà dặn
    (vd đèn chiếu cả hai khu). Khi đó khu X chủ nhà nêu CŨNG là khu của thiết bị:
    nối cảm biến khu X vào `hoac`, và KHÔNG loại lây theo khu X nữa (điều 3) —
@@ -120,6 +125,8 @@ giờ nào thì quanh giờ đó bot tự thôi dùng, về chờ đủ.
 - `{"ma": "<mã>", "la": ["on"]}` — `la` mặc định `["on"]`; ngoại vi lấy trạng
   thái ở cột "các trạng thái".
 - `{"va": [...]}`, `{"hoac": [...]}`, `{"khong": {...}}`.
+- `{"khoang_cach": "<mã mục G>"}` — chỉ dùng mã ở mục G, chỉ trong `co_nguoi`, luôn đi cùng radar của nó
+  trong một `va`.
 - Chép ĐÚNG từng ký tự mã trong đề. Tối đa 6 mã mỗi biểu thức.
 
 ```json

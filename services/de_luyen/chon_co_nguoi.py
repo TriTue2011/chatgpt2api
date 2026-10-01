@@ -30,8 +30,10 @@ def _nv(ma: str, ten: str, gia_tri: list[str], ngan: str, dai: str, doi: float =
 def _uv(ma: str, khu: str, hien_dien: dict[str, dict[str, Any]], *, cap: list | None = None,
         sang_khac: list | None = None, ngan: int = 300, dai: int = 40, ngoai_vi: list | None = None,
         camera: list[str] | None = None, frigate: list[str] | None = None, roi: list | None = None,
-        roi_nen: dict | None = None, roi_da: dict | None = None, ket: list[str] | None = None) -> dict[str, Any]:
+        roi_nen: dict | None = None, roi_da: dict | None = None, ket: list[str] | None = None,
+        khoang_cach: list | None = None) -> dict[str, Any]:
     return {"ma": ma, "khu": khu, "so_ngay": 30, "gio_bat": 150, "hien_dien": hien_dien,
+            "khoang_cach": khoang_cach or [],
             "trong": [m for m, x in hien_dien.items() if x["khu"] == khu and m not in (ket or [])],
             "ket": ket or [], "cap": cap or [], "sang_khac": sang_khac or [], "ngan": ngan, "dai": dai,
             "ngoai_vi": ngoai_vi or [], "camera": camera or [], "camera_frigate": frigate or [],
@@ -55,7 +57,37 @@ def _pk_can_ho() -> dict[str, dict[str, Any]]:
             RN: _hd("Radar phòng ngủ", "Phòng ngủ", 45)}
 
 
+KPK, KN = "sensor.radar_phong_khach_khoang_cach", "sensor.radar_phong_ngu_khoang_cach"
+
+
+def _kc(ma: str, radar: str, nguong: float, dung: float, huong: str = "duoi") -> dict[str, Any]:
+    return {"ma": ma, "radar": radar, "huong": huong, "nguong": nguong, "dung": dung, "don_vi": "m",
+            "n_trong": 3000, "n_ngoai": 1400}
+
+
 DE: list[dict[str, Any]] = [
+    {"ten": "khoang_cach_thay_loai_lay_bep_mo",
+     "tinh_huong": "Bếp mở: radar phòng khách báo lây người ở bếp; bot đã học vùng khoảng cách (phòng khách khi "
+                   "dưới 3,66 m, tách 89%) → dùng radar VÀ khoảng cách thay cho loại lây theo radar bếp; chủ nhà "
+                   "dặn tắt theo khoảng cách.",
+     "ten_tb": "Đèn trần phòng khách",
+     "dan": ["(chấm sai) Tắt thì dựa vào khoảng cách, chứ không phải chỉ là trống ở cảm biến phòng khách."],
+     "uv": _uv("light.den_tran_kc", "Phòng khách", _pk_can_ho(),
+               cap=[{"r": RPK, "x": RB, "p": 0.55, "xac": {CPK: "35%"}}],
+               camera=["Cam phòng khách"], frigate=["Cam phòng khách"], khoang_cach=[_kc(KPK, RPK, 3.66, 0.89)]),
+     "dap_an": {"co_nguoi_phai_co": [CPK, RPK, KPK], "co_nguoi_phu_dinh_khong": [RB]}},
+
+    {"ten": "khoang_cach_radar_phong_ngu_xuyen_vach",
+     "tinh_huong": "Radar phòng ngủ xuyên vách thấy người ở phòng khách (cùng báo 45%, không camera xác nhận); "
+                   "có vùng khoảng cách đã học → dùng khoảng cách, không loại lây theo phòng khách (cùng báo có "
+                   "thể là hai người).",
+     "ten_tb": "Đèn phòng ngủ", "dan": [],
+     "uv": _uv("light.den_ngu_kc", "Phòng ngủ",
+               {RN: _hd("Radar phòng ngủ", "Phòng ngủ", 60, "80%", "80%"),
+                RPK: _hd("Radar phòng khách", "Phòng khách", 300), RB: _hd("Radar bếp", "Bếp", 200)},
+               cap=[{"r": RN, "x": RPK, "p": 0.45, "xac": {}}], khoang_cach=[_kc(KN, RN, 2.1, 0.86)]),
+     "dap_an": {"co_nguoi_phai_co": [RN, KN], "co_nguoi_phu_dinh_khong": [RPK]}},
+
     {"ten": "can_ho_bep_thong_phong_khach",
      "tinh_huong": "Căn hộ, bếp liền phòng khách: radar phòng khách bắt cả người ở bếp; người đi ra bếp "
                    "rồi quay lại liên tục — thấy người ở bếp KHÔNG có nghĩa đã rời phòng khách.",

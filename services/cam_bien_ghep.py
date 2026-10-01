@@ -16,7 +16,9 @@ gốc — đổi biểu thức là lịch sử đổi theo, không phải lấp 
 Định nghĩa là DỮ LIỆU của từng nhà (``data/agent/cam_bien_ghep.json``), không nằm trong mã:
 ``{"ma": "binary_sensor.c2a_<tên>", "ten": "...", "loai": "occupancy", "bieu_thuc": …}`` với
 biểu thức: ``{"ma": "<thực thể>", "la": ["on", …]}`` (mặc định ``["on"]``), ``{"va": [...]}``,
-``{"hoac": [...]}``, ``{"khong": …}``.
+``{"hoac": [...]}``, ``{"khong": …}``, ``{"khoang_cach": "<cảm biến khoảng cách radar>"}`` — đúng khi radar
+không thấy người ở NGOÀI vùng khu của nó (vùng bot tự học, `vung_khoang_cach`; chủ máy 01/10/2026: "tắt thì
+cũng dựa vào khoảng cách").
 """
 
 from __future__ import annotations
@@ -68,8 +70,11 @@ def la_ghep(ma: str) -> bool:
 
 def _kiem(bt: Any, sau: int = 0) -> None:
     if sau > 8 or not isinstance(bt, dict) or len(bt) not in (1, 2):
-        raise ValueError("Biểu thức: {ma[, la]} | {va: [...]} | {hoac: [...]} | {khong: …}.")
-    if "ma" in bt:
+        raise ValueError("Biểu thức: {ma[, la]} | {va: [...]} | {hoac: [...]} | {khong: …} | {khoang_cach: …}.")
+    if set(bt) == {"khoang_cach"}:
+        if not re.fullmatch(r"sensor\.[a-z0-9_]+", str(bt["khoang_cach"])):
+            raise ValueError(f"«khoang_cach» phải là mã cảm biến khoảng cách, không phải «{bt['khoang_cach']}».")
+    elif "ma" in bt:
         if not re.fullmatch(r"[a-z_]+\.[a-z0-9_]+", str(bt["ma"])) or str(bt["ma"]).startswith(TIEN_TO):
             raise ValueError(f"Thực thể «{bt['ma']}» không hợp lệ (không ghép cảm biến ghép vào nhau).")
         la = bt.get("la", ["on"])
@@ -84,7 +89,7 @@ def _kiem(bt: Any, sau: int = 0) -> None:
         for x in next(iter(bt.values())):
             _kiem(x, sau + 1)
     else:
-        raise ValueError("Biểu thức: {ma[, la]} | {va: [...]} | {hoac: [...]} | {khong: …}.")
+        raise ValueError("Biểu thức: {ma[, la]} | {va: [...]} | {hoac: [...]} | {khong: …} | {khoang_cach: …}.")
 
 
 def dat(ma: str, ten: str, bieu_thuc: dict[str, Any], loai: str = "occupancy") -> dict[str, Any]:
@@ -116,15 +121,30 @@ def xoa(ma: str) -> bool:
 def thanh_phan(bt: Any) -> set[str]:
     if "ma" in bt:
         return {str(bt["ma"])}
+    if "khoang_cach" in bt:
+        return {str(bt["khoang_cach"])}
     if "khong" in bt:
         return thanh_phan(bt["khong"])
     return set().union(*(thanh_phan(x) for x in next(iter(bt.values()))))
+
+
+def _khoang_cach_cua(bt: Any) -> set[str]:
+    if "khoang_cach" in bt:
+        return {str(bt["khoang_cach"])}
+    if "ma" in bt:
+        return set()
+    if "khong" in bt:
+        return _khoang_cach_cua(bt["khong"])
+    return set().union(*(_khoang_cach_cua(x) for x in next(iter(bt.values()))))
 
 
 def tinh(bt: Any, tt: dict[str, str]) -> bool:
     """Giá trị biểu thức trên trạng thái ``tt`` (mã → trạng thái chữ thường). Thiếu = không khớp."""
     if "ma" in bt:
         return tt.get(str(bt["ma"]), "") in {str(x).lower() for x in bt.get("la", ["on"])}
+    if "khoang_cach" in bt:
+        from services import vung_khoang_cach
+        return vung_khoang_cach.trong_vung(bt["khoang_cach"], tt.get(str(bt["khoang_cach"])))
     if "khong" in bt:
         return not tinh(bt["khong"], tt)
     if "va" in bt:
@@ -155,7 +175,9 @@ def chuoi(ro: sqlite3.Connection, ma: str, tu: float, den: float) -> list[tuple[
     if not c:
         return []
     bt = c["bieu_thuc"]
-    goc = sorted(thanh_phan(bt))
+    # Khoảng cách: kho chỉ giữ số gộp 5 phút (còn sót vài bản ghi sự kiện cũ — đọc chúng là mang một số cũ
+    # suốt 30 ngày) → ở quá khứ nút khoảng cách là "không đo được" = đúng (`vung_khoang_cach.trong_vung`).
+    goc = sorted(thanh_phan(bt) - _khoang_cach_cua(bt))
     tt: dict[str, str] = {}
     for g in goc:
         r = ro.execute("SELECT gia_tri FROM su_kien WHERE thiet_bi=? AND truong='state' AND ts<?"
@@ -164,6 +186,8 @@ def chuoi(ro: sqlite3.Connection, ma: str, tu: float, den: float) -> list[tuple[
             tt[g] = str(r[0]).lower()
     cu = "on" if tinh(bt, tt) else "off"
     ra = [(float(tu), cu)]
+    if not goc:
+        return ra
     dau = ",".join("?" * len(goc))
     for ts, g, gt in ro.execute(
             f"SELECT ts, thiet_bi, gia_tri FROM su_kien WHERE truong='state' AND ts>=? AND ts<?"

@@ -345,7 +345,8 @@ def ung_vien(tb: str, ro: sqlite3.Connection, tu: float, den: float, *,
         so_do = so_do_nha.doan_de(khu_tb)
     except Exception:  # noqa: BLE001 — chưa có sơ đồ thì thôi
         so_do = []
-    return {"ma": tb, "camera": camera, "camera_frigate": frigate, "so_do": so_do, "khu": khu_tb, "so_ngay": so_ngay, "gio_bat": dai_bat / 3600,
+    from services import vung_khoang_cach
+    return {"ma": tb, "khoang_cach": vung_khoang_cach.cho_de(khu_tb), "camera": camera, "camera_frigate": frigate, "so_do": so_do, "khu": khu_tb, "so_ngay": so_ngay, "gio_bat": dai_bat / 3600,
             "hien_dien": {m: {k: v for k, v in x.items() if k not in ("ts", "gt", "bat")}
                           for m, x in hien_dien.items()},
             "trong": trong, "ket": ket, "cap": cap, "sang_khac": sang_khac[:_TOI_DA_LAY],
@@ -404,6 +405,14 @@ def de(uv: dict[str, Any], ten_tb: str, dan: list[str]) -> str:
     if uv.get("roi_da"):
         dong.append("Bot đã tắt theo «rời khu» rồi bị bật lại ngay (sai/số lần): "
                     + ", ".join(f"{k} {v['sai']}/{v['n']}" for k, v in uv["roi_da"].items()))
+    if uv.get("khoang_cach"):
+        dong += ["\nG. KHOẢNG CÁCH — radar trong khu đo được người đứng cách nó bao xa; bot đã tự học vùng của khu "
+                 "(nhãn: camera khu thấy người / radar khu bên cạnh báo). Nút {\"khoang_cach\": \"<mã>\"} đúng khi "
+                 "radar KHÔNG thấy người ở ngoài vùng (không đo được cũng tính là đúng):",
+                 "mã | radar | vùng của khu | tách đúng (đoán mò 50%) | số đo trong khu / khu bên cạnh"]
+        dong += [f"{x['ma']} | {x['radar']} | {'dưới' if x['huong'] == 'duoi' else 'từ'} {x['nguong']} "
+                 f"{x.get('don_vi') or 'm'} | {round(100 * x['dung'])}% | {x['n_trong']} / {x['n_ngoai']}"
+                 for x in uv["khoang_cach"]]
     dong += ["\nE. CAMERA — c2a nhìn lại được (tên | cách đếm người):"]
     dong += [f"{c} | " + ("Frigate đếm sẵn, khỏi chụp" if c in (uv.get("camera_frigate") or []) else "chụp rồi đếm")
              for c in uv.get("camera") or []] or ["(không có)"]
@@ -430,7 +439,8 @@ def kiem(data: Any, uv: dict[str, Any]) -> dict[str, Any] | str:
     co, giu = data.get("co_nguoi"), data.get("giu")
     hien_dien = set(uv["hien_dien"])
     gia_tri = {x["ma"]: set(x["gia_tri"]) for x in uv["ngoai_vi"]}
-    for ten, bt, duoc in (("co_nguoi", co, hien_dien), ("giu", giu, hien_dien | set(gia_tri))):
+    kc = {x["ma"] for x in uv.get("khoang_cach") or []}
+    for ten, bt, duoc in (("co_nguoi", co, hien_dien | kc), ("giu", giu, hien_dien | set(gia_tri))):
         if bt is None and ten == "giu":
             continue
         try:
@@ -483,6 +493,8 @@ def _la_cua(bt: Any, ra: dict[str, set[str]] | None = None) -> dict[str, set[str
     ra = {} if ra is None else ra
     if "ma" in bt:
         ra.setdefault(str(bt["ma"]), set()).update(str(x).lower() for x in bt.get("la", ["on"]))
+    elif "khoang_cach" in bt:
+        pass
     elif "khong" in bt:
         _la_cua(bt["khong"], ra)
     else:
