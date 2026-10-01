@@ -97,21 +97,28 @@ def submit_2fa_code(profile: str, code: str) -> bool:
 
 
 async def doc_cookie_phien(profile: str) -> dict[str, str]:
-    """Cookie của grok.com, BỎ nhóm Cloudflare.
+    """Cookie grok.com đọc từ hồ sơ trên đĩa, trình duyệt không cần đang mở.
 
-    Đọc được từ hồ sơ trên đĩa nên dùng được cả khi trình duyệt đã đóng — đó là
-    cách `api/grok.py` lấy phiên mà không phải mở lại cửa sổ.
+    Giữ ``sso`` và ``cf_clearance`` / ``__cf_bm``. Đo 01/10/2026: websocket
+    ``/ws/mgw/`` chỉ chấp nhận khi có clearance của đúng máy này. Vẫn bỏ
+    ``cf_chl_*`` — đó là dấu Cloudflare đang hạn chế trình duyệt, không phải phiên.
     """
     try:
         cookies = await pool.read_cookies(profile, _GROK_HOME)
     except Exception:
         logger.debug("grok_login: không đọc được cookie hồ sơ %s", profile, exc_info=True)
         return {}
-    return {
-        str(c["name"]): str(c["value"])
-        for c in cookies
-        if c.get("value") and not str(c.get("name", "")).startswith(_CF_PREFIX)
-    }
+    giu_cf = {"cf_clearance", "__cf_bm"}
+    out: dict[str, str] = {}
+    for c in cookies:
+        name = str(c.get("name") or "")
+        value = c.get("value")
+        if not name or not value:
+            continue
+        if name.startswith(_CF_PREFIX) and name not in giu_cf:
+            continue
+        out[name] = str(value)
+    return out
 
 
 async def _nhin_trang(page) -> dict[str, Any]:

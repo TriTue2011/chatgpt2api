@@ -140,6 +140,13 @@ FALLBACK_MODELS = {
         "ag/gemini-3.1-pro-high-thinking",
         "ag/gemini-3.1-flash-high",
     ],
+    # grok.com miễn phí. Catalog tĩnh vì grok.com không có /v1/models.
+    # fast là mode tài khoản Basic đã đo được; auto cũng map về fast ở client.
+    "grok_web": [
+        "grok/fast",
+        "grok/auto",
+        "gw/fast",
+    ],
 }
 
 GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -877,6 +884,19 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
         logger.info({"event": "list_models_cache_hit"})
         cached = _merge_runtime_gma_models(
             list((_models_cache or {}).get("data") or []))
+        # grok.com không có catalog động. Cache đĩa còn hạn thì vẫn phải
+        # hiện grok/ và gw/, nếu không phải đợi hết TTL 24 giờ.
+        seen_ids = {str(item.get("id") or "") for item in cached}
+        for model_id in sorted(FALLBACK_MODELS.get("grok_web") or []):
+            if model_id in seen_ids:
+                continue
+            seen_ids.add(model_id)
+            cached.append({
+                "id": model_id,
+                "object": "model",
+                "created": 0,
+                "owned_by": "grok_web",
+            })
         cdata = _curate_models(_drop_unavailable(cached))
         if apply_filter:
             cdata = _apply_enabled_filter(cdata)
@@ -969,7 +989,7 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
                 })
 
     # Apply fallbacks for providers that returned nothing
-    for provider_name in ["opencode", "gemini_free", "openai_oauth", "nvidia_nim", "tokenrouter", "chatgpt2api", "antigravity", "gemini_web"]:
+    for provider_name in ["opencode", "gemini_free", "openai_oauth", "nvidia_nim", "tokenrouter", "chatgpt2api", "antigravity", "gemini_web", "grok_web"]:
         if provider_name not in all_models:
             for model_id in sorted(_apply_fallback(provider_name)):
                 if model_id not in seen:

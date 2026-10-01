@@ -4903,6 +4903,11 @@ def _dispatch_provider(route, messages, tools, tool_choice, body):
         from api.gemini_web import handle_gemini_web_api_chat
         _base_url = str(body.get("base_url") or "").rstrip("/")
         return handle_gemini_web_api_chat(route.model, messages, body.get("stream"), body, base_url=_base_url)
+    elif route.provider == "grok_web":
+        # grok.com miễn phí (grok/ | gw/) — cookie hồ sơ hoặc file, websocket.
+        # Không mở trình duyệt trong lúc chat. Cùng cửa với gma/.
+        from api.grok_web import handle_grok_web_chat
+        return handle_grok_web_chat(route.model, messages, body.get("stream"), body)
     else:
         logger.warning({"event": "unknown_provider", "provider": route.provider, "fallback": "chatgpt_free"})
         from services.providers.chatgpt_free import handle_free_chat

@@ -69,6 +69,8 @@ PROVIDER_PREFIXES: dict[str, str] = {
     "clf/": "claude",     # alias of claude/
     "gma/": "gemini_web_api",         # gemini.google.com qua cookie 1PSID (gemini_webapi)
     "gemini-web/": "gemini_web_api",  # alias of gma/
+    "grok/": "grok_web",              # grok.com miễn phí, cookie + websocket, cùng kiểu gma/
+    "gw/": "grok_web",
     "nv/": "nvidia_nim",
     "ag/": "antigravity",
     "agnes/": "agnes",
@@ -162,6 +164,7 @@ class BackendRouter:
         "openrouter": "openai/gpt-4o",
         "nvidia_nim": "openai/gpt-oss-120b",
         "antigravity": "gemini-3.1-pro-high",
+        "grok_web": "fast",
     }
 
     @staticmethod
