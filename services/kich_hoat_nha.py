@@ -626,8 +626,29 @@ def _so_do(tb: str) -> tuple[set[str], set[str]]:
         logger.warning({"event": "kich_hoat_so_do_loi", "thiet_bi": tb, "error": str(exc)[:160]})
         return set(), set()
     ma = {str(x.get("ma")) for x in [*dk, *nv] if "." in str(x.get("ma") or "")}
-    return ({m for m in ma if m.startswith("binary_sensor.")},
-            {m for m in ma if m.startswith("sensor.")})
+    nhi_phan = {m for m in ma if m.startswith("binary_sensor.")}
+    if nhi_phan:
+        nhi_phan = _theo_co_nguoi_that(tb, nhi_phan)
+    return nhi_phan, {m for m in ma if m.startswith("sensor.")}
+
+
+def _theo_co_nguoi_that(tb: str, nhi_phan: set[str]) -> set[str]:
+    """Cảm biến «có người thật» của CHÍNH thiết bị (cảm biến ghép tắt-khi-vắng: radar + khoảng cách trong
+    vùng, hoặc camera — `co_nguoi_nha`) cũng là nguồn có người vào / vắng; radar thô đã nằm trong nó
+    KÈM khoảng cách thì bỏ. Chủ máy 02/10/2026: hiện diện phòng khách phải kèm khoảng cách, cửa đóng vẫn
+    bật theo hiện diện — radar thô thấy cả người ở bếp, nên «radar có người vào» không bao giờ đủ chắc."""
+    from services import vung_khoang_cach
+
+    ghep = _cbg.ds()
+    vung = vung_khoang_cach.ds()
+    ra = set(nhi_phan)
+    for c in ((_nap()["thiet_bi"].get(tb) or {}).get("tat_khi_vang") or {}).get("cam_bien") or []:
+        if c not in ghep:
+            continue
+        tp = _cbg.thanh_phan(ghep[c]["bieu_thuc"])
+        ra.add(c)
+        ra -= {str(vung[d]["radar"]) for d in tp if d in vung and str(vung[d]["radar"]) in tp}
+    return ra
 
 
 def ngoai_vi_cua(tb: str, ten_ha: dict[str, str]) -> dict[str, Any]:

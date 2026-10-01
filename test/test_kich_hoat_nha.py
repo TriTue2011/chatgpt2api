@@ -31,6 +31,12 @@ TT = [
 ]
 
 
+from services import kich_hoat_nha as _kh_goc  # noqa: E402
+
+#: `_so_do` thật — fixture `kh` thay bằng sơ đồ rỗng cho các ca tự dò.
+_SO_DO_GOC = _kh_goc._so_do
+
+
 @pytest.fixture
 def kh(tmp_path, monkeypatch):
     from services import du_doan_nha as dd, ha_client, kich_hoat_nha, lich_su_nha as ls
@@ -682,6 +688,29 @@ def test_so_do_tim_theo_ca_cap_guong(guong, monkeypatch):
     monkeypatch.setattr(h, "thoi_quen_hoc", lambda: {"switch.phong_ngu_l1": {"bat": [{"ma": NGU}]}})
     monkeypatch.setattr(h, "ngoai_vi_hoc", lambda: {"switch.phong_ngu_l1": {"ngoai_vi": [{"ma": LUX}]}})
     assert kh._so_do("light.phong_ngu_l1") == ({NGU}, {LUX})
+
+
+def test_nguon_la_CO_NGUOI_THAT_kem_khoang_cach_khong_phai_radar_tho(kh, tmp_path, monkeypatch):
+    """Chủ máy 02/10/2026: hiện diện phòng khách phải kèm khoảng cách, cửa đóng vẫn bật theo hiện diện. Radar
+    thô thấy cả người ở bếp — «radar có người vào» không bao giờ đủ chắc (du_chac 0/8 ở đèn trần). Nguồn phải là
+    cảm biến «có người thật» của chính thiết bị; radar thô nằm trong nó kèm khoảng cách thì bỏ."""
+    from services import cam_bien_ghep as cbg, hieu_thiet_bi_nha as h, vung_khoang_cach
+
+    KC, CAM, C = "sensor.kc_phong_ngu", "binary_sensor.cam_phong_ngu", "binary_sensor.c2a_vang_den"
+    monkeypatch.setattr(kh, "_so_do", _SO_DO_GOC)
+    from services import ha_client
+    monkeypatch.setattr(ha_client, "thuc_the_guong", lambda e: None)
+    cbg._reset_for_tests(tmp_path / "ghep.json")
+    cbg.dat(C, "Có người — Đèn", {"hoac": [{"va": [{"ma": NGU, "la": ["on"]}, {"khoang_cach": KC}]},
+                                          {"ma": CAM, "la": ["on"]}]})
+    monkeypatch.setattr(vung_khoang_cach, "ds", lambda: {KC: {"radar": NGU, "dat": True, "huong": "duoi", "nguong": 3.0}})
+    monkeypatch.setattr(h, "thoi_quen_hoc", lambda: {DEN: {"bat": [{"ma": NGU, "la": "on"}]}})
+    monkeypatch.setattr(h, "ngoai_vi_hoc", lambda: {DEN: {"ngoai_vi": [{"ma": NGU}, {"ma": CAM}, {"ma": KC}, {"ma": CUA}]}})
+    assert kh._so_do(DEN)[0] == {NGU, CAM, CUA}, "chưa có cảm biến có người thật thì giữ như cũ"
+    kh.dat_thiet_bi(DEN, bat=True, tat_khi_vang={"bat": True, "phut": 3, "cam_bien": [C]})
+    nhi_phan, so = kh._so_do(DEN)
+    assert nhi_phan == {C, CAM, CUA}, "radar thô đã nằm trong C kèm khoảng cách → bỏ; camera, cửa giữ"
+    assert so == {KC}
 
 
 def test_dong_loat_dem_thiet_bi_that_khong_dem_thuc_the(kh, guong):
