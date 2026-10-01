@@ -53,7 +53,8 @@ function HocHoiContent() {
           <SettingsSection title="Sơ đồ nhà" tuKhoa="so do nha phong vach thong cua chinh anh camera luoi o mo ta dap an chup">
             <SoDoNha />
           </SettingsSection>
-          <SettingsSection title="Lịch sinh hoạt cả nhà" tuKhoa="lich sinh hoat ngu day di lam vang nha an toi thu">
+          <SettingsSection title="Người trong nhà & lịch sinh hoạt"
+            tuKhoa="nguoi thanh vien gia dinh ca nha tuoi nam sinh con tre em lich sinh hoat ngu day di lam vang nha an toi thu">
             <LichSinhHoat />
           </SettingsSection>
           <SettingsSection title="Bật/tắt thiết bị" tuKhoa="bat tat thiet bi kich hoat luat ngoai le tu lam bao ao vang">
