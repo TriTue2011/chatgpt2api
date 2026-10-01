@@ -42,11 +42,11 @@ class CookieTests(unittest.TestCase):
             acc.list_accounts.return_value = []
             self.assertEqual(gw._profiles(), ["grok-ben"])
 
-    def test_ho_so_truoc_file(self):
-        with mock.patch.object(gw, "_profiles", return_value=["p1"]), \
-                mock.patch.object(gw, "_fetch_solver", return_value={"sso": "solver"}), \
+    def test_file_thang_khong_hoi_chrome(self):
+        with mock.patch.object(gw, "_fetch_solver", return_value={"sso": "solver"}) as lay, \
                 mock.patch.object(gw, "_file_cookies", return_value={"sso": "file"}):
-            self.assertEqual(gw.tai_cookie()["sso"], "solver")
+            self.assertEqual(gw.tai_cookie()["sso"], "file")
+            lay.assert_not_called()
 
     def test_khong_ho_so_thi_doc_file(self):
         with mock.patch.object(gw, "_profiles", return_value=[]), \

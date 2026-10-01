@@ -1,30 +1,12 @@
-"""Grok web miễn phí — cùng kiểu gemini_web_api, không mở trình duyệt mỗi lần chat.
+"""Grok web miễn phí. Chat bằng cookie, Firefox chỉ mở lúc lấy cookie.
 
-Gemini (`api/gemini_web.py`) lấy cookie từ hồ sơ đã đăng nhập (captcha-solver)
-hoặc từ cookie dán trong cấu hình, rồi thư viện Python tự gọi. Đường này làm
-đúng việc đó cho grok.com:
+Hồ sơ Firefox nằm ở ``data/grok_firefox``. Đăng nhập xong thì cookie được
+ghi vào ``data/grok_web_cookies.json`` và Firefox tắt. Hết hạn thì mở lại
+đúng hồ sơ đó — còn phiên đăng nhập, không gõ mật khẩu — rồi tắt tiếp.
+Không đi Chrome của captcha-solver: máy này bị Cloudflare chặn Chrome.
 
-  1. Cookie từ ``GET /v1/grok-web/{profile}/session`` của hồ sơ đã onboard.
-  2. Không có hồ sơ thì đọc ``data/grok_web_cookies.json`` (đường lùi, như
-     ``psid`` của Gemini).
-  3. Gửi chat bằng websocket ``wss://grok.com/ws/mgw/``, trình tự
-     ``session.create`` → ``conversation.item.create`` → ``response.create``.
-     Đo 01/10/2026 trên chính container này: một tin tạm "ping" nhận "pong".
-
-Không khởi chạy Firefox hay Chrome trong lúc chat. Phiên phải đã được tạo
-trước (onboard, hoặc file cookie).
-
-Ba điểm chốt 01/10/2026, khác Gemini Web API:
-
-* Web UI không có thẻ thêm tài khoản Grok. Gemini thêm hồ sơ ở Cài đặt
-  (thẻ Gemini Web API) và vòng xoay trên trang Tài khoản. Onboard Chrome
-  của grok.com trên máy này bị Cloudflare chặn, nên không dùng thẻ đó.
-  Phiên đang chạy là một file ``data/grok_web_cookies.json``, ghi từ
-  Firefox đã đăng nhập trên chính máy này.
-* Hết hạn không tự lấy lại. Gemini gọi ``relogin-via-google``.
-  ``cf_clearance`` của grok.com không đúc lại bằng solver.
-* Không hâm nóng. Mỗi tin mở websocket mới. Gemini giữ ``GeminiClient``
-  ấm trong ``services/web_prewarmer.py``.
+Chat là websocket ``wss://grok.com/ws/mgw/``. Không hâm nóng sẵn client
+như Gemini.
 """
 
 from __future__ import annotations
@@ -36,6 +18,7 @@ import socket
 import ssl
 import struct
 import time
+import urllib.error
 import uuid
 from typing import Any, Iterator
 
@@ -183,17 +166,13 @@ def _file_cookies() -> dict[str, str]:
 
 
 def tai_cookie() -> dict[str, str]:
-    """Hồ sơ solver trước, file cookie sau. Cần có ``sso``."""
-    for profile in _profiles():
-        cookies = _fetch_solver(profile)
-        if cookies.get("sso"):
-            return cookies
+    """Cookie đã thu từ hồ sơ Firefox. Không hỏi Chrome của solver."""
     cookies = _file_cookies()
     if cookies.get("sso"):
         return cookies
     raise RuntimeError(
-        "Chưa có phiên Grok web. Onboard một hồ sơ grok_web, hoặc đặt cookie "
-        "vào data/grok_web_cookies.json")
+        "Chưa có phiên Grok web. Đăng nhập một lần trên Firefox của máy này. "
+        "Cookie sẽ được ghi vào data/grok_web_cookies.json rồi Firefox tự tắt.")
 
 
 def _ws_send(tls, obj: dict) -> None:
@@ -281,8 +260,30 @@ def _loi_event(ev: dict) -> str:
     return code
 
 
+def _la_loi_phien(exc: BaseException) -> bool:
+    if isinstance(exc, urllib.error.HTTPError) and exc.code in (401, 403):
+        return True
+    chu = str(exc)
+    return any(mau in chu for mau in (
+        "từ chối websocket", "user id", "thiếu sso", "Chưa có phiên", "403",
+    ))
+
+
 def stream_chat(prompt: str, mode: str, cookies: dict[str, str] | None = None) -> Iterator[str]:
-    """Sinh từng mảnh chữ. Phiên tạm, không ghi vào lịch sử grok.com."""
+    """Sinh từng mảnh chữ. Hết phiên thì mở lại hồ sơ Firefox một lần."""
+    try:
+        yield from _stream_chat(prompt, mode, cookies)
+        return
+    except Exception as exc:
+        if cookies is not None or not _la_loi_phien(exc):
+            raise
+        from api.grok_firefox import lam_moi
+        lam_moi()
+        yield from _stream_chat(prompt, mode, None)
+
+
+def _stream_chat(prompt: str, mode: str, cookies: dict[str, str] | None) -> Iterator[str]:
+    """Một lượt gửi. Phiên tạm, không ghi vào lịch sử grok.com."""
     cookies = dict(cookies or tai_cookie())
     if not cookies.get("sso"):
         raise RuntimeError("Cookie Grok web thiếu sso")

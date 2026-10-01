@@ -276,6 +276,12 @@ def create_app() -> FastAPI:
             start_web_prewarm()
         except Exception as exc:
             _record_startup_failure("web_prewarmer", str(exc))
+        # Grok: Firefox chỉ mở để lấy cookie. Phiên còn sống thì tắt cho đỡ tốn.
+        try:
+            from api.grok_firefox import start as start_grok_firefox
+            start_grok_firefox()
+        except Exception as exc:
+            _record_startup_failure("grok_firefox", str(exc))
         # Start Cloudflare Tunnel if token configured
         try:
             from services.cloudflare_tunnel import start_tunnel, start_monitor
