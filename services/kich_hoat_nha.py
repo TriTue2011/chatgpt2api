@@ -706,6 +706,8 @@ def _dieu_kien_doc(key: str, nho_hon: bool, nguong: float, ten: dict[str, str]) 
         from services import lich_sinh_hoat as lsh
         m = lsh.tim(key[5:]) or {"ten": key[5:]}
         return f"{'ngoài' if nho_hon else 'đang'} giờ {m['ten']}"
+    if key.startswith(CAM_NHAN):
+        return f"nhiệt độ cảm nhận {key[len(CAM_NHAN):]} {'≤' if nho_hon else '>'} {nguong:.3g}°C"
     if key == PHUT_DA_O:
         return f"{'ở chưa quá' if nho_hon else 'đã ở hơn'} {nguong:.3g} phút"
     if key.startswith(PHUT_TU):
@@ -892,8 +894,36 @@ def _lop(dc: tuple[str, ...]) -> set[str]:
             if (s.get("attributes") or {}).get("device_class") in dc}
 
 
+#: Khoá đặc trưng NHIỆT ĐỘ CẢM NHẬN của một khu (thay cặp nhiệt + ẩm thô).
+CAM_NHAN = "cảm nhận:"
+
+
+def cap_cam_nhan(ma: list[str]) -> list[tuple[str, str, str]]:
+    """(khoá, cảm biến nhiệt, cảm biến ẩm) cho từng khu có CẢ HAI trong ``ma`` — nhận theo `device_class` HA.
+
+    Chủ máy 01/10/2026: "tắt quạt thì liên quan gì độ ẩm và nhiệt độ. Nếu liên quan chỉ là nhiệt độ cảm nhận". Cây
+    nhận nhiệt và ẩm như hai số rời thì bám được trùng hợp (luật tắt quạt «từ 19:28 VÀ độ ẩm > 85,8»); một số cảm
+    nhận là đúng đại lượng người thấy nóng/lạnh."""
+    from services import boi_canh_nha
+
+    nhiet, am = _lop(("temperature",)) & set(ma), _lop(("humidity",)) & set(ma)
+    theo_khu: dict[str, dict[str, str]] = {}
+    for m in sorted(nhiet | am):
+        k = boi_canh_nha.phong_cua(m)
+        if k:
+            theo_khu.setdefault(k, {}).setdefault("t" if m in nhiet else "h", m)
+    return [(CAM_NHAN + k, v["t"], v["h"]) for k, v in sorted(theo_khu.items()) if "t" in v and "h" in v]
+
+
+def nhiet_do_cam_nhan(t: float, rh: float) -> float:
+    """Nhiệt độ cảm nhận (Steadman / BoM, bỏ gió): AT = T + 0,33·e − 4, e = áp suất hơi nước (hPa)."""
+    e = rh / 100 * 6.105 * math.exp(17.27 * t / (237.7 + t))
+    return round(t + 0.33 * e - 4.0, 2)
+
+
 def _dac_trung(luc: float, nguon: str, ds_nguon: list[str],
-               lux: dict[str, tuple[list[float], list[str]]]) -> dict[str, float]:
+               lux: dict[str, tuple[list[float], list[str]]],
+               cam_nhan: list[tuple[str, str, str]] | None = None) -> dict[str, float]:
     """Giờ + nguồn nào (one-hot) + độ sáng CHẶT TRƯỚC lúc đó (`tq._truoc`) + đang ở mục
     nào của lịch sinh hoạt.
 
@@ -913,6 +943,12 @@ def _dac_trung(luc: float, nguon: str, ds_nguon: list[str],
             x[ma] = float(tq._truoc(ts, gt, luc))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             pass
+    for khoa, t, h in cam_nhan or []:
+        # Cặp nhiệt + ẩm của một khu → MỘT số cảm nhận; hai số thô không vào cây nữa.
+        if t in x and h in x:
+            x[khoa] = nhiet_do_cam_nhan(x[t], x[h])
+        x.pop(t, None)
+        x.pop(h, None)
     return x
 
 
@@ -1141,6 +1177,7 @@ def hoc(tb: str) -> dict[str, Any]:
         sk_toan_nha = _su_kien_nguon(ro, tu, den, bo)
         sk = [x for x in sk_toan_nha if x[1].split(" ")[0] in nhi_phan] if nhi_phan else sk_toan_nha
         lux = {m: tq._tuyen(ro, m, "state", tu, den) for m in ma_lux}
+        cam_nhan = cap_cam_nhan(list(lux))
         cho_vang = _hoc_cho_vang(ro, cd, ts_tb, gt_tb, tu, den)
         nhieu = _hoc_nhieu(ro, tb, tu, den) if (cd.get("tat_khi_vang") or {}).get("bat") else {}
         muc = _hoc_muc(ro, tb, tu, den)
@@ -1200,7 +1237,7 @@ def hoc(tb: str) -> dict[str, Any]:
                 y = int(kq == "dung")
             else:
                 y = int(any(t < d <= t + CHO for d in dich[bisect.bisect_right(dich, t):][:3]))
-            mau.append((_dac_trung(t, n, ds_nguon, lux), y, t))
+            mau.append((_dac_trung(t, n, ds_nguon, lux, cam_nhan), y, t))
         for a, b in luot if co_ol else []:
             # Mẫu «ở lại»: bot đã hỏi/làm trong lượt thì câu chủ máy trả lời là nhãn (lấy đúng lúc
             # hỏi); chưa thì lúc lượt đủ ``phut_ol`` — nhãn là người có tự bật trước khi lượt hết.
@@ -1218,7 +1255,7 @@ def hoc(tb: str) -> dict[str, Any]:
                 if any(a <= c < t for c in nguoi):
                     continue        # người đã tự chạm trong lượt — cùng luật lúc sống (`_da_xong_luot`)
                 y = int(any(t <= d <= b for d in bat))
-            mau.append(({**_dac_trung(t, ten_ol, ds_nguon, lux), **_dac_trung_o_lai(t, a, dong_ol)}, y, t))
+            mau.append(({**_dac_trung(t, ten_ol, ds_nguon, lux, cam_nhan), **_dac_trung_o_lai(t, a, dong_ol)}, y, t))
         hoc_ = [(x, y) for x, y, t in mau if t < moc_thu]
         thu = [(x, y) for x, y, t in mau if t >= moc_thu]
         cay = (dung_cay(hoc_, ghim=(cd.get("ghim") or {}).get(hd) or {}) if sum(y for _, y in hoc_) >= NGUON_TOI_THIEU
@@ -1675,7 +1712,7 @@ def xet(tb: str, hd: str, nguon: str, luc: float) -> dict[str, Any]:
     lux = {str(s["entity_id"]): ([luc - 1.0], [str(s.get("state"))]) for s in _trang_thai_ha()
            if (str(s["entity_id"]) in dts if dts is not None
                else (s.get("attributes") or {}).get("device_class") == "illuminance")}
-    x = _dac_trung(luc, nguon, list(mh["nguon"]), lux)
+    x = _dac_trung(luc, nguon, list(mh["nguon"]), lux, cap_cam_nhan(list(lux)))
     if o_lai:
         o = _o_lai_luc(tb, luc)
         if o is None:

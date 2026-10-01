@@ -1399,3 +1399,24 @@ def test_chu_may_ghim_nguong_cay_giu_dung_so(kh):
                 {"on": {"lịch:ngu": 1}}):
         with pytest.raises(ValueError):
             kh._kiem_ghim(sai)
+
+
+def test_nhiet_do_cam_nhan_thay_cap_nhiet_am_tho(kh, monkeypatch):
+    """01/10/2026, chủ máy: "tắt quạt thì liên quan gì độ ẩm và nhiệt độ. Nếu liên quan chỉ là nhiệt độ cảm nhận" —
+    cây bám trùng hợp «độ ẩm > 85,8». Khu có cả nhiệt + ẩm (theo device_class) → một số cảm nhận, bỏ hai số thô."""
+    from services import boi_canh_nha
+    tt = [{"entity_id": "sensor.t_pk", "state": "30", "attributes": {"device_class": "temperature"}},
+          {"entity_id": "sensor.h_pk", "state": "80", "attributes": {"device_class": "humidity"}},
+          {"entity_id": "sensor.t_bc", "state": "28", "attributes": {"device_class": "temperature"}},
+          {"entity_id": "sensor.lux", "state": "5", "attributes": {"device_class": "illuminance"}}]
+    monkeypatch.setattr(kh, "_trang_thai_ha", lambda: tt)
+    monkeypatch.setattr(boi_canh_nha, "phong_cua", lambda m: "Ban công" if m.endswith("_bc") else "Phòng khách")
+    cap = kh.cap_cam_nhan(["sensor.t_pk", "sensor.h_pk", "sensor.t_bc", "sensor.lux"])
+    assert cap == [("cảm nhận:Phòng khách", "sensor.t_pk", "sensor.h_pk")], "ban công thiếu ẩm: giữ nhiệt thô"
+    lux = {m: ([0.0], [s]) for m, s in (("sensor.t_pk", "30"), ("sensor.h_pk", "80"), ("sensor.t_bc", "28"),
+                                          ("sensor.lux", "5"))}
+    x = kh._dac_trung(100.0, "n", ["n"], lux, cap)
+    assert "sensor.t_pk" not in x and "sensor.h_pk" not in x and x["sensor.t_bc"] == 28.0 and x["sensor.lux"] == 5.0
+    assert 36 < x["cảm nhận:Phòng khách"] < 40               # 30 °C, 80% — oi hơn nhiều so với 30 °C khô
+    assert kh.nhiet_do_cam_nhan(30, 30) < kh.nhiet_do_cam_nhan(30, 80)
+    assert kh._dieu_kien_doc("cảm nhận:Phòng khách", True, 31.5, {}) == "nhiệt độ cảm nhận Phòng khách ≤ 31.5°C"
