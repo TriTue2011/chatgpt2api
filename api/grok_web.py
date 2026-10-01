@@ -374,7 +374,21 @@ def _stream_chat(prompt: str, mode: str, cookies: dict[str, str], anh: list[str]
                     anh.append(url)
                 if isinstance(ev.get("chunk"), dict) and "render_start" in ev["chunk"]:
                     bat_dau_ve = True
+            if kind == "response.grok.output":
+                # Đo 02/10/2026: hết lượt thì Grok gửi `output.stream_error` (usage_limit_reached …) rồi kết thúc lượt
+                # «incomplete» — bỏ qua thì người dùng nhận nửa câu như đã xong («3+4» → «5», «12 nhân 3» → «12»).
+                out = ev.get("output") if isinstance(ev.get("output"), dict) else {}
+                loi_luong = out.get("stream_error") if isinstance(out.get("stream_error"), dict) else None
+                if loi_luong:
+                    raise RuntimeError(f"Grok web: {loi_luong.get('kind') or 'stream_error'}: "
+                                       f"{str(loi_luong.get('message') or '')[:160]}")
             if kind == "response.done":
+                resp = ev.get("response") if isinstance(ev.get("response"), dict) else {}
+                trang_thai = str(resp.get("status") or "completed")
+                if trang_thai != "completed":
+                    ly_do = (resp.get("status_details") or {}).get("reason") if isinstance(
+                        resp.get("status_details"), dict) else ""
+                    raise RuntimeError(f"Grok web dừng giữa câu trả lời: {trang_thai} ({ly_do or 'không rõ'})")
                 if anh is not None and bat_dau_ve and not anh:
                     # Đo 02/10/2026: vẽ liền nhiều lần thì có lượt Grok mở khung vẽ rồi kết thúc không ảnh, không mã lỗi.
                     raise RuntimeError("Grok nhận lệnh vẽ nhưng không trả ảnh — tài khoản có thể đã hết lượt vẽ")

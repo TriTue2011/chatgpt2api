@@ -67,7 +67,10 @@ class _SockGia:
 
 
 def _khung(opcode: int, payload: bytes, fin: bool = True) -> bytes:
-    return bytes([(0x80 if fin else 0) | opcode, len(payload)]) + payload
+    """Khung máy chủ → client (RFC 6455): độ dài 7 bit, hoặc 126 + 16 bit khi dài hơn."""
+    dau = bytes([(0x80 if fin else 0) | opcode])
+    n = len(payload)
+    return dau + (bytes([n]) if n < 126 else bytes([126]) + n.to_bytes(2, "big")) + payload
 
 
 class WebsocketTests(unittest.TestCase):
@@ -190,3 +193,44 @@ class AnhTests(unittest.TestCase):
         r = BackendRouter().route("grok/imagine")
         self.assertEqual((r.provider, r.is_image), ("grok_web", True))
         self.assertEqual(classify_model_capability("grok/imagine"), ["image"])
+
+
+class KetThucDoDangTests(unittest.TestCase):
+    """Đo 02/10/2026: tài khoản hết lượt → Grok gửi stream_error rồi response.done «incomplete»; mã cũ trả nửa câu
+    như đã xong («3+4» → «5»)."""
+
+    def _chay(self, su_kien):
+        import json as _j
+
+        khung = b"".join(_khung(1, _j.dumps({"event": e}).encode()) for e in su_kien)
+        dau = (b"HTTP/1.1 101 Switching Protocols\r\n\r\n")
+        sock = _SockGia([dau, khung])
+        with mock.patch.object(gw.socket, "create_connection", return_value=sock), \
+                mock.patch.object(gw.ssl, "create_default_context") as ctx, \
+                mock.patch.object(gw, "_user_id", return_value="u1"):
+            ctx.return_value.wrap_socket.return_value = sock
+            sock.settimeout = lambda *_: None
+            sock.close = lambda: None
+            return list(gw._stream_chat("p", "fast", {"sso": "x"}))
+
+    MO = [{"type": "session.created", "client_event_id": ""}, {"type": "conversation.attached", "conversation": {"id": "c"}}]
+
+    def test_het_luot_bao_loi_khong_tra_nua_cau(self):
+        ev = self.MO + [{"type": "response.chunk", "chunk": {"text": {"text": "5"}}},
+                        {"type": "response.grok.output", "output": {"stream_error": {
+                            "kind": "usage_limit_reached", "message": "You've reached your usage limit."}}},
+                        {"type": "response.done", "response": {"status": "incomplete",
+                                                               "status_details": {"reason": "stream_error"}}}]
+        with self.assertRaises(RuntimeError) as e:
+            self._chay(ev)
+        self.assertIn("usage_limit_reached", str(e.exception))
+
+    def test_ket_thuc_khong_completed_cung_bao_loi(self):
+        with self.assertRaises(RuntimeError):
+            self._chay(self.MO + [{"type": "response.done", "response": {"status": "incomplete"}}])
+
+    def test_completed_tra_du_chu(self):
+        ev = self.MO + [{"type": "response.chunk", "chunk": {"text": {"text": "3"}}},
+                        {"type": "response.chunk", "chunk": {"text": {"text": "6"}}},
+                        {"type": "response.done", "response": {"status": "completed"}}]
+        self.assertEqual("".join(self._chay(ev)), "36")
