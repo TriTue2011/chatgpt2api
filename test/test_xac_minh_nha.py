@@ -152,3 +152,28 @@ def test_thiet_bi_nguy_hiem_khong_tu_xac_minh_de_tu_lam(kh, xmn):
     _ap(xmn, gia_tri={**BAI_TAT, "bat": {**BAI_TAT["bat"], "hoi": "luon"}})
     assert kh._xac_minh_truoc_hoi(DEN, "on", f"{NGU} có người vào", 0.0) is None
     assert kh._xac_minh_truoc_hoi(DEN, "off", f"{NGU} vắng", 0.0) is None
+
+
+def test_radar_ghep_voi_khoang_cach_cua_chinh_no(kh, xmn, monkeypatch, tmp_path):
+    """Radar phòng khách báo vì người đứng bếp (khoảng cách ngoài vùng) thì không tính là có người."""
+    from services import ha_client, vung_khoang_cach as vk
+    vk._reset_for_tests(tmp_path / "vk.json")
+    vk._nap()["sensor.kc"] = {"radar": NGU, "dat": True, "huong": "duoi", "nguong": 3.66}
+    tt = {x["entity_id"]: dict(x) for x in TT}
+    tt[NGU]["state"] = "on"
+    tt["sensor.kc"] = {"entity_id": "sensor.kc", "state": "4.5"}
+    monkeypatch.setattr(kh, "_trang_thai_ha", lambda: list(tt.values()))
+    monkeypatch.setattr(ha_client, "get_state", lambda e: tt.get(e))
+    assert xmn.xac_minh([NGU], "Phòng ngủ")[0] is False
+    tt["sensor.kc"]["state"] = "2.5"
+    assert xmn.xac_minh([NGU], "Phòng ngủ")[0] is True
+    tt["sensor.kc"]["state"] = "0"
+    assert xmn.xac_minh([NGU], "Phòng ngủ")[0] is True, "không đo được khoảng cách: tin radar"
+    vk._reset_for_tests(tmp_path / "vk.json")
+
+
+def test_nguy_hiem_dung_dau_vao_cua_chot_luc_chay():
+    """«Đèn CỬA sổ» không phải khoá cửa: đề phải nhận thiết bị nguy hiểm bằng ĐÚNG đầu vào chốt lúc chạy dùng."""
+    from services import du_doan_nha as dd, kich_hoat_nha as kh_
+    assert not dd._cam_tu_lam(kh_._ten_tt("light.phong_khach_l1", "on"))
+    assert dd._cam_tu_lam(kh_._ten_tt("switch.binh_nong_lanh", "on"))

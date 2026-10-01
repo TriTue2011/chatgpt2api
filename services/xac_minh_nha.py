@@ -219,7 +219,9 @@ def do(tb: str) -> dict[str, Any]:
             ket_qua.append(f"14 ngày: hỏi {ten_hd} {len(hoi)} lần, không ai trả lời "
                            f"{sum(x[1].startswith('lo') for x in hoi)}")
     return {"tb": tb, "khu": khu, "loai_tb": tb.split(".")[0], "noi": "",
-            "nguy_hiem": dd._cam_tu_lam(f"{tb} {ten.get(tb, '')}"), "nguon": nguon, "camera": camera,
+            # ĐÚNG đầu vào chốt lúc chạy dùng (`kich_hoat_nha._ten_tt`): đưa cả tên thân thiện vào thì «Đèn CỬA sổ»
+            # khớp «cua» (khoá cửa) — đo 01/10/2026, bài đèn cửa sổ thành «luôn hỏi» vì đề ghi NGUY HIỂM.
+            "nguy_hiem": dd._cam_tu_lam(kh._ten_tt(tb, "on")), "nguon": nguon, "camera": camera,
             "lich": lich_sinh_hoat.doc_cho_bot(), "ket_qua": ket_qua, "so_do": so_do_nha.doan_de(khu),
             "ten_tb": ten.get(tb, tb)}
 
@@ -301,9 +303,13 @@ def xac_minh(nguon: list[str], khu: str) -> tuple[bool | None, str]:
             if v is False:
                 da_xem.append(m)
         elif m.startswith("binary_sensor."):
-            if tt.get(m) == "on":
+            # Radar đã học vùng khoảng cách: «có người» chỉ tính khi khoảng cách của CHÍNH nó không cho thấy người
+            # đứng ngoài vùng — không thì người ở bếp làm radar phòng khách giữ đèn (đúng thứ khoảng cách để loại).
+            ngoai = any(vung_khoang_cach.vi_tri(d, (ha_client.get_state(d) or {}).get("state")) is False
+                        for d, v in vung_khoang_cach.ds().items() if v.get("radar") == m and v.get("dat"))
+            if tt.get(m) == "on" and not ngoai:
                 return True, f"{m} báo có người"
-            if tt.get(m) == "off":
+            if tt.get(m) == "off" or ngoai:
                 da_xem.append(m)
     return (False, "không nguồn nào thấy người: " + ", ".join(da_xem)) if da_xem else (None, "không nguồn nào nhìn được")
 
