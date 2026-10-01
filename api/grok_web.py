@@ -334,6 +334,7 @@ def _stream_chat(prompt: str, mode: str, cookies: dict[str, str], anh: list[str]
         attached = False
         sent = False
         session_id = ""
+        bat_dau_ve = False
         # Hạn tính từ lần CUỐI có dữ liệu, không phải từ lúc mở: hạn cứng 45 giây cũ cắt câu trả lời dài (expert,
         # heavy) rồi trả phần dở như đã xong.
         deadline = time.time() + _IM_TOI_DA
@@ -371,7 +372,12 @@ def _stream_chat(prompt: str, mode: str, cookies: dict[str, str], anh: list[str]
                 url = _anh_xong(ev)
                 if url and url not in anh:
                     anh.append(url)
+                if isinstance(ev.get("chunk"), dict) and "render_start" in ev["chunk"]:
+                    bat_dau_ve = True
             if kind == "response.done":
+                if anh is not None and bat_dau_ve and not anh:
+                    # Đo 02/10/2026: vẽ liền nhiều lần thì có lượt Grok mở khung vẽ rồi kết thúc không ảnh, không mã lỗi.
+                    raise RuntimeError("Grok nhận lệnh vẽ nhưng không trả ảnh — tài khoản có thể đã hết lượt vẽ")
                 return
             if created and attached and not sent and session_id:
                 sent = True

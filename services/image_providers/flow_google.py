@@ -64,6 +64,7 @@ so future models work without code changes.
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from typing import Any
@@ -337,11 +338,23 @@ def _next_account(exclude: set[str] | None = None) -> dict[str, Any] | None:
         return None
 
 
+#: Lỗi HẾT NGẠCH / bị giới hạn tốc độ — khớp theo TỪ. Trước đây khớp chuỗi con `"rate" in text`, mà «rate» nằm sẵn
+#: trong «gene*rate*», «mode*rate*», «accu*rate*»: một lỗi kiểu "failed to generate image" là đủ cho tài khoản nghỉ 1 giờ.
+_HET_NGACH_RE = re.compile(r"\b(quota|rate[ _-]?limit(?:ed)?|resource[ _]exhausted|usage[ _]limit|too many requests)\b",
+                           re.IGNORECASE)
+
+
+def _la_het_ngach(status: int, text: str) -> bool:
+    return status == 429 or bool(_HET_NGACH_RE.search(str(text or "")))
+
+
 def _mark_quota_exhausted(account: dict[str, Any]) -> None:
     cooldown_s = _cooldown_seconds()
     with _pool_lock:
         key = _account_key(account)
-        _account_state.setdefault(key, {})["cooldown_until"] = time.time() + cooldown_s
+        st = _account_state.setdefault(key, {})
+        st["cooldown_until"] = time.time() + cooldown_s
+        st["ly_do"] = "hết ngạch / bị giới hạn tốc độ"
     logger.warning({"event": "flow_account_cooldown", "account": account.get("label"),
                     "cooldown_s": cooldown_s})
 
@@ -361,8 +374,25 @@ def _tam_nghi_ca_nhom(ly_do: str) -> None:
     with _pool_lock:
         for acc in _accounts():
             st = _account_state.setdefault(_account_key(acc), {})
-            st["cooldown_until"] = max(float(st.get("cooldown_until") or 0), den)
+            if den > float(st.get("cooldown_until") or 0):
+                st["cooldown_until"] = den
+                st["ly_do"] = "Google gắn cờ hoạt động bất thường cho cả nhóm"
     logger.warning({"event": "flow_ca_nhom_tam_nghi", "ly_do": ly_do, "giay": giay})
+
+
+def _mo_ta_dang_nghi() -> str:
+    """Vì sao và còn bao lâu cả nhóm nghỉ — đọc từ trạng thái thật. Trước đây câu báo luôn ghi «cooldown 3600s» kể cả khi
+    cả nhóm đang nghỉ 6 giờ vì cờ «hoạt động bất thường» (thấy 3 lần trong runs 30/09–01/10)."""
+    now = time.time()
+    with _pool_lock:
+        st = [_account_state.get(_account_key(a)) or {} for a in _accounts()]
+    con = [(float(x.get("cooldown_until") or 0) - now, str(x.get("ly_do") or "lượt thất bại trước")) for x in st]
+    con = [c for c in con if c[0] > 0]
+    if not con:
+        return ""
+    giay, _ = min(con)
+    ly_do = "; ".join(sorted({c[1] for c in con}))
+    return f"còn ~{max(1, round(giay / 60))} phút nữa tài khoản đầu tiên mới được dùng lại ({ly_do})"
 
 
 def _reorder_flow_account(account: dict[str, Any], to_front: bool) -> None:
@@ -531,7 +561,16 @@ class FlowImageAdapter(BaseImageAdapter):
     ) -> dict[str, str]:
         cfg = _pool_config()
         api_key = str(cfg.get("captcha_solver_api_key") or "")
-        account = (credentials or {}).get("_flow_account") or _next_account()
+        account = (credentials or {}).get("_flow_account")
+        if account is None and credentials is None:
+            account = _next_account()        # gọi lẻ ngoài vòng thử của dispatcher
+        elif account is None and _next_account() is not None:
+            # Vòng thử của dispatcher đã đi hết các tài khoản còn dùng được trong lượt này. Trước đây rơi về
+            # `_next_account()` KHÔNG loại trừ — chọn lại đúng tài khoản vừa hỏng (mỗi lần tới 280 giây).
+            da_thu = len(self._tried_by_req.get(id(credentials), ()))
+            raise RuntimeError(
+                f"đã thử hết {da_thu} tài khoản Google Flow còn dùng được trong lượt này mà đều lỗi — "
+                "xem lỗi của từng lần thử ở trên.")
         if account:
             request_body["project_id"] = account["project_id"]
             request_body["profile"] = account["profile"]
@@ -565,9 +604,8 @@ class FlowImageAdapter(BaseImageAdapter):
             so_tk = len(_accounts())
             if so_tk:
                 raise RuntimeError(
-                    f"cả {so_tk} tài khoản Google Flow đang trong thời gian nghỉ "
-                    f"(cooldown {_cooldown_seconds()}s sau lượt thất bại trước). "
-                    "Chờ hết cooldown hoặc thêm tài khoản dự phòng."
+                    f"cả {so_tk} tài khoản Google Flow đang nghỉ — {_mo_ta_dang_nghi() or 'vừa hết giờ nghỉ, thử lại'}. "
+                    "Chờ hết giờ nghỉ hoặc thêm tài khoản dự phòng."
                 )
             raise RuntimeError(
                 "no Google Flow accounts configured. "
@@ -591,13 +629,7 @@ class FlowImageAdapter(BaseImageAdapter):
             except Exception:
                 pass
             lower = text.lower()
-            # Common Flow quota / rate signals.
-            if (
-                "quota" in lower
-                or "rate" in lower
-                or "usage_limit" in lower
-                or response.status_code == 429
-            ):
+            if _la_het_ngach(response.status_code, lower):
                 # The credentials carry the account we just used.
                 account = (
                     (response.request._flow_account if hasattr(response.request, "_flow_account") else None)
@@ -675,7 +707,7 @@ class FlowImageAdapter(BaseImageAdapter):
         # gọi parse_response, nên nhánh _mark_quota_exhausted() trong đó
         # không bao giờ chạy tới. Đặt cooldown ở đây để tài khoản hết hạn
         # ngạch không bị hot-retry mỗi request (đốt ~60s hydration timeout).
-        if status == 429 or "quota" in low or "rate" in low or "usage_limit" in low:
+        if _la_het_ngach(status, low):
             _mark_quota_exhausted(account)
         # "account nào lỗi bị đẩy xuống cuối" — demote on any account-health
         # failure (logout, browser crash, hydration timeout, 5xx) so a
