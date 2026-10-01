@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 import { docTien, dong, gui, lay, type TongQuan } from "../lib";
+import { BieuDoChiTieu } from "./bieu-do";
 
 function Thanh({ phan_tram }: { phan_tram: number }) {
   const mau = phan_tram >= 100 ? "bg-rose-500" : phan_tram >= 80 ? "bg-amber-500" : "bg-emerald-500";
@@ -59,6 +60,8 @@ export function TongQuanTab({ tq, taiLai }: { tq: TongQuan; taiLai: () => Promis
           onKeyDown={(e) => e.key === "Enter" && void them()} />
         <Button size="sm" onClick={() => void them()}><Plus className="mr-1 size-4" /> Ghi</Button>
       </div>
+
+      <BieuDoChiTieu tq={tq} />
 
       <div className="space-y-2">
         {n.hu.map((h) => (
