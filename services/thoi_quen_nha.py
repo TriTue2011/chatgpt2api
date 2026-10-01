@@ -264,6 +264,15 @@ def _kieu_khoang_cach(ma: str) -> str:
     return s
 
 
+def _radar_cua(ma: str) -> dict[str, str]:
+    """Số đo là khoảng cách người tới một radar: radar nào và vùng khu đã học — để đề bày vùng và bộ kiểm
+    tính cặp radar + khoảng cách của nó là MỘT ý «có người trong khu»."""
+    from services import vung_khoang_cach
+
+    v = vung_khoang_cach.ds().get(ma)
+    return {"radar": str(v["radar"]), "vung": _kieu_khoang_cach(ma)} if v else {}
+
+
 def _co_trong(ds_tang: list[float], a: float, b: float) -> bool:
     i = bisect.bisect_left(ds_tang, a)
     return i < len(ds_tang) and ds_tang[i] <= b
@@ -565,7 +574,8 @@ def do_thoi_quen(ro: sqlite3.Connection, ma: str, ngoai_vi: list[dict[str, Any]]
             kieu = kieu or k
             gia_tri.update(thay)
         nv[str(x["ma"])] = {"ten": str(x.get("ten") or x["ma"]), "vai_tro": str(x.get("vai_tro") or ""),
-                            "kieu": kieu or "chưa đo được", "gia_tri": sorted(gia_tri), **cot}
+                            "kieu": kieu or "chưa đo được", "gia_tri": sorted(gia_tri), **cot,
+                            **_radar_cua(str(x["ma"]))}
     return {"ma": ma, "o_bat": len(co_bat), "o_tat": len(co_tat),
             "nen_bat": len(nen_bat), "nen_tat": len(nen_tat),
             "thoi_gian_bat": _dong_thoi_gian(co_bat, nen_bat),
@@ -596,6 +606,9 @@ def de_thoi_quen(do: dict[str, Any], dau: list[str], pham_vi: str) -> str:
         dong.append("mã | tên | vai trò | kiểu | lúc bật | nền bật | lúc tắt | nền tắt")
         dong += [f"{ma} | {x['ten']} | {x['vai_tro']} | {x['kieu']} | {x['bat']} | "
                  f"{x['nen_bat']} | {x['tat']} | {x['nen_tat']}" for ma, x in do["ngoai_vi"].items()]
+        kc = [f"- {ma}: {x['vung']}" for ma, x in do["ngoai_vi"].items() if x.get("vung")]
+        if kc:
+            dong += ["\nKHOẢNG CÁCH TỚI RADAR (vùng khu):"] + kc
     else:
         dong.append("\nNGOẠI VI: chưa chọn ngoại vi nào — chỉ đọc được giờ giấc.")
     return "\n".join(dong)
@@ -606,7 +619,7 @@ def _la_con_so(x: Any) -> bool:
 
 
 def _kiem_dieu_kien(ds: Any, do: dict[str, Any]) -> list[dict[str, Any]] | str:
-    if not isinstance(ds, list) or len(ds) > _TOI_DA_DIEU_KIEN_THOI_QUEN:
+    if not isinstance(ds, list) or len(ds) > 2 * _TOI_DA_DIEU_KIEN_THOI_QUEN:
         return f"dieu_kien phải là danh sách tối đa {_TOI_DA_DIEU_KIEN_THOI_QUEN} mục"
     ra: list[dict[str, Any]] = []
     for x in ds:
@@ -641,6 +654,11 @@ def _kiem_dieu_kien(ds: Any, do: dict[str, Any]) -> list[dict[str, Any]] | str:
         if dk["ma"] != "gio" and any(y["ma"] == dk["ma"] for y in ra):
             return f"mã lặp: {ma!r}"
         ra.append(dk)
+    # Radar và khoảng cách của CHÍNH nó là một ý «có người trong khu» — cặp đó tính một điều kiện.
+    co = {y["ma"] for y in ra}
+    cap = sum(1 for y in ra if (do["ngoai_vi"].get(y["ma"]) or {}).get("radar") in co)
+    if len(ra) - cap > _TOI_DA_DIEU_KIEN_THOI_QUEN:
+        return f"dieu_kien phải là danh sách tối đa {_TOI_DA_DIEU_KIEN_THOI_QUEN} mục"
     return ra
 
 

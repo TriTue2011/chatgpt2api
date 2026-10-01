@@ -148,6 +148,36 @@ class DocThoiQuenTest(unittest.TestCase):
                 self.assertIsInstance(self.tq.kiem_thoi_quen(self._bai(bat), self.DO), str)
         self.assertIsInstance(self.tq.kiem_thoi_quen({"bat": {"dieu_kien": []}}, self.DO), str)
 
+    def test_cap_radar_va_KHOANG_CACH_cua_no_tinh_MOT_dieu_kien(self) -> None:
+        do = {"ngoai_vi": {**self.DO["ngoai_vi"],
+                           "sensor.kc": {"kieu": "số đo", "gia_tri": [], "radar": "binary_sensor.p"}}}
+        hai_gio = [{"ma": "gio", "tu": "06:00", "den": "12:00"}, {"ma": "gio", "tu": "15:00", "den": "24:00"}]
+        kq = self.tq.kiem_thoi_quen(self._bai([{"ma": "binary_sensor.p", "la": "on"},
+                                               {"ma": "sensor.kc", "duoi": 3.66}, *hai_gio]), do)
+        self.assertEqual(len(kq["bat"]["dieu_kien"]), 4)
+        bon = [{"ma": "binary_sensor.p", "la": "on"}, {"ma": "sensor.lux", "duoi": 30}, *hai_gio]
+        self.assertIsInstance(self.tq.kiem_thoi_quen(self._bai(bon), do), str, "ngoài cặp radar thì vẫn tối đa 3")
+        le = [{"ma": "sensor.kc", "duoi": 3.66}, {"ma": "sensor.lux", "duoi": 30}, *hai_gio]
+        self.assertIsInstance(self.tq.kiem_thoi_quen(self._bai(le), do), str, "khoảng cách không kèm radar thì không được miễn")
+
+    def test_de_bay_VUNG_KHU_cua_khoang_cach_toi_radar(self) -> None:
+        from services import vung_khoang_cach
+        g = _GOC
+        self._sk("light.a", "off", g - 10)
+        self._sk("sensor.kc", "2.1", g + 30)
+        self._sk("light.a", "on", g + 60)
+        ro = self._ro()
+        tu, den = g - 60, g + _O
+        vung = {"sensor.kc": {"radar": "binary_sensor.p", "khu": "Phòng khách", "don_vi": "m", "dat": True,
+                              "huong": "duoi", "nguong": 3.66}}
+        with mock.patch.object(vung_khoang_cach, "ds", return_value=vung):
+            do = self.tq.do_thoi_quen(ro, "light.a", [{"ma": "sensor.kc", "ten": "Khoảng cách", "vai_tro": "khoang_cach"}],
+                                      tu=tu, den=den, o_nha=self.tq._o_nha(ro, tu, den))
+        self.assertEqual(do["ngoai_vi"]["sensor.kc"]["radar"], "binary_sensor.p")
+        de = self.tq.de_thoi_quen(do, ["THIẾT BỊ: light.a"], "x")
+        self.assertIn("KHOẢNG CÁCH TỚI RADAR", de)
+        self.assertIn("người trong khu khi ≤ 3.66 m", de)
+
     # ── lưu sổ và đọc lại ──────────────────────────────────────────────────
     def _ket_luan(self, **doi) -> dict:
         k = {"ma_hoc": "switch.bep_left", "chac": 0.8, "vi_sao": "có người thì bật",

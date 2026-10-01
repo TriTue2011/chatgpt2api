@@ -43,6 +43,14 @@ phần đã đúng, đừng kết luận lại như cũ.
     là cả bài bị loại);
   - ngày: `{"ma": "ngay", "la": "thuong"}` hoặc `"cuoi_tuan"`;
   - mùa: `{"ma": "mua", "la": "nong"}` — `lanh` | `chuyen` | `nong`.
+- Radar hiện diện làm điều kiện mà đề có mục KHOẢNG CÁCH TỚI RADAR cho chính
+  radar đó thì LUÔN ghi kèm điều kiện khoảng cách theo vùng khu (`{"ma": "<mã
+  khoảng cách>", "duoi": <số vùng>}` hoặc `"tren"` — chép đúng chiều và số của
+  vùng): radar thấy cả người ở khu bên cạnh, khoảng cách mới nói người ở TRONG
+  khu này. Cặp radar + khoảng cách của nó tính là MỘT điều kiện. Không bỏ cặp
+  này để lấy chỗ cho điều kiện khác — dù lúc bật/tắt số khoảng cách không khác
+  nền. Chiều tắt: tắt tay thì người luôn có mặt, đừng lấy «có người» làm điều
+  kiện tắt; tắt khi vắng là việc của bài «có người thật».
 - Bật/tắt gần như LUÔN trùng một ngoại vi thì vẫn ghi điều kiện đó, và `vi_sao`
   nói "có vẻ do tự động hóa".
 - Không thấy thói quen rõ thì `dieu_kien` rỗng, `thoi_quen` nói vì sao.
