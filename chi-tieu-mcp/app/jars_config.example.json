@@ -1,0 +1,13 @@
+{
+  "thu_nhap_thuc_linh_thang": 10000000,
+  "hu": [
+    {"ma": "thiet_yeu", "ten": "Thiết Yếu", "ty_le_phan_tram": 55},
+    {"ma": "gia_dinh", "ten": "Gia Đình & Cho Đi", "ty_le_phan_tram": 5},
+    {"ma": "hoc_tap", "ten": "Học Tập", "ty_le_phan_tram": 10},
+    {"ma": "du_phong", "ten": "Dự Phòng & Tiết Kiệm", "ty_le_phan_tram": 10},
+    {"ma": "huong_thu", "ten": "Hưởng Thụ", "ty_le_phan_tram": 10},
+    {"ma": "tu_do_tai_chinh", "ten": "Tự Do Tài Chính", "ty_le_phan_tram": 10}
+  ],
+  "nguong_canh_bao": [0.65, 0.8, 1.0],
+  "ngay_bat_dau_chu_ky": 1
+}

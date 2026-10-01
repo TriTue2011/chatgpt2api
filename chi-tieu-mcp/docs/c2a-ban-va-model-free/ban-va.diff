@@ -1,0 +1,343 @@
+diff --git a/services/mcp_client.py b/services/mcp_client.py
+index dee3169..9807bc0 100644
+--- a/services/mcp_client.py
++++ b/services/mcp_client.py
+@@ -2005,6 +2005,32 @@ def get_relevant_mcp_tools(query: str, _relevant_messages: list | None = None) -
+     return selected or _generic()
+ 
+ 
++# ── chi-tieu-bot (ngân sách cá nhân JARS 6 hũ, MCP riêng cổng 8801) ─────────
++# Bản vá tại chỗ 25/09/2026: ChatGPT Free có trần payload ~42 KB, nên tin chi
++# tiêu gửi model free chỉ kèm tool của RIÊNG server này (11 tool ≈12,8 KB) —
++# get_relevant_mcp_tools trả mọi tool external + generic (57-73 tool), vượt
++# trần. Nhận server theo id/tên đã bỏ dấu (tên hiện tại: "Chi tiêu bot").
++def _is_expense_server(server: dict[str, Any]) -> bool:
++    import unicodedata
++    ident = " ".join(str(server.get(k) or "") for k in ("id", "name")).lower()
++    ident = "".join(c for c in unicodedata.normalize("NFD", ident)
++                    if unicodedata.category(c) != "Mn").replace("đ", "d")
++    ident = ident.replace("-", " ").replace("_", " ")
++    return "chi tieu" in ident or "chitieu" in ident
++
++
++def get_expense_mcp_tools() -> list[dict[str, Any]]:
++    """Tool (đúng tên đã expose) của server chi-tieu-bot đang bật; [] nếu không có."""
++    servers = [s for s in _configured_servers()
++               if s.get("enabled", True) and s.get("url") and _is_expense_server(s)]
++    if not servers:
++        return []
++    all_tools = get_enabled_mcp_tools()
++    keys = {_session_key(*_connection_options(s), s.get("oauth_id", "")) for s in servers}
++    names = {name for name, route in _tool_routes.items() if route[0] in keys}
++    return [t for t in all_tools if (t.get("function") or {}).get("name") in names]
++
++
+ def query_has_specialized_mcp(query: str) -> bool:
+     """True if the query matches a dedicated MCP server (weather/gold/stock/
+     news/law/lunar…). Caller skips the slow web-search injection and lets the
+diff --git a/services/protocol/openai_v1_chat_complete.py b/services/protocol/openai_v1_chat_complete.py
+index 304f0ac..988dd79 100644
+--- a/services/protocol/openai_v1_chat_complete.py
++++ b/services/protocol/openai_v1_chat_complete.py
+@@ -3693,9 +3693,17 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
+                     except Exception:
+                         payload_bytes = 0
+                     if payload_bytes > 42_000:
+-                        logger.info({"event": "combo_skip_free_oversized", "bytes": payload_bytes, "model": route.model})
+-                        last_error = "payload exceeds ChatGPT Free 45KB limit"
+-                        continue
++                        # Tin chi tiêu: rút về đúng tool chi-tieu-bot thay vì bỏ
++                        # qua cgf — bản vá tại chỗ 25/09/2026, xem _trim_free_expense_tools.
++                        _rut = _trim_free_expense_tools(tools_with_mcp, messages_for_route, original_user_text)
++                        if _rut is None:
++                            logger.info({"event": "combo_skip_free_oversized", "bytes": payload_bytes, "model": route.model})
++                            last_error = "payload exceeds ChatGPT Free 45KB limit"
++                            continue
++                        logger.info({"event": "combo_free_expense_trimmed", "bytes": payload_bytes,
++                                     "bytes_after": _free_payload_bytes(messages_for_route, _rut),
++                                     "tools": len(_rut), "model": route.model})
++                        tools_with_mcp = _rut
+ 
+                 logger.info({
+                     "event": "combo_try",
+@@ -3710,7 +3718,17 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
+                     ),
+                 })
+ 
+-                result = _dispatch(route, messages_for_route, tools_with_mcp, tool_choice, body)
++                # Bản vá tại chỗ 25/09/2026: lượt gọi tiếp sau khi chạy tool dùng lại
++                # đúng bộ tool này (xem _stash_free_expense_tools / _followup_tools).
++                # v3: tin ghi chi ngắn có số tiền → chỉ tool chi-tieu-bot + bắt buộc gọi.
++                _ep_ghi = _free_expense_bat_buoc(route, tools_with_mcp, original_user_text, tool_choice)
++                if _ep_ghi:
++                    tools_with_mcp = _ep_ghi
++                _stash_free_expense_tools(body, route, tools_with_mcp, original_user_text)
++                if _ep_ghi:
++                    result = _dispatch_free_expense(route, messages_for_route, tools_with_mcp, tool_choice, body)
++                else:
++                    result = _dispatch(route, messages_for_route, tools_with_mcp, tool_choice, body)
+                 # Execute MCP tools server-side for combo too
+                 if not isinstance(result, dict):
+                     result = _wrap_mcp_stream(result, messages_for_route, route, body)
+@@ -4645,7 +4663,9 @@ def _execute_mcp_tools_in_response(
+             }
+ 
+         # Re-dispatch with updated messages
+-        tools = _inject_mcp_tools(body.get("tools"), is_free_model=(route.provider == "chatgpt_free"), messages=current_messages,
++        tools = _followup_tools(body, route, current_messages)  # bản vá tại chỗ 25/09/2026
++        if tools is None:
++            tools = _inject_mcp_tools(body.get("tools"), is_free_model=(route.provider == "chatgpt_free"), messages=current_messages,
+                                   no_smart_home=_thread_denies(body, "homeassistant"),
+                                   no_server_admin=_thread_denies(body, "server"))
+         try:
+@@ -6762,6 +6782,217 @@ def _is_smarthome_query(text: str) -> bool:
+     return any(_co_tu(t, v) for v in _CONTROL_VERBS) or any(_co_tu(t, n) for n in _HOME_NOUNS)
+ 
+ 
++# Từ khoá + mẫu số tiền nhận diện câu hỏi/lệnh liên quan chi-tieu-bot (ngân
++# sách cá nhân JARS 6 hũ, MCP server riêng, cổng 8801) — cùng lý do
++# _is_smarthome_query: free model bị is_free_model gate (dưới) chặn hết tool,
++# câu này cần lọt qua exemption mới gọi được ghi_chi_tieu/xem_ngan_sach/...
++# Khác smarthome (luôn có danh từ thiết bị cố định), ghi chi tiêu thường
++# KHÔNG có từ khoá tài chính rõ ràng ("cà phê sáng 20k") — nên thêm mẫu số
++# tiền kiểu Việt (20k/50 nghìn/2 triệu/20.000đ) làm tín hiệu phụ. Có thể bắt
++# nhầm câu hỏi giá vàng/cổ phiếu có nhắc số tiền — chấp nhận bắt rộng: model
++# free chỉ được kèm tool của RIÊNG server chi tiêu (≈12,8 KB, đo 25/09/2026),
++# không kéo cả 57-73 tool như get_relevant_mcp_tools.
++# Mở rộng 25/09/2026 theo các kiểu tin bị trượt (bot bịa "đã ghi", mất khoản chi):
++# "ăn sáng ba mươi ngàn" (số bằng chữ, "ngàn"), "Ghi 45.000 cà phê." (số có
++# dấu chấm), "Chi 120 tiếp khách" (số trơn ngắn), "Tạm ứng",
++# "Nhận tiền từ công ty 5000000".
++_EXPENSE_KEYWORDS = [
++    "chi tiêu", "ngân sách", "hũ thiết yếu", "hũ học tập", "hũ dự phòng",
++    "hũ hưởng thụ", "hũ gia đình", "hũ tự do tài chính", "thu nhập thêm",
++    "thu nhập phát sinh", "tạm ứng công ty", "chi công ty", "giải chi",
++    "chi phí đặc biệt", "6 hũ", "sáu hũ", "chu kỳ lương",
++    "tạm ứng", "thu nhập", "nhận tiền", "nhận lương", "đổ xăng", "tiền xăng",
++    "tiền tiêu", "đã tiêu", "khoản chi", "số dư", "hũ",
++]
++_MONEY_AMOUNT_RE = re.compile(
++    r"\d+\s*(k\b|nghìn|nghin|ngàn|ngan|triệu|trieu|tr\b|đồng|dong|vnđ|vnd|đ\b)"
++    # 60.000 / 1.500.000 / 9,000,000 — không bắt IP (10.0.0.5), số phiên bản.
++    r"|(?<![\d.,])\d{1,3}(?:[.,]\d{3})+(?![\d.,])"
++    # 9000000 — số trơn từ 5 chữ số; số điện thoại (bắt đầu bằng 0) không khớp.
++    r"|(?<![\d.,])[1-9]\d{4,9}(?![\d.,])"
++    # sáu mươi ngàn / hai triệu rưỡi / một trăm năm mươi nghìn
++    r"|(?<!\w)(?:một|hai|ba|bốn|tư|năm|lăm|sáu|bảy|tám|chín|mười|mươi|chục|trăm|rưỡi|nửa)"
++    r"\s+(?:ngàn|nghìn|triệu|tỷ|tỉ)(?!\w)"
++    # Chi 120 tiếp khách / trả 50 tiền gửi xe
++    r"|(?<!\w)(?:chi|ghi|trả|tiêu|mua|nạp|đóng|đổ)\s+\d",
++    re.IGNORECASE,
++)
++
++
++def _is_expense_query(text: str) -> bool:
++    """True for a chi-tieu-bot (ngân sách cá nhân JARS 6-hũ) query."""
++    t = _chu_thuong(text)
++    return any(_co_tu(t, kw) for kw in _EXPENSE_KEYWORDS) or bool(_MONEY_AMOUNT_RE.search(t))
++
++
++# Trần payload ChatGPT Free (backend 413 quanh 45 KB) — cùng ngưỡng với nhánh
++# combo_skip_free_oversized, đo trên payload ĐÃ rút gọn như _dispatch gửi đi.
++_FREE_PAYLOAD_LIMIT = 42_000
++
++
++def _free_payload_bytes(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None) -> int:
++    """Kích thước model free nhận: messages (bỏ ảnh base64) + tool đã rút gọn."""
++    slim_tools = _slim_tools_for_free(tools)
++    raw_json = json.dumps(messages, ensure_ascii=False, default=str)
++    slim_json = re.sub(r'"data:image/[^;]+;base64,[^"]+"', '""', raw_json)
++    return (len(slim_json.encode("utf-8"))
++            + len(json.dumps(slim_tools or [], ensure_ascii=False, default=str).encode("utf-8")))
++
++
++def _trim_free_expense_tools(
++    tools: list[dict[str, Any]] | None, messages: list[dict[str, Any]], user_text: str,
++) -> list[dict[str, Any]] | None:
++    """Tin chi tiêu mà payload vượt trần ChatGPT Free → chỉ giữ tool chi-tieu-bot.
++
++    Bước 1 của agent mang cả ~90 tool năng lực (≈104 KB, đo 25/09/2026) nên cgf
++    luôn bị loại; khi các model gọi được tool khác cạn quota, "ăn sáng 30k" rơi
++    xuống model không có tool và nó BỊA "đã ghi". Ghi đúng khoản chi quan trọng
++    hơn các năng lực khác của lượt này. Trả None (giữ hành vi cũ: bỏ qua cgf) khi
++    không phải tin chi tiêu, danh sách không có tool chi tiêu, hoặc rút rồi vẫn
++    vượt trần.
++    """
++    if not tools or not _is_expense_query(user_text):
++        return None
++    rut = _chi_tool_chi_tieu(tools)
++    if not rut or _free_payload_bytes(messages, rut) > _FREE_PAYLOAD_LIMIT:
++        return None
++    return rut
++
++
++def _chi_tool_chi_tieu(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
++    """Lọc giữ tool của server chi-tieu-bot (theo tên đã expose)."""
++    try:
++        from services.mcp_client import get_expense_mcp_tools
++        ten = {(t.get("function") or {}).get("name") for t in get_expense_mcp_tools()}
++    except Exception:
++        return []
++    return [t for t in tools if (t.get("function") or {}).get("name") in ten]
++
++
++# Đo thật 25/09: tin nhắn ≈29,7 KB + 11 tool chi tiêu đủ mô tả (12,8 KB)
++# = 42,5 KB — vẫn vượt trần ~500 byte. Bản gọn (mô tả ≤420 ký tự, bỏ title)
++# ≈7 KB. Phần cắt đi là hướng dẫn dài; quy tắc chi vượt tổng vẫn nằm trong
++# tham số (xac_nhan_vuot_tong mặc định False) và được nhắc lại trong kết quả tool.
++_FREE_EXPENSE_DESC_MAX = 420
++
++
++def _compact_expense_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
++    """Bản gọn (bản sao, không sửa cache MCP) của tool chi-tieu-bot cho model free."""
++    import copy
++    out: list[dict[str, Any]] = []
++    for t in tools or []:
++        t = copy.deepcopy(t)
++        fn = t.get("function") or {}
++        mo_ta = re.sub(r"\s+", " ", str(fn.get("description") or "")).strip()
++        if len(mo_ta) > _FREE_EXPENSE_DESC_MAX:
++            cat = mo_ta[:_FREE_EXPENSE_DESC_MAX]
++            cham = cat.rfind(". ")
++            mo_ta = cat[:cham + 1] if cham > _FREE_EXPENSE_DESC_MAX // 2 else cat
++        fn["description"] = mo_ta
++        params = fn.get("parameters")
++        if isinstance(params, dict):
++            params.pop("title", None)
++            for p in (params.get("properties") or {}).values():
++                if isinstance(p, dict):
++                    p.pop("title", None)
++        out.append(t)
++    return out
++
++
++def _stash_free_expense_tools(body: dict[str, Any], route, tools: list[dict[str, Any]] | None,
++                              user_text: str) -> None:
++    """Ghi nhớ bộ tool ĐÃ gửi cho model free ở tin chi tiêu, cho lượt gọi tiếp.
++
++    Lượt tiếp trong _execute_mcp_tools_in_response tự nạp lại body["tools"]
++    (~90 tool năng lực) → vượt trần → lỗi SAU khi tool ghi sổ đã chạy → agent thử
++    lại → có thể ghi trùng. Gọi cho MỌI route để route sau xoá ghi nhớ cũ.
++    """
++    body.pop("_free_expense_tools", None)
++    if getattr(route, "provider", "") != "chatgpt_free" or not tools \
++            or not _is_expense_query(user_text):
++        return
++    if _chi_tool_chi_tieu(tools):
++        body["_free_expense_tools"] = {"model": getattr(route, "model", ""),
++                                       "tools": list(tools), "user_text": user_text}
++
++
++def _followup_tools(body: dict[str, Any], route,
++                    messages: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
++    """Bộ tool cho lượt gọi tiếp của cùng route; None = để nguyên cách cũ."""
++    nho = body.get("_free_expense_tools")
++    if not nho or nho.get("model") != getattr(route, "model", ""):
++        return None
++    tools = nho["tools"]
++    if _free_payload_bytes(messages, tools) <= _FREE_PAYLOAD_LIMIT:
++        return tools
++    # Vượt trần (thêm kết quả tool): rút về tool chi tiêu — kể cả khi vẫn vượt,
++    # bản nhỏ nhất vẫn hơn nạp lại 90 tool.
++    return _chi_tool_chi_tieu(tools) or tools
++
++
++# Bản vá tại chỗ 25/09/2026 (v3). Lỗi thật: v2 đưa đủ 11 tool chi tiêu (38 KB)
++# cho cgf, nhưng "Chi 30k ăn sáng" vẫn được trả lời bằng chữ "em ghi nhận khoản
++# chi…" — không có khối ```xml <tool_call>```, sổ không có dòng mới. Tóm tắt phiên
++# có sẵn "Đã ghi nhận chi tiêu: ăn sáng 30.000đ" của lần trước nên model coi khoản
++# mới giống hệt là tin lặp. Với ChatGPT Free, gọi tool chỉ là lời dặn trong prompt.
++#
++# Chỉ ép với tin NGẮN, có số tiền, không phải câu hỏi: tin dán dài có số tiền (phiếu
++# lương) hay "giá vàng 12 triệu à?" mà bị ép thì model có thể ghi bừa một khoản.
++_TIN_GHI_CHI_MAX = 160
++_CAU_HOI_RE = re.compile(
++    r"\?|(?<!\w)(?:bao nhiêu|thế nào|như nào|có nên|được không|tại sao|vì sao|còn không)(?!\w)")
++_XAC_NHAN_DA_GHI_RE = re.compile(
++    r"(?<!\w)(?:đã|vừa)\s+(?:được\s+)?(?:ghi|lưu|thêm|cập nhật|nhập)(?!\w)"
++    r"|(?<!\w)ghi\s+nhận(?!\w)|(?<!\w)ghi\s+xong(?!\w)")
++_CANH_BAO_CHUA_GHI = (
++    "⚠️ Em CHƯA ghi được khoản này vào sổ chi tiêu — AI đang trục trặc, không gọi được "
++    "lệnh ghi. Anh nhắn lại giúp em sau ít phút, hoặc thêm tay tại "
++    "<địa chỉ trang /ui> nha.")
++
++
++def _free_expense_bat_buoc(route, tools: list[dict[str, Any]] | None, user_text: str,
++                           tool_choice: Any) -> list[dict[str, Any]] | None:
++    """Bộ tool chi-tieu-bot để ép lượt đầu gọi tool, hoặc None (giữ nguyên cách cũ)."""
++    if getattr(route, "provider", "") != "chatgpt_free" or tool_choice not in (None, "auto"):
++        return None
++    t = _chu_thuong(user_text).strip()
++    if not t or len(t) > _TIN_GHI_CHI_MAX or not _MONEY_AMOUNT_RE.search(t) \
++            or _CAU_HOI_RE.search(t):
++        return None
++    return _chi_tool_chi_tieu(tools or []) or None
++
++
++def _la_xac_nhan_chi_gia(result: dict[str, Any]) -> bool:
++    """Trả lời bằng chữ rằng đã ghi mà KHÔNG kèm lệnh gọi tool nào (native lẫn XML)."""
++    msg = ((result.get("choices") or [{}])[0].get("message")) or {}
++    if msg.get("tool_calls"):
++        return False
++    noi_dung = str(msg.get("content") or "")
++    if not noi_dung or _extract_xml_tool_calls_from_text(noi_dung):
++        return False
++    return bool(_XAC_NHAN_DA_GHI_RE.search(_chu_thuong(noi_dung)))
++
++
++def _dispatch_free_expense(route, messages, tools, tool_choice, body):
++    """Lượt đầu của tin ghi chi trên model free: bắt buộc gọi tool; bịa "đã ghi" thì
++    thử lại 1 lần, vẫn bịa thì báo CHƯA ghi — thà người dùng nhắn lại còn hơn mất khoản chi."""
++    logger.info({"event": "free_expense_tool_required", "model": getattr(route, "model", ""),
++                 "tools": len(tools or [])})
++    for lan in (1, 2):
++        result = _dispatch(route, messages, tools, "required", body)
++        if not isinstance(result, dict) or not _la_xac_nhan_chi_gia(result):
++            return result
++        noi_dung = str(((result.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
++        logger.warning({"event": "free_expense_fake_confirm", "lan": lan,
++                        "model": getattr(route, "model", ""), "content": noi_dung[:160]})
++    import copy
++    out = copy.deepcopy(result)
++    choice = out["choices"][0]
++    choice["message"] = {"role": "assistant", "content": _CANH_BAO_CHUA_GHI}
++    choice["finish_reason"] = "stop"
++    return out
++
++
+ def _inject_server_admin_context(messages: list[dict[str, Any]], user_text: str) -> list[dict[str, Any]]:
+     """For a server-admin query, append the declared-server list + 'use ssh_run,
+     don't ask the user' instruction to the last user message. Keeps the model
+@@ -6840,6 +7071,23 @@ def _inject_mcp_tools(
+             logger.info({"event": "mcp_inject_skipped", "reason": "vision_request"})
+             return tools if tools else None
+ 
++        # chi-tieu-bot trên model free: CHỈ kèm tool của server chi tiêu (≈12,8 KB)
++        # thay vì get_relevant_mcp_tools (57-73 tool của mọi server external +
++        # generic → vượt trần ~42 KB, cgf bị loại, câu rơi xuống model không có
++        # tool và bịa "đã ghi"). Bản vá tại chỗ 25/09/2026, lỗi thật trên Zalo.
++        if is_free_model and not _is_admin and not _is_device \
++                and not _is_smarthome_query(user_text) and _is_expense_query(user_text):
++            from services.mcp_client import get_expense_mcp_tools
++            chi_tieu = _compact_expense_tools(get_expense_mcp_tools())
++            if chi_tieu:
++                tools = list(tools or [])
++                co_san = {(t.get("function") or {}).get("name", "") for t in tools}
++                tools += [t for t in chi_tieu
++                          if (t.get("function") or {}).get("name", "") not in co_san]
++                logger.info({"event": "mcp_inject_expense_free", "count": len(chi_tieu),
++                             "total_tools": len(tools)})
++                return tools
++
+         # Pure status/listing query whose answer is already in the prefetched
+         # live context → ship NO tools. Drops HA's ~40 control-tool schemas
+         # (the dominant payload bloat that 413s the free backend and makes the
+@@ -6850,7 +7098,7 @@ def _inject_mcp_tools(
+             return None
+ 
+         if is_free_model and not _is_smarthome_query(user_text) and not _is_admin \
+-                and not _is_device:
++                and not _is_device and not _is_expense_query(user_text):
+             logger.info({"event": "mcp_inject_skipped", "reason": "free_model_no_agentic_loop"})
+             return tools if tools else None
+ 

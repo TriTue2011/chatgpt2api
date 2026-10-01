@@ -1,0 +1,22 @@
+services:
+  chi-tieu-bot:
+    build: .
+    container_name: chi-tieu-bot
+    restart: unless-stopped
+    environment:
+      # I1 (review toàn nhánh Tính năng A): container mặc định chạy UTC,
+      # máy chủ +07 -- lệch 7 tiếng làm "chu kỳ lương" (đặc biệt cạnh ranh
+      # giới ngày bắt đầu chu kỳ) bị tính sai. Với kiến trúc đóng băng nhãn
+      # tháng tại thời điểm ghi (Tính năng A), lỗi này giờ VĨNH VIỄN (không
+      # tự sửa được như trước, chỉ xoá/ghi lại) -- sửa lúc DB sản xuất còn
+      # trống (0 dòng) là rẻ nhất có thể.
+      - TZ=Asia/Ho_Chi_Minh
+    ports:
+      # LƯU Ý: "8801:8801" bind ra 0.0.0.0 trên host — mở cho cả LAN, KHÔNG
+      # chỉ nội bộ (dù C2A tự gọi qua 127.0.0.1). /ui (trang quản lý) cũng
+      # chạy trên cổng này và có trang đăng nhập riêng (xem C2A_AUTH_KEY).
+      - "8801:8801"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
