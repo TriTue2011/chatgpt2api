@@ -708,24 +708,22 @@ def prewarm_clients() -> int:
 # Lib KHÔNG có model "Flash-Lite" riêng → map về flash. Tên lib gốc vẫn route OK.
 _GMA_ALIASES = {
     # Tên khớp UI Gemini (không dấu cho an toàn client) — bộ hiển thị chính
-    "3.5-flash": "gemini-3-flash",                  # 3.5 Flash (Tiêu chuẩn)
-    "3.5-flash-mo-rong": "gemini-3-flash-advanced", # 3.5 Flash (Mở rộng)
-    "3.1-pro": "gemini-3-pro",                      # 3.1 Pro (Tiêu chuẩn)
-    "3.1-pro-mo-rong": "gemini-3-pro-advanced",     # 3.1 Pro (Mở rộng)
-    "3.1-flash-lite": "gemini-3-flash",             # Flash-Lite (lib chưa tách → flash)
+    "3.5-flash": "gemini-3-flash",                  # Flash hiện hành (registry tự đổi sang gemini-flash)
+    "3.1-pro": "gemini-3-pro",                      # 3.1 Pro
+    # Flash-Lite nay là model RIÊNG trong registry (đo 02/10/2026 trên 3 tài khoản: gemini-flash-lite,
+    # gemini-flash, gemini-pro). Các tên «Mở rộng» / «thử nghiệm» (-advanced, -thinking) Gemini đã bỏ —
+    # resolve báo «Unknown model» — nên gỡ hẳn: chọn tên chết phải ra 400, không âm thầm chạy model khác.
+    "3.5-flash-lite": "gemini-flash-lite",
+    "3.1-flash-lite": "gemini-flash-lite",
     # Hai tên này ĐÃ được liệt kê trong gma_models của /v1/models từ trước nhưng
     # KHÔNG có ở bảng này, nên chọn chúng trong giao diện là rơi thẳng vào nhánh
     # gma_unknown_model_fallback: trả HTTP 200 bằng model auto, không báo gì.
     # Đích của chúng là hai giá trị đã có sẵn ở trên, không phải tên mới bịa ra.
     "3.1-flash": "gemini-3-flash",
-    "3.1-flash-thu-nghiem": "gemini-3-flash-thinking",
     # Alias cũ — vẫn nhận để không vỡ request đã cấu hình
     "flash": "gemini-3-flash",
-    "flash-lite": "gemini-3-flash",
-    "flash-thinking": "gemini-3-flash-thinking",
-    "flash-extended": "gemini-3-flash-advanced",
+    "flash-lite": "gemini-flash-lite",
     "pro": "gemini-3-pro",
-    "pro-extended": "gemini-3-pro-advanced",
 }
 
 

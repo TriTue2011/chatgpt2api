@@ -209,8 +209,8 @@ class ModelSaiPhaiBaoLoiTests(unittest.TestCase):
 
     def test_alias_cu_van_chay(self):
         from api.gemini_web import _resolve_model
-        for m in ("gma/3.5-flash", "gma/flash", "gma/3.1-pro", "gma/3.1-flash",
-                  "gma/3.1-flash-thu-nghiem"):
+        # «3.1-flash-thu-nghiem» đã gỡ: Gemini bỏ model -thinking (đo 02/10/2026, «Unknown model»).
+        for m in ("gma/3.5-flash", "gma/flash", "gma/3.1-pro", "gma/3.1-flash"):
             try:
                 _resolve_model(m)
             except HTTPException:

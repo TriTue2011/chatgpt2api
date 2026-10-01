@@ -1141,11 +1141,11 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
     # chạy — đo thật 08/08: gma/3.5-flash trả OK, adapter gọi BASIC_FLASH) nhưng
     # chưa từng được LIỆT KÊ ở đây, nên không chọn được trong giao diện và không
     # đưa vào enabled_models được.
+    # Model THẬT của từng tài khoản (gemini-flash, gemini-flash-lite, gemini-pro…) do
+    # `_merge_runtime_gma_models` ghép từ registry; đây chỉ là tên thân thiện còn sống.
     gma_models = ["gma/auto", "gma/image",
-                  "gma/3.5-flash", "gma/3.5-flash-mo-rong",
-                  "gma/3.1-flash", "gma/3.1-flash-thu-nghiem",
-                  "gma/3.1-pro", "gma/3.1-pro-mo-rong",
-                  "gma/3.1-flash-lite"]
+                  "gma/3.5-flash", "gma/3.1-flash",
+                  "gma/3.1-pro", "gma/3.5-flash-lite"]
     for mid in gma_models:
         if mid not in seen:
             seen.add(mid)
