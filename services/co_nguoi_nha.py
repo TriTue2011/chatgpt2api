@@ -674,6 +674,30 @@ def ap_dung() -> list[dict[str, Any]]:
     return lam
 
 
+def giai_ngay(chi: list[str] | None = None) -> dict[str, Any]:
+    """Giải lại NGAY trong tiến trình app (API `/api/hoc-hoi/co-nguoi/giai`): học lại vùng khoảng cách, giải các
+    thiết bị ``chi`` (bỏ trống = mọi thiết bị) bất kể kết luận còn mới, ghi sổ, áp những câu đã chấm đúng.
+
+    Vì sao cần: lượt hằng đêm bỏ qua thiết bị có kết luận dưới 7 ngày — sửa hướng dẫn / chủ nhà dặn thêm thì phải chờ
+    cả tuần; và áp phải chạy trong tiến trình app (cài đặt kích hoạt nằm trong RAM), không chạy được từ ngoài."""
+    from services import hieu_thiet_bi_nha as ht, vung_khoang_cach
+    from services.thoi_quen_nha import _ghi_luot
+
+    if not _dang_chay.acquire(blocking=False):
+        return {"ok": False, "error": "lượt trước chưa xong"}
+    try:
+        vung = {m: v.get("dat") for m, v in vung_khoang_cach.hoc().items()}
+        kq = giai(chi=chi, tat_ca=True)
+        if kq.get("bo_qua"):
+            return {"ok": False, "error": kq["bo_qua"], "vung_khoang_cach": vung}
+        lan = _ghi_luot(ht, kq, "co_nguoi")
+        ghi = ht.ghi_co_nguoi(lan, kq["ket_luan"])
+        return {"ok": True, "vung_khoang_cach": vung, "lan_giai": lan, "moi": ghi["moi"],
+                "lap_lai": ghi["lap_lai"], "loai": kq["loi"], "ap": ap_dung()}
+    finally:
+        _dang_chay.release()
+
+
 def chay(ht: Any) -> tuple[dict[str, Any], str]:
     """Một lượt trong heartbeat của tầng thói quen: giải → lưu sổ → áp. Trả (kết quả, đoạn báo)."""
     from services.thoi_quen_nha import _bao_so, _ghi_luot

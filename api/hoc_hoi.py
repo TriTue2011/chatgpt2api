@@ -827,6 +827,18 @@ def create_router() -> APIRouter:
         except Exception as exc:
             return _loi(exc, "vẽ sơ đồ nhà")
 
+    @router.post("/api/hoc-hoi/co-nguoi/giai")
+    async def co_nguoi_giai(body: dict | None = None, authorization: str | None = Header(default=None)):
+        """Bot chọn lại «có người thật» NGAY (học vùng khoảng cách, giải, ghi sổ, áp câu đã chấm đúng).
+        body: {thiet_bi?: [mã]} — bỏ trống = mọi thiết bị tắt khi vắng. Gọi model — vài chục giây mỗi thiết bị."""
+        require_admin(authorization)
+        from services import co_nguoi_nha
+        chi = [str(x) for x in (body or {}).get("thiet_bi") or []] or None
+        try:
+            return await asyncio.to_thread(co_nguoi_nha.giai_ngay, chi)
+        except Exception as exc:
+            return _loi(exc, "chọn có người thật")
+
     @router.post("/api/hoc-hoi/so-do-nha/cham")
     async def so_do_nha_cham(body: dict, authorization: str | None = Header(default=None)):
         """Chấm một bài vẽ sơ đồ; đúng thì áp. body: {id, dung, ghi_chu, cham_boi?}."""

@@ -36,8 +36,10 @@ nhiều khả năng là người đã rời; camera thấy khu này là camera n
 
 Dùng cảm biến mục A (trong khu); cảm biến khu khác ở mục B chỉ để loại lây.
 
-1. Bỏ cảm biến đổi/ngày 0 — kẹt. Cùng một camera có cả "All" (mọi vật) và
-   "Person" (người) thì chỉ lấy "Person".
+1. Bỏ cảm biến đổi/ngày 0 — kẹt. Một camera có cảm biến "Person" (người) thì
+   CHỈ lấy "Person"; bỏ mọi cảm biến khác của chính camera đó — "All" (mọi
+   vật), "Motion" (chuyển động khung hình): chúng báo cả tivi, đèn đổi sáng,
+   rèm lay, nên có thể giữ "có người" hàng giờ khi phòng trống.
 2. Mặc định nối MỌI cảm biến còn lại trong khu bằng `hoac`: cái này bắt được
    lúc cái kia mất (cột "CHỈ mình nó báo" — người ngồi yên radar mất, camera
    vẫn thấy). Bỏ một cảm biến là thêm lần tắt nhầm.

@@ -165,12 +165,16 @@ DE: list[dict[str, Any]] = [
      "dap_an": {"co_nguoi_phai_co": [RT], "giu": None, "nhin": None}},
 
     {"ten": "camera_co_ca_all_va_person",
-     "tinh_huong": "Camera có cả cảm biến 'All' (mọi vật, cả mèo, rèm bay) và 'Person' — chỉ dùng Person.",
+     "tinh_huong": "Camera có cả cảm biến 'All' (mọi vật, cả mèo, rèm bay), 'Motion' (chuyển động khung hình — giữ "
+                   "«có» hàng giờ khi phòng trống) và 'Person' — chỉ dùng Person.",
      "ten_tb": "Đèn phòng khách", "dan": [],
      "uv": _uv("light.den_pk2", "Phòng khách",
-               {**_pk_can_ho(), APK: _hd("Camera phòng khách All", "Phòng khách", 270, "40%", "0%")},
+               {**_pk_can_ho(), APK: _hd("Camera phòng khách All", "Phòng khách", 270, "40%", "0%"),
+                # Dáng đo thật 01/10/2026: motion của camera bật 9 lần / 30 ngày mà giữ «on» 97 giờ, 84% lúc đó
+                # camera người lẫn radar đều trống.
+                MPK: _hd("Camera phòng khách Motion", "Phòng khách", 0.3, "55%", "40%")},
                camera=["Cam phòng khách"]),
-     "dap_an": {"co_nguoi_phai_co": [CPK], "co_nguoi_khong_co": [APK]}},
+     "dap_an": {"co_nguoi_phai_co": [CPK], "co_nguoi_khong_co": [APK, MPK]}},
 
     {"ten": "cam_bien_ket_o_khu_khac",
      "tinh_huong": "Radar phòng học báo có người 100% thời gian (kẹt) — không mang thông tin, không dùng "
