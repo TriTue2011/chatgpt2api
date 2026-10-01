@@ -6667,6 +6667,8 @@ def _h_dang_facebook(args: dict, ctx: dict) -> dict:
 
 # ── Registry ─────────────────────────────────────────────────────────────────
 
+from services.chi_tieu import tool_bot as _chi_tieu_bot  # noqa: E402 — tool «chi_tieu» bên dưới
+
 CAPABILITIES: dict[str, Capability] = {
     "generate_image": Capability(
         name="generate_image", risk=READ, handler=_h_generate_image,
@@ -7467,6 +7469,12 @@ CAPABILITIES: dict[str, Capability] = {
             "dung": {"type": "boolean", "description": "viec='cham': nhận định của bot đúng hay sai."},
             "lan": {"type": "integer", "description": "viec='cham': số TH của lần dựng nếu nêu."}},
             "required": ["viec"]}),
+    # Chi tiêu theo hũ — mỗi người một sổ (chủ máy 02/10/2026). READ như `ghi_du_kien`: chỉ ghi vào sổ ĐÃ LIÊN KẾT
+    # với chính người nhắn, không đụng nhà hay hệ thống — để «vừa chi 50k» không phải chờ duyệt mỗi lần.
+    "chi_tieu": Capability(
+        name="chi_tieu", risk=READ, handler=_chi_tieu_bot.xu_ly,
+        emoji="💰", label="Sổ chi tiêu theo hũ",
+        description=_chi_tieu_bot.MO_TA, parameters=_chi_tieu_bot.THAM_SO, workflow=_chi_tieu_bot.QUY_TRINH),
     "ghi_du_kien": Capability(
         name="ghi_du_kien", risk=READ, handler=_h_ghi_du_kien,
         emoji="📝", label="Dạy bot về nhà — sổ học",
@@ -8455,6 +8463,7 @@ CAPABILITIES: dict[str, Capability] = {
 # "_ungrouped" → tự động BỊ CHẶN với thread có bật lọc (an toàn: deny-by-default),
 # và luôn chạy với thread không bật lọc (allow=None).
 _CAP_GROUP: dict[str, str] = {
+    "chi_tieu": "chi_tieu",
     # delete_media theo nhóm "image" cùng library_media, dù nó chạm cả video và
     # nhạc: hai tool này là một cặp đọc/xoá trên CÙNG kho, tách nhóm thì có
     # thread xem được thư viện mà không dọn được, hoặc ngược lại.

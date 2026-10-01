@@ -1427,6 +1427,11 @@ _KW_KHODAMMAY = _re_mod.compile(
 # soi lại 29/08 thấy chưa dòng nào nhắc tới (dò bằng cách đối chiếu từng tool
 # của mỗi nhóm với chữ trong bảng). Thiếu chúng thì đúng việc hay dùng lại
 # không có chỉ đường.
+#: Sổ chi tiêu (services/chi_tieu) — cùng khuôn các _KW_* khác: chỉ quyết định NẠP một dòng chỉ đường, khớp thừa
+#: thì tốn đúng một dòng prompt; quyết định ghi vẫn ở tool (hỏi lại khi mơ hồ).
+_KW_CHITIEU = _re_mod.compile(
+    r"chi tieu|vua (chi|mua|tra)|da chi|het bao nhieu|con bao nhieu tien|ngan sach|\bhu\b|tam ung|giai chi|"
+    r"thu nhap them|chi phi dac biet|lien ket chi tieu|\b\d+([.,]\d+)? ?(k|nghin|ngan|tr|trieu)\b")
 _KW_DOCTRANG = _re_mod.compile(
     r"https?://|\bwww\.|doc (trang|bai|link|web)|trang nay|link nay|"
     r"tom tat (trang|bai|link|web)|noi dung (trang|link)")
@@ -1659,6 +1664,9 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
      "- Người dùng đưa MỘT đường dẫn / nhờ đọc-tóm tắt một trang cụ thể → "
      "read_webpage (đọc thẳng trang đó), KHÔNG phải web_search. Search là để "
      "TÌM khi chưa có địa chỉ; đã có địa chỉ thì đọc thẳng."),
+    ("chi_tieu", _KW_CHITIEU,
+     "- Chi tiêu / ngân sách / hũ của CHÍNH người đang nhắn → chi_tieu (viec=ghi_chi mỗi tin «vừa chi …» là một "
+     "khoản mới; viec=xem để biết còn bao nhiêu; viec=lien_ket khi họ gửi mã). Số liệu luôn lấy từ tool."),
     ("web", _KW_YOUTUBE,
      "- Video YouTube ('video này nói gì', 'tóm tắt clip', 'lấy phụ đề') → "
      "youtube_transcript để lấy bản chép lời rồi tóm tắt từ đó — đừng đoán nội "

@@ -87,6 +87,7 @@ class TungNhomBanDungTool(_Base):
         ("xem tác giả và số trang tài liệu", "office_thong_tin", None),
         ("sửa cấu hình home assistant", "ha_write_config_file", None),
         ("tạo helper input_boolean", "ha_upsert_helper", None),
+        ("vừa chi 50k ăn trưa", "chi_tieu", None),
     ]
 
     #: Ba tool này có chỉ đường ở CHỖ KHÁC, cố ý không nằm trong bảng:

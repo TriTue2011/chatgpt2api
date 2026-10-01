@@ -31,7 +31,7 @@ const NHOM_CHUC_NANG: [string, string][] = [
   ["homeassistant", "🏠 Nhà (HA)"], ["server", "🖥️ Server"], ["image", "🎨 Ảnh"],
   ["video", "🎬 Video"], ["music", "🎵 Nhạc"], ["web", "🌐 Web"], ["code", "💻 Code"],
   ["memory", "🧠 Ghi nhớ"], ["rag", "📚 RAG / tài liệu"], ["word", "📝 PDF → Word"],
-  ["office", "📄 Tài liệu Office"], ["device", "🔌 Thiết bị"],
+  ["office", "📄 Tài liệu Office"], ["device", "🔌 Thiết bị"], ["chi_tieu", "💰 Chi tiêu"],
   ["camera", "📷 Camera nhà"],
   ["summary", "🧾 Tổng hợp"], ["schedule", "⏰ Nhắc hẹn"], ["skills", "🧩 Skill"],
   ["wiki", "📖 Wiki"], ["contacts", "📒 Danh bạ"], ["kho_dam_may", "☁️ Kho đám mây"],

@@ -41,6 +41,7 @@ const FUNCTION_GROUPS: [string, string][] = [
   // 18 công cụ tài liệu tắt ở CẢ 5 thread, chủ máy không tìm thấy ô để bật.
   // Có bài `test_o_tich_du_moi_nhom` chốt lại; thêm nhóm mới thì thêm cả đây.
   ["office", "📄 Tài liệu Office (Word · Excel · PowerPoint)"],
+  ["chi_tieu", "💰 Sổ chi tiêu (mỗi người một sổ)"],
   ["device", "🔌 Thiết bị (chụp màn hình · tắt/mở máy)"],
   ["camera", "📷 Camera nhà (go2rtc · RTSP)"],
   ["summary", "🧾 Tổng hợp thông tin"],
