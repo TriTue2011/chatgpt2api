@@ -400,7 +400,7 @@ def _handle_single_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterat
             image=src_image,
         )
 
-    core_providers = {"chatgpt", "chatgpt_free", "openai_oauth", "gemini_web", "gemini_web_api"}
+    core_providers = {"chatgpt", "chatgpt_free", "openai_oauth", "gemini_web", "gemini_web_api", "grok_web"}
     if route.provider not in core_providers and (route.is_image or route.provider.startswith("custom:")):
         logger.info({
             "event": "image_routed_to_adapter",
@@ -437,6 +437,12 @@ def _handle_single_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterat
         })
         from api.gemini_web import handle_gemini_web_api_image_gen
         return handle_gemini_web_api_image_gen(prompt, n=n, response_format=response_format, base_url=base_url_str)
+
+    # Grok web (grok/imagine): cùng websocket chat, Grok tự vẽ — `api/grok_web.py`.
+    if route.provider == "grok_web":
+        logger.info({"event": "image_routed_to_grok", "provider": route.provider, "n": n})
+        from api.grok_web import handle_grok_web_image_gen
+        return handle_grok_web_image_gen(prompt, n=n, response_format=response_format, base_url=base_url_str or "")
 
     # For chatgpt/ DALL-E: use original chatgpt.com backend flow (same as upstream)
     # Let combo fallback handle failures if token can't access chatgpt.com

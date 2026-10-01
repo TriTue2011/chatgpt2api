@@ -1,9 +1,9 @@
 """Grok web miễn phí. Chat bằng cookie, Firefox chỉ mở lúc lấy cookie.
 
-Hồ sơ Firefox nằm ở ``data/grok_firefox``. Đăng nhập xong thì cookie được
-ghi vào ``data/grok_web_cookies.json`` và Firefox tắt. Hết hạn thì mở lại
-đúng hồ sơ đó — còn phiên đăng nhập, không gõ mật khẩu — rồi tắt tiếp.
-Không đi Chrome của captcha-solver: máy này bị Cloudflare chặn Chrome.
+Tài khoản theo thứ tự trong ``providers.grok_web.accounts`` (Cài đặt › Grok), mỗi tài khoản
+một hồ sơ Firefox riêng — xem ``api/grok_firefox.py``. Hết phiên thì mở lại đúng hồ sơ đó (còn
+đăng nhập, không gõ mật khẩu), vẫn hỏng thì sang tài khoản kế. Không đi Chrome của captcha-solver:
+máy này bị Cloudflare chặn Chrome.
 
 Chat là websocket ``wss://grok.com/ws/mgw/``. Không hâm nóng sẵn client
 như Gemini.
@@ -37,19 +37,9 @@ _MODES = {
 }
 
 
-def _config():
-    from services.config import config
-    return config
-
-
 def _logger():
     from utils.log import logger
     return logger
-
-
-def _cookie_file():
-    from services.config import DATA_DIR
-    return DATA_DIR / "grok_web_cookies.json"
 
 
 def che_do(model: str) -> str:
@@ -82,27 +72,13 @@ def hop_van_ban(messages: list[dict[str, Any]] | None) -> str:
     return "\n\n".join(parts).strip()
 
 
-def _file_cookies() -> dict[str, str]:
-    path = _cookie_file()
-    try:
-        if not path.is_file():
-            return {}
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return {str(k): str(v) for k, v in data.items() if v}
-
-
-def tai_cookie() -> dict[str, str]:
-    """Cookie đã thu từ hồ sơ Firefox. Không hỏi Chrome của solver."""
-    cookies = _file_cookies()
+def tai_cookie(profile: str) -> dict[str, str]:
+    """Cookie Firefox riêng của tài khoản đã thu (`api/grok_firefox`). Không hỏi Chrome của solver."""
+    from api.grok_firefox import doc_cookie_file
+    cookies = doc_cookie_file(profile)
     if cookies.get("sso"):
         return cookies
-    raise RuntimeError(
-        "Chưa có phiên Grok web. Đăng nhập một lần trên Firefox của máy này. "
-        "Cookie sẽ được ghi vào data/grok_web_cookies.json rồi Firefox tự tắt.")
+    raise RuntimeError(f"Chưa có phiên Grok cho {profile} — bấm «Đăng nhập» ở Cài đặt › Grok.")
 
 
 def _ws_send(tls, obj: dict) -> None:
@@ -235,26 +211,70 @@ def _la_loi_phien(exc: BaseException) -> bool:
     ))
 
 
-def stream_chat(prompt: str, mode: str, cookies: dict[str, str] | None = None) -> Iterator[str]:
-    """Sinh từng mảnh chữ. Hết phiên thì mở lại hồ sơ Firefox một lần — chỉ khi CHƯA gửi chữ nào: thử lại sau khi
-    đã gửi nửa câu thì người gọi nhận câu trả lời lặp đầu."""
-    da_gui = False
-    try:
-        for manh in _stream_chat(prompt, mode, cookies):
-            da_gui = True
-            yield manh
+def stream_chat(prompt: str, mode: str, cookies: dict[str, str] | None = None,
+                anh: list[str] | None = None, da_dung: list[str] | None = None) -> Iterator[str]:
+    """Sinh từng mảnh chữ. Xoay tài khoản theo thứ tự ưu tiên (như Flow): tài khoản hết phiên thì mở lại hồ sơ
+    Firefox của nó MỘT lần, vẫn hỏng thì sang tài khoản kế. Chỉ đổi khi CHƯA gửi chữ nào — thử lại sau khi đã gửi
+    nửa câu thì người gọi nhận câu trả lời lặp đầu."""
+    if cookies is not None:
+        yield from _stream_chat(prompt, mode, cookies, anh)
         return
-    except Exception as exc:
-        if da_gui or cookies is not None or not _la_loi_phien(exc):
-            raise
-        from api.grok_firefox import lam_moi
-        lam_moi()
-        yield from _stream_chat(prompt, mode, None)
+    from api.grok_firefox import dang_bat, lam_moi
+    ds = dang_bat()
+    if not ds:
+        raise RuntimeError("Chưa có tài khoản Grok nào đang bật — thêm và đăng nhập ở Cài đặt › Grok.")
+    loi: list[str] = []
+    for acc in ds:
+        p = acc["profile"]
+        da_gui = False
+        try:
+            _ghi_tai_khoan(acc, mode)
+            for lan in range(2):
+                try:
+                    for manh in _stream_chat(prompt, mode, tai_cookie(p), anh):
+                        da_gui = True
+                        yield manh
+                    if da_dung is not None:
+                        da_dung.append(p)
+                    return
+                except Exception as exc:
+                    if da_gui or lan or not _la_loi_phien(exc):
+                        raise
+                    lam_moi(p)
+        except Exception as exc:
+            if da_gui:
+                raise
+            loi.append(f"{acc.get('label') or p}: {str(exc)[:120]}")
+            _logger().warning({"event": "grok_web_tai_khoan_hong", "profile": p, "error": str(exc)[:160]})
+    raise RuntimeError("Grok web: mọi tài khoản đều hỏng — " + "; ".join(loi))
 
 
-def _stream_chat(prompt: str, mode: str, cookies: dict[str, str] | None) -> Iterator[str]:
-    """Một lượt gửi. Phiên tạm, không ghi vào lịch sử grok.com."""
-    cookies = dict(cookies or tai_cookie())
+def _ghi_tai_khoan(acc: dict[str, Any], mode: str) -> None:
+    """Báo request_context để Agent runs hiện đúng tài khoản Grok đã dùng (như Flow)."""
+    try:
+        from services.request_context import note_provider_account
+        note_provider_account("grok_web", str(acc.get("email") or acc.get("label") or acc["profile"]),
+                              model=f"grok/{mode}", account_id=str(acc["profile"]))
+    except Exception:
+        pass
+
+
+def _anh_xong(ev: dict) -> str:
+    """Đường ảnh đã vẽ XONG trong một mảnh (đo 01/10/2026: `chunk.render_generated_image.image_chunk` có
+    `imageUrl` = "users/<id>/generated/<uuid>/image.jpg", `progress` tới 100; tải ở assets.grok.com kèm cookie).
+    Vẽ hỏng thì mảnh mang `systemErrCode` thay cho `imageUrl` — báo lỗi ra, đừng nói chung chung «không có ảnh»."""
+    chunk = ev.get("chunk") if isinstance(ev.get("chunk"), dict) else {}
+    ve = chunk.get("render_generated_image") if isinstance(chunk.get("render_generated_image"), dict) else {}
+    ic = ve.get("image_chunk") if isinstance(ve.get("image_chunk"), dict) else {}
+    if ic.get("systemErrCode"):
+        raise RuntimeError(f"Grok vẽ ảnh lỗi: systemErrCode={ic.get('systemErrCode')}")
+    url = str(ic.get("imageUrl") or "")
+    return url if url and int(ic.get("progress") or 0) >= 100 else ""
+
+
+def _stream_chat(prompt: str, mode: str, cookies: dict[str, str], anh: list[str] | None = None) -> Iterator[str]:
+    """Một lượt gửi. Phiên tạm, không ghi vào lịch sử grok.com. ``anh``: nhận đường các ảnh Grok vẽ xong."""
+    cookies = dict(cookies)
     if not cookies.get("sso"):
         raise RuntimeError("Cookie Grok web thiếu sso")
     uid = _user_id(cookies)
@@ -267,7 +287,7 @@ def _stream_chat(prompt: str, mode: str, cookies: dict[str, str] | None) -> Iter
     raw = socket.create_connection(("grok.com", 443), timeout=20)
     tls = ssl.create_default_context().wrap_socket(raw, server_hostname="grok.com")
     try:
-        tls.settimeout(25)
+        tls.settimeout(_IM_TOI_DA)
         tls.sendall((
             f"GET /ws/mgw/?uid={uid} HTTP/1.1\r\n"
             "Host: grok.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
@@ -347,6 +367,10 @@ def _stream_chat(prompt: str, mode: str, cookies: dict[str, str] | None) -> Iter
             delta = _delta_tu_event(ev)
             if delta:
                 yield delta
+            if anh is not None and kind == "response.chunk":
+                url = _anh_xong(ev)
+                if url and url not in anh:
+                    anh.append(url)
             if kind == "response.done":
                 return
             if created and attached and not sent and session_id:
@@ -414,3 +438,42 @@ def handle_grok_web_chat(
     text = "".join(stream_chat(prompt, mode))
     from services.protocol.openai_v1_chat_complete import completion_response
     return completion_response(shown, text, messages=messages)
+
+
+def handle_grok_web_image_gen(prompt: str, n: int = 1, response_format: str = "url",
+                              base_url: str = "") -> dict[str, Any]:
+    """/v1/images/generations cho ``grok/imagine`` — cùng websocket chat, Grok tự vẽ (model imagine). Ảnh tải bằng
+    cookie của CHÍNH tài khoản vừa vẽ (assets.grok.com trả 403 khi không có), lưu vào thư mục ảnh như Gemini Web API."""
+    import base64
+    import urllib.request
+    from services.config import config
+
+    anh: list[str] = []
+    da_dung: list[str] = []
+    loi = "".join(stream_chat(f"Vẽ ảnh: {prompt}" if "vẽ" not in prompt.lower() else prompt, "fast",
+                              anh=anh, da_dung=da_dung))
+    if not anh:
+        raise RuntimeError(f"Grok không vẽ ảnh nào. Trả lời: {loi[:200]}")
+    cookies = tai_cookie(da_dung[-1])
+    jar = "; ".join(f"{k}={v}" for k, v in cookies.items())
+    thu_muc = config.images_dir / "grok"
+    thu_muc.mkdir(parents=True, exist_ok=True)
+    data: list[dict[str, Any]] = []
+    for duong in anh[:max(1, int(n or 1))]:
+        req = urllib.request.Request(f"https://assets.grok.com/{duong.lstrip('/')}", headers={
+            "Cookie": jar, "Referer": "https://grok.com/",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.0"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            byte = resp.read()
+        if not byte:
+            continue
+        ten = f"{uuid.uuid4().hex}.jpg"
+        (thu_muc / ten).write_bytes(byte)
+        if response_format == "b64_json":
+            data.append({"b64_json": base64.b64encode(byte).decode("ascii")})
+        else:
+            data.append({"url": f"{base_url.rstrip('/')}/images/grok/{ten}" if base_url else f"/images/grok/{ten}"})
+    if not data:
+        raise RuntimeError("Tải ảnh Grok vẽ không được")
+    _logger().info({"event": "grok_web_image", "so_anh": len(data), "profile": da_dung[-1]})
+    return {"created": int(time.time()), "data": data}

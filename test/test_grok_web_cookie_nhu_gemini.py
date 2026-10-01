@@ -40,13 +40,13 @@ class CookieTests(unittest.TestCase):
     flow như cũ")."""
 
     def test_doc_file(self):
-        with mock.patch.object(gw, "_file_cookies", return_value={"sso": "file"}):
-            self.assertEqual(gw.tai_cookie()["sso"], "file")
+        with mock.patch("api.grok_firefox.doc_cookie_file", return_value={"sso": "file"}):
+            self.assertEqual(gw.tai_cookie("grok-1")["sso"], "file")
 
     def test_khong_co_sso_thi_bao(self):
-        with mock.patch.object(gw, "_file_cookies", return_value={}):
+        with mock.patch("api.grok_firefox.doc_cookie_file", return_value={}):
             with self.assertRaises(RuntimeError):
-                gw.tai_cookie()
+                gw.tai_cookie("grok-1")
 
     def test_khong_con_duong_solver(self):
         for ten in ("_fetch_solver", "_profiles", "_solver_cfg"):
@@ -90,14 +90,23 @@ class WebsocketTests(unittest.TestCase):
         self.assertTrue(s.gui[0][1] & 0x80, "client phải che mặt nạ")
 
 
+HAI_TK = [{"profile": "grok-1", "label": "Main"}, {"profile": "grok-2", "label": "Backup"}]
+
+
+def _vas_tk(ds=HAI_TK):
+    return (mock.patch("api.grok_firefox.dang_bat", return_value=ds),
+            mock.patch.object(gw, "tai_cookie", side_effect=lambda p: {"sso": p}))
+
+
 class ThuLaiTests(unittest.TestCase):
     def test_da_gui_chu_thi_khong_thu_lai(self):
-        """Hết phiên GIỮA câu trả lời: thử lại sẽ gửi lặp đầu câu."""
+        """Hết phiên GIỮA câu trả lời: thử lại / đổi tài khoản sẽ gửi lặp đầu câu."""
         def hong(*a):
             yield "Xin "
             raise RuntimeError("Grok web từ chối websocket: 403")
 
-        with mock.patch.object(gw, "_stream_chat", side_effect=hong), \
+        a, b = _vas_tk()
+        with a, b, mock.patch.object(gw, "_stream_chat", side_effect=hong), \
                 mock.patch("api.grok_firefox.lam_moi") as lam_moi:
             ra = []
             with self.assertRaises(RuntimeError):
@@ -115,7 +124,69 @@ class ThuLaiTests(unittest.TestCase):
                 raise e
             yield "ok"
 
-        with mock.patch.object(gw, "_stream_chat", side_effect=chay), \
+        a, b = _vas_tk()
+        with a, b, mock.patch.object(gw, "_stream_chat", side_effect=chay), \
                 mock.patch("api.grok_firefox.lam_moi") as lam_moi:
             self.assertEqual(list(gw.stream_chat("p", "fast")), ["ok"])
-            lam_moi.assert_called_once()
+            lam_moi.assert_called_once_with("grok-1")
+
+    def test_tai_khoan_dau_hong_thi_sang_tai_khoan_ke(self):
+        """Như Flow: tài khoản #1 hỏng (làm mới phiên cũng không cứu) thì sang #2."""
+        def chay(prompt, mode, cookies, anh=None):
+            if cookies["sso"] == "grok-1":
+                raise RuntimeError("Grok web từ chối websocket: 403")
+            yield "từ #2"
+
+        a, b = _vas_tk()
+        with a, b, mock.patch.object(gw, "_stream_chat", side_effect=chay), \
+                mock.patch("api.grok_firefox.lam_moi", side_effect=RuntimeError("chưa tự mới")):
+            self.assertEqual(list(gw.stream_chat("p", "fast")), ["từ #2"])
+
+    def test_khong_tai_khoan_nao_bat(self):
+        a, b = _vas_tk([])
+        with a, b, self.assertRaises(RuntimeError) as e:
+            list(gw.stream_chat("p", "fast"))
+        self.assertIn("Cài đặt › Grok", str(e.exception))
+
+
+class HienModelTests(unittest.TestCase):
+    """Như mọi provider: model grok/ gw/ chỉ hiện khi có tài khoản Grok đang bật đã đăng nhập."""
+
+    def _loc(self, ds, cookie):
+        from services.protocol import openai_v1_models as om
+        with mock.patch("api.grok_firefox.dang_bat", return_value=ds), \
+                mock.patch("api.grok_firefox.doc_cookie_file", return_value=cookie), \
+                mock.patch.object(om.account_service, "list_accounts", return_value=[]):
+            return [m["id"] for m in om._drop_unavailable([{"id": "grok/fast"}, {"id": "gw/fast"}, {"id": "oc/auto"}])]
+
+    def test_co_tai_khoan_dang_nhap_thi_hien(self):
+        self.assertEqual(self._loc([{"profile": "grok-1"}], {"sso": "x"}), ["grok/fast", "gw/fast", "oc/auto"])
+
+    def test_chua_dang_nhap_hoac_khong_tai_khoan_thi_an(self):
+        self.assertEqual(self._loc([{"profile": "grok-1"}], {}), ["oc/auto"])
+        self.assertEqual(self._loc([], {"sso": "x"}), ["oc/auto"])
+
+
+class AnhTests(unittest.TestCase):
+    """Đo 01/10/2026: ảnh Grok vẽ nằm ở chunk.render_generated_image.image_chunk; hỏng thì mang systemErrCode."""
+
+    def _ev(self, ic):
+        return {"type": "response.chunk", "chunk": {"render_generated_image": {"image_chunk": ic}}}
+
+    def test_chi_lay_anh_da_xong(self):
+        self.assertEqual(gw._anh_xong(self._ev({"imageUrl": "users/u/generated/a/image.jpg", "progress": 100})),
+                         "users/u/generated/a/image.jpg")
+        self.assertEqual(gw._anh_xong(self._ev({"imageUrl": "users/u/generated/a/image.jpg", "progress": 40})), "")
+        self.assertEqual(gw._anh_xong({"type": "response.chunk", "chunk": {"text": {"text": "x"}}}), "")
+
+    def test_ve_hong_thi_bao_ma_loi(self):
+        with self.assertRaises(RuntimeError) as e:
+            gw._anh_xong(self._ev({"imageUuid": "a", "progress": 100, "systemErrCode": 7}))
+        self.assertIn("systemErrCode=7", str(e.exception))
+
+    def test_grok_imagine_la_model_anh_cua_grok(self):
+        from services.backend_router import BackendRouter
+        from utils.helper import classify_model_capability
+        r = BackendRouter().route("grok/imagine")
+        self.assertEqual((r.provider, r.is_image), ("grok_web", True))
+        self.assertEqual(classify_model_capability("grok/imagine"), ["image"])

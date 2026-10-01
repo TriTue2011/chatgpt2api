@@ -1,16 +1,20 @@
-"""Firefox của riêng Grok — chỉ mở để lấy cookie, xong thì tắt.
+"""Tài khoản Grok — mỗi tài khoản một hồ sơ Firefox riêng, chỉ mở để đăng nhập / lấy cookie, xong thì tắt.
 
-Chat không dùng trình duyệt. Hồ sơ nằm trên ổ dữ liệu
-(``data/grok_firefox``), không nằm trong ``/tmp``, nên lần sau mở lại vẫn
-còn đăng nhập. ``cf_clearance`` hết hạn thì mở đúng hồ sơ đó, đợi grok.com
-nhận phiên, ghi cookie, rồi tắt. Không gõ lại mật khẩu, không dùng Chrome
-của captcha-solver.
+Chủ máy 01/10/2026: "các provider khác như nào thì grok cũng phải như vậy trên web ui" — nên Grok có danh sách tài
+khoản có THỨ TỰ trong ``providers.grok_web.accounts`` (như Flow, Gemini Web API, Claude), thẻ Cài đặt, nhánh trang
+Tài khoản. Khác các provider kia ở đường ĐĂNG NHẬP: grok.com chặn Chrome của captcha-solver trên máy này
+(Cloudflare), nên mỗi tài khoản là một hồ sơ Firefox mở trên noVNC; người đăng nhập tay (Google hay email đều
+được), thấy phiên sống thì cookie được ghi và Firefox tự tắt. Chat không dùng trình duyệt (`api/grok_web.py`).
+
+Hồ sơ: ``data/grok_ho_so/<profile>/``, cookie: ``data/grok_ho_so/<profile>.cookies.json`` (0600). Hồ sơ cũ một
+tài khoản (``data/grok_firefox`` + ``data/grok_web_cookies.json``) tự chuyển thành tài khoản đầu tiên.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import signal
 import sqlite3
@@ -20,11 +24,12 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Any
 
-_HO_SO_TAM = Path("/tmp/ff-grok-hand")
-_KHOA = threading.Lock()
-_THEO_DOI: threading.Thread | None = None
+_KHOA = threading.RLock()
+_THEO_DOI: dict[str, threading.Thread] = {}
 _UA = "Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.0"
+_TEN_RE = re.compile(r"grok-[a-z0-9_-]{1,40}")
 
 
 def _log(event: str, **kw) -> None:
@@ -35,33 +40,144 @@ def _log(event: str, **kw) -> None:
         pass
 
 
-def _data():
+def _data() -> Path:
     from services.config import DATA_DIR
-    return DATA_DIR
+    return Path(DATA_DIR)
 
 
-def ho_so() -> Path:
-    return _data() / "grok_firefox"
+def _goc() -> Path:
+    return _data() / "grok_ho_so"
+
+
+def ho_so(profile: str) -> Path:
+    return _goc() / profile
 
 
 def _nha() -> Path:
     return _data() / "grok_firefox_home"
 
 
-def _file_cookie() -> Path:
-    return _data() / "grok_web_cookies.json"
+def _file_cookie(profile: str) -> Path:
+    return _goc() / f"{profile}.cookies.json"
 
 
 def _firefox_bin() -> str:
     for ten in ("/usr/bin/firefox-esr", "/usr/bin/firefox"):
         if os.path.isfile(ten) and os.access(ten, os.X_OK):
             return ten
-    raise RuntimeError("Máy này chưa có Firefox để mở lại phiên Grok")
+    raise RuntimeError("Máy này chưa có Firefox để đăng nhập Grok")
 
 
-def doc_cookie_sqlite(profile: Path) -> dict[str, str]:
+# ── Cấu hình tài khoản ──────────────────────────────────────────────────────
+def _cfg() -> dict[str, Any]:
+    from services.config import config
+    c = (config.data.get("providers") or {}).get("grok_web")
+    return c if isinstance(c, dict) else {}
+
+
+def _luu_cfg(c: dict[str, Any]) -> None:
+    from services.config import config
+    providers = dict(config.data.get("providers") or {})
+    providers["grok_web"] = c
+    config.update({"providers": providers})
+
+
+def tai_khoan() -> list[dict[str, Any]]:
+    """Tài khoản theo thứ tự ưu tiên (đầu = Main)."""
+    _di_tru_cu()
+    return [dict(a) for a in _cfg().get("accounts") or [] if isinstance(a, dict) and a.get("profile")]
+
+
+def dang_bat() -> list[dict[str, Any]]:
+    c = _cfg()
+    if c.get("enabled") is False:
+        return []
+    return [a for a in tai_khoan() if a.get("enabled") is not False]
+
+
+def _sua_ds(sua) -> list[dict[str, Any]]:
+    with _KHOA:
+        c = dict(_cfg())
+        ds = [dict(a) for a in c.get("accounts") or [] if isinstance(a, dict)]
+        ds = sua(ds)
+        c["accounts"] = ds
+        c.setdefault("enabled", True)
+        _luu_cfg(c)
+        return ds
+
+
+def them(label: str = "") -> dict[str, Any]:
+    """Thêm một tài khoản trống (hồ sơ Firefox mới) — đăng nhập bằng `mo` sau đó."""
+    ds = tai_khoan()
+    co = {a["profile"] for a in ds}
+    n = 1
+    while f"grok-{n}" in co:
+        n += 1
+    nhan = str(label or "").strip()[:40] or ["Main", "Backup", "Spare 1", "Spare 2"][min(len(ds), 3)]
+    moi = {"profile": f"grok-{n}", "label": nhan, "email": "", "enabled": True}
+    _sua_ds(lambda d: d + [moi])
+    _log("grok_tai_khoan_them", profile=moi["profile"])
+    return moi
+
+
+def _kiem_ten(profile: str) -> str:
+    if not _TEN_RE.fullmatch(str(profile or "")):
+        raise ValueError(f"Tài khoản Grok «{profile}» không hợp lệ.")
+    if profile not in {a["profile"] for a in tai_khoan()}:
+        raise ValueError(f"Không có tài khoản Grok «{profile}».")
+    return profile
+
+
+def bat_tat(profile: str, bat: bool) -> None:
+    _kiem_ten(profile)
+    _sua_ds(lambda d: [{**a, "enabled": bool(bat)} if a.get("profile") == profile else a for a in d])
+
+
+def xoa(profile: str) -> None:
+    """Gỡ khỏi danh sách và xoá hồ sơ + cookie của nó (đăng xuất hẳn khỏi máy)."""
+    _kiem_ten(profile)
+    tat(profile)
+    _sua_ds(lambda d: [a for a in d if a.get("profile") != profile])
+    if ho_so(profile).is_dir():
+        shutil.rmtree(ho_so(profile))
+    _file_cookie(profile).unlink(missing_ok=True)
+    _log("grok_tai_khoan_xoa", profile=profile)
+
+
+def doi_thu_tu(profiles: list[str]) -> None:
+    ds = tai_khoan()
+    if sorted(profiles) != sorted(a["profile"] for a in ds):
+        raise ValueError("Thứ tự phải gồm đúng mọi tài khoản Grok hiện có.")
+    theo = {a["profile"]: a for a in ds}
+    _sua_ds(lambda d: [theo[p] for p in profiles])
+
+
+def _di_tru_cu() -> None:
+    """Hồ sơ cũ một tài khoản (`data/grok_firefox`, e99bafe) → tài khoản đầu tiên `grok-1`. Chỉ chạy khi cấu hình
+    chưa có tài khoản nào và hồ sơ cũ có cookie — Firefox phải đang tắt (đổi chỗ hồ sơ đang mở là hỏng)."""
+    cu, cookie_cu = _data() / "grok_firefox", _data() / "grok_web_cookies.json"
+    if _cfg().get("accounts") or not (cu / "cookies.sqlite").is_file() or _pid_mo(cu):
+        return
+    with _KHOA:
+        if _cfg().get("accounts"):
+            return
+        _goc().mkdir(parents=True, exist_ok=True)
+        if not ho_so("grok-1").exists():
+            shutil.move(str(cu), str(ho_so("grok-1")))
+        if cookie_cu.is_file() and not _file_cookie("grok-1").exists():
+            shutil.move(str(cookie_cu), str(_file_cookie("grok-1")))
+        email = (thong_tin_phien(doc_cookie_file("grok-1")) or {}).get("email") or ""
+        c = dict(_cfg())
+        c.update(enabled=c.get("enabled", True),
+                 accounts=[{"profile": "grok-1", "label": "Main", "email": email, "enabled": True}])
+        _luu_cfg(c)
+    _log("grok_di_tru_ho_so_cu", co_email=bool(email))
+
+
+# ── Cookie và phiên ─────────────────────────────────────────────────────────
+def doc_cookie_sqlite(profile_dir: Path) -> dict[str, str]:
     """Đọc cookie grok.com. Bỏ ``cf_chl_*``. Không ghi giá trị ra log."""
-    src = profile / "cookies.sqlite"
+    src = profile_dir / "cookies.sqlite"
     if not src.is_file():
         return {}
     tmp = Path(f"/tmp/grok-ck-{os.getpid()}-{threading.get_ident()}.sqlite")
@@ -96,20 +212,20 @@ def doc_cookie_sqlite(profile: Path) -> dict[str, str]:
     return {name: pair[1] for name, pair in best.items()}
 
 
-def ghi_cookie(cookies: dict[str, str]) -> None:
+def ghi_cookie(profile: str, cookies: dict[str, str]) -> None:
     if not cookies.get("sso"):
         return
-    path = _file_cookie()
+    path = _file_cookie(profile)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(cookies, f, ensure_ascii=False)
     os.chmod(path, 0o600)
-    _log("grok_firefox_thu_hoach", so_cookie=len(cookies), co_clearance="cf_clearance" in cookies)
+    _log("grok_firefox_thu_hoach", profile=profile, so_cookie=len(cookies), co_clearance="cf_clearance" in cookies)
 
 
-def doc_cookie_file() -> dict[str, str]:
-    path = _file_cookie()
+def doc_cookie_file(profile: str) -> dict[str, str]:
+    path = _file_cookie(profile)
     try:
         if not path.is_file():
             return {}
@@ -121,10 +237,10 @@ def doc_cookie_file() -> dict[str, str]:
     return {str(k): str(v) for k, v in data.items() if v}
 
 
-def phien_song(cookies: dict[str, str]) -> bool:
-    """GET /api/auth/session. Chỉ trả có/không, không trả user id."""
+def thong_tin_phien(cookies: dict[str, str]) -> dict[str, str] | None:
+    """GET /api/auth/session: {"email"} khi phiên sống, None khi không. Không trả user id ra ngoài."""
     if not cookies.get("sso"):
-        return False
+        return None
     jar = "; ".join(f"{k}={v}" for k, v in cookies.items())
     req = urllib.request.Request("https://grok.com/api/auth/session", headers={
         "Cookie": jar,
@@ -134,18 +250,24 @@ def phien_song(cookies: dict[str, str]) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             if resp.status != 200:
-                return False
+                return None
             data = json.loads(resp.read().decode())
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
-        return False
+        return None
     sess = data.get("session") if isinstance(data, dict) else None
-    if not isinstance(sess, dict):
-        return False
-    return str(data.get("status") or "") == "authenticated" and bool(sess.get("userId"))
+    if not isinstance(sess, dict) or str(data.get("status") or "") != "authenticated" or not sess.get("userId"):
+        return None
+    user = sess.get("user") if isinstance(sess.get("user"), dict) else {}
+    return {"email": str(user.get("email") or sess.get("email") or "")}
 
 
-def _pid_mo(profile: Path) -> int | None:
-    kim = str(profile)
+def phien_song(cookies: dict[str, str]) -> bool:
+    return thong_tin_phien(cookies) is not None
+
+
+# ── Firefox ─────────────────────────────────────────────────────────────────
+def _pid_mo(profile_dir: Path) -> int | None:
+    kim = f"--profile {profile_dir} "
     for ten in os.listdir("/proc"):
         if not ten.isdigit():
             continue
@@ -153,7 +275,7 @@ def _pid_mo(profile: Path) -> int | None:
             cmd = open(f"/proc/{ten}/cmdline", "rb").read().replace(b"\0", b" ").decode(errors="replace")
         except OSError:
             continue
-        if "firefox" in cmd and kim in cmd and "--profile" in cmd:
+        if "firefox" in cmd and kim in cmd + " ":
             return int(ten)
     return None
 
@@ -177,41 +299,24 @@ def _tat_pid(pid: int) -> None:
     _log("grok_firefox_tat", pid=pid)
 
 
-def tat() -> None:
-    for profile in (ho_so(), _HO_SO_TAM):
-        pid = _pid_mo(profile)
+def dang_mo(profile: str) -> bool:
+    return _pid_mo(ho_so(profile)) is not None
+
+
+def tat(profile: str | None = None) -> None:
+    for p in ([profile] if profile else [a["profile"] for a in tai_khoan()]):
+        pid = _pid_mo(ho_so(p))
         if pid:
             _tat_pid(pid)
 
 
-def _copy_ho_so(src: Path, dst: Path) -> None:
-    if dst.exists() or not src.is_dir():
-        return
-    bo = shutil.ignore_patterns(
-        "cache2", "startupCache", "shader-cache", "thumbnails",
-        "crashes", "minidumps", "lock", "parent.lock", ".parentlock",
-    )
-    shutil.copytree(src, dst, ignore=bo)
-    _log("grok_firefox_giu_ho_so", tu=str(src))
-
-
-def _ho_so_mo() -> Path:
-    """Hồ sơ đã có cookie. Chưa copy sang ổ dữ liệu thì vẫn dùng hồ sơ tạm."""
-    if (ho_so() / "cookies.sqlite").is_file():
-        return ho_so()
-    if (_HO_SO_TAM / "cookies.sqlite").is_file():
-        return _HO_SO_TAM
-    ho_so().mkdir(parents=True, exist_ok=True)
-    return ho_so()
-
-
-def mo() -> int:
-    """Mở grok.com bằng hồ sơ đã lưu. Trả pid. Đã mở thì không mở thêm."""
-    profile = _ho_so_mo()
-    san = _pid_mo(profile)
+def mo(profile: str) -> int:
+    """Mở grok.com bằng hồ sơ của tài khoản trên màn hình noVNC. Đã mở thì không mở thêm."""
+    thu_muc = ho_so(profile)
+    san = _pid_mo(thu_muc)
     if san:
         return san
-    profile.mkdir(parents=True, exist_ok=True)
+    thu_muc.mkdir(parents=True, exist_ok=True)
     _nha().mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["DISPLAY"] = env.get("DISPLAY") or ":99"
@@ -219,108 +324,103 @@ def mo() -> int:
     env["MOZ_DISABLE_GMP_SANDBOX"] = "1"
     env["HOME"] = str(_nha())
     proc = subprocess.Popen(
-        [_firefox_bin(), "--no-remote", "--new-instance", "--profile", str(profile), "https://grok.com/"],
+        [_firefox_bin(), "--no-remote", "--new-instance", "--profile", str(thu_muc), "https://grok.com/"],
         env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
-    _log("grok_firefox_mo", pid=proc.pid)
+    _log("grok_firefox_mo", profile=profile, pid=proc.pid)
     return proc.pid
 
 
-def _thu_tu_sqlite(profile: Path) -> dict[str, str]:
-    cookies = doc_cookie_sqlite(profile)
-    if cookies.get("sso") and phien_song(cookies):
-        ghi_cookie(cookies)
-        return cookies
-    return {}
+def _thu_tu_sqlite(profile: str) -> dict[str, str]:
+    """Cookie trong hồ sơ còn phiên sống thì ghi file, cập nhật email của tài khoản, trả cookie."""
+    cookies = doc_cookie_sqlite(ho_so(profile))
+    tt = thong_tin_phien(cookies) if cookies.get("sso") else None
+    if tt is None:
+        return {}
+    ghi_cookie(profile, cookies)
+    if tt.get("email"):
+        _sua_ds(lambda d: [{**a, "email": tt["email"]} if a.get("profile") == profile else a for a in d])
+    return cookies
 
 
-def lam_moi(cho: float = 90) -> dict[str, str]:
-    """Cookie file còn sống thì tắt Firefox cho đỡ tốn. Hết hạn thì mở hồ sơ cũ."""
+def dang_nhap(profile: str) -> dict[str, Any]:
+    """Nút «Đăng nhập» trên web: mở Firefox của tài khoản trên noVNC rồi canh — phiên sống thì ghi cookie, tắt."""
+    _kiem_ten(profile)
+    pid = mo(profile)
+    _bat_theo_doi(profile)
+    return {"pid": pid, "profile": profile}
+
+
+def lam_moi(profile: str, cho: float = 90) -> dict[str, str]:
+    """Cookie file còn sống thì tắt Firefox cho đỡ tốn. Hết hạn thì mở lại đúng hồ sơ — còn đăng nhập thì grok.com
+    tự cấp phiên mới, không gõ mật khẩu."""
     with _KHOA:
-        return _lam_moi(cho)
-
-
-def _lam_moi(cho: float) -> dict[str, str]:
-    _chuyen_ho_so_tam()
-    san = doc_cookie_file()
-    if san.get("sso") and phien_song(san):
-        tat()
-        return san
-    if not (ho_so() / "cookies.sqlite").is_file() and not (_HO_SO_TAM / "cookies.sqlite").is_file():
-        raise RuntimeError(
-            "Chưa có hồ sơ Firefox của Grok trên ổ dữ liệu. "
-            "Đăng nhập một lần trên noVNC của máy này.")
-    mo()
-    het = time.time() + cho
-    while time.time() < het:
-        cookies = _thu_tu_sqlite(_ho_so_mo())
-        if cookies.get("sso"):
-            _chuyen_ho_so_tam()
-            tat()
-            return cookies
-        time.sleep(3)
-    _bat_theo_doi()
-    raise RuntimeError(
-        "Phiên Grok chưa tự mới. Firefox đang mở trên noVNC của máy này. "
-        "Đăng nhập xong thì cookie được ghi và Firefox tự tắt.")
-
-
-def _chuyen_ho_so_tam() -> None:
-    """Đưa hồ sơ /tmp sang ổ dữ liệu sau khi Firefox đã đóng, để còn đăng nhập."""
-    if ho_so().is_dir() or not _HO_SO_TAM.is_dir():
-        return
-    pid = _pid_mo(_HO_SO_TAM)
-    if pid:
-        cookies = _thu_tu_sqlite(_HO_SO_TAM)
-        if not cookies.get("sso"):
-            return
-        _tat_pid(pid)
-        time.sleep(1)
-    _copy_ho_so(_HO_SO_TAM, ho_so())
-
-
-def _vong_theo_doi() -> None:
-    """Người đang đăng nhập: thấy phiên sống thì ghi cookie và tắt Firefox."""
-    het = time.time() + 15 * 60
-    while time.time() < het:
-        for profile in (ho_so(), _HO_SO_TAM):
-            if _pid_mo(profile) is None:
-                continue
+        san = doc_cookie_file(profile)
+        if san.get("sso") and phien_song(san):
+            tat(profile)
+            return san
+        if not (ho_so(profile) / "cookies.sqlite").is_file():
+            raise RuntimeError(f"Tài khoản Grok {profile} chưa đăng nhập. Bấm «Đăng nhập» ở Cài đặt › Grok.")
+        mo(profile)
+        het = time.time() + cho
+        while time.time() < het:
             cookies = _thu_tu_sqlite(profile)
             if cookies.get("sso"):
-                _chuyen_ho_so_tam()
-                tat()
-                return
+                tat(profile)
+                return cookies
+            time.sleep(3)
+    _bat_theo_doi(profile)
+    raise RuntimeError(f"Phiên Grok {profile} chưa tự mới — Firefox đang mở trên noVNC, đăng nhập lại là xong.")
+
+
+def _vong_theo_doi(profile: str) -> None:
+    """Người đang đăng nhập: thấy phiên sống thì ghi cookie và tắt Firefox. Firefox bị đóng tay thì thôi."""
+    het = time.time() + 15 * 60
+    while time.time() < het and dang_mo(profile):
+        if _thu_tu_sqlite(profile).get("sso"):
+            tat(profile)
+            return
         time.sleep(3)
 
 
-def _bat_theo_doi() -> None:
-    global _THEO_DOI
-    if _THEO_DOI is not None and _THEO_DOI.is_alive():
-        return
-    _THEO_DOI = threading.Thread(target=_vong_theo_doi, name="grok-firefox", daemon=True)
-    _THEO_DOI.start()
+def _bat_theo_doi(profile: str) -> None:
+    with _KHOA:
+        t = _THEO_DOI.get(profile)
+        if t is not None and t.is_alive():
+            return
+        t = threading.Thread(target=_vong_theo_doi, args=(profile,), name=f"grok-firefox-{profile}", daemon=True)
+        _THEO_DOI[profile] = t
+        t.start()
+
+
+def trang_thai(kiem_phien: bool = True) -> list[dict[str, Any]]:
+    """Cho web: từng tài khoản kèm phiên còn sống không (``kiem_phien`` — gọi grok.com, tới 20 giây mỗi tài khoản;
+    cây tài khoản tắt đi cho nhanh, khi đó ``phien_song`` là None), Firefox đang mở không, cookie ghi lúc nào."""
+    ra = []
+    for i, a in enumerate(tai_khoan()):
+        p = a["profile"]
+        f = _file_cookie(p)
+        ra.append({**a, "ordinal": i + 1, "is_primary": i == 0,
+                   "phien_song": phien_song(doc_cookie_file(p)) if kiem_phien else None,
+                   "da_dang_nhap": (ho_so(p) / "cookies.sqlite").is_file(),
+                   "firefox_mo": dang_mo(p),
+                   "cookie_luc": f.stat().st_mtime if f.is_file() else None})
+    return ra
 
 
 def chuan_bi() -> None:
-    """Lúc mở app: phiên đã sống thì tắt Firefox. Chưa có cookie thì mở hồ sơ cũ."""
+    """Lúc mở app: chuyển hồ sơ cũ; tài khoản nào phiên còn sống mà Firefox đang mở thì tắt."""
     try:
-        with _KHOA:
-            _chuyen_ho_so_tam()
-            san = doc_cookie_file()
-            dang_mo = _pid_mo(ho_so()) or _pid_mo(_HO_SO_TAM)
-            if san.get("sso") and phien_song(san):
-                if dang_mo:
-                    tat()
-                return
-            if dang_mo:
-                _bat_theo_doi()
-                return
-            if ho_so().is_dir():
-                _lam_moi(90)
+        for a in tai_khoan():
+            p = a["profile"]
+            if dang_mo(p):
+                if phien_song(doc_cookie_file(p)):
+                    tat(p)
+                else:
+                    _bat_theo_doi(p)
     except Exception as exc:
         _log("grok_firefox_chuan_bi_loi", loi=str(exc)[:160])
 

@@ -15,6 +15,7 @@ IMAGE_MODELS = {
     "gpt-image-2",
     "gpt-5-5-image",
     "gma/image",
+    "grok/imagine",
     "gemini-image/imagen-3.0-generate-001",
     "gemini-image/gemini-2.5-flash-image",
     "gemini-image/gemini-3.1-flash-image-preview",

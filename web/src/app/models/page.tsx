@@ -26,6 +26,7 @@ const PROVIDER_LABELS: Record<string, { label: string; color: string; tint: stri
   claude: { label: "Claude Web", color: "#D97757", tint: "amber" },
   gemini_web_api: { label: "Gemini Web API", color: "#9333EA", tint: "violet" },
   gemini_web: { label: "Gemini Web (Scrape)", color: "#9333EA", tint: "violet" },
+  grok_web: { label: "Grok Web", color: "#111827", tint: "slate" },
   nvidia_nim: { label: "NVIDIA NIM", color: "#76B900", tint: "emerald" },
   tokenrouter: { label: "TokenRouter", color: "#06B6D4", tint: "cyan" },
 };

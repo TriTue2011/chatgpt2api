@@ -100,6 +100,7 @@ const ACCOUNT_GROUP_LABELS: Record<string, string> = {
   chatgpt_web: "ChatGPT Web",
   gemini_web: "Gemini Web",
   gemini_web_api: "Gemini Web API",
+  grok_web: "Grok Web",
 };
 
 export default function DashboardPage() {

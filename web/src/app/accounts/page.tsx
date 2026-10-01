@@ -28,7 +28,9 @@ import {
   Sparkles,
   Trash2,
   UserRound,
+  LogIn,
 } from "lucide-react";
+import { grokDangNhap, grokViec, TrangThaiGrok, type GrokTaiKhoan } from "@/app/settings/components/grok-web-card";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -583,6 +585,12 @@ function AccountsPageContent() {
       const flowBranch = ptBranches.find((b: any) => b.provider === "Google Labs Flow" || b.type === "flow");
       if (flowBranch) {
         tree.push(flowBranch);
+      }
+
+      // ── Grok Web branch — tài khoản Firefox riêng (api/grok_firefox.py) ──
+      const grokBranch = ptBranches.find((b: any) => b.type === "grok_web");
+      if (grokBranch) {
+        tree.push(grokBranch);
       }
 
       // ── Claude branch — only available from /provider-tree ──
@@ -1700,6 +1708,40 @@ function AccountsPageContent() {
                                 <Trash2 className="size-3" />
                               </button>
                             </div>
+                          </div>
+                        </div>
+                      ))}
+
+                      {/* Grok Web — mỗi tài khoản một hồ sơ Firefox; đăng nhập qua noVNC (Cài đặt › Grok có đủ nút). */}
+                      {provider.type === "grok_web" && provider.instances?.map((tk: GrokTaiKhoan) => (
+                        <div key={`grok:${tk.profile}`} className="flex items-center gap-3 px-5 py-3 hover:bg-[var(--muted)]/60 transition-colors">
+                          <span className={cn(
+                            "shrink-0 inline-flex items-center justify-center min-w-[28px] h-5 px-1.5 rounded-md text-[11px] font-mono font-bold tabular-nums",
+                            tk.is_primary ? "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300" : "bg-[var(--secondary)] text-[var(--muted-foreground)]"
+                          )}>#{tk.ordinal}</span>
+                          <div className={cn("size-8 shrink-0 rounded-full flex items-center justify-center",
+                            tk.enabled === false ? "bg-[var(--secondary)]" : "bg-gradient-to-br from-slate-700 to-black")}>
+                            <span className="text-[10px] font-bold text-white">GK</span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[13px] font-semibold text-[var(--foreground)] truncate">{tk.label}</span>
+                              <TrangThaiGrok tk={tk} />
+                              {tk.enabled === false && (
+                                <Badge variant="secondary" className="rounded text-[10px] px-1 py-0">disabled</Badge>
+                              )}
+                            </div>
+                            <code className="text-[10px] text-[var(--muted-foreground)]">{tk.email || "chưa rõ email"} · {tk.profile}</code>
+                          </div>
+                          <div className="flex items-center gap-1 text-[var(--muted-foreground)]" onClick={(e) => e.stopPropagation()}>
+                            <button className="rounded p-0.5 hover:bg-sky-50 hover:text-sky-600" title="Đăng nhập (mở Firefox trên noVNC)"
+                              onClick={() => void grokDangNhap(tk.profile).then(() => buildProviderTree())}>
+                              <LogIn className="size-3" />
+                            </button>
+                            <button className="rounded p-0.5 hover:bg-amber-50 hover:text-amber-600" title={tk.enabled === false ? "Kích hoạt" : "Vô hiệu hóa"}
+                              onClick={() => void grokViec({ viec: tk.enabled === false ? "bat" : "tat", profile: tk.profile }).then(() => buildProviderTree())}>
+                              {tk.enabled === false ? <Power className="size-3" /> : <PowerOff className="size-3" />}
+                            </button>
                           </div>
                         </div>
                       ))}

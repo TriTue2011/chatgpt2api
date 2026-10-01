@@ -656,6 +656,20 @@ def create_router() -> APIRouter:
             "captcha_solver_url": claude_cfg.get("captcha_solver_url") or "",
         })
 
+        # ── Grok Web: mỗi tài khoản một hồ sơ Firefox (`api/grok_firefox.py`) ──
+        try:
+            from api import grok_firefox as _gf
+            grok_items = _gf.trang_thai(kiem_phien=False)
+        except Exception:
+            grok_items = []
+        tree.append({
+            "provider": "Grok Web",
+            "icon": "bot",
+            "type": "grok_web",
+            "instances": grok_items,
+            "total": len(grok_items),
+        })
+
         # ── Custom providers branch ──
         custom_list = []
         for cp_id, cp_cfg in custom_providers.items():

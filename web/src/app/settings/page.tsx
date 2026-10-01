@@ -31,6 +31,7 @@ import { CodexOnboardCard } from "./components/codex-onboard-card";
 import { BrowserWorkspacesCard } from "./components/browser-workspaces-card";
 import { GoogleProvidersCard } from "./components/google-providers-card";
 import { OpenAINativeCard } from "./components/openai-native-card";
+import { GrokWebCard } from "./components/grok-web-card";
 import { ImportBrowserDialog } from "./components/import-browser-dialog";
 import { SettingsHeader } from "./components/settings-header";
 import { UserKeysCard } from "./components/user-keys-card";
@@ -139,6 +140,14 @@ function SettingsPageContent() {
           icon={<KeyRound className="size-5" />}
         >
           <GoogleProvidersCard />
+        </SettingsSection>
+
+        <SettingsSection
+          title="Grok (grok.com)"
+          description="Tài khoản Grok theo thứ tự ưu tiên — mỗi tài khoản một hồ sơ Firefox, đăng nhập qua noVNC (Google hay email)."
+          icon={<KeyRound className="size-5" />}
+        >
+          <GrokWebCard />
         </SettingsSection>
 
         <SettingsSection

@@ -8,7 +8,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from api import accounts, ai, browser_auth, camera, captcha_proxy, channels, claude, danh_muc_model, devices, dich, hoc_hoi, image_tasks, mcp, mcp_admin, mqtt, nhin_nha, novnc_proxy, oauth, ollama_compat, rclone, register, system, thong_bao, voice, youtube_phat, zalo_bot, zalo_personal
+from api import accounts, ai, grok_tai_khoan, browser_auth, camera, captcha_proxy, channels, claude, danh_muc_model, devices, dich, hoc_hoi, image_tasks, mcp, mcp_admin, mqtt, nhin_nha, novnc_proxy, oauth, ollama_compat, rclone, register, system, thong_bao, voice, youtube_phat, zalo_bot, zalo_personal
 from api.support import resolve_web_asset, start_limited_account_watcher, require_admin
 from api.veo_video import handle_video_generation
 from services.backup_service import backup_service
@@ -458,6 +458,7 @@ def create_app() -> FastAPI:
         _log_startup_failure("browser_sessions", exc)
     app.include_router(ai.create_router())
     app.include_router(claude.create_router())  # standalone, OpenAI-compatible /v1/claude/*
+    app.include_router(grok_tai_khoan.create_router())  # tài khoản Grok: danh sách, đăng nhập Firefox
     # Lớp dịch giao thức Ollama → dùng chung đường chat OpenAI. Có nó thì
     # integration Ollama sẵn trong Home Assistant nối thẳng vào gateway được
     # (nó tạo entity ai_task mà blueprint cảnh báo camera đòi).

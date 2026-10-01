@@ -145,6 +145,7 @@ FALLBACK_MODELS = {
     "grok_web": [
         "grok/fast",
         "grok/auto",
+        "grok/imagine",
         "gw/fast",
     ],
 }
@@ -727,6 +728,15 @@ def _drop_unavailable(data: list[dict]) -> list[dict]:
             if g not in avail:
                 avail[g] = _pool_ok(g)
             keep = avail[g]
+        elif pfx in ("grok", "gw"):
+            # Grok: tài khoản ở providers.grok_web (hồ sơ Firefox riêng) — hiện khi có tài khoản bật đã đăng nhập.
+            if "grok" not in avail:
+                try:
+                    from api import grok_firefox as _gf
+                    avail["grok"] = any(_gf.doc_cookie_file(a["profile"]).get("sso") for a in _gf.dang_bat())
+                except Exception:
+                    avail["grok"] = True
+            keep = avail["grok"]
         elif pfx in _KEY_PREFIX_PROVIDER:
             p = _KEY_PREFIX_PROVIDER[pfx]
             k = "k:" + p
