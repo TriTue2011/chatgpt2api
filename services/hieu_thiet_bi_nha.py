@@ -601,8 +601,12 @@ def giai(hs: dict[str, Any]) -> dict[str, Any]:
     loai_bo = 0
     loi = ""
     for phan in _chia(ho):
+        # Lời chấm câu `hoc` lần trước đi kèm từng mã — chấm sai mà bot không thấy vì sao thì
+        # lượt sau đọc y đề cũ, ra y kết luận cũ.
+        phan_de = [{**x, "loi_cham_truoc": dan} if (dan := ghi_chu_cham("hoc", x["ma"])) else x
+                   for x in phan]
         de = json.dumps({"so_ngay": hs.get("so_ngay"), "du_kien_chu_may": du_kien,
-                         "thiet_bi": phan},
+                         "thiet_bi": phan_de},
                         ensure_ascii=False)
         r = _goi_model(model, huong, de)
         if r.get("error"):

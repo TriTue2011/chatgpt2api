@@ -197,6 +197,31 @@ class ThoiQuenNhaTest(unittest.TestCase):
             with self.subTest(ly_do):
                 self.assertIsInstance(self.tq.kiem(sai, self.UV), str)
 
+    def test_chon_lai_ngoai_vi_sau_khi_bi_cham_sai_thi_CA_HAI_BUOC_mang_loi_cham(self) -> None:
+        now = time.time()
+        self._nha(now)
+        ghi = self.ht.ghi_ngoai_vi(self.ht._ghi_lan("b", "m", 1, 1, 0, 0, ""), [self._ket_luan()])
+        self.ht.cham(ghi["moi"][0]["id"], False, cham_boi="claude", ghi_chu="Sai khu: đèn này ở Ban công")
+        de_da_gui: list[str] = []
+
+        def _goi(model: str, huong: str, de: str) -> dict:
+            de_da_gui.append(de)
+            bai = ({"khu_vuc": "Ban công", "khu_xem": ["Ban công"], "vi_sao": "lời dặn"} if "BƯỚC 1" in de
+                   else {"ngoai_vi": [], "chac": 0.5, "vi_sao": ""})
+            return {"choices": [{"message": {"content": json.dumps(bai, ensure_ascii=False)}}]}
+
+        with mock.patch.object(self.ht, "thiet_bi_hoc", return_value=["switch.bep_left"]), \
+             mock.patch.object(self.ht, "_ten_ha", return_value={}), \
+             mock.patch("services.ha_client.get_states",
+                        return_value=[{"entity_id": e, "attributes": {}} for e in self.CON_TRONG_HA]), \
+             mock.patch.object(self.ht, "huong_dan", return_value=("hd", "ban")), \
+             mock.patch.object(self.ht, "_model", return_value="m"), \
+             mock.patch.object(self.ht, "_goi_model", side_effect=_goi):
+            self.tq.giai()
+        self.assertEqual(len(de_da_gui), 2, de_da_gui)
+        for de in de_da_gui:
+            self.assertIn("(giáo viên chấm sai) Sai khu: đèn này ở Ban công", de)
+
     def test_de_dinh_mat_khau_thi_KHONG_goi_model(self) -> None:
         with mock.patch.object(self.ht, "thiet_bi_hoc", return_value=["switch.x"]), \
              mock.patch.object(self.ht, "_ten_ha",

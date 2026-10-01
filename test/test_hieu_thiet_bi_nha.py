@@ -223,6 +223,22 @@ class HieuThietBiNhaTest(unittest.TestCase):
         self.assertEqual(self.ht.thiet_bi_hoc(), ["switch.bep_left"],
                          "lượt hỏng không được xoá kết luận cũ")
 
+    def test_LOI_CHAM_cau_hoc_di_kem_ma_trong_de_luot_sau(self) -> None:
+        """Chấm sai mà đề lượt sau không mang lời chấm thì bot đọc y đề cũ, ra y kết luận cũ."""
+        self._den_bep()
+        ghi = self._luu(self._nhom_bep())
+        hoc = next(x for x in ghi["moi"] if x["loai_cau_hoi"] == "hoc")
+        self.ht.cham(hoc["id"], False, cham_boi="claude", ghi_chu="đèn này chỉ bật theo tự động hoá")
+        tra = {"choices": [{"message": {"content": "{}"}}]}
+        with mock.patch.object(self.ht, "_goi_model", return_value=tra) as goi, \
+             mock.patch.object(self.ht, "_model", return_value="m"):
+            self.ht.giai(self.ht.ho_so())
+        de = json.loads(goi.call_args.args[2])
+        tb = {x["ma"]: x for x in de["thiet_bi"]}
+        self.assertEqual(tb["switch.bep_left"]["loi_cham_truoc"],
+                         ["(giáo viên chấm sai) đèn này chỉ bật theo tự động hoá"])
+        self.assertNotIn("loi_cham_truoc", tb["light.bep_left"], "mã chưa bị chấm thì đề như cũ")
+
     def test_KIEM_BIEN_bo_MA_BIA_va_khong_cho_hoc_CAM_BIEN(self) -> None:
         """Nhóm phạm luật cứng thì LOẠI, không sửa hộ — sửa hộ là làm bài thay
         học trò, và lỗi sẽ không bao giờ lộ ra để sửa hướng dẫn."""

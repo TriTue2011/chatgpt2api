@@ -8,6 +8,10 @@ có thể bật/tắt mà không ai làm. Em viết thói quen bật, thói quen
 Dữ kiện chủ nhà ưu tiên CAO NHẤT; nói khác số đo thì theo dữ kiện, và `vi_sao`
 ghi "theo dữ kiện #N".
 
+Đề có mục CHỦ NHÀ / GIÁO VIÊN DẶN thì đó là lời chấm các lần trước của CHÍNH
+thiết bị này: chỗ bị chấm SAI là bài học — sửa đúng chỗ được chỉ ra, giữ nguyên
+phần đã đúng, đừng kết luận lại như cũ.
+
 ## Đọc đề
 
 1. `khung giờ` và `ngày` ghi `X/Y`: X ô 30 phút có bật, trong Y ô thiết bị đang

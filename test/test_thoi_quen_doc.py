@@ -190,6 +190,35 @@ class DocThoiQuenTest(unittest.TestCase):
         self.assertTrue(self.tq._can_doc_lai({"ngoai_vi": [{"ma": "sensor.lux"}]}, cu, now))
         self.assertTrue(self.tq._can_doc_lai(nv, cu, now + self.tq._DOC_LAI_SAU_GIAY + 1))
 
+    def test_doc_lai_sau_khi_bi_cham_sai_thi_de_MANG_LOI_CHAM(self) -> None:
+        g = _GOC
+        self._sk("light.a", "off", g - 10)
+        self._sk("light.a", "on", g + 60)
+        self._sk("binary_sensor.p", "on", g + 30)
+        nv_hoc = {"light.a": {"khu_vuc": "Bếp", "ngoai_vi": [{"ma": "binary_sensor.p", "ten": "P", "vai_tro": "hien_dien"}]}}
+        de_da_gui: list[str] = []
+
+        def _goi(model: str, huong: str, de: str) -> dict:
+            de_da_gui.append(de)
+            bai = {"bat": {"thoi_quen": "có người thì bật", "dieu_kien": [{"ma": "binary_sensor.p", "la": "on"}]},
+                   "tat": {"thoi_quen": "", "dieu_kien": []}, "chac": 0.6, "vi_sao": ""}
+            return {"choices": [{"message": {"content": json.dumps(bai, ensure_ascii=False)}}]}
+
+        with mock.patch.object(self.ht, "ngoai_vi_hoc", return_value=nv_hoc), \
+             mock.patch("services.ha_client.get_states",
+                        return_value=[{"entity_id": "light.a"}, {"entity_id": "binary_sensor.p"}]), \
+             mock.patch.object(self.ht, "huong_dan", return_value=("hd", "ban")), \
+             mock.patch.object(self.ht, "_model", return_value="m"), \
+             mock.patch.object(self.ht, "_goi_model", side_effect=_goi):
+            kq = self.tq.doc()
+            self.assertEqual(kq["loi"], [])
+            self.assertNotIn("DẶN", de_da_gui[0])
+            ghi = self.ht.ghi_thoi_quen(self.ht._ghi_lan("b", "m", 1, 1, 0, 0, ""), kq["ket_luan"])
+            self.ht.cham(ghi["moi"][0]["id"], False, cham_boi="claude", ghi_chu="thiếu khung giờ sáng 06:00–09:00")
+            self.tq.doc()
+        self.assertIn("GIÁO VIÊN DẶN", de_da_gui[-1])
+        self.assertIn("(giáo viên chấm sai) thiếu khung giờ sáng 06:00–09:00", de_da_gui[-1])
+
     def test_doc_goi_bot_kiem_bai_va_bo_ngoai_vi_HA_da_vang(self) -> None:
         """Ngoại vi HA không còn trong `get_states` (mang mật khẩu, hoặc chủ máy đã bỏ)
         thì không bày; bài phạm luật thì vào `loi`, không vào kết luận."""

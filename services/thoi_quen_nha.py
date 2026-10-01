@@ -139,7 +139,7 @@ def _ten_ngoai_vi(tb: str, tr: str, ten_ha: dict[str, str]) -> str:
 
 
 def _dau_thiet_bi(ma: str, ten_ha: dict[str, str], so_bat: int, so_tat: int,
-                  du_kien: list[dict[str, Any]]) -> list[str]:
+                  du_kien: list[dict[str, Any]], dan: list[str] = ()) -> list[str]:
     from services import boi_canh_nha
 
     dong = [f"THIẾT BỊ: {ma} | {ten_ha.get(ma, '')} | khu vực HA: "
@@ -147,17 +147,26 @@ def _dau_thiet_bi(ma: str, ten_ha: dict[str, str], so_bat: int, so_tat: int,
     if du_kien:
         dong.append("\nDỮ KIỆN CHỦ NHÀ:")
         dong += [f"#{d['id']}: {d['noi_dung']}" for d in du_kien]
-    return dong
+    return dong + _dong_dan(dan)
+
+
+def _dong_dan(dan: list[str]) -> list[str]:
+    """Lời chấm các lần trước của CHÍNH câu này — cùng mục với đề «có người thật»
+    (`co_nguoi_nha.de`). Thiếu nó thì chấm sai xong bot đọc lại vẫn đề cũ, ra y cũ."""
+    if not dan:
+        return []
+    return (["\nCHỦ NHÀ / GIÁO VIÊN DẶN (khi chấm các lần trước của thiết bị này):"]
+            + [f"- {x}" for x in dan])
 
 
 def de_khu_vuc(ma: str, kho: dict[str, Any], ban_do: dict[str, list[tuple[str, str]]], *,
                ten_ha: dict[str, str], du_kien: list[dict[str, Any]],
-               so_bat: int, so_tat: int) -> str:
+               so_bat: int, so_tat: int, dan: list[str] = ()) -> str:
     """Đề BƯỚC 1: thiết bị, dữ kiện, và mọi khu vực kèm vài ngoại vi tiêu biểu."""
     def so_doi(c: tuple[str, str]) -> int:
         return (kho["trang_thai"].get(c) or kho["so_do"].get(c) or {"n": 0})["n"]
 
-    dong = ["BƯỚC 1 — CHỌN KHU VỰC", ""] + _dau_thiet_bi(ma, ten_ha, so_bat, so_tat, du_kien)
+    dong = ["BƯỚC 1 — CHỌN KHU VỰC", ""] + _dau_thiet_bi(ma, ten_ha, so_bat, so_tat, du_kien, dan)
     dong.append("\nKHU VỰC (số ngoại vi — vài ngoại vi tiêu biểu):")
     for kv in sorted(ban_do, key=lambda k: (k == CHUA_XEP, k)):
         tieu = sorted(ban_do[kv], key=lambda c: -so_doi(c))[:_TIEU_BIEU]
@@ -345,14 +354,15 @@ def giai(chi: list[str] | None = None, *, so_ngay: int = 30) -> dict[str, Any]:
         ban_than = _chi_tiet(kho["tu"], kho["den"], [(ma, "state")]).get((ma, "state"), [])
         so_bat = sum(1 for _, g in ban_than if du_doan_nha._la_bat(g))
         so_tat = len(ban_than) - so_bat
+        dan = ht.ghi_chu_cham("ngoai_vi", ma)
         b1 = _hoi_bot(ht, model, huong, de_khu_vuc(
-            ma, kho, ban_do, ten_ha=ten_ha, du_kien=du_kien, so_bat=so_bat, so_tat=so_tat))
+            ma, kho, ban_do, ten_ha=ten_ha, du_kien=du_kien, so_bat=so_bat, so_tat=so_tat, dan=dan))
         k1 = kiem_khu(b1, ban_do) if not isinstance(b1, str) else b1
         if isinstance(k1, str):
             loi.append({"ma": ma, "buoc": "khu vực", "loi": k1})
             continue
         uv = ung_vien(ma, k1["khu_xem"], kho, ban_do, ten_ha=ten_ha, bo_ma=nhom.get(ma, set()), lop_ha=lop_ha)
-        dau = _dau_thiet_bi(ma, ten_ha, so_bat, so_tat, du_kien)
+        dau = _dau_thiet_bi(ma, ten_ha, so_bat, so_tat, du_kien, dan)
         b2 = _hoi_bot(ht, model, huong, de_ngoai_vi(uv, dau, k1["khu_vuc"]))
         k2 = kiem(b2, uv) if not isinstance(b2, str) else b2
         if isinstance(k2, str):
@@ -703,6 +713,7 @@ def doc(chi: list[str] | None = None, *, so_ngay: int = 30, tat_ca: bool = False
                    f"{nv_hoc[ma].get('khu_vuc') or 'chưa rõ'}"]
             if du_kien:
                 dau += ["\nDỮ KIỆN CHỦ NHÀ:"] + [f"#{d['id']}: {d['noi_dung']}" for d in du_kien]
+            dau += _dong_dan(ht.ghi_chu_cham("thoi_quen", ma))
             b = _hoi_bot(ht, model, huong, de_thoi_quen(do, dau, pham_vi))
             k = kiem_thoi_quen(b, do) if not isinstance(b, str) else b
             if isinstance(k, str):

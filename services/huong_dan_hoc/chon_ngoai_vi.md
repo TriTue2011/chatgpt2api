@@ -7,6 +7,10 @@ HAI bước; dòng đầu của đề ghi bước nào. Chỉ trả JSON.
 Dữ kiện chủ nhà ưu tiên CAO NHẤT; nói khác số đo thì theo dữ kiện, và `vi_sao`
 ghi "theo dữ kiện #N".
 
+Đề có mục CHỦ NHÀ / GIÁO VIÊN DẶN thì đó là lời chấm các lần trước của CHÍNH
+thiết bị này: chỗ bị chấm SAI là bài học — sửa đúng chỗ được chỉ ra, giữ nguyên
+phần đã đúng, đừng kết luận lại như cũ.
+
 ## BƯỚC 1 — chọn khu vực
 
 Đề: thiết bị (mã, tên, khu vực HA), dữ kiện, và mọi khu vực kèm vài ngoại vi
