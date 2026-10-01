@@ -84,10 +84,12 @@ class ThanYeuCauDungHopDongREST(unittest.TestCase):
         than = AD.build_body("flow/banana-pro", {"prompt": "x"})
         self.assertNotIn("return_binary", than)
 
-    def test_khong_can_hien_man_hinh(self):
-        """Trình duyệt chỉ còn để lấy bearer + reCAPTCHA, không bấm gì."""
+    def test_phai_hien_man_hinh_khi_duc_token(self):
+        """Token đúc khi không có màn hình bị Google trả
+        PUBLIC_ERROR_UNUSUAL_ACTIVITY. Đo 01/10/2026: cùng hồ sơ, hiện
+        trình duyệt trên Xvfb thì ogiZ0b trả ảnh. Body phải xin màn hình."""
         than = AD.build_body("flow/banana-pro", {"prompt": "x"})
-        self.assertIs(than["headless"], True)
+        self.assertIs(than["headless"], False)
 
 
 class DiaChiTroDungDuongREST(unittest.TestCase):
