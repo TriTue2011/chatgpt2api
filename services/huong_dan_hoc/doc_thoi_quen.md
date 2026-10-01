@@ -35,6 +35,8 @@ ghi "theo dữ kiện #N".
     khung THẤP NHẤT: gộp MỌI khung liền nhau cao hẳn chúng, không chỉ khung cao
     nhất; `tu` là đầu khung đầu, `den` là cuối khung cuối; qua nửa đêm thì `tu`
     lớn hơn `den`; hai cụm khung rời nhau thì hai điều kiện giờ (hiểu là HOẶC);
+    giờ LUÔN đủ hai chữ số `HH:MM` — `"06:00"`, không phải `"6:00"` (sai dạng
+    là cả bài bị loại);
   - ngày: `{"ma": "ngay", "la": "thuong"}` hoặc `"cuoi_tuan"`;
   - mùa: `{"ma": "mua", "la": "nong"}` — `lanh` | `chuyen` | `nong`.
 - Bật/tắt gần như LUÔN trùng một ngoại vi thì vẫn ghi điều kiện đó, và `vi_sao`
