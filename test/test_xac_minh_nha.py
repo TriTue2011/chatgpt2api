@@ -177,3 +177,16 @@ def test_nguy_hiem_dung_dau_vao_cua_chot_luc_chay():
     from services import du_doan_nha as dd, kich_hoat_nha as kh_
     assert not dd._cam_tu_lam(kh_._ten_tt("light.phong_khach_l1", "on"))
     assert dd._cam_tu_lam(kh_._ten_tt("switch.binh_nong_lanh", "on"))
+
+
+def test_xac_minh_bat_nhin_lai_mot_nhip_truoc_khi_ket_luan_vang(kh, xmn, monkeypatch):
+    """17:33 01/10/2026: mở cửa, Cam PK chưa thấy người vừa bước vào → chặn «không bật, không hỏi»; 2 giây sau Frigate
+    thấy người, người tự bật. Một lần nhìn không thấy lúc người VỪA vào chưa phải vắng."""
+    monkeypatch.setattr(kh, "xet", lambda *a, **k: {"lam": "hoi"})
+    monkeypatch.setattr(kh.time, "sleep", lambda s: None)
+    _ap(xmn)
+    lan = iter(["", "Cam phòng ngủ: 1 người"])
+    monkeypatch.setattr(kh, "_nhin_lai", lambda cams, khu="": next(lan))
+    assert kh._xac_minh_truoc_hoi(DEN, "on", f"{NGU} có người vào", 0.0)[1] is True
+    monkeypatch.setattr(kh, "_nhin_lai", lambda cams, khu="": "")
+    assert kh._xac_minh_truoc_hoi(DEN, "on", f"{NGU} có người vào", 0.0)[1] is False, "nhìn lại vẫn trống: vắng"

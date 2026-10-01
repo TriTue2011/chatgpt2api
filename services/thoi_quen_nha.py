@@ -58,7 +58,7 @@ from utils.log import logger
 #: lúc bật/tắt" — số đo phụ bày cho bot, không phải điều kiện.
 _QUANH_GIAY = 600
 
-_TOI_DA_NGOAI_VI = 5
+_TOI_DA_NGOAI_VI = 6
 _TOI_DA_KHU_XEM = 3
 
 #: Ngoại vi không có khu trong sổ HA và tên không chứa tên khu nào.
@@ -91,12 +91,12 @@ def _doc_kho(tu: float, den: float) -> dict[str, Any]:
 
     ro = sqlite3.connect(f"file:{lich_su_nha._DB_PATH}?mode=ro", uri=True, timeout=10.0)
     try:
-        trang_thai = {(r[0], r[1]): {"n": int(r[2]), "so_gt": int(r[3])} for r in ro.execute(
-            "SELECT thiet_bi, truong, COUNT(*), COUNT(DISTINCT gia_tri) FROM su_kien"
+        trang_thai = {(r[0], r[1]): {"n": int(r[2]), "so_gt": int(r[3]), "cuoi": float(r[4])} for r in ro.execute(
+            "SELECT thiet_bi, truong, COUNT(*), COUNT(DISTINCT gia_tri), MAX(ts) FROM su_kien"
             " WHERE ts>=? AND ts<? AND do_ai=0 GROUP BY thiet_bi, truong", (tu, den))}
-        so_do = {(r[0], r[1]): {"nho": r[2], "tb": r[3], "lon": r[4], "n": int(r[5])}
+        so_do = {(r[0], r[1]): {"nho": r[2], "tb": r[3], "lon": r[4], "n": int(r[5]), "cuoi": float(r[6]) * 300}
                  for r in ro.execute(
-            "SELECT thiet_bi, truong, MIN(nho), AVG(tb), MAX(lon), COUNT(*) FROM so_do"
+            "SELECT thiet_bi, truong, MIN(nho), AVG(tb), MAX(lon), COUNT(*), MAX(o_5p) FROM so_do"
             " WHERE o_5p>=? AND o_5p<? GROUP BY thiet_bi, truong",
             (int(tu // 300), int(den // 300) + 1))}
     finally:
@@ -205,8 +205,8 @@ def ung_vien(ma_hoc: str, khu_xem: list[str], kho: dict[str, Any],
             s = kho["so_do"][(tb, tr)]
             gt = (f"chỉ một giá trị: {s['nho']:g}" if s["nho"] == s["lon"]
                   else f"{s['nho']:g}–{s['lon']:g} (tb {s['tb']:.4g})")
-            ngoai_vi[ma] = {"ten": ten, "khu_vuc": kv, "kieu": "số đo", "gia_tri": gt,
-                            "doi_ngay": "", "quanh": ""}
+            ngoai_vi[ma] = {"ten": ten, "khu_vuc": kv, "kieu": _kieu_khoang_cach(ma) or "số đo", "gia_tri": gt,
+                            "doi_ngay": "", "quanh": "", "im": _im(kho, (tb, tr))}
             continue
         dong = chi.get((tb, tr)) or []
         if not dong:
@@ -221,8 +221,31 @@ def ung_vien(ma_hoc: str, khu_xem: list[str], kho: dict[str, Any],
         trung = sum(1 for t in moc if _co_trong(mt, t - _QUANH_GIAY, t + _QUANH_GIAY))
         ngoai_vi[ma] = {"ten": ten, "khu_vuc": kv, "kieu": "trạng thái", "gia_tri": gt,
                         "doi_ngay": f"{len(dong) / so_ngay:.1f}",
-                        "quanh": f"{round(100 * trung / len(moc))}%" if moc else ""}
+                        "quanh": f"{round(100 * trung / len(moc))}%" if moc else "", "im": _im(kho, (tb, tr))}
     return {"ma": ma_hoc, "khu_xem": khu_xem, "ngoai_vi": ngoai_vi}
+
+
+def _im(kho: dict[str, Any], c: tuple[str, str]) -> str:
+    """Nguồn đã im bao lâu tính tới cuối đợt đo — cảm biến đổi tên / hỏng vẫn còn 30 ngày số đếm cũ (đèn trần phòng
+    khách học theo radar tên cũ im từ 15/09/2026, đo 01/10). Im dưới một ngày thì không ghi."""
+    # Một mã có thể nằm ở CẢ hai kho (từ 11/09/2026 số đo chỉ còn ghi vào `so_do`) — lấy mốc mới hơn.
+    cuoi = max([float(x["cuoi"]) for x in (kho["trang_thai"].get(c), kho["so_do"].get(c)) if x] or [0.0])
+    ngay = (kho["den"] - cuoi) / 86400 if cuoi else 0.0
+    return f"im {ngay:.0f} ngày" if ngay >= 1 else ""
+
+
+def _kieu_khoang_cach(ma: str) -> str:
+    """Số đo là KHOẢNG CÁCH người tới một radar (`vung_khoang_cach` nhận theo sổ thiết bị HA, không theo tên)."""
+    from services import vung_khoang_cach
+
+    v = vung_khoang_cach.ds().get(ma)
+    if not v:
+        return ""
+    s = f"khoảng cách người tới radar {v['radar']}"
+    if v.get("dat"):
+        s += (f"; vùng đã học: người trong khu khi {'≤' if v.get('huong') == 'duoi' else '>'} {v['nguong']:g} "
+              f"{v.get('don_vi') or ''}".rstrip())
+    return s
 
 
 def _co_trong(ds_tang: list[float], a: float, b: float) -> bool:
@@ -236,8 +259,8 @@ def de_ngoai_vi(uv: dict[str, Any], dau: list[str], khu_vuc: str) -> str:
     dong.append(f"\nKHU VỰC CỦA THIẾT BỊ (bước 1): {khu_vuc or 'chưa xác định'}")
     for kv in uv["khu_xem"]:
         dong.append(f"\nNGOẠI VI — khu vực {kv}:")
-        dong.append("mã | tên | kiểu | giá trị | đổi/ngày | đổi quanh lúc bật/tắt")
-        dong += [f"{ma} | {x['ten']} | {x['kieu']} | {x['gia_tri']} | {x['doi_ngay']} | {x['quanh']}"
+        dong.append("mã | tên | kiểu | giá trị | đổi/ngày | đổi quanh lúc bật/tắt | lần cuối")
+        dong += [f"{ma} | {x['ten']} | {x['kieu']} | {x['gia_tri']} | {x['doi_ngay']} | {x['quanh']} | {x['im']}"
                  for ma, x in uv["ngoai_vi"].items() if x["khu_vuc"] == kv]
     return "\n".join(dong)
 
@@ -255,7 +278,7 @@ def kiem(data: Any, uv: dict[str, Any]) -> dict[str, Any] | str:
         return "không phải JSON object"
     ds = data.get("ngoai_vi")
     if not isinstance(ds, list) or len(ds) > _TOI_DA_NGOAI_VI:
-        return "ngoai_vi phải là danh sách tối đa 5 mục"
+        return f"ngoai_vi phải là danh sách tối đa {_TOI_DA_NGOAI_VI} mục"
     ra: list[dict[str, str]] = []
     for x in ds:
         ma = x.get("ma") if isinstance(x, dict) else None

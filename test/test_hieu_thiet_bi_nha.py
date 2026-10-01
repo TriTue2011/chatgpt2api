@@ -827,5 +827,22 @@ class HieuThietBiNhaTest(unittest.TestCase):
         self.assertEqual(self.ht.thiet_bi_hoc(), ["switch.bep_left"])
 
 
+class BieuThucDocTest(unittest.TestCase):
+    """Mọi loại nút `cam_bien_ghep` nhận đều phải đọc được thành chữ — nút «khoang_cach» (B2) từng làm vỡ
+    việc dựng kịch bản nhà: `'str' object has no attribute 'values'` (01/10/2026)."""
+
+    def test_doc_duoc_nut_khoang_cach_long_trong_va_hoac(self):
+        from services.hieu_thiet_bi_nha import _bieu_thuc_doc
+
+        bt = {"hoac": [{"va": [{"ma": "binary_sensor.radar_pk"}, {"khoang_cach": "sensor.radar_pk_distance"}]},
+                       {"ma": "binary_sensor.cam_pk_person"}]}
+        ten = {"binary_sensor.radar_pk": "Radar PK", "sensor.radar_pk_distance": "Khoảng cách radar PK",
+               "binary_sensor.cam_pk_person": "Camera PK"}
+        s = _bieu_thuc_doc(bt, ten)
+        self.assertIn("Radar PK và Khoảng cách radar PK", s)
+        self.assertIn("trong vùng", s)
+        self.assertTrue(s.endswith("hoặc Camera PK"))
+
+
 if __name__ == "__main__":
     unittest.main()

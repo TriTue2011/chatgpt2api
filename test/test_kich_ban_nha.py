@@ -193,3 +193,21 @@ def test_danh_muc_dai_chia_nhieu_luot_moi_luot_it_ma(kb, monkeypatch):
     assert len(de) == 3 and all(len(x.splitlines()[1].rsplit("): ", 1)[1].split(", ")) <= kb.MA_MOI_LUOT for x in de)
     assert sorted(x["loai"] for x in k["kich_ban"]) == sorted(ma) and k["thieu"] == []
     assert "phần 1" in k["tom_tat"] and "phần 3" in k["tom_tat"]
+
+
+def test_de_bay_bai_tu_xac_minh_dang_ap(kb, tmp_path, monkeypatch):
+    """01/10/2026: đề thiếu bài xác minh nên bot kết luận đèn trần "cần xử lý cảm biến nhiễu bằng camera" — việc
+    bot đã làm (kiểm lại bằng camera mỗi 2 phút)."""
+    from services import camera_nha, xac_minh_nha as xm
+    xm._reset_for_tests(tmp_path / "xm.json")
+    monkeypatch.setattr(camera_nha, "danh_sach", lambda **k: [{"name": "Cam phòng ngủ"}])
+    with xm._khoa:
+        xm._nap()["bai"][DEN] = [{"id": 1, "luc": 0, "ket_qua": "dung", "gia_tri": {
+            "bat": {"xac_minh": ["Cam phòng ngủ"], "kiem_lai": ["Cam phòng ngủ"], "lech_lich": [], "hoi": "khong"},
+            "tat": {"xac_minh": ["Cam phòng ngủ", NGU], "nha_vang": [], "lech_lich": [], "hoi": "khong"}}}]
+    de = kb.de(kb.do(), [], DEN, ["vao", "o_lai"])
+    assert "TỰ XÁC MINH trước khi bật (lúc luật định hỏi anh): nhìn Cam phòng ngủ — thấy người thì tự bật, " \
+           "không thấy ai thì không bật, không hỏi" in de
+    assert "KIỂM LẠI sau khi bật: mỗi 2 phút nhìn Cam phòng ngủ" in de
+    assert "TỰ XÁC MINH trước khi tắt khi vắng: Cam phòng ngủ, Hiện diện phòng ngủ còn thấy người" in de
+    xm._reset_for_tests(tmp_path / "xm2.json")

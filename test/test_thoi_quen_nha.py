@@ -133,6 +133,31 @@ class ThoiQuenNhaTest(unittest.TestCase):
             "zigbee2mqtt/Hiện diện ban công#presence"])
         self.assertEqual(uv["ngoai_vi"]["switch.ban_cong_motion"]["gia_tri"], "chỉ một giá trị: on",
                          "bot tự loại theo hướng dẫn — code chỉ ghi rõ")
+
+    def test_de_buoc_2_bay_nguon_da_im_va_khoang_cach_radar(self) -> None:
+        """01/10/2026: đèn trần học theo radar tên cũ đã im 16 ngày — số đếm 30 ngày vẫn còn nên bot cứ chọn nó.
+        Số đo có ở CẢ hai kho (trạng thái cũ, ô 5 phút mới) thì lấy mốc mới hơn."""
+        from services import vung_khoang_cach
+        now = time.time()
+        self._nha(now)
+        self._sk("zigbee2mqtt/Hiện diện ban công", "True", now - 16 * 86400, truong="occupancy")
+        self._sk("zigbee2mqtt/Hiện diện ban công", "False", now - 16 * 86400 + 60, truong="occupancy")
+        self._sk("zigbee2mqtt/Hiện diện ban công", "3.1", now - 20 * 86400, truong="distance")
+        self._sd("zigbee2mqtt/Hiện diện ban công", "distance", now - 600, 2.5)
+        kho = self.tq._doc_kho(now - 30 * 86400, now + 1)
+        bd = self.tq.ban_do_khu(kho, con_trong_ha=self.CON_TRONG_HA)
+        with mock.patch.object(vung_khoang_cach, "ds", return_value={"zigbee2mqtt/Hiện diện ban công#distance": {
+                "radar": "binary_sensor.radar_bc", "dat": True, "huong": "duoi", "nguong": 3.6, "don_vi": "m"}}):
+            uv = self.tq.ung_vien("switch.bep_center", ["Ban công"], kho, bd, ten_ha={}, bo_ma=set())
+        nv = uv["ngoai_vi"]
+        self.assertEqual(nv["zigbee2mqtt/Hiện diện ban công#occupancy"]["im"], "im 16 ngày")
+        self.assertEqual(nv["zigbee2mqtt/Hiện diện ban công#presence"]["im"], "")
+        self.assertEqual(nv["zigbee2mqtt/Hiện diện ban công#distance"]["im"], "", "ô 5 phút mới hơn bản ghi cũ")
+        self.assertEqual(nv["zigbee2mqtt/Hiện diện ban công#illuminance"]["kieu"], "số đo")
+        de = self.tq.de_ngoai_vi(uv, [], "Ban công")
+        self.assertIn("| lần cuối", de)
+        self.assertIn("khoảng cách người tới radar binary_sensor.radar_bc; vùng đã học: người trong khu khi ≤ 3.6 m",
+                      de)
         self.assertEqual(uv["ngoai_vi"]["zigbee2mqtt/Hiện diện ban công#presence"]["quanh"], "100%")
         de = self.tq.de_ngoai_vi(uv, ["THIẾT BỊ: switch.bep_center"], "Ban công")
         self.assertIn("NGOẠI VI — khu vực Ban công:", de)

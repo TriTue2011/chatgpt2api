@@ -95,9 +95,9 @@ _TOI_DA_DU_KIEN = 40
 _LOAI = ("bat_tat", "cam_bien", "rac", "khong_ro")
 
 #: Vai trò một ngoại vi với thiết bị — tầng thói quen dùng khi đọc số đo.
-VAI_TRO_NGOAI_VI = ("hien_dien", "dem_nguoi", "anh_sang", "nhiet_do", "do_am",
+VAI_TRO_NGOAI_VI = ("hien_dien", "khoang_cach", "dem_nguoi", "anh_sang", "nhiet_do", "do_am",
                     "thiet_bi", "khac")
-_VAI_TRO_DOC = {"hien_dien": "hiện diện", "dem_nguoi": "đếm người",
+_VAI_TRO_DOC = {"hien_dien": "hiện diện", "khoang_cach": "khoảng cách tới radar", "dem_nguoi": "đếm người",
                 "anh_sang": "ánh sáng", "nhiet_do": "nhiệt độ", "do_am": "độ ẩm",
                 "thiet_bi": "thiết bị đi kèm", "khac": "khác"}
 
@@ -1255,6 +1255,9 @@ def _bieu_thuc_doc(bt: dict[str, Any], ten: dict[str, str], trong: bool = False)
         la = [str(x) for x in bt.get("la", ["on"])]
         nhan = ten.get(str(bt["ma"])) or str(bt["ma"])
         return nhan if la == ["on"] else f"{nhan} là {'/'.join(la)}"
+    if "khoang_cach" in bt:         # `cam_bien_ghep`: radar không thấy người NGOÀI vùng khu bot đã học
+        ma = str(bt["khoang_cach"])
+        return f"{ten.get(ma) or ma} trong vùng khu"
     if "khong" in bt:
         return f"không {_bieu_thuc_doc(bt['khong'], ten, True)}"
     noi = " và " if "va" in bt else " hoặc "

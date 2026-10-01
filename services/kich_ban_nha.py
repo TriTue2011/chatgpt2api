@@ -143,9 +143,46 @@ def _viec_dang_cai(tb: str, cd: dict[str, Any], mh: dict[str, Any], ten: dict[st
         dong.append("TẮT: không tự tắt")
     if (cd.get("tat_khi_sang") or {}).get("bat"):
         dong.append(f"TẮT KHI TRỜI SÁNG: phòng trống mà trời ≥ {cd['tat_khi_sang'].get('lux')} lux")
+    dong += _xac_minh_dang_ap(tb, bool(tv.get("bat")), cb)
     for x in cd.get("ngoai_le") or []:
         dong.append(f"KHUNG GIỜ «{x.get('ten') or x.get('lich') or ''}»: hướng "
                     f"{'bật' if x['hanh_dong'] == 'on' else 'tắt'} {'luôn hỏi' if x.get('cach') == 'hoi' else 'không làm'}")
+    return dong
+
+
+def _xac_minh_dang_ap(tb: str, tat_khi_vang: bool, cb: Any) -> list[str]:
+    """Bài TỰ XÁC MINH đang áp (`xac_minh_nha`) bằng lời — đúng những gì `kich_hoat_nha` làm lúc sống. Thiếu phần
+    này, lượt dựng tình huống 01/10/2026 kết luận đèn trần "cần bổ sung xử lý cảm biến nhiễu/kẹt bằng camera" trong
+    khi bot đã kiểm lại bằng camera mỗi 2 phút."""
+    from services import kich_hoat_nha as kh, xac_minh_nha
+
+    bai = xac_minh_nha.ap(tb)
+    if not bai:
+        return []
+
+    def ds(x: list[str]) -> str:
+        return ", ".join(cb(m) for m in x)
+
+    def lech(h: dict[str, Any]) -> str:
+        them = [m for m in h.get("lech_lich") or [] if m not in (h.get("xac_minh") or [])]
+        return f"; giờ lịch nói cả nhà vắng/ngủ thì nhìn thêm {ds(them)}" if them else ""
+
+    dong: list[str] = []
+    b, t = bai.get("bat") or {}, bai.get("tat") or {}
+    if b.get("hoi") == "luon":
+        dong.append("TỰ XÁC MINH khi bật: không — thiết bị luôn hỏi anh")
+    elif b.get("xac_minh") or b.get("lech_lich"):
+        dong.append(f"TỰ XÁC MINH trước khi bật (lúc luật định hỏi anh): nhìn {ds(b.get('xac_minh') or [])}{lech(b)}"
+                    " — thấy người thì tự bật, không thấy ai thì "
+                    + ("không bật, không hỏi" if b.get("hoi") == "khong" else "hỏi anh")
+                    + ", không nguồn nào nhìn được thì hỏi anh")
+    if b.get("kiem_lai"):
+        dong.append(f"KIỂM LẠI sau khi bật: mỗi {xac_minh_nha.KIEM_LAI_GIAY // 60} phút nhìn {ds(b['kiem_lai'])} "
+                    f"(tối đa {kh.KIEM_LAI_LAN} lần, thấy người một lần là thôi) — không ai thì tắt và báo anh cảm "
+                    "biến có thể báo ảo")
+    if tat_khi_vang and (t.get("xac_minh") or t.get("lech_lich")):
+        dong.append(f"TỰ XÁC MINH trước khi tắt khi vắng: {ds(t.get('xac_minh') or [])}{lech(t)} còn thấy người thì "
+                    f"chưa tắt, xét lại sau {kh.HEN_LAI} giây")
     return dong
 
 

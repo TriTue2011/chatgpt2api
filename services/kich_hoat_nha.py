@@ -1718,7 +1718,13 @@ def _xac_minh_truoc_hoi(tb: str, hd: str, nguon: str, luc: float) -> tuple[str, 
     nguon_xm = xac_minh_nha.nguon_luc(bai["bat"], luc)
     if not nguon_xm or xet(tb, hd, nguon, luc)["lam"] != "hoi":
         return None
-    co, mo_ta = xac_minh_nha.xac_minh(nguon_xm, boi_canh_nha.phong_cua(tb))
+    khu = boi_canh_nha.phong_cua(tb)
+    co, mo_ta = xac_minh_nha.xac_minh(nguon_xm, khu)
+    if co is False:
+        # Bật là lúc người VỪA bước vào — camera/Frigate chậm một nhịp mới thấy (như `_dinh_vi`). 17:33 01/10/2026:
+        # mở cửa, Cam PK chưa thấy ai → chặn «không bật, không hỏi»; 2 giây sau Frigate thấy người, người tự bật.
+        time.sleep(DINH_VI_NHIN_LAI)
+        co, mo_ta = xac_minh_nha.xac_minh(nguon_xm, khu)
     logger.info({"event": "kich_hoat_xac_minh_bat", "thiet_bi": tb, "nguon": nguon, "co_nguoi": co, "mo_ta": mo_ta})
     return str(bai["bat"].get("hoi") or ""), co, mo_ta
 
