@@ -182,64 +182,16 @@ async def _capture_bearer(page, timeout_s: float = 25.0) -> str:
 
 
 async def _get_recaptcha_token(page, action: str = "flow_generate") -> tuple[str, str]:
-    """Call grecaptcha.enterprise.execute() on the page; return (token, sitekey).
+    """Đúc reCAPTCHA bằng execute gốc của trang. Hàm công khai đã bị Flow bọc.
 
-    The Flow app loads grecaptcha lazily via a script tag with
-    ?render=<sitekey>. If the script hasn't auto-loaded yet, we inject the
-    script ourselves so we don't have to wait for the React app to trigger
-    the load on its own.
+    Bản Flow 22/09/2026 gán action extension_hijack_detected cho mọi token
+    đi qua grecaptcha.enterprise.execute. Google trả unusual activity.
+    Ưu tiên hàm đã giữ trước lúc bọc; không có thì gỡ action độc ngay trong Object.assign.
     """
-    info = await page.evaluate(
-        """async (action) => {
-            // Locate sitekey from any of the standard places.
-            const findSitekey = () => {
-                const el = document.querySelector('[data-sitekey]');
-                if (el) return el.getAttribute('data-sitekey');
-                for (const s of document.querySelectorAll('script[src*="recaptcha"]')) {
-                    const m = s.src.match(/render=([^&]+)/);
-                    if (m) return m[1];
-                }
-                if (window.___grecaptcha_cfg?.clients?.[0]?.K?.K?.sitekey) {
-                    return window.___grecaptcha_cfg.clients[0].K.K.sitekey;
-                }
-                return null;
-            };
-            const sitekey = findSitekey();
-            if (!sitekey) return {error: "sitekey not on page"};
+    from .flow_rpc import FLOW_MINT_JS, install_captcha_hook
 
-            // If grecaptcha isn't loaded yet, inject the script explicitly.
-            if (!window.grecaptcha?.enterprise?.execute) {
-                if (!document.querySelector('script[data-cs-injected]')) {
-                    const sc = document.createElement('script');
-                    sc.src = 'https://www.google.com/recaptcha/enterprise.js?render=' + sitekey;
-                    sc.async = true;
-                    sc.defer = true;
-                    sc.dataset.csInjected = '1';
-                    document.head.appendChild(sc);
-                }
-                // Wait up to 30 s for the runtime to register.
-                for (let i = 0; i < 150; i++) {
-                    if (window.grecaptcha?.enterprise?.execute) break;
-                    await new Promise(r => setTimeout(r, 200));
-                }
-            }
-            if (!window.grecaptcha?.enterprise?.execute) {
-                return {error: "grecaptcha.enterprise.execute never registered", sitekey};
-            }
-
-            // grecaptcha.enterprise has its own ready() callback that must
-            // resolve before execute() will work. Promisify it.
-            await new Promise(r => grecaptcha.enterprise.ready(r));
-
-            try {
-                const token = await grecaptcha.enterprise.execute(sitekey, { action });
-                return {token, sitekey};
-            } catch (e) {
-                return {error: String(e?.message || e), sitekey};
-            }
-        }""",
-        action,
-    )
+    await install_captcha_hook(page)
+    info = await page.evaluate(FLOW_MINT_JS, action)
     if not isinstance(info, dict) or info.get("error"):
         raise RuntimeError(f"reCAPTCHA execute failed: {info}")
     token = info.get("token")

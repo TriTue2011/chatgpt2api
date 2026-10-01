@@ -508,9 +508,10 @@ class FlowImageAdapter(BaseImageAdapter):
             # (đo 30-33s so với 73-94s của đường cũ); vẫn để rộng vì Nano Banana
             # Pro có lúc chậm.
             "timeout": 280,
-            # Trình duyệt chỉ còn dùng để lấy bearer + token reCAPTCHA, không
-            # phải để bấm gì, nên không cần hiện màn hình.
-            "headless": True,
+            # Headless bị Google trả PUBLIC_ERROR_UNUSUAL_ACTIVITY. Đo
+            # 01/10/2026: cùng hồ sơ Main, hiện trình duyệt trên Xvfb thì
+            # ogiZ0b trả ảnh. Đừng đúc token khi không có màn hình.
+            "headless": False,
         }
         # Img2img: REST nhận MẢNG base64 (`images_b64`), khác đường cũ chỉ nhận
         # một tấm — sửa ảnh nhiều tấm nay không bị cắt còn một.

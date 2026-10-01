@@ -3,16 +3,23 @@
 Hợp đồng đo 07/09/2026 từ request thật và client wO1vlb:
 ogiZ0b = FlowService.BatchGenerateImages, maseQ = FlowService.UploadImage.
 Mảng JSON là protobuf: chỉ số Python = số trường protobuf - 1.
+
+Bản 22/09/2026 của Flow bọc grecaptcha.enterprise.execute để gắn action
+extension_hijack_detected. Token đúc qua hàm công khai bị từ chối
+PUBLIC_ERROR_UNUSUAL_ACTIVITY. Request của trang còn có f.sid, bl, hl.
 """
 from __future__ import annotations
 
 import base64
 import json
+import logging
 import random
 import re
 import time
 import uuid
 from urllib.parse import quote, urlsplit
+
+logger = logging.getLogger("src.solvers.flow_rpc")
 
 from .flow_rest import LoiFlowRest, TY_LE_ANH, kiem_model_anh
 
@@ -26,20 +33,144 @@ READY = """() => location.hostname === 'accounts.google.com' ||
     location.pathname === '/about' ||
     (!!window.grecaptcha?.enterprise?.execute && !!window.WIZ_global_data?.SNlM0e)"""
 
+FLOW_CAPTCHA_INIT = """() => {
+    if (window.__c2a_flow) return;
+    let pristine = null;
+    const save = (fn, enterprise) => {
+        if (pristine || typeof fn !== 'function') return;
+        try { if (String(fn).includes('extension_hijack_detected')) return; } catch (e) {}
+        pristine = fn.bind(enterprise);
+    };
+    const watchExecute = (enterprise) => {
+        if (!enterprise) return;
+        save(enterprise.execute, enterprise);
+        let current = enterprise.execute;
+        try {
+            Object.defineProperty(enterprise, 'execute', {
+                configurable: true, enumerable: true,
+                get() { return current; },
+                set(fn) { current = fn; save(fn, enterprise); },
+            });
+        } catch (e) {}
+    };
+    const watchEnterprise = (grecaptcha) => {
+        if (!grecaptcha) return;
+        watchExecute(grecaptcha.enterprise);
+        let current = grecaptcha.enterprise;
+        try {
+            Object.defineProperty(grecaptcha, 'enterprise', {
+                configurable: true, enumerable: true,
+                get() { return current; },
+                set(obj) { current = obj; watchExecute(obj); },
+            });
+        } catch (e) {}
+    };
+    let current = window.grecaptcha;
+    watchEnterprise(current);
+    try {
+        Object.defineProperty(window, 'grecaptcha', {
+            configurable: true, enumerable: true,
+            get() { return current; },
+            set(obj) { current = obj; watchEnterprise(obj); },
+        });
+    } catch (e) {}
+    Object.defineProperty(window, '__c2a_flow', {
+        value: { get pristine() { return pristine; } },
+        configurable: false, enumerable: false,
+    });
+}"""
+
 POST_RPC = """async ({rpc, body, timeout}) => {
-    const at = window.WIZ_global_data?.SNlM0e;
+    const wiz = window.WIZ_global_data || {};
+    const at = wiz.SNlM0e;
     if (!at) return {status: 401, text: ''};
     const form = new URLSearchParams({at,
         'f.req': JSON.stringify([[[rpc, JSON.stringify(body), null, 'generic']]])});
-    const query = new URLSearchParams({rpcids: rpc, 'source-path': location.pathname, rt: 'c'});
-    const response = await fetch('/_/AiSandboxAngularFrontend/data/batchexecute?' + query, {
-        method: 'POST', credentials: 'same-origin',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'},
+    const hl = (document.documentElement.lang || navigator.language || 'en').split('-')[0];
+    const query = new URLSearchParams({
+        rpcids: rpc,
+        'source-path': location.pathname || '/',
+        bl: wiz.cfb2h || '',
+        'f.sid': wiz.FdrFJe || '',
+        hl,
+        _reqid: String(Math.floor(Math.random() * 900000) + 100000),
+        rt: 'c',
+    });
+        const account = (location.pathname.match(new RegExp('^/u/\\d+')) || [''])[0];
+    const response = await fetch(account + '/_/AiSandboxAngularFrontend/data/batchexecute?' + query, {
+        method: 'POST', credentials: 'include',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+            'x-same-domain': '1',
+        },
         body: form, signal: AbortSignal.timeout(timeout),
     });
     if (new URL(response.url).hostname !== location.hostname)
         return {status: 401, text: ''};
     return {status: response.status, text: await response.text()};
+}"""
+
+FLOW_MINT_JS = """async (action) => {
+    const findSitekey = () => {
+        const el = document.querySelector('[data-sitekey]');
+        if (el) return el.getAttribute('data-sitekey');
+        for (const s of document.querySelectorAll('script[src*="recaptcha"]')) {
+            const m = s.src.match(/render=([^&]+)/);
+            if (m) return decodeURIComponent(m[1]);
+        }
+        const clients = window.___grecaptcha_cfg?.clients || {};
+        for (const client of Object.values(clients)) {
+            if (client?.sitekey) return client.sitekey;
+            if (client?.K?.K?.sitekey) return client.K.K.sitekey;
+        }
+        return null;
+    };
+    const sitekey = findSitekey() || '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
+    if (!window.grecaptcha?.enterprise?.execute && !window.__c2a_flow?.pristine) {
+        if (!document.querySelector('script[data-cs-injected]')) {
+            const sc = document.createElement('script');
+            sc.src = 'https://www.google.com/recaptcha/enterprise.js?render=' + sitekey;
+            sc.async = true;
+            sc.dataset.csInjected = '1';
+            document.head.appendChild(sc);
+        }
+        for (let i = 0; i < 150; i++) {
+            if (window.grecaptcha?.enterprise?.execute || window.__c2a_flow?.pristine) break;
+            await new Promise(r => setTimeout(r, 200));
+        }
+    }
+    const pristine = window.__c2a_flow?.pristine;
+    const execute = window.grecaptcha?.enterprise?.execute;
+    if (typeof pristine !== 'function' && typeof execute !== 'function')
+        return {error: 'grecaptcha.enterprise.execute never registered', sitekey};
+    if (window.grecaptcha?.enterprise?.ready)
+        await new Promise(r => window.grecaptcha.enterprise.ready(r));
+    const realAssign = Object.assign;
+    let poisoned = false;
+    try {
+        if (typeof execute === 'function' && String(execute).includes('extension_hijack_detected'))
+            poisoned = true;
+    } catch (e) {}
+    try {
+        let token;
+        if (typeof pristine === 'function') {
+            token = await pristine(sitekey, {action});
+        } else if (poisoned) {
+            Object.assign = function (target, ...sources) {
+                const result = realAssign.call(this, target, ...sources);
+                if (result && result.action === 'extension_hijack_detected') result.action = action;
+                return result;
+            };
+            token = await execute(sitekey, {action});
+        } else {
+            token = await execute(sitekey, {action});
+        }
+        return token ? {token: String(token), sitekey, pristine: typeof pristine === 'function'} : {error: 'empty token', sitekey};
+    } catch (e) {
+        return {error: String(e?.message || e), sitekey};
+    } finally {
+        Object.assign = realAssign;
+    }
 }"""
 
 
@@ -147,8 +278,24 @@ async def post_rpc(page, rpc: str, body: list, timeout: float) -> list:
     return rpc_result(result.get("text", ""), rpc)
 
 
+
+async def install_captcha_hook(page) -> None:
+    """Gắn bẫy execute trước lần tải trang kế. Trang đang mở thì đường đúc token xử lý."""
+    context = getattr(page, "context", None)
+    add = getattr(context, "add_init_script", None)
+    if add is None:
+        return
+    await add(FLOW_CAPTCHA_INIT)
+
+
+def _la_trang_du_an(path: str, project_id: str) -> bool:
+    """/project/<id> hoặc /u/<n>/project/<id>. n là chỉ số tài khoản trên trình duyệt."""
+    return re.fullmatch(rf"(?:/u/\d+)?/project/{re.escape(project_id)}", path.rstrip("/")) is not None
+
+
 async def open_project(page, project_id: str, profile: str) -> None:
     url = f"https://flow.google.com/project/{quote(project_id, safe='')}"
+    await install_captcha_hook(page)
     await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
     await page.wait_for_function(READY, timeout=30_000)
     if urlsplit(page.url).path == "/about":
@@ -166,7 +313,8 @@ async def open_project(page, project_id: str, profile: str) -> None:
                 await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
                 await page.wait_for_function(READY, timeout=30_000)
     current = urlsplit(page.url)
-    if current.hostname != "flow.google.com" or current.path != urlsplit(url).path:
+    logger.info("flow open profile=%s path=%s", profile, current.path)
+    if current.hostname != "flow.google.com" or not _la_trang_du_an(current.path, project_id):
         raise LoiFlowRest(401, f"Phiên Google Flow của {profile} cần đăng nhập lại Google.")
 
 
