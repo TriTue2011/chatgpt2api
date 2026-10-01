@@ -2196,6 +2196,17 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
             send_message(chat_id, "📎 Hiện chỉ hỗ trợ PDF, Word, Excel, "
                                   f"PowerPoint và hóa đơn XML. File: {doc_name}")
             return
+        from services import hoa_don as _hd
+        _khoa_hd = f"tg:{_bot_id()}:{chat_id}:{user_id or ''}"
+        if _hd.dang_cho(_khoa_hd, str(doc_name)):
+            # Tệp thứ hai của một lượt đối chiếu đang chờ → làm luôn, không hiện menu lần nữa.
+            _api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
+            _hd_data = _download_file(document.get("file_id", ""))
+            if not _hd_data:
+                send_message(chat_id, "❌ Không thể tải file.")
+                return
+            send_message(chat_id, _hd.nhan_du_lieu(_khoa_hd, _hd_data, str(doc_name)))
+            return
         _pdf_intents = (_pi.them_doi_chieu(_pi.y_dinh_cho_office(_allow), doc_name, _allow) if _la_office
                         else _pi.y_dinh_cho_hoa_don(_allow) if _la_hd
                         else _pi.allowed_intents(_allow))

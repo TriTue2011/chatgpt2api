@@ -193,3 +193,15 @@ def test_danh_muc_ghi_gia_gom_thue_noi_thang():
     assert "ĐÃ GỒM thuế GTGT 10%" in hd.doi_chieu(h, d)
     d["dong"][0]["dg"] = 1500.0                                                   # một dòng lệch thật → không gộp
     assert "ĐÃ GỒM" not in hd.doi_chieu(h, d)
+
+
+def test_tep_thu_hai_vao_thang_khong_hoi_lai(xml, tmp_path):
+    """Chủ máy 01/10/2026: "gửi 1 file trước có lựa chọn đối chiếu, rồi gửi file 2 là xong"."""
+    hd._reset_for_tests()
+    assert not hd.dang_cho("u9", "dm.xlsx")                       # chưa chọn đối chiếu tệp nào
+    with mock.patch("services.agent.luu_tru_day.luu_vao_thu_muc_lam_viec",
+                    side_effect=lambda ten, dl: (tmp_path / ten).write_bytes(dl) and str(tmp_path / ten)):
+        hd.nhan_du_lieu("u9", xml.read_bytes(), "hd.xml")
+    assert hd.dang_cho("u9", "danh_muc.xlsx")                     # đang chờ đúng loại còn thiếu
+    assert not hd.dang_cho("u9", "hoa_don_khac.pdf")               # cùng vai với tệp đã có → hiện menu như cũ
+    assert not hd.dang_cho("u9", "hop_dong.docx") and not hd.dang_cho("u8", "dm.xlsx")

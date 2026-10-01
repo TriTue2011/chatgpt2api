@@ -3793,6 +3793,17 @@ def _process_ai(ev: dict) -> None:
         # thật vì markitdown nhận dạng theo đuôi.
         _la_office = _pi.la_office(name)
         _la_hd = _pi.la_hoa_don(name)
+        from services import hoa_don as _hd
+        _khoa_hd = _skey_zalop(thread_id, thread_type, ev.get("sender_id"))
+        if (_la_pdf or _la_office or _la_hd) and _hd.dang_cho(_khoa_hd, name or "document.pdf"):
+            # Tệp thứ hai của một lượt đối chiếu đang chờ → làm luôn, không hiện menu lần nữa.
+            send_typing(thread_id, thread_type)
+            data = _download(ev["attachment_url"])
+            if not data:
+                send_message(thread_id, "📄 Không tải được file.", thread_type)
+                return
+            send_message(thread_id, _hd.nhan_du_lieu(_khoa_hd, data, name or "document.pdf"), thread_type)
+            return
         if _la_pdf or _la_office or _la_hd:
             intents = (_pi.them_doi_chieu(_pi.y_dinh_cho_office(_allow), name, _allow) if _la_office
                        else _pi.y_dinh_cho_hoa_don(_allow) if _la_hd

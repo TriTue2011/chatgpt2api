@@ -435,12 +435,30 @@ def la_bang(ten: str) -> bool:
     return str(ten or "").lower().endswith(_DUOI_BANG)
 
 
+def _vai(ten: str) -> str:
+    return "danh_muc" if la_bang(ten) else "hoa_don"
+
+
+def dang_cho(khoa: str, ten: str) -> bool:
+    """Người này đã chọn «Đối chiếu hóa đơn» cho MỘT tệp (còn hạn) và ``ten`` đúng là tệp còn thiếu → kênh chuyển
+    thẳng vào đây, không hiện menu lần nữa (chủ máy 01/10/2026: "gửi 1 file trước … rồi gửi file 2 là xong")."""
+    if not (la_bang(ten) or str(ten or "").lower().endswith((".pdf", ".xml"))):
+        return False
+    with _khoa:
+        hs = _ho_so.get(str(khoa))
+        return bool(hs) and time.time() - hs["luc"] <= CHO_GIAY and _vai(ten) not in hs
+
+
 def nhan_tep(khoa: str, duong: str, ten: str) -> str:
+    return nhan_du_lieu(khoa, Path(duong).read_bytes(), ten)
+
+
+def nhan_du_lieu(khoa: str, du_lieu: bytes, ten: str) -> str:
     """Người dùng chọn «Đối chiếu hóa đơn» cho một tệp: lưu vào thư mục làm việc (công cụ
     `office_doi_chieu_hoa_don` đọc lại được), ghi vào hồ sơ của người đó; đủ hai tệp thì đối chiếu luôn."""
     from services.agent import luu_tru_day
-    tep = luu_tru_day.luu_vao_thu_muc_lam_viec(ten, Path(duong).read_bytes())
-    vai = "danh_muc" if la_bang(ten) else "hoa_don"
+    tep = luu_tru_day.luu_vao_thu_muc_lam_viec(ten, du_lieu)
+    vai = _vai(ten)
     with _khoa:
         for k in [k for k, v in _ho_so.items() if time.time() - v["luc"] > CHO_GIAY]:
             _ho_so.pop(k, None)
@@ -452,7 +470,7 @@ def nhan_tep(khoa: str, duong: str, ten: str) -> str:
     if not du:
         con = "file Excel danh mục" if vai == "hoa_don" else "hóa đơn (file XML gốc, hoặc PDF)"
         return (f"🧾 Đã nhận {'hóa đơn' if vai == 'hoa_don' else 'danh mục'}: {Path(tep).name}.\n"
-                f"Gửi tiếp {con} rồi chọn «Đối chiếu hóa đơn» (trong {CHO_GIAY // 60} phút).")
+                f"Gửi tiếp {con} trong {CHO_GIAY // 60} phút — em đối chiếu luôn, không hỏi lại.")
     kq = doi_chieu_tep(hs["hoa_don"], hs["danh_muc"])
     return kq["bao_cao"] if kq["ok"] else f"Không đối chiếu được — {kq['error']}."
 
