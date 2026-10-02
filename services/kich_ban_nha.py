@@ -696,12 +696,17 @@ def sua_duyet(tb: str, h: str, viec: str, so_muc: int | None = None, noi_dung: s
             raise ValueError("Việc phải là duyet / sua / them / bo.")
         _luu(d)
         con = list(muc)
+        xong_tb = bool(x.get("xong"))
     ten = kich_hoat_nha._ten_ha().get(tb, tb)
     if viec != "duyet":
         return _soan(tb, h, con)
     so_do_nha.them_mo_ta(f"Chủ nhà duyệt trường hợp {_TEN_CHIEU[h]} của {ten}: "
                          + "; ".join(f"{m['tinh_huong']} → {_NEN_DOC.get(m['nen'], m['nen'])}" for m in con),
                          nguon=f"duyet:{tb}:{h}", thay_cu=True)
+    if xong_tb:
+        # Duyệt xong cả hai chiều: bot chuyển trường hợp thành luật chạy được, báo nhóm để chấm (`luat_duyet`).
+        from services import luat_duyet
+        threading.Thread(target=luat_duyet.giai_va_bao, args=(tb,), name="luat-duyet", daemon=True).start()
     tiep = gui_duyet_tiep()
     return f"Dạ, em ghi phần {_TEN_CHIEU[h].lower()} của {ten} đã duyệt." + (
         "" if tiep.startswith("Đã duyệt xong") else " Em gửi phần tiếp theo ạ.")

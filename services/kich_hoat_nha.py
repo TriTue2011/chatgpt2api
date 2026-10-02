@@ -2246,9 +2246,149 @@ def _bat_lai(tb: str, nguon: str, luc: float) -> None:
         logger.warning({"event": "kich_hoat_bat_lai_loi", "thiet_bi": tb, "error": str(exc)[:200]})
 
 
+# ── Luật từ trường hợp chủ nhà ĐÃ DUYỆT (`luat_duyet`) ─────────────────────
+# Chủ máy 02/10/2026: duyệt trường hợp bật rồi tắt, "rồi thực hiện đúng theo đó và hỏi lại để học cách làm đúng hơn,
+# xem đã làm đúng chưa, chưa đúng thì nhìn lại ở đâu không đạt, chỉnh lại cho phù hợp". Luật do bot chuyển từ trường
+# hợp đã duyệt, chỉ chạy khi đã chấm ĐÚNG; chạy thì hỏi đúng/sai, sai thì bot giải lại kèm giá trị lúc đó.
+_CHAN = {"on": "khong_lam", "off": "giu"}
+
+
+def _luat_duyet(tb: str) -> list[dict[str, Any]]:
+    try:
+        from services import luat_duyet
+        return luat_duyet.ap(tb)
+    except Exception as exc:  # noqa: BLE001 — sổ hỏng thì như chưa có luật duyệt
+        logger.warning({"event": "kich_hoat_luat_duyet_loi", "thiet_bi": tb, "error": str(exc)[:160]})
+        return []
+
+
+def _huong_duyet(l: dict[str, Any]) -> str:
+    return "on" if l.get("chieu") == "bat" else "off"
+
+
+def _xu_ly_duyet(tb: str, khop: list[dict[str, Any]], nguon: str, luc: float) -> None:
+    """Một sự kiện khớp ``khi`` của các luật đã duyệt: luật đầu tiên đủ điều kiện, không bị luật chặn, qua xác minh
+    thì làm (hoặc hỏi) — mỗi sự kiện tối đa MỘT việc."""
+    from services import du_doan_nha as dd, ha_client, luat_duyet, thong_bao
+    try:
+        tat_ca = _luat_duyet(tb)
+        st = {str(x["entity_id"]): x for x in ha_client.get_states() or []}
+        tt = str((st.get(tb) or {}).get("state") or "").lower()
+        th = (luat_duyet.so().get(tb) or {}).get("lan") or []
+        for l in khop:
+            hd = _huong_duyet(l)
+            ten_th = next((x["truong_hop"][l["so"] - 1] for x in th if x["id"] == l["lan"]), "")[:80]
+            ok, doc = luat_duyet.kiem_dieu_kien(l["neu"], luc, st)
+            if not ok:
+                _nk(tb, hd, "khong", nguon, f"trường hợp duyệt #{l['so']}: chưa đủ điều kiện — {', '.join(doc)}",
+                    luc=luc)
+                continue
+            if tt == hd:
+                continue
+            if tt in _KHONG_CO_MAT:
+                _bao_khong_co_mat(tb, hd, nguon, luc)
+                return
+            chan = next((c for c in tat_ca if c["nen"] == _CHAN[hd]
+                         and luat_duyet.kiem_dieu_kien(c["neu"], luc, st)[0]), None)
+            if chan:
+                _nk(tb, hd, "khong", nguon, f"trường hợp duyệt #{l['so']} khớp nhưng bị trường hợp #{chan['so']} chặn",
+                    luc=luc)
+                return
+            if _vua_lam(tb, hd) or _nguoi_vua_cham(tb, luc):
+                _nk(tb, hd, "khong", nguon, f"trường hợp duyệt #{l['so']}: vừa có người / bot bật tắt", luc=luc)
+                return
+            if l.get("xac_minh"):
+                co, mo_ta = _co_nguoi_that(tb, luc)
+                if (hd == "on" and co is False) or (hd == "off" and co):
+                    _nk(tb, hd, "khong", nguon, f"trường hợp duyệt #{l['so']}: xác minh — {mo_ta}", luc=luc)
+                    return
+                doc = doc + [f"xác minh: {mo_ta}"] if mo_ta else doc
+            ten = _ten_tb(tb)
+            nhan = {"nguon": f"trường hợp duyệt #{l['so']}", "luat_duyet": {"lan": l["lan"], "so": l["so"], "doc": doc}}
+            hoi = l["nen"] == "hoi" or dd._cam_tu_lam(_ten_tt(tb, hd))
+            if hoi:
+                id_ = dd.ghi_nhan(_ten_tt(tb, hd), hd, 1.0, nhan, "hoi")
+                _nk(tb, hd, "hoi", nguon, f"trường hợp duyệt #{l['so']}: {', '.join(doc)}", luc=luc)
+                if not thong_bao.gui("nha.goi_y", f"💡 #{id_} {_TEN_HD[hd]} {ten} không ạ? (trường hợp anh duyệt "
+                                                  f"#{l['so']} «{ten_th}») — anh trả lời «có» hoặc «không»."):
+                    dd.xoa(id_)
+                return
+            with _khoa_xet:
+                if not _lam(tb, hd, tu_lam=True):
+                    _nk(tb, hd, "khong", nguon, f"trường hợp duyệt #{l['so']}: lệnh tới thiết bị không thành", luc=luc)
+                    return
+                id_ = dd.ghi_nhan(_ten_tt(tb, hd), hd, 1.0, nhan, "tu_lam")
+                _nk(tb, hd, "lam", nguon, f"trường hợp duyệt #{l['so']}: {', '.join(doc)}", luc=luc)
+            if hd == "on":
+                _hen_kiem_lai(tb, 0)
+            thong_bao.gui("nha.goi_y", f"🤖 #{id_} Em đã {_TEN_HD[hd].lower()} {ten} theo trường hợp anh duyệt "
+                                       f"#{l['so']} «{ten_th}».\nĐúng hay sai ạ? Anh trả lời «đúng» hoặc «sai» — sai thì em "
+                                       f"{_TEN_HD[_NGUOC[hd]].lower()} lại và sửa luật. Không trả "
+                                       f"lời trong {CHAM_TU_LAM // 60} phút là em tính đúng.")
+            return
+    except Exception as exc:  # noqa: BLE001
+        logger.warning({"event": "kich_hoat_duyet_loi", "thiet_bi": tb, "error": str(exc)[:200]})
+
+
+def _duyet_sai(tb: str, boi_canh: Any, loi: str) -> None:
+    """Lần làm bị chấm sai mà đến từ luật đã duyệt → `luat_duyet.chay_sai` (bot giải lại kèm giá trị lúc đó)."""
+    try:
+        ld = json.loads(boi_canh or "{}").get("luat_duyet")
+        if isinstance(ld, dict):
+            from services import luat_duyet
+            luat_duyet.chay_sai(tb, int(ld["lan"]), int(ld["so"]), list(ld.get("doc") or []), loi)
+    except Exception as exc:  # noqa: BLE001 — ghi bài học hỏng không được chặn việc làm ngược lại
+        logger.warning({"event": "kich_hoat_duyet_sai_loi", "thiet_bi": tb, "error": str(exc)[:160]})
+
+
+def _o_lai_duyet(tb: str, ma: str, khi: str, luc0: float) -> None:
+    """«<ma> ở lại N giây»: sau N giây ``ma`` vẫn báo có người, LIỀN từ lúc vào → xét các luật có sự kiện đó."""
+    from datetime import datetime
+    from services import ha_client
+    try:
+        st = ha_client.get_state(ma) or {}
+        if str(st.get("state") or "").lower() != "on":
+            return
+        if datetime.fromisoformat(str(st.get("last_changed"))).timestamp() > luc0 + 2:
+            return                          # đã tắt rồi bật lại trong lúc chờ — không liền
+        khop = [l for l in _luat_duyet(tb) if khi in l["khi"] and l["nen"] in ("bat", "tat", "hoi")]
+        if khop:
+            _xu_ly_duyet(tb, khop, khi, time.time())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning({"event": "kich_hoat_o_lai_duyet_loi", "thiet_bi": tb, "error": str(exc)[:160]})
+
+
+def _phat_duyet(nguon: str, luc: float, cua: bool) -> set[str]:
+    """Chạy luật đã duyệt cho mọi thiết bị; trả các hướng («tb|on») có luật duyệt — luật bot học nhường hướng đó."""
+    co: set[str] = set()
+    for tb in ds_thiet_bi():
+        luat = _luat_duyet(tb)
+        if not luat:
+            continue
+        co |= {f"{tb}|{_huong_duyet(l)}" for l in luat if l["nen"] in ("bat", "tat", "hoi")}
+        if nguon.endswith(" có người vào"):
+            ma = nguon.split(" ")[0]
+            cho = {k for l in luat for k in l["khi"] if k.startswith(f"{ma} ở lại ")}
+            for k in cho:
+                t = threading.Timer(int(k.rsplit(" ", 2)[1]), _o_lai_duyet, args=(tb, ma, k, luc))
+                t.daemon = True
+                t.start()
+        khop = [l for l in luat if nguon in l["khi"] and l["nen"] in ("bat", "tat", "hoi")]
+        if not khop:
+            continue
+        if cua and any(_huong_duyet(l) == "on" for l in khop):
+            threading.Thread(target=_cho_nguoi_vao, args=(_xu_ly_duyet, tb, khop, nguon, luc),
+                             name="kich-hoat-duyet-cho-vao", daemon=True).start()
+        else:
+            threading.Thread(target=_xu_ly_duyet, args=(tb, khop, nguon, luc), name="kich-hoat-duyet",
+                             daemon=True).start()
+    return co
+
+
 def _phat(nguon: str, luc: float) -> None:
     mh = _nap()["mo_hinh"]
     cua = nguon.endswith(" có người vào") and _la_cua(nguon)
+    co_duyet = _phat_duyet(nguon, luc, cua)
     if nguon.endswith(" có người vào"):
         ma = nguon.split(" ")[0]
         for tb, cd in ds_thiet_bi().items():
@@ -2266,8 +2406,8 @@ def _phat(nguon: str, luc: float) -> None:
                                      name="kich-hoat-luat-chu", daemon=True).start()
         co_chu = {l["hanh_dong"] for l in chu}
         for hd in HANH_DONG:
-            if hd in co_chu:
-                continue                     # luật anh đặt thắng luật bot học ở hướng này
+            if hd in co_chu or f"{tb}|{hd}" in co_duyet:
+                continue                     # luật anh đặt / luật từ trường hợp anh duyệt thắng luật bot học
             if nguon in ((mh.get(tb) or {}).get(hd) or {}).get("nguon", []):
                 if cua and hd == "on":
                     threading.Thread(target=_cho_nguoi_vao, args=(_xu_ly, tb, hd, nguon, luc),
@@ -2306,8 +2446,10 @@ def _nguoi_lam(tb: str, gt: str, luc: float) -> None:
             "SELECT id, boi_canh FROM du_doan WHERE ten=? AND cach='tu_lam' AND ket_qua='cho' AND ts>?",
             (_ten_tt(tb, nguoc), luc - CHAM_TU_LAM)).fetchall()
     for x in r:
-        if dd.ghi_sai(int(x["id"])) and nguoc == "off":
-            _noi_vang(tb, x["boi_canh"], luc)       # bot tắt vì vắng mà người bật lại ngay
+        if dd.ghi_sai(int(x["id"])):
+            _duyet_sai(tb, x["boi_canh"], "người tự làm ngược lại ngay sau đó")
+            if nguoc == "off":
+                _noi_vang(tb, x["boi_canh"], luc)   # bot tắt vì vắng mà người bật lại ngay
 
 
 def cham_tu_lam() -> int:
@@ -3082,6 +3224,7 @@ def tra_loi(text: str) -> str | None:
                    "em vẫn tự tắt như thường." if hd == "on" and tv.get("bat") else "")
             return f"Dạ, em ghi là đúng: {_TEN_HD[hd].lower()} {_ten_tb(tb)}.{con}"
         dd.ghi_sai(int(r["id"]))
+        _duyet_sai(tb, r["boi_canh"], "chủ nhà trả lời sai")
         nang = _nang_nguong_sang(tb, r["boi_canh"])
         noi = _noi_vang(tb, r["boi_canh"], time.time()) if hd == "off" else None
         if not _lam(tb, _NGUOC[hd], tu_lam=False):

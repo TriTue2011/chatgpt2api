@@ -1187,6 +1187,12 @@ def _h_kich_ban_nha(args: dict, ctx: dict) -> dict:
     from services import kich_ban_nha
 
     viec = str(args.get("viec") or "dung").strip().lower()
+    if viec == "cham_luat":
+        from services import luat_duyet
+        if not args.get("so"):
+            return {"text": "Anh cho em số luật (số đầu dòng ở tin ⚙️) ạ."}
+        return {"text": luat_duyet.cham_moi_nhat(int(args["so"]), bool(args.get("dung")),
+                                                 str(args.get("noi_dung") or ""))}
     if viec == "duyet":
         noi = str(args.get("noi_dung") or "").strip()
         return {"text": kich_ban_nha.tra_loi_duyet(noi) if noi
@@ -7468,9 +7474,10 @@ CAPABILITIES: dict[str, Capability] = {
                      "dung, noi_dung = lời chấm, lan = số TH nếu nêu). Hỏi bot đã dựng được gì → viec='xem'. "
                      "Gửi / trả lời danh sách «📋 Duyệt trường hợp BẬT|TẮT …» → viec='duyet' (noi_dung = nguyên lời "
                      "chủ nhà: «duyệt», «sửa 2: …», «thêm: …», «bỏ 3»; để trống = gửi danh sách đầu tiên; uu_tien = "
-                     "mã thiết bị chủ nhà muốn duyệt trước)."),
+                     "mã thiết bị chủ nhà muốn duyệt trước). Chấm một luật trong tin «⚙️ Luật em chuyển …» («luật 3 "
+                     "sai, …», «luật 2 đúng») → viec='cham_luat' (so, dung, noi_dung = lời chủ nhà)."),
         parameters={"type": "object", "properties": {
-            "viec": {"type": "string", "enum": ["dung", "tra_loi", "cham", "xem", "duyet"]},
+            "viec": {"type": "string", "enum": ["dung", "tra_loi", "cham", "xem", "duyet", "cham_luat"]},
             "noi_dung": {"type": "string", "description": "Lời chủ nhà trả lời / chấm, giữ đúng ý."},
             "so": {"type": "integer", "description": "Số KB của câu hỏi, hoặc số tình huống khi chấm."},
             "dung": {"type": "boolean", "description": "viec='cham': nhận định của bot đúng hay sai."},

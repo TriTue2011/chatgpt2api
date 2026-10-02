@@ -12,6 +12,9 @@ os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
 from services import hieu_thiet_bi_nha as ht, kich_ban_nha as kb, kich_hoat_nha, so_do_nha  # noqa: E402
 
 
+GIAI: list[str] = []
+
+
 def _th(tb, nen, chu, hien="sai"):
     return {"thiet_bi": tb, "loai": "vao", "tinh_huong": chu, "cam_bien_thay": "", "nen": nen, "hien_tai": hien}
 
@@ -32,6 +35,9 @@ def so(tmp_path, monkeypatch):
     monkeypatch.setattr(ht, "bao_nhom", lambda tin: gui.append(tin) or 1)
     monkeypatch.setattr(kich_hoat_nha, "_ten_ha", lambda: {"light.den": "Đèn trần", "fan.quat": "Quạt"})
     monkeypatch.setattr(so_do_nha, "them_mo_ta", lambda nd, nguon="", thay_cu=False: mo_ta.append((nguon, nd)) or 1)
+    from services import luat_duyet
+    monkeypatch.setattr(luat_duyet, "giai_va_bao", lambda tb: GIAI.append(tb) or {})
+    GIAI.clear()
     return gui, mo_ta
 
 
@@ -60,6 +66,9 @@ def test_sua_them_bo_qua_kenh_roi_duyet_thi_sang_tat(so):
     kb.tra_loi_duyet("duyệt")
     assert gui[-1].startswith("📋 Duyệt trường hợp BẬT — Quạt"), "xong một thiết bị thì sang thiết bị kế"
     assert kb.duyet()["light.den"]["xong"] is True
+    import time
+    time.sleep(0.2)
+    assert GIAI == ["light.den"], "duyệt xong cả hai chiều thì bot chuyển trường hợp thành luật"
 
 
 def test_chay_lai_khong_mat_phan_da_sua(so):

@@ -1029,6 +1029,33 @@ def create_router() -> APIRouter:
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
+    # ── Luật từ trường hợp đã duyệt (`luat_duyet`) ──
+    @router.get("/api/hoc-hoi/luat-duyet")
+    async def luat_duyet_xem(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        from services import luat_duyet
+        return {"ok": True, "so": luat_duyet.so(), "ap": {tb: luat_duyet.ap(tb) for tb in luat_duyet.so()}}
+
+    @router.post("/api/hoc-hoi/luat-duyet")
+    async def luat_duyet_viec(body: dict, authorization: str | None = Header(default=None)):
+        """body: {viec: giai, tb} | {viec: cham, tb, so, dung, ghi_chu?, cham_boi?, lan?}."""
+        require_admin(authorization)
+        from services import luat_duyet
+        tb = str(body.get("tb") or "")
+        try:
+            if body.get("viec") == "giai":
+                kq = await asyncio.to_thread(luat_duyet.giai_va_bao, tb)
+                return {"ok": bool(kq.get("ok")), "error": kq.get("loi"), "lan": kq.get("id")}
+            if body.get("viec") == "cham":
+                ok = luat_duyet.cham(tb, int(body.get("so") or 0), bool(body.get("dung")),
+                                     cham_boi=str(body.get("cham_boi") or "chu_may"),
+                                     ghi_chu=str(body.get("ghi_chu") or ""),
+                                     lan_id=int(body["lan"]) if body.get("lan") else None)
+                return {"ok": ok} if ok else {"ok": False, "error": "Không có luật đó."}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": "viec phải là giai hoặc cham."}
+
     # ── Cảm biến ghép: bot tự tính từ cảm biến gốc (`cam_bien_ghep`) ──
     @router.get("/api/hoc-hoi/cam-bien-ghep")
     async def cam_bien_ghep_ds(authorization: str | None = Header(default=None)):

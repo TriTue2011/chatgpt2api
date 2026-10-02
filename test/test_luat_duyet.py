@@ -1,0 +1,123 @@
+"""Luật từ trường hợp chủ nhà đã duyệt — kiểm ở biên, kiểm điều kiện lúc chạy, áp luật đã chấm, chạy sai thì giải lại,
+và bộ kích hoạt thi hành (chủ máy 02/10/2026). Không gọi HA, không gọi model."""
+from __future__ import annotations
+
+import json
+import os
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
+
+from services import luat_duyet as ld  # noqa: E402
+
+_TZ = timezone(timedelta(hours=7))
+MA = {"binary_sensor.cua", "binary_sensor.pk", "sensor.kc", "light.den"}
+
+
+def _luat(**k):
+    return {"so": 1, "nen": "bat", "khi": ["binary_sensor.pk có người vào"], "neu": [], "xac_minh": False, **k}
+
+
+def test_kiem_bien_loai_ma_la_nguon_sai_va_bo_sot():
+    data = {"luat": [_luat(neu=[{"ma": "sensor.kc", "duoi": 3.66}, {"ma": "ca_nha", "la": "ngu", "phu_dinh": True}]),
+                     _luat(so=2, neu=[{"ma": "sensor.khong_co", "la": "on"}]),
+                     _luat(so=3, khi=["binary_sensor.pk ở lại 5 giây"]),
+                     _luat(so=4, khi=["binary_sensor.pk ở lại 30 giây"], neu=[{"ma": "gio", "tu": "6h", "den": "21:45"}])],
+            "khong_chuyen_duoc": [{"so": 5, "ly_do": "cần nhận mặt"}]}
+    luat, khong, loi = ld.kiem(data, 6, MA, {"ngu"})
+    assert [l["so"] for l in luat] == [1] and luat[0]["neu"][1] == {"ma": "ca_nha", "la": "ngu", "phu_dinh": True}
+    assert khong == [{"so": 5, "ly_do": "cần nhận mặt"}]
+    assert any("sensor.khong_co" in x for x in loi) and any("10–3600" in x for x in loi)
+    assert any("khung giờ" in x for x in loi) and any("bỏ sót trường hợp [2, 3, 4, 6]" in x for x in loi)
+
+
+def test_lien_giay_va_trong_giay_khong_di_chung():
+    _, _, loi = ld.kiem({"luat": [_luat(neu=[{"ma": "binary_sensor.cua", "la": "on", "lien_giay": 5,
+                                              "trong_giay": 60}])]}, 1, MA, set())
+    assert loi and "không đi chung" in loi[0]
+
+
+def _st(ma, gt, cach_giay=0.0, luc=1_000_000.0):
+    return {"entity_id": ma, "state": gt,
+            "last_changed": datetime.fromtimestamp(luc - cach_giay, _TZ).isoformat()}
+
+
+def test_kiem_dieu_kien_so_lien_giay_trong_giay_va_phu_dinh(monkeypatch):
+    luc = 1_000_000.0
+    st = {"sensor.kc": _st("sensor.kc", "2.1"), "binary_sensor.pk": _st("binary_sensor.pk", "on", 40),
+          "binary_sensor.cua": _st("binary_sensor.cua", "off", 20)}
+    monkeypatch.setattr(ld, "_da_o_trong", lambda ma, la, tu: ma == "binary_sensor.cua" and tu == luc - 60)
+    ok, doc = ld.kiem_dieu_kien([{"ma": "sensor.kc", "duoi": 3.66}, {"ma": "binary_sensor.pk", "la": "on", "lien_giay": 30},
+                                 {"ma": "binary_sensor.cua", "la": "on", "trong_giay": 60}], luc, st)
+    assert ok and doc[0] == "sensor.kc=2.1✓"
+    ok, _ = ld.kiem_dieu_kien([{"ma": "binary_sensor.pk", "la": "on", "lien_giay": 60}], luc, st)
+    assert not ok, "mới có người 40 giây"
+    ok, _ = ld.kiem_dieu_kien([{"ma": "sensor.kc", "duoi": 3.66, "phu_dinh": True}], luc, st)
+    assert not ok
+
+
+def test_khung_gio_qua_nua_dem():
+    luc = datetime(2026, 10, 2, 23, 30, tzinfo=_TZ).timestamp()
+    assert ld._trong_khung("21:45", "06:00", luc) and not ld._trong_khung("06:00", "21:45", luc)
+
+
+@pytest.fixture
+def so(tmp_path, monkeypatch):
+    ld._reset_for_tests(tmp_path / "ld.json")
+    d = {"light.den": {"lan": [
+        {"id": 1, "luc": 1, "luat": [_luat(chieu="bat"), _luat(so=2, nen="khong_lam", chieu="bat")], "truong_hop": ["a", "b"]},
+        {"id": 2, "luc": 2, "luat": [_luat(chieu="bat")], "truong_hop": ["a"]}],
+        "cham": [{"lan": 1, "so": 1, "dung": True}, {"lan": 1, "so": 2, "dung": True}]}}
+    (tmp_path / "ld.json").write_text(json.dumps(d), encoding="utf-8")
+    giai: list[str] = []
+    monkeypatch.setattr(ld, "giai_va_bao", lambda tb: giai.append(tb) or {})
+    return giai
+
+
+def test_ap_lan_moi_chua_cham_thi_lan_da_cham_van_chay(so):
+    assert [(l["lan"], l["so"]) for l in ld.ap("light.den")] == [(1, 1), (1, 2)]
+    ld.cham("light.den", 1, True, cham_boi="claude")             # chấm lần 2
+    assert [(l["lan"], l["so"]) for l in ld.ap("light.den")] == [(2, 1)]
+
+
+def test_chay_sai_ghi_gia_tri_cham_sai_va_giai_lai(so):
+    import time
+    ld.chay_sai("light.den", 1, 1, ["binary_sensor.pk=on✓"], "chủ nhà trả lời sai")
+    time.sleep(0.2)
+    assert so == ["light.den"]
+    assert [l["so"] for l in ld.ap("light.den")] == [2], "luật chạy sai thôi chạy"
+    x = ld.so()["light.den"]
+    assert x["chay_sai"][-1]["doc"] == ["binary_sensor.pk=on✓"]
+
+
+def test_bo_kich_hoat_lam_theo_luat_bi_chan_va_xac_minh(monkeypatch):
+    from services import du_doan_nha as dd, ha_client, kich_hoat_nha as kh, thong_bao
+
+    lam: list[tuple] = []
+    tin: list[str] = []
+    luat = [_luat(chieu="bat", lan=1), _luat(so=2, nen="khong_lam", chieu="bat", lan=1,
+                                              neu=[{"ma": "binary_sensor.cua", "la": "on"}])]
+    monkeypatch.setattr(kh, "_luat_duyet", lambda tb: luat)
+    monkeypatch.setattr(ld, "so", lambda: {"light.den": {"lan": [{"id": 1, "truong_hop": ["người vào", "x"]}]}})
+    trang = {"light.den": "off", "binary_sensor.cua": "off"}
+    monkeypatch.setattr(ha_client, "get_states", lambda use_cache=True: [{"entity_id": k, "state": v} for k, v in trang.items()])
+    for ten, gia in (("_vua_lam", lambda *a, **k: False), ("_nguoi_vua_cham", lambda *a: False), ("_nk", lambda *a, **k: None),
+                     ("_ten_tb", lambda tb: "Đèn trần"), ("_hen_kiem_lai", lambda *a: None)):
+        monkeypatch.setattr(kh, ten, gia)
+    monkeypatch.setattr(kh, "_lam", lambda tb, hd, tu_lam: lam.append((tb, hd)) or True)
+    monkeypatch.setattr(dd, "ghi_nhan", lambda *a, **k: 7)
+    monkeypatch.setattr(dd, "_cam_tu_lam", lambda ten: False)
+    monkeypatch.setattr(thong_bao, "gui", lambda khoa, t, anh_url="": tin.append(t) or 1)
+    kh._xu_ly_duyet("light.den", [luat[0]], "binary_sensor.pk có người vào", 1.0)
+    assert lam == [("light.den", "on")] and "theo trường hợp anh duyệt #1 «người vào»" in tin[-1]
+    trang["binary_sensor.cua"] = "on"                     # luật chặn khớp
+    trang["light.den"] = "off"
+    kh._xu_ly_duyet("light.den", [luat[0]], "binary_sensor.pk có người vào", 2.0)
+    assert len(lam) == 1, "luật «không bật» đang khớp thì chặn"
+    trang["binary_sensor.cua"] = "off"
+    luat[0]["xac_minh"] = True
+    monkeypatch.setattr(kh, "_co_nguoi_that", lambda tb, luc: (False, "camera không thấy ai"))
+    kh._xu_ly_duyet("light.den", [luat[0]], "binary_sensor.pk có người vào", 3.0)
+    assert len(lam) == 1, "xác minh không thấy người thì không bật"
