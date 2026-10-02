@@ -237,3 +237,33 @@ def test_lenh_tach_nap_cuda12_truoc_khi_co_thu_muc(monkeypatch, tmp_path):
     assert cmd[cmd.index("--single_stem") + 1] == "Instrumental"
     monkeypatch.setattr(app, "ONNX_CU12_DIR", str(tmp_path / "khong-co"))
     assert app._lenh_tach("/tmp/vao.flac", "/tmp/ra")[0] == "audio-separator"
+
+
+@pytest.mark.pure
+def test_onnx_gte_nhung_nap_o_muc_toi_uu_co_ban(monkeypatch):
+    """Bản fp16 của gte làm ORT hỏng lúc gộp LayerNorm ở mức tối ưu mặc định (đo 02/10/2026) — phải nạp mức cơ bản;
+    graph khác giữ mặc định."""
+    import sys
+    import types
+
+    app = _load()
+    nap: dict[str, object] = {}
+
+    class _So:
+        graph_optimization_level = "mac_dinh"
+
+    class _Phien:
+        def __init__(self, duong, so, providers):
+            nap[duong] = so.graph_optimization_level
+
+        def get_providers(self):
+            return ["CUDAExecutionProvider"]
+
+    ort = types.SimpleNamespace(SessionOptions=_So, InferenceSession=_Phien, preload_dlls=lambda **_k: None,
+                                GraphOptimizationLevel=types.SimpleNamespace(ORT_ENABLE_BASIC="co_ban"))
+    monkeypatch.setitem(sys.modules, "onnxruntime", ort)
+    monkeypatch.setattr(app, "_onnx_tai", lambda ten: f"/onnx/{ten}.onnx")
+    monkeypatch.setattr(app, "_onnx_phien", {})
+    app._onnx_nap("gte_nhung")
+    app._onnx_nap("det_10g")
+    assert nap == {"/onnx/gte_nhung.onnx": "co_ban", "/onnx/det_10g.onnx": "mac_dinh"}

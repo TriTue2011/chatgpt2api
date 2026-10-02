@@ -487,6 +487,8 @@ def unload(request: Request):
 _INSIGHTFACE = "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
 _KOKORO_VI = ("https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/"
               "9f210d622209fcc216fe2ac6159fed2ff381cb8a/kokoro_vi.onnx")
+_GTE_NHUNG = ("https://huggingface.co/onnx-community/gte-multilingual-base/resolve/"
+              "2edbf5e672aab465f9ed4c154a8b61791c082c69/onnx/model_fp16.onnx")
 ONNX_GRAPH = {
     # tên: (nguồn, tệp trong zip hoặc None, sha256)
     "det_10g": (_INSIGHTFACE, "det_10g.onnx",
@@ -495,7 +497,14 @@ ONNX_GRAPH = {
                   "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43"),
     "kokoro_vi": (_KOKORO_VI, None,
                   "da191277f58633649a9c0d2ae8012e80ef57ea8e2a56e30323c0f7df1ca29087"),
+    # Model nhúng chọn tool / tìm tin nhắn của c2a (`services/nhung.py`) — bản fp16, ~0,6 GB VRAM. Chủ máy
+    # 02/10/2026 chọn gte thay AITeamVN (~2,5 GB làm GPU vượt 8 GB lúc Qwen-VL thức). Đo: 81,6% như bản int8.
+    "gte_nhung": (_GTE_NHUNG, None,
+                  "f1d0f4ec988a6c17387d3b256e631deea506a891aed3a6ded4f9bf09386cc38e"),
 }
+#: Graph phải nạp ở mức tối ưu CƠ BẢN: bản fp16 của gte làm ORT hỏng lúc gộp LayerNorm (SimplifiedLayerNormFusion —
+#: "Attempting to get index by a name which does not exist") ở mức mặc định; mức cơ bản nạp được, kết quả giữ nguyên.
+ONNX_TOI_UU_CO_BAN = frozenset({"gte_nhung"})
 ONNX_DIR = Path(os.getenv("ONNX_DIR", "/data/onnx"))
 #: Thư viện CUDA 12 + cuDNN 9 riêng cho onnxruntime-gpu (xem Dockerfile) —
 #: image gốc chỉ có CUDA 13 của torch nên thiếu nó ORT âm thầm chạy CPU.
@@ -545,7 +554,10 @@ def _onnx_nap(ten: str):
             if Path(ONNX_CU12_DIR).is_dir():
                 # Nạp lại nhiều lần vô hại: đã nạp thì ctypes dùng lại bản trong bộ nhớ.
                 ort.preload_dlls(directory=ONNX_CU12_DIR)
-            phien = ort.InferenceSession(str(_onnx_tai(ten)), providers=["CUDAExecutionProvider"])
+            so = ort.SessionOptions()
+            if ten in ONNX_TOI_UU_CO_BAN:
+                so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+            phien = ort.InferenceSession(str(_onnx_tai(ten)), so, providers=["CUDAExecutionProvider"])
             # CUDA hỏng thì ORT âm thầm lùi về CPU — không nhận, để c2a tự chạy.
             if phien.get_providers()[0] != "CUDAExecutionProvider":
                 raise HTTPException(503, "Không có CUDA cho ONNX.")

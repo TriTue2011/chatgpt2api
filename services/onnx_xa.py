@@ -24,9 +24,9 @@ from typing import Any
 from utils.log import logger
 
 #: Graph máy GPU chạy được (tên = tên tệp bỏ ".onnx").
-TREN_GPU = frozenset({"det_10g", "w600k_r50", "kokoro_vi"})
+TREN_GPU = frozenset({"det_10g", "w600k_r50", "kokoro_vi", "gte_nhung"})
 NGHI_GIAY = 60.0
-_HET_GIO = {"det_10g": 10.0, "w600k_r50": 5.0, "kokoro_vi": 30.0}
+_HET_GIO = {"det_10g": 10.0, "w600k_r50": 5.0, "kokoro_vi": 30.0, "gte_nhung": 5.0}
 
 _khoa = threading.Lock()
 _nghi_toi = 0.0
@@ -53,7 +53,7 @@ def _hong(ten: str, exc: Exception) -> None:
             from services.notifier import notify_admin
 
             notify_admin(f"⚠️ GPU nhà lỗi khi chạy {ten}: {str(exc)[:160]} — "
-                         "nhận mặt/TTS đang chạy CPU tại chỗ.", category="system")
+                         "đang chạy CPU tại chỗ.", category="system")
         except Exception as loi:  # noqa: BLE001 — báo hỏng không được làm hỏng việc chính
             logger.warning({"event": "onnx_gpu_bao_loi", "loi": str(loi)[:120]})
 
@@ -73,6 +73,9 @@ class PhienLai:
         self.ten = ten
         self._tai_cho = tai_cho
         self._ten_ra = [o.name for o in tai_cho.get_outputs()]
+        #: Lần chạy vừa rồi đi đường nào ("gpu" / "cpu") — model có bản GPU khác bản CPU (fp16 so với int8 của
+        #: `services/nhung.py`) thì vector hai đường không trùng hẳn, người dùng phải so cùng đường.
+        self.duong = "cpu"
 
     def get_inputs(self):
         return self._tai_cho.get_inputs()
@@ -89,7 +92,9 @@ class PhienLai:
                 _hong(self.ten, exc)
             else:
                 _da_lanh(self.ten)
+                self.duong = "gpu"
                 return ra
+        self.duong = "cpu"
         return self._tai_cho.run(output_names, feeds)
 
     def _chay_gpu(self, url: str, token: str, output_names, feeds) -> list:

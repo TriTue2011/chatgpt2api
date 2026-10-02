@@ -10,7 +10,8 @@ và vì sao không reranker: docstring `services/nhung.py`. Ngưỡng điểm kh
 0,575 so với 0,599 của câu cần tool) nên lấy cố định.
 
 Chưa sẵn (model đang nạp, vector tool đang tính) / lỗi → ``None``: người gọi chạy như cũ bằng từ khoá. Vector 101
-tool tính một lần ở luồng nền, lưu đĩa theo mã băm (model + mô tả tool) — đổi ảnh mà mô tả không đổi thì khỏi tính.
+tool tính ở luồng nền, lưu đĩa theo mã băm (model + ĐƯỜNG chạy + mô tả tool) — đổi ảnh mà mô tả không đổi thì khỏi
+tính; GPU nhà hỏng thì lùi CPU và dùng bộ vector của đường CPU (vector fp16 và int8 không trùng hẳn).
 """
 
 from __future__ import annotations
@@ -44,20 +45,25 @@ def _tinh() -> None:
         from services.config import DATA_DIR
 
         tai_lieu, nhom = _tai_lieu()
-        bam = hashlib.sha256("\n".join([nhung.ten_model()] + tai_lieu).encode()).hexdigest()[:16]
+        dau = nhung.vec(tai_lieu[0])           # chạy một lần để biết đường (GPU fp16 / CPU int8) trước khi tra đĩa
+        if dau is None:
+            return
+        model = nhung.ten_model()
+        bam = hashlib.sha256("\n".join([model] + tai_lieu).encode()).hexdigest()[:16]
         tep = DATA_DIR / "agent" / f"dinh_tuyen_nhung_{bam}.npy"
         if tep.exists():
             vec = np.load(tep)
         else:
-            ds = [nhung.vec(t) for t in tai_lieu]
-            if any(v is None for v in ds):
-                return
+            ds = [dau]
+            for t in tai_lieu[1:]:
+                v = nhung.vec(t)
+                if v is None or nhung.ten_model() != model:
+                    return                  # đổi đường giữa chừng — bộ vector lẫn hai đường thì bỏ, lượt sau tính lại
+                ds.append(v)
             vec = np.stack(ds)
             tep.parent.mkdir(parents=True, exist_ok=True)
-            for cu in tep.parent.glob("dinh_tuyen_nhung_*.npy"):
-                cu.unlink()
-            np.save(tep, vec)
-        _san = {"vec": vec, "nhom": nhom, "model": nhung.ten_model()}
+            np.save(tep, vec)               # mỗi đường một tệp (mã băm gồm đường) — GPU hỏng rồi lành không tính lại
+        _san = {"vec": vec, "nhom": nhom, "model": model}
         logger.info({"event": "dinh_tuyen_nhung_san", "so_tool": len(nhom)})
     except Exception as exc:
         logger.warning({"event": "dinh_tuyen_nhung_hong", "error": str(exc)[:200]})

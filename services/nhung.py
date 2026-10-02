@@ -49,7 +49,10 @@ def _nap(loai: str) -> None:
         so.intra_op_num_threads = LUONG
         so.inter_op_num_threads = 1
         so.enable_cpu_mem_arena = False
-        _san[loai] = (t, ort.InferenceSession(hf_hub_download(kho, tep), so, providers=["CPUExecutionProvider"]))
+        from services import onnx_xa
+        # GPU nhà (bản fp16 trên fw-tach-am) khi có, lùi phiên CPU int8 này khi GPU hỏng (`onnx_xa`).
+        _san[loai] = (t, onnx_xa.lai("gte_nhung", ort.InferenceSession(hf_hub_download(kho, tep), so,
+                                                                       providers=["CPUExecutionProvider"])))
         logger.info({"event": "nhung_san", "loai": loai, "model": kho})
     except Exception as exc:  # noqa: BLE001
         logger.warning({"event": "nhung_nap_loi", "loai": loai, "error": str(exc)[:200]})
@@ -92,5 +95,7 @@ def vec(chu: str):
 
 
 def ten_model() -> str:
-    """Định danh cấu hình model — đổi model/cắt token thì vector cũ lưu trên đĩa không còn dùng được."""
-    return "|".join([*NHUNG[:2], str(TOI_DA_TOKEN)])
+    """Định danh cấu hình model KÈM đường vừa chạy (gpu/cpu) — đổi model/cắt token, hay GPU hỏng nên lùi CPU (fp16 so
+    với int8: cosine 0,97–0,99), thì vector cũ không còn so được với vector mới."""
+    m = _san.get("nhung")
+    return "|".join([*NHUNG[:2], str(TOI_DA_TOKEN), str(getattr(m[1], "duong", "cpu") if m else "cpu")])

@@ -113,3 +113,20 @@ def test_graph_ngoai_danh_muc_hoac_chua_khai_gpu_thi_giu_nguyen_cpu(monkeypatch)
     p = onnx_xa.lai("kokoro_vi", cpu)
     assert p.run(None, {"vao": np.ones((1, 3), np.float32)})[0][0, 0] == 2.0
     assert cpu.lan == 1
+
+
+def test_ghi_duong_vua_chay_cho_model_nhung(monkeypatch, gpu):
+    """`services/nhung.py`: bản GPU (fp16) và CPU (int8) cho vector không trùng hẳn — phải biết lần vừa chạy đi đường
+    nào để so câu hỏi với bộ vector tool cùng đường (02/10/2026)."""
+    import requests
+    x = np.ones((1, 3), np.float32)
+    monkeypatch.setattr(requests, "post", lambda *a, **k: _TraLoi(_npz(o0=x, o1=x)))
+    p = onnx_xa.lai("gte_nhung", _PhienCpu())
+    p.run(None, {"vao": x})
+    assert p.duong == "gpu"
+
+    def hong(*_a, **_k):
+        raise ConnectionError("GPU tắt")
+    monkeypatch.setattr(requests, "post", hong)
+    p.run(None, {"vao": x})
+    assert p.duong == "cpu"
