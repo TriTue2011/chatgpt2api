@@ -440,7 +440,9 @@ def _tuyen(ro: sqlite3.Connection, tb: str, tr: str, tu: float, den: float
         (tb, tr, int((tu - _HAN_GIA_TRI_GIAY) // 300), int(den // 300) + 1))
         if r[1] is not None]
     ra.sort(key=lambda x: x[0])
-    return [t for t, _ in ra], [g for _, g in ra]
+    # Ngày cảm biến bật/tắt KẸT «on» (≥ 98% cả ngày) là «không biết», không phải «có người» (cam_bien_ket).
+    from services.cam_bien_ket import bo_ket
+    return bo_ket([t for t, _ in ra], [g for _, g in ra], tu, den)  # type: ignore[return-value]
 
 
 def _truoc(ts: list[float], gt: list[str], luc: float) -> str | None:

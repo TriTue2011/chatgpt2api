@@ -796,6 +796,15 @@ def _su_kien_nguon(ro: sqlite3.Connection, tu: float, den: float, bo: set[str],
     hang += [(t, ma, g) for ma in _cbg.ds() if ma not in bo and (chi is None or ma in chi)
              for t, g in _cbg.chuoi(ro, ma, tu, den)[1:]]
     hang.sort()
+    # Ngày cảm biến KẸT «on» (≥ 98% cả ngày) không sinh mốc «có người vào» / «vắng» (cam_bien_ket).
+    from services.cam_bien_ket import ngay_ket
+    theo_ma: dict[str, tuple[list[float], list[str]]] = {}
+    for ts, ma, gt in hang:
+        theo_ma.setdefault(ma, ([], []))[0].append(ts)
+        theo_ma[ma][1].append(gt)
+    ket = {ma: q for ma, (t_, g_) in theo_ma.items() if (q := ngay_ket(t_, g_, tu, den))}
+    if ket:
+        hang = [x for x in hang if not any(a <= x[0] < b for a, b in ket.get(x[1], ()))]
     for ts, ma, gt in hang:
         gt = gt.lower()
         if ma in bo or (chi is not None and ma not in chi):
@@ -1036,7 +1045,8 @@ def _chuoi_nhi_phan(ro: sqlite3.Connection, ma: str, tu: float, den: float) -> t
             "SELECT ts, gia_tri FROM (SELECT ts, gia_tri FROM su_kien WHERE thiet_bi=? AND truong='state'"
             " AND ts<? ORDER BY ts DESC LIMIT 1) UNION ALL SELECT ts, gia_tri FROM su_kien"
             " WHERE thiet_bi=? AND truong='state' AND ts>=? AND ts<? ORDER BY ts", (ma, tu, ma, tu, den))]
-    return [t for t, _ in ch], [g for _, g in ch]
+    from services.cam_bien_ket import bo_ket      # ngày kẹt «on» → không biết
+    return bo_ket([t for t, _ in ch], [g for _, g in ch], tu, den)  # type: ignore[return-value]
 
 
 def _luot_o(dong: dict[str, tuple[list[float], list[str]]], den: float) -> list[tuple[float, float]]:

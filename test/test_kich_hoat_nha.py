@@ -362,6 +362,7 @@ def test_hoc_theo_so_do_chi_nguon_trong_so_do(kh, monkeypatch):
         t = _luc(n, 19, n % 20)
         _sk(BEP, "off", t - 700)
         _sk(BEP, "on", t - 60)
+        _sk(BEP, "off", t + 600)      # tắt lại như cảm biến thật — «on» gần cả ngày là KẸT (cam_bien_ket)
     _nep_30_ngay()
     kh.dat_thiet_bi(DEN, bat=True)
     assert f"{BEP} có người vào" in kh.hoc(DEN)["on"]["nguon"], "tự dò thì bếp lọt vào"
@@ -485,6 +486,7 @@ def test_goi_y_them_cam_bien_ngoai_so_do(kh, monkeypatch):
         t = _luc(n, 19, n % 20)
         _sk(CUA, "off", t - 700)
         _sk(CUA, "on", t - 60)
+        _sk(CUA, "off", t + 600)      # tắt lại như cảm biến thật — «on» gần cả ngày là KẸT (cam_bien_ket)
     _nep_30_ngay()
     monkeypatch.setattr(kh, "_so_do", lambda tb: ({NGU}, {LUX}))
     kh.dat_thiet_bi(DEN, bat=True)
