@@ -18,6 +18,7 @@ import { ModelCanTaiCard } from "./components/model-can-tai-card";
 import { CachDocCard } from "./components/cach-doc-card";
 import { TeacherSettingsCard } from "./components/teacher-settings-card";
 import { PersonasCard } from "./components/personas-card";
+import { TamHonCard } from "./components/tam-hon-card";
 import { TelegramCloudflareCard, CloudflareInfraCard } from "./components/telegram-cloudflare-card";
 import { NotificationsCard } from "./components/notifications-card";
 import { ConfigCard } from "./components/config-card";
@@ -241,6 +242,7 @@ function SettingsPageContent() {
         >
           <TeacherSettingsCard />
           <PersonasCard />
+          <TamHonCard />
         </SettingsSection>
 
         <SettingsSection

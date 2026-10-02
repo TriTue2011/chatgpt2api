@@ -3505,6 +3505,16 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 sys_prompt += "\n\n" + _pb
     except Exception:
         pass
+    # Tâm trạng của bot (chủ máy tích «Cảm xúc trong lời trò chuyện» mới có) — cùng
+    # chốt với persona: việc đòi nguyên văn thì không bơm.
+    try:
+        from services.agent import persona as _persona3, tam_hon as _tam_hon
+        if not _persona3.viec_doi_nguyen_van(user_text):
+            _th = _tam_hon.khoi_prompt(user_id, user_text)
+            if _th:
+                sys_prompt += "\n\n" + _th
+    except Exception:
+        pass
     sys_prompt = super_context.maybe_attach(
         sys_prompt, user_id, user_text, hist_before, allow=allow,
     )

@@ -1249,4 +1249,48 @@ def create_router() -> APIRouter:
         except Exception as exc:
             return _loi(exc, "sửa nếp")
 
+    # ── Tâm hồn của bot (services/agent/tam_hon.py) — mặc định TẮT ──────────
+    @router.get("/api/tam-hon")
+    async def tam_hon_xem(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        try:
+            from services import thong_bao
+            from services.agent import tam_hon
+            return {"ok": True, **tam_hon.trang_thai(), "thong_bao": thong_bao.cai_dat("bot.tam_hon")}
+        except Exception as exc:
+            return _loi(exc, "xem tâm hồn")
+
+    @router.post("/api/tam-hon")
+    async def tam_hon_dat(body: dict, authorization: str | None = Header(default=None)):
+        """body: {bat_viet?: bool, bat_cam_xuc?: bool, goc?: str}. ``goc`` chỉ ghi được qua đây."""
+        require_admin(authorization)
+        try:
+            from services.agent import tam_hon
+            kw = {k: bool(body[k]) for k in ("bat_viet", "bat_cam_xuc") if k in body}
+            if "goc" in body:
+                kw["goc"] = str(body["goc"] or "")
+            return {"ok": True, **tam_hon.dat(**kw)}
+        except Exception as exc:
+            return _loi(exc, "đặt tâm hồn")
+
+    @router.post("/api/tam-hon/ky-uc/xoa")
+    async def tam_hon_xoa_ky_uc(body: dict, authorization: str | None = Header(default=None)):
+        """body: {id: int} — chủ máy bỏ một ký ức bot không nên giữ."""
+        require_admin(authorization)
+        try:
+            from services.agent import tam_hon
+            return {"ok": tam_hon.xoa_ky_uc(int(body.get("id") or 0))}
+        except Exception as exc:
+            return _loi(exc, "xoá ký ức")
+
+    @router.post("/api/tam-hon/cam-ngay")
+    async def tam_hon_cam_ngay(authorization: str | None = Header(default=None)):
+        """Chủ máy bấm «Cảm ngay» — vẫn phải đã tích kích hoạt, vẫn giữ hạn mức bài/ngày."""
+        require_admin(authorization)
+        try:
+            from services.agent import tam_hon
+            return await asyncio.to_thread(tam_hon.chay_mot_lan, ep=True)
+        except Exception as exc:
+            return _loi(exc, "cảm ngay")
+
     return router

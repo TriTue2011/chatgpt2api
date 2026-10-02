@@ -182,6 +182,12 @@ def _parse_tasks() -> list[dict[str, Any]]:
         "system": True,
     })
     tasks.append({
+        "id": "tam_hon",
+        "intent": "read",
+        "text": "Bot cảm và viết/vẽ từ chuyện thật trong nhà — chỉ khi chủ máy đã tích kích hoạt",
+        "system": True,
+    })
+    tasks.append({
         "id": "du_doan_nha",
         "intent": "read",
         "text": "Học thói quen theo bối cảnh (lux, nhiệt độ, hiện diện) rồi gợi ý",
@@ -610,6 +616,19 @@ def _eval_thoi_quen_nha() -> tuple[str, str]:
         return "skip", f"error: {exc}"
 
 
+def _eval_tam_hon() -> tuple[str, str]:
+    """Tâm hồn của bot — services.agent.tam_hon. Mặc định TẮT: chủ máy tích mới chạy."""
+    try:
+        from services.agent import tam_hon
+        nen, ly_do = tam_hon.nen_chay()
+        if not nen:
+            return "skip", ly_do
+        threading.Thread(target=tam_hon.chay_mot_lan, name="tam-hon", daemon=True).start()
+        return "act", "bot cảm (chạy nền)"
+    except Exception as exc:
+        return "skip", f"error: {exc}"
+
+
 _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
     "hieu_thiet_bi_nha": _eval_hieu_thiet_bi_nha,
     "thoi_quen_nha": _eval_thoi_quen_nha,
@@ -622,6 +641,7 @@ _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
     "khoa_cua_nha": _eval_khoa_cua,
     "bai_hoc": _eval_bai_hoc,
     "du_doan_nha": _eval_du_doan_nha,
+    "tam_hon": _eval_tam_hon,
 }
 
 
