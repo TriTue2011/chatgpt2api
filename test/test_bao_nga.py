@@ -60,8 +60,10 @@ class GocThanTests(unittest.TestCase):
     def test_dung_nam_va_cham_mep_duoi(self):
         self.assertLess(bn.goc_than(_kp(0), (400, 300, 600, 700), 1080), 5)
         self.assertGreater(bn.goc_than(_kp(90), (400, 300, 600, 700), 1080), 85)
-        self.assertIsNone(bn.goc_than(_kp(90), (400, 300, 600, 1079), 1080),
-                          "người chạm mép dưới — thân bị cắt, góc không tin được")
+        self.assertIsNone(bn.goc_than(_kp(90, hong_y=1060), (400, 900, 600, 1079), 1080),
+                          "hông sát mép dưới — hông bị cắt, model đoán, góc không tin được")
+        self.assertGreater(bn.goc_than(_kp(90, hong_y=900), (300, 820, 700, 1079), 1080), 85,
+                           "người ngã đổ dài chạm mép nhưng hông còn trong ảnh — vẫn đo (GMDCSA: 16/19 cú sót vì đây)")
         self.assertIsNone(bn.goc_than(_kp(90, tin=0.2), (400, 300, 600, 700), 1080))
 
 

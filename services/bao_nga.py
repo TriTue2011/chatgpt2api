@@ -151,14 +151,17 @@ def dang(anh) -> list:
 def goc_than(kp, hop, cao_anh: int) -> float | None:
     """Thân lệch khỏi phương đứng (0 đứng, 90 nằm) — chỉ khi đo TIN được.
 
-    Không tin khi thiếu vai hoặc hông, hoặc người chạm mép dưới ảnh: đo 28/09/2026 Cam bếp, người
-    ngồi sát mép chỉ lộ vai mà vẫn ra góc 79–93° như đang nằm."""
+    Không tin khi thiếu vai hoặc hông, hoặc CHÍNH ĐIỂM HÔNG sát mép dưới ảnh: đo 28/09/2026 Cam bếp, người
+    ngồi sát mép chỉ lộ vai (hông bị cắt, model đoán) mà vẫn ra góc 79–93° như đang nằm.
+    Trước đây bỏ cả người khi KHUNG chạm mép dưới — đo 02/10/2026 trên GMDCSA24 (52 clip ngã có ≥1,5 s trước cú
+    ngã): 16/19 cú bị sót là vì thân đổ dài ra chạm mép; xét theo điểm hông thì bắt 34/52 thay vì 27/52 (2 k/s),
+    còn ở Cam bếp số lần kích tăng 22 → 31 trong 52 phút video có người (17–19h 01/10)."""
     import numpy as np
-    if hop[3] >= 0.98 * cao_anh:
-        return None
     vai = [kp[i, :2] for i in (5, 6) if kp[i, 2] >= TIN_KHOP]
     hong = [kp[i, :2] for i in (11, 12) if kp[i, 2] >= TIN_KHOP]
     if not vai or not hong:
+        return None
+    if np.mean(hong, 0)[1] >= 0.95 * cao_anh:
         return None
     v = np.mean(vai, 0) - np.mean(hong, 0)
     return float(np.degrees(np.arctan2(abs(v[0]), -v[1])))
