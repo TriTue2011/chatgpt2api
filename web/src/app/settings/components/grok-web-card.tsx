@@ -24,7 +24,43 @@ import { moNoVNC } from "@/lib/duong-dan";
 export type GrokTaiKhoan = {
   profile: string; label: string; email?: string; enabled?: boolean; ordinal: number; is_primary: boolean;
   phien_song: boolean | null; da_dang_nhap: boolean; firefox_mo: boolean; cookie_luc: number | null;
+  /** Hạn mức từ grok.com `/rest/rate-limits` (máy chủ lưu tạm 5 phút); null = chưa đọc được. */
+  han_muc?: { luc: number; ds: { ten: string; con: number; tong: number; cua_so: number; hoi_luc: number | null }[] } | null;
 };
+
+/** 86400 → "ngày", 604800 → "tuần", 7200 → "2 giờ" — gói Grok trả phí có cửa sổ khác gói miễn phí. */
+function tenCuaSo(giay: number): string {
+  if (giay === 3600) return "giờ";
+  if (giay === 86400) return "ngày";
+  if (giay === 604800) return "tuần";
+  if (giay % 86400 === 0) return `${giay / 86400} ngày`;
+  if (giay % 3600 === 0) return `${giay / 3600} giờ`;
+  return `${Math.round(giay / 60)} phút`;
+}
+
+function conBao(luc: number): string {
+  const giay = Math.max(0, luc - Date.now() / 1000);
+  const g = Math.floor(giay / 3600);
+  const p = Math.round((giay % 3600) / 60);
+  return g ? `${g} giờ ${p} phút` : `${p} phút`;
+}
+
+/** Như hạn mức ChatGPT ở trang Tài khoản: còn/tổng theo từng cửa sổ, hết thì đỏ kèm giờ hồi. */
+export function HanMucGrok({ tk }: { tk: GrokTaiKhoan }) {
+  const ds = tk.han_muc?.ds;
+  if (!ds?.length) return null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      {ds.map((m) => (
+        <span key={m.ten} title={`Đọc lúc ${new Date((tk.han_muc?.luc || 0) * 1000).toLocaleTimeString("vi-VN")}`}
+          className={`rounded px-1.5 py-0 text-[10px] font-medium ${m.con > 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+          {m.ten} {m.con}/{m.tong}/{tenCuaSo(m.cua_so)}
+          {m.con <= 0 && m.hoi_luc ? ` · hồi sau ${conBao(m.hoi_luc)}` : ""}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 export async function grokViec(body: Record<string, unknown>): Promise<boolean> {
   try {
@@ -119,6 +155,7 @@ export function GrokWebCard() {
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className={`font-semibold ${tk.enabled === false ? "text-muted-foreground line-through" : ""}`}>{tk.label}</span>
                   <TrangThaiGrok tk={tk} />
+                  <HanMucGrok tk={tk} />
                 </div>
                 <div className="text-[11px] text-muted-foreground">
                   {tk.email || "chưa rõ email"} · <code>{tk.profile}</code>

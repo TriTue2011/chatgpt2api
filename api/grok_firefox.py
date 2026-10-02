@@ -265,6 +265,75 @@ def phien_song(cookies: dict[str, str]) -> bool:
     return thong_tin_phien(cookies) is not None
 
 
+# ── Hạn mức lượt hỏi ────────────────────────────────────────────────────────
+#: Hạn mức đọc từ `POST /rest/rate-limits` theo modelName. Đo 02/10/2026 tài khoản miễn phí: grok-3 (= mode fast)
+#: 30 lượt / 86.400 s, grok-4 7 lượt / 86.400 s. Gói trả phí có cửa sổ khác (giờ, tuần) — hiện theo đúng
+#: `windowSizeSeconds` máy chủ trả, kèm hạn mức con `lowEffortRateLimits` / `highEffortRateLimits` nếu có.
+_HAN_MUC_MODEL = {"grok-3": "Fast", "grok-4": "Grok 4"}
+_HAN_MUC_GIAY = 300
+_han_muc: dict[str, dict[str, Any]] = {}
+_han_muc_dang: set[str] = set()
+
+
+def _mot_han_muc(ten: str, d: Any, luc: float) -> dict[str, Any] | None:
+    if not isinstance(d, dict) or "remainingQueries" not in d:
+        return None
+    cho = d.get("waitTimeSeconds")
+    return {"ten": ten, "con": int(d.get("remainingQueries") or 0), "tong": int(d.get("totalQueries") or 0),
+            "cua_so": int(d.get("windowSizeSeconds") or 0),
+            "hoi_luc": luc + float(cho) if isinstance(cho, (int, float)) and cho > 0 else None}
+
+
+def han_muc(cookies: dict[str, str]) -> list[dict[str, Any]]:
+    """Lượt còn / tổng, độ dài cửa sổ và lúc hồi — mỗi model một mục (cộng hạn mức con nếu gói có)."""
+    jar = "; ".join(f"{k}={v}" for k, v in cookies.items())
+    ra: list[dict[str, Any]] = []
+    for model, ten in _HAN_MUC_MODEL.items():
+        req = urllib.request.Request(
+            "https://grok.com/rest/rate-limits", method="POST",
+            data=json.dumps({"requestKind": "DEFAULT", "modelName": model}).encode(),
+            headers={"Content-Type": "application/json", "Cookie": jar, "Origin": "https://grok.com",
+                     "Referer": "https://grok.com/", "User-Agent": _UA})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                d = json.loads(resp.read().decode())
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+            continue
+        luc = time.time()
+        for khoa, them in (("", ""), ("lowEffortRateLimits", " · nhẹ"), ("highEffortRateLimits", " · nặng")):
+            m = _mot_han_muc(ten + them, d.get(khoa) if khoa else d, luc)
+            if m:
+                ra.append(m)
+    return ra
+
+
+def _lay_han_muc(profile: str) -> None:
+    try:
+        ds = han_muc(doc_cookie_file(profile))
+        if ds:
+            _han_muc[profile] = {"luc": time.time(), "ds": ds}
+    except Exception as exc:  # noqa: BLE001 — không đọc được hạn mức thì web chỉ thiếu dòng hạn mức
+        _log("grok_han_muc_loi", profile=profile, loi=str(exc)[:160])
+    finally:
+        _han_muc_dang.discard(profile)
+
+
+def han_muc_cua(profile: str, *, cho: bool) -> dict[str, Any] | None:
+    """Bản lưu tạm ≤ 5 phút. ``cho``: cũ thì hỏi grok.com ngay; không thì trả bản cũ và làm mới chạy nền
+    (cây tài khoản phải tải nhanh)."""
+    cu = _han_muc.get(profile)
+    if cu and time.time() - cu["luc"] < _HAN_MUC_GIAY:
+        return cu
+    if cho:
+        _lay_han_muc(profile)
+        return _han_muc.get(profile)
+    with _KHOA:
+        if profile not in _han_muc_dang:
+            _han_muc_dang.add(profile)
+            threading.Thread(target=_lay_han_muc, args=(profile,), name=f"grok-han-muc-{profile}", daemon=True).start()
+    return cu
+
+
 # ── Firefox ─────────────────────────────────────────────────────────────────
 def _pid_mo(profile_dir: Path) -> int | None:
     kim = f"--profile {profile_dir} "
@@ -407,7 +476,8 @@ def trang_thai(kiem_phien: bool = True) -> list[dict[str, Any]]:
                    "phien_song": phien_song(doc_cookie_file(p)) if kiem_phien else None,
                    "da_dang_nhap": (ho_so(p) / "cookies.sqlite").is_file(),
                    "firefox_mo": dang_mo(p),
-                   "cookie_luc": f.stat().st_mtime if f.is_file() else None})
+                   "cookie_luc": f.stat().st_mtime if f.is_file() else None,
+                   "han_muc": han_muc_cua(p, cho=kiem_phien) if a.get("enabled", True) else None})
     return ra
 
 

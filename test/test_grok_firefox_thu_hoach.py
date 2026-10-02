@@ -110,3 +110,54 @@ class LamMoiTests(unittest.TestCase):
         self.assertEqual(ra["sso"], "a")
         tat.assert_called_once_with("grok-1")
         mo.assert_not_called()
+
+
+class _Tl:
+    def __init__(self, body):
+        self.body = body
+
+    def read(self):
+        import json
+        return json.dumps(self.body).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class HanMucTests(unittest.TestCase):
+    """Hạn mức đọc từ /rest/rate-limits — đo 02/10/2026 tài khoản miễn phí: grok-3 0/30, grok-4 7/7, cửa sổ 86.400 s."""
+
+    def _tra(self, theo_model):
+        import json
+
+        def urlopen(req, timeout=0):
+            return _Tl(theo_model[json.loads(req.data)["modelName"]])
+        return mock.patch("urllib.request.urlopen", side_effect=urlopen)
+
+    def test_mien_phi_va_goi_co_han_muc_con(self):
+        theo = {"grok-3": {"windowSizeSeconds": 86400, "remainingQueries": 0, "waitTimeSeconds": 3600, "totalQueries": 30,
+                           "lowEffortRateLimits": None, "highEffortRateLimits": None},
+                "grok-4": {"windowSizeSeconds": 7200, "remainingQueries": 5, "totalQueries": 20,
+                           "highEffortRateLimits": {"windowSizeSeconds": 604800, "remainingQueries": 2, "totalQueries": 10}}}
+        with self._tra(theo):
+            ds = gf.han_muc({"sso": "x"})
+        self.assertEqual([(m["ten"], m["con"], m["tong"], m["cua_so"]) for m in ds],
+                         [("Fast", 0, 30, 86400), ("Grok 4", 5, 20, 7200), ("Grok 4 · nặng", 2, 10, 604800)])
+        self.assertIsNotNone(ds[0]["hoi_luc"], "hết lượt thì có giờ hồi")
+        self.assertIsNone(ds[1]["hoi_luc"])
+
+    def test_luu_tam_va_cay_tai_khoan_khong_cho_mang(self):
+        gf._han_muc.clear()
+        with mock.patch.object(gf, "doc_cookie_file", return_value={"sso": "x"}), \
+                mock.patch.object(gf, "han_muc", return_value=[{"ten": "Fast"}]) as hm, \
+                mock.patch("threading.Thread") as th:
+            self.assertIsNone(gf.han_muc_cua("grok-1", cho=False), "cây tài khoản: chưa có thì trả rỗng, không chờ")
+            th.assert_called_once()
+            gf._han_muc_dang.clear()
+            self.assertEqual(gf.han_muc_cua("grok-1", cho=True)["ds"], [{"ten": "Fast"}])
+            self.assertEqual(gf.han_muc_cua("grok-1", cho=True)["ds"], [{"ten": "Fast"}])
+            self.assertEqual(hm.call_count, 1, "trong 5 phút dùng bản lưu tạm")
+        gf._han_muc.clear()

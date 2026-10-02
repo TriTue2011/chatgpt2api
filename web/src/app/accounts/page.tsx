@@ -30,7 +30,7 @@ import {
   UserRound,
   LogIn,
 } from "lucide-react";
-import { grokDangNhap, grokViec, TrangThaiGrok, type GrokTaiKhoan } from "@/app/settings/components/grok-web-card";
+import { grokDangNhap, grokViec, HanMucGrok, TrangThaiGrok, type GrokTaiKhoan } from "@/app/settings/components/grok-web-card";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -1727,6 +1727,7 @@ function AccountsPageContent() {
                             <div className="flex items-center gap-1.5">
                               <span className="text-[13px] font-semibold text-[var(--foreground)] truncate">{tk.label}</span>
                               <TrangThaiGrok tk={tk} />
+                              <HanMucGrok tk={tk} />
                               {tk.enabled === false && (
                                 <Badge variant="secondary" className="rounded text-[10px] px-1 py-0">disabled</Badge>
                               )}
