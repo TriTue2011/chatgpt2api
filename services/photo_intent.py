@@ -334,19 +334,31 @@ def bo_tag(text: str) -> str:
     return _TAG_RE.sub(" ", str(text or "")).strip()
 
 
+#: Nhãn từng việc với ảnh — menu (`ask_text`) và câu báo bị chặn (`nhan`) dùng chung.
+_CATALOG = {
+    RAG_KNOWLEDGE: "📚 Nạp **RAG kiến thức** (tự phát hiện → wiki)",
+    RAG_TEACHER: "🎓 Nạp **RAG teacher / SGK** (hỏi lớp + môn)",
+    ANALYZE: "🔍 **Phân tích ảnh** (hỏi thêm yêu cầu)",
+    GENERATE: "🎨 **Tạo ảnh** từ ảnh này (hỏi thêm mô tả)",
+    DICH: "🌐 **Dịch chữ trong ảnh** (đọc chữ → hỏi dịch sang tiếng gì)",
+    NHAN_MAT: "👤 **Đây là ai?** (nhận khuôn mặt đã dạy)",
+    DAY_MAT: "🧑 **Dạy khuôn mặt** (hỏi tên người trong ảnh để em nhớ)",
+    LUU_ONLINE: "☁️ **Lưu lên kho đám mây** (không phân tích, không tạo)",
+    FACEBOOK: "📘 **Đăng lên Facebook** (gửi thêm ảnh được, chốt caption sau)",
+}
+
+
+def nhan(code: str) -> str:
+    """Tên ngắn của một việc với ảnh, cho câu báo «chưa bật»: bỏ biểu tượng, ``**`` và phần ngoặc."""
+    goc = _CATALOG.get(code)
+    if not goc:
+        return str(code)
+    return goc.split(" (", 1)[0].replace("**", "").split(" ", 1)[-1].strip()
+
+
 def ask_text(intents: set[str] | None = None) -> str:
     intents = intents if intents is not None else ALL_INTENTS
-    catalog = {
-        RAG_KNOWLEDGE: "📚 Nạp **RAG kiến thức** (tự phát hiện → wiki)",
-        RAG_TEACHER: "🎓 Nạp **RAG teacher / SGK** (hỏi lớp + môn)",
-        ANALYZE: "🔍 **Phân tích ảnh** (hỏi thêm yêu cầu)",
-        GENERATE: "🎨 **Tạo ảnh** từ ảnh này (hỏi thêm mô tả)",
-        DICH: "🌐 **Dịch chữ trong ảnh** (đọc chữ → hỏi dịch sang tiếng gì)",
-        NHAN_MAT: "👤 **Đây là ai?** (nhận khuôn mặt đã dạy)",
-        DAY_MAT: "🧑 **Dạy khuôn mặt** (hỏi tên người trong ảnh để em nhớ)",
-        LUU_ONLINE: "☁️ **Lưu lên kho đám mây** (không phân tích, không tạo)",
-        FACEBOOK: "📘 **Đăng lên Facebook** (gửi thêm ảnh được, chốt caption sau)",
-    }
+    catalog = _CATALOG
     lines = ["📷 Đã nhận ảnh. Bạn muốn em làm gì?"]
     n = 1
     shown = 0

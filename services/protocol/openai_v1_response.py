@@ -190,8 +190,42 @@ def collect_response(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
     return completed
 
 
+def model_chat_cung_nha(model: str) -> str:
+    """Model TRÒ CHUYỆN cùng nhà cung cấp với model ảnh ``model``; '' nếu nhà đó chỉ vẽ.
+
+    Lấy từ danh mục ``FALLBACK_MODELS`` của chính nhà cung cấp (model đầu tiên không phải ảnh,
+    không phải video) — không có bảng đổi tên viết tay nào ở đây."""
+    from services.backend_router import BackendRouter, la_model_video
+    from services.protocol.openai_v1_models import FALLBACK_MODELS
+
+    nha, _ = BackendRouter.resolve_model(model)
+    for m in FALLBACK_MODELS.get(nha) or []:
+        ten = m.split("/", 1)[-1]
+        if not BackendRouter.is_image_model(m) and not la_model_video(nha, ten):
+            return m
+    return ""
+
+
 def response_events(body: dict[str, Any]) -> Iterator[dict[str, Any]]:
     if is_text_response_request(body):
+        # Yêu cầu CHỮ (không kèm công cụ image_generation) mà tên model là model ẢNH.
+        # Đo 02/10/2026: HA dùng MỘT model cho cả «vẽ» (kèm image_generation) và «lấy dữ liệu»
+        # mỗi giờ; đặt grok/imagine thì lượt lấy dữ liệu bị đẩy sang chế độ vẽ — trả
+        # status=completed với chữ RỖNG, không lý do. Responses API đã phân biệt rõ vẽ/chữ
+        # bằng công cụ, nên chữ thì đi model trò chuyện cùng nhà; nhà chỉ biết vẽ thì báo lỗi
+        # kèm lý do (chủ máy 02/10: "bị block hay từ chối phải phản hồi lý do").
+        from services.backend_router import BackendRouter
+        model = str(body.get("model") or "").strip()
+        if BackendRouter.is_image_model(model):
+            chat = model_chat_cung_nha(model)
+            if not chat:
+                raise HTTPException(status_code=400, detail={"error": (
+                    f"«{model}» là model chỉ vẽ ảnh, mà yêu cầu này không xin vẽ (không có công cụ "
+                    "image_generation) nên không trả lời bằng chữ được. Chọn một model trò chuyện, "
+                    "hoặc gửi kèm công cụ image_generation để vẽ.")})
+            from utils.log import logger
+            logger.info({"event": "responses_model_anh_tra_chu", "model": model, "dung": chat})
+            body = {**body, "model": chat}
         yield from stream_text_response(text_backend(), body)
         return
 

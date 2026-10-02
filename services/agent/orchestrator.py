@@ -1887,9 +1887,12 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None,
             "Danh sách «Em làm được gì» ở trên là nguồn sự thật DUY NHẤT về "
             "quyền của khung chat này. Nếu người dùng yêu cầu việc KHÔNG nằm "
             "trong danh sách đó: KHÔNG giải thích, KHÔNG xin lỗi, KHÔNG bịa/"
-            "đoán dữ liệu — chỉ trả lời DUY NHẤT chuỗi [BLOCKED] (đúng nguyên "
-            "văn), hệ thống sẽ tự bỏ qua tin nhắn đó. Trò chuyện thông thường "
-            "vẫn trả lời bình thường.\n"
+            "đoán dữ liệu — nếu việc đó thuộc một nhóm trong danh sách «Nhóm chức "
+            "năng đã TẮT» ở cuối mục này thì chỉ trả lời DUY NHẤT «[BLOCKED] <tên "
+            "nhóm đúng như danh sách>», vd «[BLOCKED] camera»; hệ thống sẽ tự báo "
+            "người dùng nhóm đó đang tắt. Việc mà KHÔNG nhóm nào làm được (kể cả "
+            "nhóm đã tắt) thì đừng [BLOCKED]: nói thẳng em chưa làm được việc đó. "
+            "Trò chuyện thông thường vẫn trả lời bình thường.\n"
             # Model hay phán nhầm câu hỏi entity CỤ THỂ ("kiểm tra cảm biến
             # sensor.xyz") là việc kỹ thuật ngoài danh sách rồi [BLOCKED] oan,
             # trong khi "phòng khách có ai không" thì trả lời bình thường —
@@ -3609,17 +3612,21 @@ def _orchestrate_locked(user_text: str, user_id: str,
             # xác định `_tat_lay_media` xử lý TRƯỚC vòng model, nên guard này chỉ
             # còn tác dụng phụ. Bỏ.)
             if allow is not None and "[BLOCKED]" in reply:
-                # Thread lọc hỏi chức năng bị tắt → BỎ QUA, không phản hồi gì
-                # (yêu cầu 2026-07-15). Bot thấy silent=True sẽ không gửi tin.
-                # PHẢI log kèm câu hỏi: đường này câm tuyệt đối, và model có
-                # lúc phán nhầm ([BLOCKED] oan cho chức năng đang bật) — không
-                # log thì không phân biệt được với treo/chết.
+                # Thread lọc hỏi chức năng bị tắt → BÁO LÝ DO (chủ máy 02/10/2026:
+                # "bị block hay từ chối phải phản hồi lý do"; trước đó im lặng theo
+                # yêu cầu 15/07). Vẫn log kèm câu hỏi: model có lúc [BLOCKED] oan
+                # cho chức năng đang bật — nay người hỏi thấy và báo lại được.
                 logger.warning({"event": "agent_reply_blocked", "user_id": str(user_id)[:40],
                                 "question": str(user_text)[:120]})
                 if hist and hist[-1].get("role") == "user":
                     hist.pop()
-                _journal("", status="blocked")
-                return {"text": "", "silent": True}
+                # Chỉ nêu tên nhóm khi nó ĐÚNG là nhóm đang tắt của thread này — model ghi bừa thì
+                # câu báo không được khẳng định một lý do sai.
+                _ten = reply.split("[BLOCKED]", 1)[1].strip(" :-—–«»\"'.\n")
+                _tat = set(caps.all_groups()) - set(allow)
+                _bao = caps.cau_bi_chan(nhom=_ten if _ten in _tat else "")
+                _journal(_bao, status="blocked")
+                return {"text": _bao}
             # Bài Facebook do AI viết: KHÔNG trả ra màn hình rồi bỏ đó. Lấy phần
             # trong <<<BAI>>>…<<<HETBAI>>> đưa qua cổng duyệt. Model không bọc
             # thì lấy cả câu trả lời — cổng duyệt hiện nguyên văn cho chủ máy
@@ -3711,12 +3718,14 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 # trong _CAP_GROUP sẽ rơi vào "_ungrouped" rồi bị chặn ở đây,
                 # và triệu chứng nhìn từ ngoài y hệt bot hỏng: hỏi mà không
                 # thấy trả lời, cũng chẳng có dòng log nào.
-                logger.warning({"event": "agent_tool_blocked_silent", "tool": name,
+                logger.warning({"event": "agent_tool_blocked", "tool": name,
                                 "group": caps.group_of(name),
                                 "allow": sorted(allow) if allow is not None else None})
                 if hist and hist[-1].get("role") == "user":
                     hist.pop()
-                return {"text": "", "silent": True}
+                _bao = caps.cau_bi_chan(cap.label or name, nhom=caps.group_of(name))
+                _journal(_bao, status="blocked")
+                return {"text": _bao}
             elif approval_gate.is_blocked(name, risk=cap.risk):
                 # FIX1 (security, audit 2026-07): readonly là CHẶN CỨNG — trước
                 # đây điều kiện "not auto_approve and ..." khiến việc chạy TỰ

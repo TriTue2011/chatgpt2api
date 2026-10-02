@@ -315,6 +315,12 @@ class KetThucDoDangTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self._chay(self.MO + [{"type": "response.done", "response": {"status": "incomplete"}}])
 
+    def test_completed_ma_rong_la_loi_khong_phai_ok(self):
+        """Đo 02/10/2026 06:36–07:07: 5 lượt «completed» không có chữ nào — trước đây ghi ok, trả câu rỗng."""
+        with self.assertRaises(RuntimeError) as e:
+            self._chay(self.MO + [{"type": "response.done", "response": {"status": "completed"}}])
+        self.assertIn("không có chữ nào", str(e.exception))
+
     def test_completed_tra_du_chu(self):
         ev = self.MO + [{"type": "response.chunk", "chunk": {"text": {"text": "3"}}},
                         {"type": "response.chunk", "chunk": {"text": {"text": "6"}}},

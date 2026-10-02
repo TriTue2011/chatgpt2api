@@ -2959,6 +2959,10 @@ def _do_photo_request(
         if it not in allowed and allow is not None:
             status = "blocked"
             err = f"intent {it} not allowed"
+            # Báo lý do, không im lặng (chủ máy 02/10/2026).
+            from services.agent import capabilities as _caps_chan
+            reply = _caps_chan.cau_bi_chan(_phi.nhan(it))
+            send_message(thread_id, reply, thread_type)
             return
 
         if it == _phi.FACEBOOK:

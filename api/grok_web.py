@@ -356,6 +356,7 @@ def _stream_chat(prompt: str, mode: str, cookies: dict[str, str]) -> Iterator[st
         created = False
         attached = False
         sent = False
+        co_chu = False
         session_id = ""
         # Hạn tính từ lần CUỐI có dữ liệu, không phải từ lúc mở: hạn cứng 45 giây cũ cắt câu trả lời dài (expert,
         # heavy) rồi trả phần dở như đã xong.
@@ -389,6 +390,7 @@ def _stream_chat(prompt: str, mode: str, cookies: dict[str, str]) -> Iterator[st
                 session_id = session_id or str(conv.get("id") or "")
             delta = _delta_tu_event(ev)
             if delta:
+                co_chu = True
                 yield delta
             if kind == "response.grok.output":
                 # Đo 02/10/2026: hết lượt thì Grok gửi `output.stream_error` (usage_limit_reached …) rồi kết thúc lượt
@@ -405,6 +407,10 @@ def _stream_chat(prompt: str, mode: str, cookies: dict[str, str]) -> Iterator[st
                     ly_do = (resp.get("status_details") or {}).get("reason") if isinstance(
                         resp.get("status_details"), dict) else ""
                     raise RuntimeError(f"Grok web dừng giữa câu trả lời: {trang_thai} ({ly_do or 'không rõ'})")
+                if not co_chu:
+                    # Đo 02/10/2026 06:36–07:07: 5 lượt «completed» mà không có chữ nào — c2a ghi ok, người hỏi
+                    # nhận câu RỖNG không lý do. Xong mà rỗng là hỏng: báo lỗi để sang tài khoản kế / báo lý do.
+                    raise RuntimeError("Grok web trả lời xong mà không có chữ nào (completed rỗng)")
                 return
             if created and attached and not sent and session_id:
                 sent = True

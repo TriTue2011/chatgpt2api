@@ -8642,6 +8642,21 @@ def nhom_duoc_phep(nhom: str, allow: set[str] | None) -> bool:
     return allow is None or nhom in allow
 
 
+def cau_bi_chan(viec: str = "", *, nhom: str = "") -> str:
+    """Câu trả lời khi khung chat CHƯA BẬT việc người dùng xin.
+
+    Chủ máy 02/10/2026: *"Toàn bộ dự án, bị block hay từ chối phải phản hồi lý do"* — thay cho
+    đường im lặng tuyệt đối (yêu cầu cũ 15/07/2026). Im lặng thì người hỏi không phân biệt được
+    "chưa bật" với "bot chết", và model [BLOCKED] oan (đo 29/08) cũng không ai thấy để sửa.
+    """
+    viec = " ".join(str(viec or "").split())[:80]
+    ai = f"việc «{viec}»" if viec else "việc này"
+    vi_sao = (f"thuộc nhóm chức năng «{nhom}» đang TẮT ở khung chat này" if nhom
+              else "chưa được bật ở khung chat này")
+    return (f"⛔ Dạ {ai} {vi_sao} nên em không làm được ạ. "
+            "Nhờ quản trị bật trong Cài đặt › Kênh chat › Lọc thread nếu cần.")
+
+
 def all_groups() -> list[str]:
     """Danh sách nhóm chức năng đã biết (cho UI + kiểm tra cấu hình lọc)."""
     return sorted(set(_CAP_GROUP.values()) | _FLOW_GROUPS)

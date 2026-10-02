@@ -1383,6 +1383,10 @@ def _do_photo_request(
             # generate blocked without image group
             status = "blocked"
             err = f"intent {it} not allowed"
+            # Báo lý do, không im lặng (chủ máy 02/10/2026).
+            from services.agent import capabilities as _caps_chan
+            reply = _caps_chan.cau_bi_chan(_phi.nhan(it))
+            send_message(chat_id, reply)
             return
 
         if it == _phi.LUU_ONLINE:
