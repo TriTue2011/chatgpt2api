@@ -6678,6 +6678,7 @@ def _h_dang_facebook(args: dict, ctx: dict) -> dict:
 # ── Registry ─────────────────────────────────────────────────────────────────
 
 from services.chi_tieu import tool_bot as _chi_tieu_bot  # noqa: E402 — tool «chi_tieu» bên dưới
+from services import mang_nha as _mang_nha  # noqa: E402 — tool «mang_nha» bên dưới
 
 CAPABILITIES: dict[str, Capability] = {
     "generate_image": Capability(
@@ -7464,6 +7465,10 @@ CAPABILITIES: dict[str, Capability] = {
             "o_lai_giay": {"type": "number", "description": "Giây có người ở lại trước khi bật/hỏi; 0 = bot tự học."},
             "roi_giay": {"type": "number", "description": "Giây vắng liền (rời đi) thì tắt; 0 = bot tự học."}},
             "required": ["thiet_bi"]}),
+    "mang_nha": Capability(
+        name="mang_nha", risk=CHANGE, handler=_mang_nha.xu_ly,
+        emoji="🌐", label="Mạng nhà — router MikroTik",
+        description=_mang_nha.MO_TA, parameters=_mang_nha.THAM_SO),
     "kich_ban_nha": Capability(
         name="kich_ban_nha", risk=READ, handler=_h_kich_ban_nha,
         emoji="🧭", label="Tình huống nhà — bot tự dựng và hỏi",
@@ -8516,7 +8521,7 @@ _CAP_GROUP: dict[str, str] = {
     "mo_nhac": "tts_speaker", "dieu_khien_nhac": "tts_speaker", "nhac_dang_phat": "tts_speaker",
     "announce_on_speaker": "tts_speaker",
     "create_automation": "homeassistant",
-    "system_status": "server", "remote_system_status": "server",
+    "system_status": "server", "remote_system_status": "server", "mang_nha": "server",
     # Chụp webcam/màn hình máy khác — nhóm RIÊNG, không gộp vào "server", để
     # thread nào được xem máy chủ vẫn KHÔNG tự động được nhìn vào máy người khác.
     "device_capture": "device",

@@ -1635,7 +1635,8 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
     ("server", _KW_SERVER,
      "- Máy chủ → system_status (phần cứng CHÍNH máy chủ bot: CPU, RAM, ổ "
      "đĩa, uptime); remote_system_status (SSH đọc phần cứng máy khác, chỉ "
-     "đọc, cần thông tin đăng nhập người dùng cung cấp)."),
+     "đọc, cần thông tin đăng nhập người dùng cung cấp). Mạng nhà / internet / wifi / VPN / máy nào đang "
+     "dùng mạng / chặn mạng một máy → mang_nha (router MikroTik)."),
     ("device", _KW_DEVICE,
      "- Máy tính đã cài agent → device_capture (chụp webcam hoặc ảnh màn "
      "hình máy đó rồi gửi về); device_power (tắt nguồn, khởi động lại, khoá "

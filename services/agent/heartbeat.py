@@ -456,6 +456,11 @@ def _eval_canh_bao_nha() -> tuple[str, str]:
             su_co_thiet_bi.quet()            # thiết bị bot đang tự điều khiển mà mất kết nối — báo nhanh, kèm nguyên nhân
         except Exception as exc:  # noqa: BLE001
             logger.warning({"event": "su_co_thiet_bi_quet_loi", "error": str(exc)[:160]})
+        try:
+            from services import mang_nha
+            mang_nha.quet()                  # máy lạ vào mạng nhà, internet rớt / có lại (router MikroTik)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning({"event": "mang_nha_quet_loi", "error": str(exc)[:160]})
         kq = canh_bao_nha.chay_mot_lan()
         if kq.get("gui"):
             return "act", f"báo {kq['so_loi']} lỗi tới {kq['gui']} người"
