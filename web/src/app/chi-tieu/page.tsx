@@ -15,6 +15,7 @@ import { LoaderCircle } from "lucide-react";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 
 import { CongTy } from "./components/cong-ty";
+import { HopThuTab } from "./components/hop-thu";
 import { HuLuong } from "./components/hu-luong";
 import { Ky } from "./components/ky";
 import { LichSu } from "./components/lich-su";
@@ -25,7 +26,7 @@ import { lay, type TongQuan } from "./lib";
 
 const TAB = [
   ["tong", "Tổng quan"], ["lich", "Lịch sử chi"], ["hu", "Hũ & lương"], ["ky", "Thu nhập · Chi phí đặc biệt"],
-  ["cty", "Tạm ứng công ty"], ["lk", "Liên kết Zalo/Telegram"],
+  ["cty", "Tạm ứng công ty"], ["mail", "Email"], ["lk", "Liên kết Zalo/Telegram"],
 ] as const;
 
 export default function ChiTieuPage() {
@@ -80,6 +81,7 @@ export default function ChiTieuPage() {
       {tab === "hu" && <HuLuong tq={tq} taiLai={tai} />}
       {tab === "ky" && <Ky tq={tq} taiLai={tai} />}
       {tab === "cty" && <CongTy />}
+      {tab === "mail" && <HopThuTab taiLai={tai} />}
       {tab === "lk" && <LienKetTab tq={tq} taiLai={tai} />}
       {tab === "qt" && tq.la_admin && <QuanTri />}
     </div>

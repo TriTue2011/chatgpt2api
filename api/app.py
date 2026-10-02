@@ -280,6 +280,8 @@ def create_app() -> FastAPI:
         try:
             from services.chi_tieu.canh_bao import start as start_chi_tieu
             start_chi_tieu()
+            from services.chi_tieu.email_chi import start as start_chi_tieu_email
+            start_chi_tieu_email()
         except Exception as exc:
             _record_startup_failure("chi_tieu", str(exc))
         # Grok: Firefox chỉ mở để lấy cookie. Phiên còn sống thì tắt cho đỡ tốn.

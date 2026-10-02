@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Header
 
 from api.support import require_admin, require_identity
-from services.chi_tieu import kho, ngan_sach as ns, nghiep_vu as nv
+from services.chi_tieu import email_chi, kho, ngan_sach as ns, nghiep_vu as nv
 
 
 def _ok(f, *a, **k) -> dict[str, Any]:
@@ -67,6 +67,35 @@ def create_router() -> APIRouter:
         for x in kho.ds_chi(s["id"], hien):
             ngay[x["thoi_gian"][:10]] = ngay.get(x["thoi_gian"][:10], 0) + int(x["so_tien"])
         return {"ok": True, "ky": ky, "theo_ngay": [{"ngay": k, "tong": v} for k, v in sorted(ngay.items())]}
+
+    # ── Hộp thư của sổ: đọc thư báo biến động rồi tự ghi (`services/chi_tieu/email_chi.py`) ──
+    @r.get("/api/chi-tieu/hop-thu")
+    async def hop_thu(authorization: str | None = Header(default=None)):
+        s = _so(authorization)
+        return await asyncio.to_thread(_ok, email_chi.ds_hop_thu, s["id"])
+
+    @r.post("/api/chi-tieu/hop-thu")
+    async def luu_hop_thu(body: dict, authorization: str | None = Header(default=None)):
+        s = _so(authorization)
+        return await asyncio.to_thread(
+            _ok, email_chi.luu_hop_thu, s["id"], id_=body.get("id"), ten=body.get("ten"),
+            imap_host=body.get("imap_host"), imap_port=body.get("imap_port"), dia_chi=body.get("dia_chi"),
+            mat_khau=body.get("mat_khau"), nguoi_gui=body.get("nguoi_gui"), bat=body.get("bat", True))
+
+    @r.delete("/api/chi-tieu/hop-thu/{id_}")
+    async def xoa_hop_thu(id_: int, authorization: str | None = Header(default=None)):
+        s = _so(authorization)
+        return await asyncio.to_thread(_ok, email_chi.xoa_hop_thu, s["id"], id_)
+
+    @r.post("/api/chi-tieu/hop-thu/{id_}/thu")
+    async def thu_hop_thu(id_: int, authorization: str | None = Header(default=None)):
+        s = _so(authorization)
+        return await asyncio.to_thread(_ok, email_chi.thu_ket_noi, s["id"], id_)
+
+    @r.post("/api/chi-tieu/hop-thu/{id_}/quet")
+    async def quet_hop_thu(id_: int, authorization: str | None = Header(default=None)):
+        s = _so(authorization)
+        return await asyncio.to_thread(_ok, email_chi.quet_ngay, s["id"], id_)
 
     @r.get("/api/chi-tieu/de-xuat")
     async def de_xuat(authorization: str | None = Header(default=None)):

@@ -117,6 +117,32 @@ CREATE TABLE IF NOT EXISTS ma_lien_ket (
     so_id INTEGER NOT NULL,
     het_han REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS hop_thu (                -- hộp thư CỦA SỔ để đọc thư báo biến động (email_chi.py)
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    so_id INTEGER NOT NULL REFERENCES so(id) ON DELETE CASCADE,
+    ten TEXT NOT NULL DEFAULT '',
+    imap_host TEXT NOT NULL,
+    imap_port INTEGER NOT NULL DEFAULT 993,
+    dia_chi TEXT NOT NULL,
+    mat_khau TEXT NOT NULL,                         -- Fernet, không bao giờ trả ra web
+    nguoi_gui TEXT NOT NULL DEFAULT '[]',           -- JSON: địa chỉ / @tên-miền người gửi được đọc
+    bat INTEGER NOT NULL DEFAULT 1,
+    tu_ngay TEXT NOT NULL,                          -- chỉ đọc thư từ ngày này (đầu kỳ lúc nối)
+    uid_validity TEXT NOT NULL DEFAULT '',
+    uid_cuoi INTEGER NOT NULL DEFAULT 0,
+    luc_quet TEXT NOT NULL DEFAULT '',
+    loi TEXT NOT NULL DEFAULT '',
+    so_da_ghi INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS thu_da_doc (             -- chống ghi trùng: một thư (Message-ID) ghi một lần mỗi sổ
+    so_id INTEGER NOT NULL,
+    khoa TEXT NOT NULL,
+    ket_qua TEXT NOT NULL DEFAULT '',
+    luc TEXT NOT NULL,
+    PRIMARY KEY (so_id, khoa)
+);
 """
 
 #: 6 hũ của bản gốc (55/5/10/10/10/10) — chỉ là MẪU khi tạo sổ mới; người dùng sửa / thêm / xoá tự do.
