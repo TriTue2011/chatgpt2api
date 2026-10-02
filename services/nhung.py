@@ -1,0 +1,95 @@
+"""Model NHÚNG (embedding) chạy tại chỗ trên CPU — dùng chung cho mọi chỗ tìm theo nghĩa (chọn tool, tìm lại chuyện cũ).
+
+Chủ máy 02/10/2026: "embedding + reranking áp vào toàn bộ mục khác (ngoài điều khiển HA), cứ dùng model tốt nhất".
+Model nạp MỘT lần cho cả tiến trình, không mỗi nơi một bản — RAM .38 chật.
+
+KHÔNG có reranker — đo cùng ngày trên bộ 297 câu: jina-reranker-v2 (int8) chấm lại 10 tool LÀM KÉM đi (AITeamVN
+82,1 → 79,3%, gte 80,4 → 78,2%) và mất ~1,6 giây cho 10 ứng viên; bge-reranker-v2-m3 còn chậm hơn (phép đo chạy hơn
+một giờ chưa xong). Với đoạn ngắn đều nhau như mô tả tool / tin nhắn, vector đã xếp đủ tốt.
+
+Lần gọi đầu khởi luồng nền tải/nạp model (HF_HOME = data/hf, đổi ảnh không tải lại) và trả ``None``; người gọi
+chạy đường cũ cho tới khi model sẵn. Model hỏng thì cũng ``None`` — không bao giờ tệ hơn đường cũ.
+"""
+
+from __future__ import annotations
+
+import threading
+from typing import Any
+
+from utils.log import logger
+
+#: (kho Hugging Face, tệp ONNX, tệp dữ liệu ngoài hoặc None, tệp tokenizer).
+#:
+#: Đo 02/10/2026 trên bộ 297 câu thật (chọn nhóm tool, 2 tool gần nhất gộp từ khoá, CPU .38): AITeamVN/Vietnamese_
+#: Embedding (bge-m3 tinh chỉnh tiếng Việt) 82,1%, 64 ms/câu, RAM ~840 MB; bge-m3 int8 81,6%; gte-multilingual int8
+#: 80,4%; multilingual-e5-large 52,5% (gộp) / 7 GB RAM. Chủ máy: "cứ dùng model tốt nhất".
+NHUNG = ("AITeamVN/Vietnamese_Embedding", "onnx/model.onnx", "onnx/model.onnx_data", "onnx/tokenizer.json")
+#: Cắt câu ở ngần này token. Số 82,1% của AITeamVN đo với 512.
+TOI_DA_TOKEN = 512
+LUONG = 2
+
+_khoa = threading.Lock()
+_dang_nap: set[str] = set()
+_san: dict[str, tuple[Any, Any]] = {}       # "nhung" → (tokenizer, phiên ONNX)
+
+
+def _nap(loai: str) -> None:
+    try:
+        import onnxruntime as ort
+        from huggingface_hub import hf_hub_download
+        from tokenizers import Tokenizer
+
+        kho, tep, du_lieu, tok = NHUNG
+        if du_lieu:
+            hf_hub_download(kho, du_lieu)
+        t = Tokenizer.from_file(hf_hub_download(kho, tok))
+        t.enable_truncation(TOI_DA_TOKEN)
+        so = ort.SessionOptions()
+        so.intra_op_num_threads = LUONG
+        so.inter_op_num_threads = 1
+        so.enable_cpu_mem_arena = False
+        _san[loai] = (t, ort.InferenceSession(hf_hub_download(kho, tep), so, providers=["CPUExecutionProvider"]))
+        logger.info({"event": "nhung_san", "loai": loai, "model": kho})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning({"event": "nhung_nap_loi", "loai": loai, "error": str(exc)[:200]})
+    finally:
+        with _khoa:
+            _dang_nap.discard(loai)
+
+
+def _lay(loai: str) -> tuple[Any, Any] | None:
+    if loai in _san:
+        return _san[loai]
+    with _khoa:
+        if loai not in _san and loai not in _dang_nap:
+            _dang_nap.add(loai)
+            threading.Thread(target=_nap, args=(loai,), name=f"nhung-{loai}", daemon=True).start()
+    return None
+
+
+def _vao(tok: Any, phien: Any, e: Any) -> dict[str, Any]:
+    import numpy as np
+    feed = {"input_ids": np.array([e.ids], dtype=np.int64), "attention_mask": np.array([e.attention_mask], dtype=np.int64)}
+    if any(i.name == "token_type_ids" for i in phien.get_inputs()):
+        feed["token_type_ids"] = np.array([e.type_ids], dtype=np.int64)
+    return feed
+
+
+def vec(chu: str):
+    """Vector đã chuẩn hoá (numpy) của ``chu``; ``None`` khi model chưa sẵn / lỗi."""
+    import numpy as np
+    m = _lay("nhung")
+    if m is None:
+        return None
+    tok, phien = m
+    try:
+        h = phien.run(None, _vao(tok, phien, tok.encode(str(chu or ""))))[0][0, 0]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning({"event": "nhung_loi", "error": str(exc)[:200]})
+        return None
+    return (h / (np.linalg.norm(h) or 1.0)).astype(np.float32)
+
+
+def ten_model() -> str:
+    """Định danh cấu hình model — đổi model/cắt token thì vector cũ lưu trên đĩa không còn dùng được."""
+    return "|".join([*NHUNG[:2], str(TOI_DA_TOKEN)])

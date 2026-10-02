@@ -399,14 +399,43 @@ def search(user_id: str, query: str, *, limit: int = 20) -> list[dict[str, Any]]
                 "FROM turns_fts JOIN turns t ON t.id = turns_fts.rowid "
                 "WHERE turns_fts MATCH ? AND t.user_id=? "
                 "ORDER BY t.created_at DESC LIMIT ?",
-                (fts, str(user_id), limit),
+                (fts, str(user_id), max(limit, UNG_VIEN_XEP)),
             ).fetchall()
     except Exception:
         return []
-    return [
+    hits = [
         {"role": r[0], "content": r[1], "created_at": r[2]}
         for r in rows
     ]
+    return _lien_quan_nhat(query, hits, limit)
+
+
+#: Số lượt khớp chữ (mới nhất trước) đưa cho model chọn — 12 × ~64 ms ≈ 0,8 giây ở lượt đầu phiên. FTS «OR» từng
+#: từ khớp cả lượt chỉ chung một chữ thường; xếp theo thời gian thì lời nhắc nhận lượt MỚI NHẤT, không phải lượt
+#: LIÊN QUAN NHẤT.
+UNG_VIEN_XEP = 12
+
+
+def _lien_quan_nhat(query: str, hits: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    """``limit`` lượt GẦN NGHĨA câu hỏi nhất (model nhúng `services/nhung.py`), trả lại theo thứ tự mới nhất trước như
+    cũ (người gọi hiển thị theo thời gian). Model chưa sẵn → ``limit`` lượt mới nhất, đúng như trước.
+
+    Nhúng chứ không dùng reranker: đo 02/10/2026 reranker jina mất ~160 ms MỖI ứng viên (20 ứng viên ≈ 3 giây chèn
+    vào lượt đầu phiên — `super_context`), và ở bài chọn tool còn làm kém đi (82,1 → 79,3%)."""
+    if len(hits) <= limit:
+        return hits
+    from services import nhung
+    q = nhung.vec(query)
+    if q is None:
+        return hits[:limit]
+    diem = []
+    for h in hits:
+        v = nhung.vec(str(h.get("content") or "")[:500])
+        if v is None:
+            return hits[:limit]
+        diem.append(float(v @ q))
+    chon = sorted(range(len(hits)), key=lambda i: -diem[i])[:limit]
+    return [hits[i] for i in sorted(chon)]
 
 
 def turn_gan_ts(user_id: str, ts: float, *, cua_bot: bool | None = None,
