@@ -410,7 +410,7 @@ def search(user_id: str, query: str, *, limit: int = 20) -> list[dict[str, Any]]
     return _lien_quan_nhat(query, hits, limit)
 
 
-#: Số lượt khớp chữ (mới nhất trước) đưa cho model chọn — 12 × ~64 ms ≈ 0,8 giây ở lượt đầu phiên. FTS «OR» từng
+#: Số lượt khớp chữ (mới nhất trước) đưa cho model chọn — 12 × ~24 ms ≈ 0,3 giây ở lượt đầu phiên. FTS «OR» từng
 #: từ khớp cả lượt chỉ chung một chữ thường; xếp theo thời gian thì lời nhắc nhận lượt MỚI NHẤT, không phải lượt
 #: LIÊN QUAN NHẤT.
 UNG_VIEN_XEP = 12

@@ -21,11 +21,12 @@ from utils.log import logger
 #: (kho Hugging Face, tệp ONNX, tệp dữ liệu ngoài hoặc None, tệp tokenizer).
 #:
 #: Đo 02/10/2026 trên bộ 297 câu thật (chọn nhóm tool, 2 tool gần nhất gộp từ khoá, CPU .38): AITeamVN/Vietnamese_
-#: Embedding (bge-m3 tinh chỉnh tiếng Việt) 82,1%, 64 ms/câu, RAM ~840 MB; bge-m3 int8 81,6%; gte-multilingual int8
-#: 80,4%; multilingual-e5-large 52,5% (gộp) / 7 GB RAM. Chủ máy: "cứ dùng model tốt nhất".
-NHUNG = ("AITeamVN/Vietnamese_Embedding", "onnx/model.onnx", "onnx/model.onnx_data", "onnx/tokenizer.json")
-#: Cắt câu ở ngần này token. Số 82,1% của AITeamVN đo với 512.
-TOI_DA_TOKEN = 512
+#: Embedding 82,1% (108 ms/câu, RAM thêm ~1,7 GB); gte-multilingual-base int8 81,6% ở 256 token (24 ms/câu, RAM
+#: ~0,66 GB; 80,4% ở 512); bge-m3 int8 81,6%; multilingual-e5-large 52,5% / 7 GB RAM. Chủ máy chọn gte: chạy GPU nhà
+#: bản fp16 (~0,7 GB VRAM — AITeamVN ~2,5 GB làm GPU vượt 8 GB lúc Qwen-VL thức), lùi CPU bằng bản int8 này.
+NHUNG = ("onnx-community/gte-multilingual-base", "onnx/model_int8.onnx", None, "tokenizer.json")
+#: Câu người dùng và mô tả tool hiếm khi dài hơn; với gte cắt 256 đúng hơn 512 (81,6 / 80,4%).
+TOI_DA_TOKEN = 256
 LUONG = 2
 
 _khoa = threading.Lock()
