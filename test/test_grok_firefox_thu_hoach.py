@@ -191,3 +191,36 @@ class HanMucTests(unittest.TestCase):
             self.assertEqual(gf.han_muc_cua("grok-1", cho=True)["goi"], "Miễn phí")
             self.assertEqual(hm.call_count, 1, "trong 5 phút dùng bản lưu tạm")
         gf._han_muc.clear()
+
+
+class TheoDoiTests(unittest.TestCase):
+    """Đo 02/10/2026: đăng nhập xong sau 24 phút mà bộ canh 15 phút đã thôi — cookie không được lấy, Firefox mở mãi."""
+
+    def test_canh_qua_15_phut_van_lay_cookie(self):
+        gio = iter([0, 16 * 60, 24 * 60, 24 * 60])
+        thu = iter([{}, {}, {"sso": "x"}])
+        with mock.patch.object(gf.time, "time", side_effect=lambda: next(gio)), \
+                mock.patch.object(gf.time, "sleep"), \
+                mock.patch.object(gf, "dang_mo", return_value=True), \
+                mock.patch.object(gf, "_thu_tu_sqlite", side_effect=lambda p: next(thu)), \
+                mock.patch.object(gf, "tat") as tat:
+            gf._vong_theo_doi("grok-2")
+        tat.assert_called_once_with("grok-2")
+
+    def test_het_gio_canh_thi_tat_firefox(self):
+        gio = iter([0, gf._CANH_GIAY + 1])
+        with mock.patch.object(gf.time, "time", side_effect=lambda: next(gio)), \
+                mock.patch.object(gf.time, "sleep"), \
+                mock.patch.object(gf, "dang_mo", return_value=True), \
+                mock.patch.object(gf, "_thu_tu_sqlite", return_value={}), \
+                mock.patch.object(gf, "tat") as tat:
+            gf._vong_theo_doi("grok-2")
+        tat.assert_called_once_with("grok-2")
+
+    def test_trang_thai_thay_firefox_mo_thi_bat_lai_bo_canh(self):
+        with mock.patch.object(gf, "tai_khoan", return_value=[{"profile": "grok-2", "label": "Backup"}]), \
+                mock.patch.object(gf, "dang_mo", return_value=True), \
+                mock.patch.object(gf, "_bat_theo_doi") as bat, \
+                mock.patch.object(gf, "han_muc_cua", return_value=None):
+            gf.trang_thai(kiem_phien=False)
+        bat.assert_called_once_with("grok-2")

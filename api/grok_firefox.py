@@ -532,11 +532,21 @@ def lam_moi(profile: str, cho: float = 90) -> dict[str, str]:
     raise RuntimeError(f"Phiên Grok {profile} chưa tự mới — Firefox đang mở trên noVNC, đăng nhập lại là xong.")
 
 
+#: Canh tối đa ngần này giây. Đo 02/10/2026: hạn cũ 15 phút — chủ máy mở Firefox 11:03, đăng nhập xong 11:27, bộ canh
+#: đã thôi từ 11:18 nên cookie không được lấy, Firefox để mở mãi. Hết hạn mà chưa đăng nhập thì TẮT Firefox (đỡ RAM);
+#: bấm «Đăng nhập» lại là mở tiếp, và `trang_thai` thấy Firefox mở mà không ai canh thì bật lại bộ canh.
+_CANH_GIAY = 60 * 60
+
+
 def _vong_theo_doi(profile: str) -> None:
     """Người đang đăng nhập: thấy phiên sống thì ghi cookie và tắt Firefox. Firefox bị đóng tay thì thôi."""
-    het = time.time() + 15 * 60
-    while time.time() < het and dang_mo(profile):
+    het = time.time() + _CANH_GIAY
+    while dang_mo(profile):
         if _thu_tu_sqlite(profile).get("sso"):
+            tat(profile)
+            return
+        if time.time() >= het:
+            _log("grok_firefox_het_gio_canh", profile=profile)
             tat(profile)
             return
         time.sleep(3)
@@ -558,6 +568,8 @@ def trang_thai(kiem_phien: bool = True) -> list[dict[str, Any]]:
     ra = []
     for i, a in enumerate(tai_khoan()):
         p = a["profile"]
+        if dang_mo(p):
+            _bat_theo_doi(p)          # Firefox mở mà bộ canh đã thôi (hết giờ cũ, app khởi động lại) → canh tiếp
         f = _file_cookie(p)
         ra.append({**a, "ordinal": i + 1, "is_primary": i == 0,
                    "phien_song": phien_song(doc_cookie_file(p)) if kiem_phien else None,
