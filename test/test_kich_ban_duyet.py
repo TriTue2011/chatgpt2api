@@ -73,3 +73,19 @@ def test_loi_khong_hieu_thi_huong_dan(so):
     kb.bat_dau_duyet()
     assert "duyệt" in kb.tra_loi_duyet("hôm nay trời đẹp")
     assert "Không có trường hợp số 9" in kb.tra_loi_duyet("sửa 9: x")
+
+
+def test_uu_tien_xep_truoc_va_khong_gui_lai_danh_sach_dang_cho(so):
+    """Chủ máy: "Quạt và đèn trần ưu tiên, đèn khác để sau"."""
+    gui, _ = so
+    kb.bat_dau_duyet()
+    assert gui[-1].startswith("📋 Duyệt trường hợp BẬT — Đèn trần")
+    n = len(gui)
+    kb.bat_dau_duyet(["light.den", "fan.quat"])
+    assert len(gui) == n, "đèn trần vẫn đứng đầu, đang chờ — không gửi lại"
+    kb.tra_loi_duyet("duyệt")
+    kb.tra_loi_duyet("duyệt")
+    assert list(kb.duyet())[:2] == ["light.den", "fan.quat"]
+    assert gui[-1].startswith("📋 Duyệt trường hợp BẬT — Quạt"), "duyệt xong đèn trần thì tự gửi quạt"
+    n = len(gui)
+    assert "không gửi lại" in kb.bat_dau_duyet(["fan.quat"]) and len(gui) == n

@@ -574,10 +574,14 @@ def duyet() -> dict[str, Any]:
         return _nap().get("duyet") or {}
 
 
-def bat_dau_duyet() -> str:
-    """Dựng danh sách từ lần dựng tình huống mới nhất (giữ phần đã duyệt), gửi danh sách đầu tiên còn chờ."""
+def bat_dau_duyet(uu_tien: list[str] | None = None) -> str:
+    """Dựng danh sách từ lần dựng tình huống mới nhất (giữ phần đã duyệt / đã sửa), gửi danh sách đầu tiên còn chờ.
+
+    ``uu_tien``: thiết bị duyệt TRƯỚC, theo thứ tự này (chủ máy 02/10/2026: "Quạt và đèn trần ưu tiên, đèn khác để
+    sau"); thiết bị khác giữ thứ tự cũ, xếp sau. Danh sách đang chờ mà vẫn đứng đầu sau khi xếp thì KHÔNG gửi lại."""
     with _khoa:
         d = _nap()
+        truoc = _dang_cho(d)
         if not d["lan"]:
             return "Em chưa dựng tình huống nào — bảo em «dựng tình huống» trước ạ."
         kb = d["lan"][-1]["kich_ban"]
@@ -586,7 +590,7 @@ def bat_dau_duyet() -> str:
             cu = dv.get(tb) or {}
             if cu.get("xong"):
                 continue
-            moi = {"buoc": cu.get("buoc") or "bat", "gui_luc": None, "xong": False}
+            moi = {"buoc": cu.get("buoc") or "bat", "gui_luc": cu.get("gui_luc"), "xong": False}
             for h, nen in CHIEU.items():
                 moi[h] = cu[h] if cu.get(h) is not None else [          # giữ phần anh đã sửa / duyệt
                     {"tinh_huong": x["tinh_huong"], "cam_bien_thay": x.get("cam_bien_thay") or "", "nen": x["nen"],
@@ -594,7 +598,13 @@ def bat_dau_duyet() -> str:
                     for x in kb if x["thiet_bi"] == tb and x["nen"] in nen]
                 moi[f"{h}_xong"] = bool(cu.get(f"{h}_xong"))
             dv[tb] = moi
+        dau = [tb for tb in (uu_tien or []) if tb in dv]
+        d["duyet"] = {tb: dv[tb] for tb in [*dau, *[t for t in dv if t not in dau]]}
+        sau = _dang_cho(d)
+        da_gui = sau is not None and sau == truoc and bool(d["duyet"][sau[0]].get("gui_luc"))
         _luu(d)
+    if da_gui:
+        return "Danh sách đang chờ anh duyệt vẫn là danh sách đã gửi — em không gửi lại."
     return gui_duyet_tiep()
 
 

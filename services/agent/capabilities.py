@@ -1189,7 +1189,8 @@ def _h_kich_ban_nha(args: dict, ctx: dict) -> dict:
     viec = str(args.get("viec") or "dung").strip().lower()
     if viec == "duyet":
         noi = str(args.get("noi_dung") or "").strip()
-        return {"text": kich_ban_nha.tra_loi_duyet(noi) if noi else kich_ban_nha.bat_dau_duyet()}
+        return {"text": kich_ban_nha.tra_loi_duyet(noi) if noi
+                else kich_ban_nha.bat_dau_duyet([str(x) for x in args.get("uu_tien") or []])}
     if viec == "tra_loi":
         return {"text": kich_ban_nha.tra_loi(str(args.get("noi_dung") or ""),
                                              int(args["so"]) if args.get("so") else None)}
@@ -7466,13 +7467,16 @@ CAPABILITIES: dict[str, Capability] = {
                      "huống trong tin «🧭 TH<số>» («tình huống 3 sai, …») → viec='cham' (so = số tình huống, "
                      "dung, noi_dung = lời chấm, lan = số TH nếu nêu). Hỏi bot đã dựng được gì → viec='xem'. "
                      "Gửi / trả lời danh sách «📋 Duyệt trường hợp BẬT|TẮT …» → viec='duyet' (noi_dung = nguyên lời "
-                     "chủ nhà: «duyệt», «sửa 2: …», «thêm: …», «bỏ 3»; để trống = gửi danh sách đầu tiên)."),
+                     "chủ nhà: «duyệt», «sửa 2: …», «thêm: …», «bỏ 3»; để trống = gửi danh sách đầu tiên; uu_tien = "
+                     "mã thiết bị chủ nhà muốn duyệt trước)."),
         parameters={"type": "object", "properties": {
             "viec": {"type": "string", "enum": ["dung", "tra_loi", "cham", "xem", "duyet"]},
             "noi_dung": {"type": "string", "description": "Lời chủ nhà trả lời / chấm, giữ đúng ý."},
             "so": {"type": "integer", "description": "Số KB của câu hỏi, hoặc số tình huống khi chấm."},
             "dung": {"type": "boolean", "description": "viec='cham': nhận định của bot đúng hay sai."},
-            "lan": {"type": "integer", "description": "viec='cham': số TH của lần dựng nếu nêu."}},
+            "lan": {"type": "integer", "description": "viec='cham': số TH của lần dựng nếu nêu."},
+            "uu_tien": {"type": "array", "items": {"type": "string"},
+                        "description": "viec='duyet' không noi_dung: mã HA các thiết bị duyệt trước, theo thứ tự."}},
             "required": ["viec"]}),
     # Chi tiêu theo hũ — mỗi người một sổ (chủ máy 02/10/2026). READ như `ghi_du_kien`: chỉ ghi vào sổ ĐÃ LIÊN KẾT
     # với chính người nhắn, không đụng nhà hay hệ thống — để «vừa chi 50k» không phải chờ duyệt mỗi lần.

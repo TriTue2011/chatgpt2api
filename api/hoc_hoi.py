@@ -1014,12 +1014,14 @@ def create_router() -> APIRouter:
 
     @router.post("/api/hoc-hoi/kich-ban/duyet")
     async def kich_ban_duyet_sua(body: dict, authorization: str | None = Header(default=None)):
-        """body: {viec: bat_dau} hoặc {tb, huong: bat|tat, viec: duyet|sua|them|bo, so?, noi_dung?}."""
+        """body: {viec: bat_dau, uu_tien?: [mã thiết bị duyệt trước]} hoặc {tb, huong: bat|tat, viec: duyet|sua|them|bo,
+        so?, noi_dung?}."""
         require_admin(authorization)
         from services import kich_ban_nha
         try:
             if body.get("viec") == "bat_dau":
-                return {"ok": True, "tin": await asyncio.to_thread(kich_ban_nha.bat_dau_duyet)}
+                uu = [str(x) for x in body.get("uu_tien") or [] if str(x).strip()]
+                return {"ok": True, "tin": await asyncio.to_thread(kich_ban_nha.bat_dau_duyet, uu)}
             tin = await asyncio.to_thread(kich_ban_nha.sua_duyet, str(body.get("tb") or ""), str(body.get("huong") or ""),
                                           str(body.get("viec") or ""), int(body["so"]) if body.get("so") else None,
                                           str(body.get("noi_dung") or ""))
