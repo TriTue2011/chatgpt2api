@@ -438,11 +438,12 @@ def _handle_single_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterat
         from api.gemini_web import handle_gemini_web_api_image_gen
         return handle_gemini_web_api_image_gen(prompt, n=n, response_format=response_format, base_url=base_url_str)
 
-    # Grok web (grok/imagine): cùng websocket chat, Grok tự vẽ — `api/grok_web.py`.
+    # Grok web (grok/imagine): websocket của trang Imagine — `api/grok_web.py::_imagine`.
     if route.provider == "grok_web":
         logger.info({"event": "image_routed_to_grok", "provider": route.provider, "n": n})
         from api.grok_web import handle_grok_web_image_gen
-        return handle_grok_web_image_gen(prompt, n=n, response_format=response_format, base_url=base_url_str or "")
+        return handle_grok_web_image_gen(prompt, n=n, response_format=response_format, base_url=base_url_str or "",
+                                         size=size)
 
     # For chatgpt/ DALL-E: use original chatgpt.com backend flow (same as upstream)
     # Let combo fallback handle failures if token can't access chatgpt.com

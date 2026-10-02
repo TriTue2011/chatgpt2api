@@ -25,7 +25,7 @@ class CheDoTests(unittest.TestCase):
 
     def test_het_luot_fast_moi_tai_khoan_thi_ha_mode(self):
         """Đo 02/10/2026: fast 0/30 lượt mà mode auto của Grok vẫn trả lời."""
-        def chay(prompt, mode, cookies, anh=None):
+        def chay(prompt, mode, cookies):
             if mode == "fast":
                 raise RuntimeError("Grok web: usage_limit_reached: You've reached your usage limit.")
             yield f"{mode}:{cookies['sso']}"
@@ -35,7 +35,7 @@ class CheDoTests(unittest.TestCase):
             self.assertEqual(list(gw.stream_theo_chuoi("p", ["fast", "auto"])), ["auto:grok-1"])
 
     def test_loi_khac_het_luot_thi_khong_ha_mode(self):
-        def chay(prompt, mode, cookies, anh=None):
+        def chay(prompt, mode, cookies):
             raise RuntimeError("Grok web từ chối websocket: 500")
             yield ""
 
@@ -162,7 +162,7 @@ class ThuLaiTests(unittest.TestCase):
 
     def test_tai_khoan_dau_hong_thi_sang_tai_khoan_ke(self):
         """Như Flow: tài khoản #1 hỏng (làm mới phiên cũng không cứu) thì sang #2."""
-        def chay(prompt, mode, cookies, anh=None):
+        def chay(prompt, mode, cookies):
             if cookies["sso"] == "grok-1":
                 raise RuntimeError("Grok web từ chối websocket: 403")
             yield "từ #2"
@@ -198,21 +198,68 @@ class HienModelTests(unittest.TestCase):
 
 
 class AnhTests(unittest.TestCase):
-    """Đo 01/10/2026: ảnh Grok vẽ nằm ở chunk.render_generated_image.image_chunk; hỏng thì mang systemErrCode."""
+    """Đo 02/10/2026: nhờ khung chat vẽ thì Grok trả ảnh phong cảnh có sẵn, không theo prompt. Nay vẽ bằng websocket
+    của trang Imagine: ``image`` (< 100% là ảnh nháp) rồi ``json`` completed cho từng ảnh."""
 
-    def _ev(self, ic):
-        return {"type": "response.chunk", "chunk": {"render_generated_image": {"image_chunk": ic}}}
+    def _ve(self, tin, n=1):
+        import json as _j
 
-    def test_chi_lay_anh_da_xong(self):
-        self.assertEqual(gw._anh_xong(self._ev({"imageUrl": "users/u/generated/a/image.jpg", "progress": 100})),
-                         "users/u/generated/a/image.jpg")
-        self.assertEqual(gw._anh_xong(self._ev({"imageUrl": "users/u/generated/a/image.jpg", "progress": 40})), "")
-        self.assertEqual(gw._anh_xong({"type": "response.chunk", "chunk": {"text": {"text": "x"}}}), "")
+        khung = b"".join(_khung(1, _j.dumps(t).encode()) for t in tin)
+        sock = _SockGia([b"HTTP/1.1 101 Switching Protocols\r\n\r\n", khung])
+        sock.settimeout = lambda *_: None
+        sock.close = lambda: None
+        with mock.patch.object(gw.socket, "create_connection", return_value=sock), \
+                mock.patch.object(gw.ssl, "create_default_context") as ctx:
+            ctx.return_value.wrap_socket.return_value = sock
+            kq = gw._imagine("voi xanh", n, "16:9", {"sso": "x"})
+        return kq, sock
 
-    def test_ve_hong_thi_bao_ma_loi(self):
+    def test_lay_anh_xong_bo_anh_nhap_qua_websocket_imagine(self):
+        import base64 as _b
+        nhap, that = _b.b64encode(b"NHAP").decode(), _b.b64encode(b"THAT").decode()
+        kq, sock = self._ve([
+            {"type": "json", "current_status": "start_stage", "job_id": "a"},
+            {"type": "image", "id": "a", "percentage_complete": 50.0, "blob": nhap, "url": "https://x/a.png"},
+            {"type": "image", "id": "a", "percentage_complete": 100.0, "blob": that, "url": "https://x/a.jpg"},
+            {"type": "json", "current_status": "completed", "job_id": "a", "moderated": False},
+        ])
+        self.assertEqual(kq, [b"THAT"])
+        gui = b"".join(sock.gui)
+        self.assertIn(b"GET /ws/imagine/listen", gui)
+
+    def test_het_luot_ve_bao_loi_ro(self):
         with self.assertRaises(RuntimeError) as e:
-            gw._anh_xong(self._ev({"imageUuid": "a", "progress": 100, "systemErrCode": 7}))
-        self.assertIn("systemErrCode=7", str(e.exception))
+            self._ve([{"type": "error", "err_code": "rate_limit_exceeded", "err_msg": "Image rate limit exceeded"}])
+        self.assertIn("rate_limit_exceeded", str(e.exception))
+
+    def test_kiem_duyet_thi_khong_xoay_tai_khoan(self):
+        with self.assertRaises(gw.GrokTuChoi):
+            self._ve([{"type": "json", "current_status": "completed", "job_id": "a", "moderated": True}])
+        dem = []
+
+        def lam(p, ck):
+            dem.append(p)
+            raise gw.GrokTuChoi("kiểm duyệt")
+        with mock.patch("api.grok_firefox.dang_bat", return_value=[{"profile": "grok-1"}, {"profile": "grok-2"}]), \
+                mock.patch.object(gw, "tai_cookie", return_value={"sso": "x"}), self.assertRaises(gw.GrokTuChoi):
+            gw.theo_tai_khoan(lam, "imagine")
+        self.assertEqual(dem, ["grok-1"])
+
+    def test_het_luot_thi_sang_tai_khoan_ke(self):
+        def lam(p, ck):
+            if p == "grok-1":
+                raise RuntimeError("Grok Imagine: rate_limit_exceeded: Image rate limit exceeded")
+            return "anh"
+        with mock.patch("api.grok_firefox.dang_bat", return_value=[{"profile": "grok-1"}, {"profile": "grok-2"}]), \
+                mock.patch.object(gw, "tai_cookie", return_value={"sso": "x"}):
+            self.assertEqual(gw.theo_tai_khoan(lam, "imagine"), ("anh", "grok-2"))
+
+    def test_ti_le_tu_size(self):
+        self.assertEqual(gw.ti_le("1792x1024"), "16:9")
+        self.assertEqual(gw.ti_le("1024x1024"), "1:1")
+        self.assertEqual(gw.ti_le("1024x1536"), "2:3")
+        self.assertEqual(gw.ti_le("9:16"), "9:16")
+        self.assertEqual(gw.ti_le(None), "auto")
 
     def test_grok_imagine_la_model_anh_cua_grok(self):
         from services.backend_router import BackendRouter
