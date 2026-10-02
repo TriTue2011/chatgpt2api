@@ -2132,9 +2132,128 @@ def _la_cua(nguon: str) -> bool:
                for s in _trang_thai_ha())
 
 
+# ── Bật LẠI khi người quay lại sau lần bot tắt vì vắng ─────────────────────
+# Chủ máy 02/10/2026 (17:16 bot tắt đèn trần + quạt vì «vắng», 17:19 người tự bật lại): "bật quạt trở lại khi có
+# người nữa", "thực hiện rồi hỏi đúng hay sai", "giờ có rất nhiều ngoại vi xác nhận rồi mà", "rồi cả yolo, frigate".
+# Đo 30 ngày: bot tắt đèn trần 21 lần — người bật lại trong 15 phút 11 lần (≤ 5 phút: 6); đèn phòng ngủ 6/12;
+# quạt 3/11. Luật học từ lịch sử không học được ca này: cây không có «bot vừa tắt mấy phút trước», và mẫu bị bỏ
+# vì học phải bỏ do_ai=1. Đây là bot SỬA việc của chính nó — chung cho mọi thiết bị có «tắt khi vắng».
+#: Lịch sử dùng để bot tự rút cửa sổ «quay lại» (ngày) và trần một lần quay lại (giây).
+BAT_LAI_NGAY = 30
+BAT_LAI_TRAN = 3600
+
+
+def cua_so_bat_lai(tb: str) -> float:
+    """Bao lâu sau lần bot tắt thì người xuất hiện lại vẫn là «quay lại» — bot tự rút: phân vị 75 của độ trễ những
+    lần NGƯỜI bật lại sau khi bot tắt (≤ BAT_LAI_TRAN). Chưa đủ 3 lần thì bằng cửa sổ chấm tự làm (CHAM_TU_LAM)."""
+    from services import lich_su_nha
+    ro = sqlite3.connect(f"file:{lich_su_nha._DB_PATH}?mode=ro", uri=True, timeout=10.0)
+    try:
+        ev = ro.execute("SELECT ts, gia_tri, do_ai FROM su_kien WHERE thiet_bi=? AND truong='state'"
+                        " AND gia_tri IN ('on','off') AND ts>? ORDER BY ts",
+                        (tb, time.time() - BAT_LAI_NGAY * 86400)).fetchall()
+    finally:
+        ro.close()
+    tre = []
+    for i, (t, g, ai) in enumerate(ev):
+        if g == "off" and ai:
+            lai = next(((t2 - t) for t2, g2, ai2 in ev[i + 1:] if t2 - t <= BAT_LAI_TRAN and g2 == "on" and not ai2), None)
+            if lai is not None:
+                tre.append(lai)
+    if len(tre) < 3:
+        return float(CHAM_TU_LAM)
+    tre.sort()
+    return max(float(VANG), tre[int(0.75 * (len(tre) - 1))])
+
+
+def _co_nguoi_that(tb: str, luc: float) -> tuple[bool | None, str]:
+    """Xác minh bằng MỌI nguồn đã có: bài xác minh «bật» bot học (radar, khoảng cách, camera…), rồi camera của
+    thiết bị (`tat_khi_vang.nhin`: số người Frigate đếm sẵn, không có thì chụp + YOLO). True = có nguồn thấy người;
+    False = nguồn nhìn được mà không ai; None = không nguồn nào trả lời."""
+    from services import boi_canh_nha, xac_minh_nha
+    khu = boi_canh_nha.phong_cua(tb)
+    ket: list[bool | None] = []
+    mo_ta: list[str] = []
+    bai = xac_minh_nha.ap(tb)
+    if bai and xac_minh_nha.nguon_luc(bai["bat"], luc):
+        co, mt = xac_minh_nha.xac_minh(xac_minh_nha.nguon_luc(bai["bat"], luc), khu)
+        ket.append(co)
+        mo_ta.append(mt)
+        if co:
+            return True, mt
+    cams = list(((_nap()["thiet_bi"].get(tb) or {}).get("tat_khi_vang") or {}).get("nhin") or [])
+    if cams:
+        thay = _nhin_lai(cams, khu)
+        if thay:
+            return True, f"{thay} thấy người"
+        ket.append(None if thay is None else False)
+        mo_ta.append("camera không nhìn được" if thay is None else f"{', '.join(cams)} không thấy ai")
+    if any(k is False for k in ket):
+        return False, "; ".join(mo_ta)
+    return None, "; ".join(mo_ta)
+
+
+def _bat_lai(tb: str, nguon: str, luc: float) -> None:
+    """Cảm biến «có người» của chính thiết bị báo người MỚI vào trong cửa sổ quay lại sau lần bot tắt vì vắng →
+    xác minh bằng mọi nguồn, có người thì BẬT LẠI rồi hỏi đúng/sai (kể cả thiết bị đặt «im lặng» — chủ máy muốn
+    được hỏi việc này); lần tắt vừa rồi ghi SAI và nới giờ chờ như khi người tự bật lại."""
+    from services import du_doan_nha as dd, lich_su_nha, thong_bao
+    try:
+        cd = ds_thiet_bi().get(tb) or {}
+        if dd._cam_tu_lam(_ten_tt(tb, "on")):
+            return                                  # khoá cửa / bếp / bình nóng lạnh: không bao giờ tự làm
+        if any(x.get("hanh_dong") == "on" and x.get("cach", "khong") == "khong" and _khung_dang(x, luc)
+               for x in cd.get("ngoai_le") or []):
+            return
+        cua_so = cua_so_bat_lai(tb)
+        with dd._khoa:
+            tat = dd._db().execute(
+                "SELECT id, ts, boi_canh FROM du_doan WHERE ten=? AND cach='tu_lam' AND ts>?"
+                " ORDER BY ts DESC LIMIT 1", (_ten_tt(tb, "off"), luc - cua_so)).fetchone()
+        if not tat:
+            return
+        ro = sqlite3.connect(f"file:{lich_su_nha._DB_PATH}?mode=ro", uri=True, timeout=10.0)
+        try:
+            nguoi = ro.execute("SELECT 1 FROM su_kien WHERE thiet_bi=? AND truong='state' AND do_ai=0 AND ts>? LIMIT 1",
+                               (tb, float(tat["ts"]))).fetchone()
+        finally:
+            ro.close()
+        if nguoi:
+            return                                  # người đã tự bật/tắt sau lần bot tắt — người quyết rồi
+        co, mo_ta = _co_nguoi_that(tb, luc)
+        phut = (luc - float(tat["ts"])) / 60
+        if co is False:
+            _nk(tb, "on", "khong", nguon, f"người quay lại sau {phut:.0f} phút — xác minh không thấy ai ({mo_ta})", luc=luc)
+            return
+        with _khoa_xet:
+            from services import ha_client
+            if str((ha_client.get_state(tb) or {}).get("state") or "").lower() != "off" or _vua_lam(tb, "on"):
+                return
+            if not _lam(tb, "on", tu_lam=True):
+                _nk(tb, "on", "khong", nguon, "bật lại: lệnh tới thiết bị không thành", luc=luc)
+                return
+            gio_tat = datetime.fromtimestamp(float(tat["ts"]), _TZ).strftime("%H:%M")
+            vi = (f"có người quay lại {phut:.0f} phút sau khi em tắt lúc {gio_tat} vì tưởng vắng; "
+                  + (f"xác minh: {mo_ta}" if co else "cảm biến có người báo"))
+            id_ = dd.ghi_nhan(_ten_tt(tb, "on"), "on", 1.0, {"nguon": vi, "bat_lai": 1}, "tu_lam")
+            _nk(tb, "on", "lam", nguon, f"bật lại — {vi}", {"cua_so_phut": round(cua_so / 60, 1)}, luc)
+        if dd.ghi_sai(int(tat["id"])):
+            _noi_vang(tb, tat["boi_canh"], luc)
+        thong_bao.gui("nha.goi_y", f"🤖 #{id_} Em đã bật lại {_ten_tb(tb)} ({vi}).\nĐúng hay sai ạ? Anh trả lời "
+                                   f"«đúng» hoặc «sai» — sai thì em tắt lại ngay. Không trả lời trong "
+                                   f"{CHAM_TU_LAM // 60} phút là em tính đúng.")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning({"event": "kich_hoat_bat_lai_loi", "thiet_bi": tb, "error": str(exc)[:200]})
+
+
 def _phat(nguon: str, luc: float) -> None:
     mh = _nap()["mo_hinh"]
     cua = nguon.endswith(" có người vào") and _la_cua(nguon)
+    if nguon.endswith(" có người vào"):
+        ma = nguon.split(" ")[0]
+        for tb, cd in ds_thiet_bi().items():
+            if ma in ((cd.get("tat_khi_vang") or {}).get("cam_bien") or []):
+                threading.Thread(target=_bat_lai, args=(tb, nguon, luc), name="kich-hoat-bat-lai", daemon=True).start()
     for tb, cd in ds_thiet_bi().items():
         chu = cd.get("luat_chu") or []
         for l in chu:
