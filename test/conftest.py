@@ -71,6 +71,13 @@ if _cfg is not None:
     # mọi hằng số khác đã trỏ sang thư mục tạm. Thả về None để lần gọi sau dựng lại.
     _cfg.config._storage_backend = None
 
+# Định tuyến bằng model embedding (`services/agent/dinh_tuyen_nhung.py`): lần gọi đầu khởi luồng TẢI model 340 MB từ
+# Hugging Face. Test không được gọi mạng — chặn bước nạp, hàm trả None (chỉ từ khoá) như máy chưa có model.
+# Đặt SAU khi đổi DATA_DIR: import services.agent nạp cả orchestrator.
+if _cfg is not None:
+    from services.agent import dinh_tuyen_nhung as _dtn  # noqa: E402
+    _dtn._nap = lambda: None
+
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     """Dọn thư mục tạm của cả phiên — không để lại rác trong /tmp."""

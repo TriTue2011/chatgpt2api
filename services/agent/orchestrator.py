@@ -1744,15 +1744,22 @@ _BANG_CHI_DUONG: list[tuple[str, Any, str]] = [
 ]
 
 
-def _nhom_viec(user_text: str, allow: set[str] | None = None) -> set[str]:
+def _nhom_viec(user_text: str, allow: set[str] | None = None, theo_nghia: bool = False) -> set[str]:
     """Nhóm chức năng mà tin nhắn lượt này CHẠM tới (đã lọc theo quyền thread).
 
     Một chỗ tính duy nhất, để Bảng chỉ đường và bộ lọc skill không lệch nhau —
     lệch là model thấy skill của việc mà không có chỉ đường, hoặc ngược lại.
+
+    ``theo_nghia``: cộng nhóm do model embedding chọn (`dinh_tuyen_nhung`) — chỉ cho câu HIỆN TẠI. Từ khoá một
+    mình bắt đủ nhóm 41,3% câu cần tool, gộp với model 81,6% (đo 02/10/2026, 297 câu thật). Model chưa sẵn thì
+    chỉ từ khoá như cũ. Lịch sử không đi qua model: 4 lượt × 2 nhóm sẽ mở gần hết bảng.
     """
     low = _bo_dau(user_text)
-    return {g for (g, rx, _t) in _BANG_CHI_DUONG
-            if rx.search(low) and caps.nhom_duoc_phep(g, allow)}
+    nhom = {g for (g, rx, _t) in _BANG_CHI_DUONG if rx.search(low)}
+    if theo_nghia:
+        from services.agent import dinh_tuyen_nhung
+        nhom |= dinh_tuyen_nhung.nhom_theo_nghia(user_text) or set()
+    return {g for g in nhom if caps.nhom_duoc_phep(g, allow)}
 
 
 #: Số lượt NGƯỜI DÙNG gần nhất được tính vào ngữ cảnh chọn tool. Việc thường
@@ -1770,7 +1777,7 @@ def _nhom_ngu_canh(user_text: str, hist: list[dict[str, Any]] | None,
     không thể lệch với thứ model đang đọc. Rộng tay là CỐ Ý — thiếu một tool thì
     model không tài nào gọi được, còn thừa vài schema chỉ tốn ít token.
     """
-    nhom = _nhom_viec(user_text, allow)
+    nhom = _nhom_viec(user_text, allow, theo_nghia=True)
     cu = [m for m in (hist or []) if (m.get("role") or "") == "user"]
     for m in cu[-_LUOT_NHO_NGU_CANH:]:
         nhom |= _nhom_viec(str(m.get("content") or ""), allow)
@@ -1985,7 +1992,7 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None,
         # Chỉ nạp skill CHUNG + skill thuộc đúng việc của lượt này. Lượt không
         # chạm nhóm nào (tán gẫu) vẫn được skill chung — đó là nhóm skill về
         # cách giao tiếp/hỏi cho rõ, luôn có ích.
-        sk_block = agent_skills.router_block(_nhom_viec(user_text, allow))
+        sk_block = agent_skills.router_block(_nhom_viec(user_text, allow, theo_nghia=True))
         if sk_block.strip():
             parts.append(sk_block)
     except Exception:
