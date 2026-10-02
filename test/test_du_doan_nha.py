@@ -169,9 +169,12 @@ class DuDoanNhaTest(unittest.TestCase):
         """Mũi tên trong sơ đồ chủ máy vẽ HAI CHIỀU — bot chọn thiết bị đi kèm
         làm ngoại vi, thói quen ghi "đang bật" làm điều kiện."""
         self._nep_toi()
-        now = time.time()
+        # Bình bật 30 phút TRƯỚC giờ đèn bếp bật (19:00 của `_nep_toi`) — không lấy theo giờ CHẠY test: chạy sau
+        # 19:30 thì «bây giờ − 30 phút» rơi SAU giờ bật đèn và test hỏng (đo 02/10/2026: đạt 18:58, hỏng 19:58).
+        from datetime import datetime, timedelta
+        moc = datetime.now(self.bc._TZ).replace(hour=19, minute=0, second=0, microsecond=0)
         for i in range(1, 15):
-            self._bat("switch.binh_nong_lanh", now - i * 86400 - 1800)
+            self._bat("switch.binh_nong_lanh", (moc - timedelta(days=i, minutes=30)).timestamp())
         self.thoi_quen = {"light.bep": [{"ma": "switch.binh_nong_lanh", "la": "on"}]}
         dk = self.dd.hoc(so_ngay=30)["light.bep"]["dk"]
         self.assertTrue(any(k.startswith("switch.binh_nong_lanh=") for k in dk), sorted(dk))
