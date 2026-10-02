@@ -28,6 +28,7 @@ import { NhatKyKichHoat } from "./components/nhat-ky-kich-hoat";
 import { LichSinhHoat } from "./components/lich-sinh-hoat";
 import { GoiY } from "./components/goi-y";
 import { NepSinhHoat } from "./components/nep-sinh-hoat";
+import { DuyetTruongHop } from "./components/duyet-truong-hop";
 
 function HocHoiContent() {
   return (
@@ -56,6 +57,9 @@ function HocHoiContent() {
           <SettingsSection title="Người trong nhà & lịch sinh hoạt"
             tuKhoa="nguoi thanh vien gia dinh ca nha tuoi nam sinh con tre em lich sinh hoat ngu day di lam vang nha an toi thu">
             <LichSinhHoat />
+          </SettingsSection>
+          <SettingsSection title="Duyệt trường hợp bật/tắt" tuKhoa="duyet truong hop tinh huong kich ban bat tat sua them bo">
+            <DuyetTruongHop />
           </SettingsSection>
           <SettingsSection title="Bật/tắt thiết bị" tuKhoa="bat tat thiet bi kich hoat luat ngoai le tu lam bao ao vang">
             <KichHoat />

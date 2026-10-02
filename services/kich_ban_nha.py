@@ -557,6 +557,170 @@ def tra_loi(noi_dung: str, so_cau: int | None = None) -> str:
     return f"Dạ, em ghi KB{c['so']}. Hết câu hỏi rồi ạ — em dựng lại tình huống theo lời anh, xong em gửi nhóm."
 
 
+# ── Duyệt trường hợp BẬT rồi TẮT ───────────────────────────────────────────
+# Chủ máy 02/10/2026: "Đơn giản là đầu tiên bot gửi các trường hợp bật để đánh giá, user cần thêm gì, sửa gì qua
+# kênh hoặc webui, sau đó đến tắt". Hỏi lần lượt từng câu (`gui_cau_tiep`) thì kẹt: 16 câu, gửi 1, trả lời 0. Nay
+# gửi CẢ DANH SÁCH một thiết bị một chiều; chủ nhà duyệt / sửa / thêm / bỏ; duyệt xong chiều bật thì gửi chiều tắt,
+# rồi thiết bị kế. Bản đã duyệt vào lời mô tả của sơ đồ nhà (`so_do_nha.them_mo_ta`) — mọi tầng học đọc nó.
+#: Tình huống thuộc chiều nào theo việc NÊN làm: chiều bật gồm cả lúc KHÔNG được bật / phải hỏi; chiều tắt gồm cả lúc
+#: phải GIỮ. «Báo», «nói» là chuyện khác (an ninh, khách) — không vào danh sách bật/tắt.
+CHIEU = {"bat": ("bat", "khong_lam", "hoi"), "tat": ("tat", "giu")}
+_TEN_CHIEU = {"bat": "BẬT", "tat": "TẮT"}
+_HIEN_DOC = {"dung": "✓ đang làm đúng", "sai": "✗ đang làm sai", "khong_ro": "? chưa rõ"}
+
+
+def duyet() -> dict[str, Any]:
+    with _khoa:
+        return _nap().get("duyet") or {}
+
+
+def bat_dau_duyet() -> str:
+    """Dựng danh sách từ lần dựng tình huống mới nhất (giữ phần đã duyệt), gửi danh sách đầu tiên còn chờ."""
+    with _khoa:
+        d = _nap()
+        if not d["lan"]:
+            return "Em chưa dựng tình huống nào — bảo em «dựng tình huống» trước ạ."
+        kb = d["lan"][-1]["kich_ban"]
+        dv = d.setdefault("duyet", {})
+        for tb in dict.fromkeys(x["thiet_bi"] for x in kb):
+            cu = dv.get(tb) or {}
+            if cu.get("xong"):
+                continue
+            moi = {"buoc": cu.get("buoc") or "bat", "gui_luc": None, "xong": False}
+            for h, nen in CHIEU.items():
+                moi[h] = cu[h] if cu.get(h) is not None else [          # giữ phần anh đã sửa / duyệt
+                    {"tinh_huong": x["tinh_huong"], "cam_bien_thay": x.get("cam_bien_thay") or "", "nen": x["nen"],
+                     "hien_tai": x.get("hien_tai") or "khong_ro", "nguon": "bot"}
+                    for x in kb if x["thiet_bi"] == tb and x["nen"] in nen]
+                moi[f"{h}_xong"] = bool(cu.get(f"{h}_xong"))
+            dv[tb] = moi
+        _luu(d)
+    return gui_duyet_tiep()
+
+
+def _soan(tb: str, h: str, muc: list[dict[str, Any]]) -> str:
+    from services import kich_hoat_nha
+    ten = kich_hoat_nha._ten_ha().get(tb, tb)
+    dong = [f"📋 Duyệt trường hợp {_TEN_CHIEU[h]} — {ten} ({len(muc)}):"]
+    for i, x in enumerate(muc, 1):
+        nguon = " (anh thêm)" if x.get("nguon") == "chu_may" else ""
+        hien = "" if x.get("nguon") == "chu_may" else f" [{_HIEN_DOC.get(x['hien_tai'], '?')}]"
+        dong.append(f"{i}. {x['tinh_huong']} → {_NEN_DOC.get(x['nen'], x['nen'])}{hien}{nguon}")
+    dong.append("Anh trả lời «duyệt» nếu đúng hết; «sửa 2: …», «thêm: … → bật/không bật/hỏi», «bỏ 3». "
+                "Sửa trên web ở Học hỏi › Duyệt trường hợp cũng được.")
+    return "\n".join(dong)
+
+
+def _dang_cho(d: dict[str, Any]) -> tuple[str, str] | None:
+    """(thiết bị, chiều) đang chờ duyệt — thiết bị theo thứ tự, mỗi thiết bị bật trước tắt sau."""
+    for tb, x in (d.get("duyet") or {}).items():
+        if x.get("xong"):
+            continue
+        for h in CHIEU:
+            if not x.get(f"{h}_xong"):
+                return tb, h
+    return None
+
+
+def gui_duyet_tiep() -> str:
+    from services import hieu_thiet_bi_nha as ht
+    with _khoa:
+        d = _nap()
+        c = _dang_cho(d)
+        if c is None:
+            return "Đã duyệt xong mọi thiết bị ạ."
+        tb, h = c
+        x = d["duyet"][tb]
+        x["buoc"], x["gui_luc"] = h, time.time()
+        tin = _soan(tb, h, x[h])
+        _luu(d)
+    ht.bao_nhom(tin)
+    return tin
+
+
+_NEN_TU_CHU = (("không bật", "khong_lam"), ("khong bat", "khong_lam"), ("không làm", "khong_lam"),
+               ("giữ", "giu"), ("giu", "giu"), ("hỏi", "hoi"), ("hoi", "hoi"), ("bật", "bat"), ("bat", "bat"),
+               ("tắt", "tat"), ("tat", "tat"))
+
+
+def _nen_tu_loi(loi: str, h: str) -> str:
+    """Việc nên làm đọc từ lời chủ nhà («… → không bật»); không nói thì việc chính của chiều đó."""
+    duoi = loi.rsplit("→", 1)[-1].lower() if "→" in loi else ""
+    for chu, nen in _NEN_TU_CHU:
+        if chu in duoi and nen in CHIEU[h]:
+            return nen
+    return CHIEU[h][0]
+
+
+def sua_duyet(tb: str, h: str, viec: str, so_muc: int | None = None, noi_dung: str = "") -> str:
+    """viec: duyet | sua | them | bo. Duyệt xong một chiều thì ghi vào sơ đồ nhà và gửi phần kế."""
+    from services import kich_hoat_nha, so_do_nha
+    if h not in CHIEU:
+        raise ValueError("Chiều phải là bat hoặc tat.")
+    noi = str(noi_dung or "").strip()
+    with _khoa:
+        d = _nap()
+        x = (d.get("duyet") or {}).get(tb)
+        if not x:
+            raise ValueError("Thiết bị này chưa có danh sách duyệt.")
+        muc = x[h]
+        if viec in ("sua", "bo"):
+            if not so_muc or not 1 <= so_muc <= len(muc):
+                raise ValueError(f"Không có trường hợp số {so_muc}.")
+            if viec == "bo":
+                muc.pop(so_muc - 1)
+            else:
+                if not noi:
+                    raise ValueError("Sửa thành gì ạ?")
+                muc[so_muc - 1].update(tinh_huong=noi.split("→")[0].strip(), nen=_nen_tu_loi(noi, h),
+                                       nguon="chu_may")
+        elif viec == "them":
+            if not noi:
+                raise ValueError("Thêm trường hợp gì ạ?")
+            muc.append({"tinh_huong": noi.split("→")[0].strip(), "cam_bien_thay": "", "nen": _nen_tu_loi(noi, h),
+                        "hien_tai": "khong_ro", "nguon": "chu_may"})
+        elif viec == "duyet":
+            x[f"{h}_xong"] = True
+            x["xong"] = all(x.get(f"{c}_xong") for c in CHIEU)
+        else:
+            raise ValueError("Việc phải là duyet / sua / them / bo.")
+        _luu(d)
+        con = list(muc)
+    ten = kich_hoat_nha._ten_ha().get(tb, tb)
+    if viec != "duyet":
+        return _soan(tb, h, con)
+    so_do_nha.them_mo_ta(f"Chủ nhà duyệt trường hợp {_TEN_CHIEU[h]} của {ten}: "
+                         + "; ".join(f"{m['tinh_huong']} → {_NEN_DOC.get(m['nen'], m['nen'])}" for m in con),
+                         nguon=f"duyet:{tb}:{h}", thay_cu=True)
+    tiep = gui_duyet_tiep()
+    return f"Dạ, em ghi phần {_TEN_CHIEU[h].lower()} của {ten} đã duyệt." + (
+        "" if tiep.startswith("Đã duyệt xong") else " Em gửi phần tiếp theo ạ.")
+
+
+def tra_loi_duyet(chu: str) -> str:
+    """Lời chủ nhà trên kênh cho danh sách đang chờ: «duyệt», «sửa 2: …», «thêm: …», «bỏ 3»."""
+    with _khoa:
+        c = _dang_cho(_nap())
+    if c is None:
+        return "Em không có danh sách nào đang chờ duyệt ạ."
+    tb, h = c
+    t = str(chu or "").strip()
+    thap = t.lower()
+    m = re.match(r"^(sửa|sua|bỏ|bo|xoá|xóa|xoa)\s*(\d+)\s*[:：]?\s*(.*)$", thap, re.S)
+    try:
+        if m:
+            viec = "bo" if m.group(1)[0] in "bx" else "sua"
+            return sua_duyet(tb, h, viec, int(m.group(2)), t[m.start(3):].strip())
+        m = re.match(r"^(thêm|them)\s*[:：]?\s*(.+)$", thap, re.S)
+        if m:
+            return sua_duyet(tb, h, "them", None, t[m.start(2):].strip())
+        if re.match(r"^(duyệt|duyet|đúng hết|dung het|ok|đồng ý|dong y)\b", thap):
+            return sua_duyet(tb, h, "duyet")
+    except ValueError as exc:
+        return str(exc)
+    return "Anh trả lời «duyệt», «sửa 2: …», «thêm: …» hoặc «bỏ 3» giúp em ạ."
+
+
 def _reset_for_tests(duong: Path) -> None:
     global _PATH
     _PATH = duong

@@ -1004,6 +1004,29 @@ def create_router() -> APIRouter:
             return {"ok": False, "error": str(exc)}
         return {"ok": ok} if ok else {"ok": False, "error": "Không có tình huống đó."}
 
+    @router.get("/api/hoc-hoi/kich-ban/duyet")
+    async def kich_ban_duyet_xem(authorization: str | None = Header(default=None)):
+        """Danh sách trường hợp bật/tắt từng thiết bị đang duyệt (`kich_ban_nha.duyet`)."""
+        require_admin(authorization)
+        from services import kich_ban_nha, kich_hoat_nha
+        ten = kich_hoat_nha._ten_ha()
+        return {"ok": True, "duyet": {tb: {**x, "ten": ten.get(tb, tb)} for tb, x in kich_ban_nha.duyet().items()}}
+
+    @router.post("/api/hoc-hoi/kich-ban/duyet")
+    async def kich_ban_duyet_sua(body: dict, authorization: str | None = Header(default=None)):
+        """body: {viec: bat_dau} hoặc {tb, huong: bat|tat, viec: duyet|sua|them|bo, so?, noi_dung?}."""
+        require_admin(authorization)
+        from services import kich_ban_nha
+        try:
+            if body.get("viec") == "bat_dau":
+                return {"ok": True, "tin": await asyncio.to_thread(kich_ban_nha.bat_dau_duyet)}
+            tin = await asyncio.to_thread(kich_ban_nha.sua_duyet, str(body.get("tb") or ""), str(body.get("huong") or ""),
+                                          str(body.get("viec") or ""), int(body["so"]) if body.get("so") else None,
+                                          str(body.get("noi_dung") or ""))
+            return {"ok": True, "tin": tin}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+
     # ── Cảm biến ghép: bot tự tính từ cảm biến gốc (`cam_bien_ghep`) ──
     @router.get("/api/hoc-hoi/cam-bien-ghep")
     async def cam_bien_ghep_ds(authorization: str | None = Header(default=None)):
