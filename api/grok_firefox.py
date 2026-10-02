@@ -266,52 +266,139 @@ def phien_song(cookies: dict[str, str]) -> bool:
 
 
 # ── Hạn mức lượt hỏi ────────────────────────────────────────────────────────
-#: Hạn mức đọc từ `POST /rest/rate-limits` theo modelName. Đo 02/10/2026 tài khoản miễn phí: grok-3 (= mode fast)
-#: 30 lượt / 86.400 s, grok-4 7 lượt / 86.400 s. Gói trả phí có cửa sổ khác (giờ, tuần) — hiện theo đúng
-#: `windowSizeSeconds` máy chủ trả, kèm hạn mức con `lowEffortRateLimits` / `highEffortRateLimits` nếu có.
-_HAN_MUC_MODEL = {"grok-3": "Fast", "grok-4": "Grok 4"}
+#: Theo chenyme/grok2api (backend/internal/infra/provider/web/quota.go) và đo 02/10/2026 trên tài khoản miễn phí:
+#: `POST /rest/rate-limits {"modelName": <mode>}` cho mode auto / fast (miễn phí: auto 7, fast 30 lượt / 86.400 s);
+#: gói nhận theo TỔNG lượt (auto 7|20 & fast 30 = miễn phí, 50 & 140 = SuperGrok, 150 & 400 = Heavy — tín hiệu mâu
+#: thuẫn thì lấy gói THẤP hơn); gói trả phí dùng chung một quỹ TUẦN (`GrokBuildBilling/GetGrokCreditsConfig`, gRPC-web);
+#: vẽ ảnh / video có hạn mức riêng ở `/rest/media/imagine/quota_info`. expert / heavy có số nhưng gói miễn phí không
+#: gọi được («model_unavailable») nên không hiện.
+_HAN_MUC_MODE = {"auto": "Auto", "fast": "Fast"}
+_GOI_THEO_TONG = {("auto", 7): 1, ("auto", 20): 1, ("fast", 30): 1, ("auto", 50): 2, ("fast", 140): 2,
+                  ("auto", 150): 3, ("fast", 400): 3}
+_TEN_GOI = {1: "Miễn phí", 2: "SuperGrok", 3: "Heavy"}
+_IMAGINE = {"imagePro": "Ảnh Pro", "imageEdit": "Sửa ảnh", "video": "Video", "video720p": "Video 720p"}
 _HAN_MUC_GIAY = 300
 _han_muc: dict[str, dict[str, Any]] = {}
 _han_muc_dang: set[str] = set()
 
 
-def _mot_han_muc(ten: str, d: Any, luc: float) -> dict[str, Any] | None:
-    if not isinstance(d, dict) or "remainingQueries" not in d:
-        return None
-    cho = d.get("waitTimeSeconds")
-    return {"ten": ten, "con": int(d.get("remainingQueries") or 0), "tong": int(d.get("totalQueries") or 0),
-            "cua_so": int(d.get("windowSizeSeconds") or 0),
-            "hoi_luc": luc + float(cho) if isinstance(cho, (int, float)) and cho > 0 else None}
-
-
-def han_muc(cookies: dict[str, str]) -> list[dict[str, Any]]:
-    """Lượt còn / tổng, độ dài cửa sổ và lúc hồi — mỗi model một mục (cộng hạn mức con nếu gói có)."""
+def _goi_post(cookies: dict[str, str], duong: str, body: bytes, kieu: str = "application/json") -> bytes | None:
     jar = "; ".join(f"{k}={v}" for k, v in cookies.items())
-    ra: list[dict[str, Any]] = []
-    for model, ten in _HAN_MUC_MODEL.items():
-        req = urllib.request.Request(
-            "https://grok.com/rest/rate-limits", method="POST",
-            data=json.dumps({"requestKind": "DEFAULT", "modelName": model}).encode(),
-            headers={"Content-Type": "application/json", "Cookie": jar, "Origin": "https://grok.com",
-                     "Referer": "https://grok.com/", "User-Agent": _UA})
-        try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                d = json.loads(resp.read().decode())
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
-            continue
-        luc = time.time()
-        for khoa, them in (("", ""), ("lowEffortRateLimits", " · nhẹ"), ("highEffortRateLimits", " · nặng")):
-            m = _mot_han_muc(ten + them, d.get(khoa) if khoa else d, luc)
-            if m:
-                ra.append(m)
+    them = {"x-grpc-web": "1", "x-user-agent": "connect-es/2.1.1"} if "grpc" in kieu else {}
+    req = urllib.request.Request("https://grok.com" + duong, data=body, method="POST", headers={
+        "Content-Type": kieu, "Cookie": jar, "Origin": "https://grok.com", "Referer": "https://grok.com/",
+        "User-Agent": _UA, **them})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return resp.read()
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return None
+
+
+def _gio_iso(s: Any) -> float | None:
+    """"2026-10-02T16:11:01.206245968Z" (giờ UTC, tới 9 chữ số lẻ) → giây."""
+    from datetime import datetime, timezone
+    m = re.match(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)", str(s))
+    return datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp() if m else None
+
+
+def _varint(b: bytes, i: int) -> tuple[int, int]:
+    v = s = 0
+    while True:
+        x = b[i]
+        i += 1
+        v |= (x & 0x7F) << s
+        s += 7
+        if not x & 0x80:
+            return v, i
+
+
+def _truong_proto(b: bytes) -> list[tuple[int, int, Any]]:
+    """(số trường, kiểu, giá trị) — đủ cho quỹ tuần: varint, fixed32, chuỗi byte; kiểu khác thì dừng."""
+    ra, i = [], 0
+    while i < len(b):
+        tag, i = _varint(b, i)
+        so, kieu = tag >> 3, tag & 7
+        if kieu == 0:
+            v, i = _varint(b, i)
+        elif kieu == 5:
+            v, i = b[i:i + 4], i + 4
+        elif kieu == 2:
+            n, i = _varint(b, i)
+            v, i = b[i:i + n], i + n
+        elif kieu == 1:
+            v, i = b[i:i + 8], i + 8
+        else:
+            break
+        ra.append((so, kieu, v))
     return ra
+
+
+def quy_tuan(body: bytes, luc: float) -> dict[str, Any] | None:
+    """Quỹ TUẦN của gói trả phí (giải như grok2api `parseWeeklyCreditsResponse`): khung gRPC-web → trường 1 → %
+    đã dùng (trường 1, float), đầu / cuối kỳ (trường 4 / 5, Timestamp). Gói miễn phí trả rỗng hoặc thiếu % → None."""
+    import struct
+    if not body or len(body) < 5 or body[0] & 0x80:
+        return None
+    n = int.from_bytes(body[1:5], "big")
+    try:
+        cfg = next((v for so, k, v in _truong_proto(body[5:5 + n]) if so == 1 and k == 2), b"")
+        tr = _truong_proto(cfg)
+    except IndexError:
+        return None
+    pt = next((struct.unpack("<f", v)[0] for so, k, v in tr if so == 1 and k == 5), None)
+    ky = {so: dict((s2, v2) for s2, _k, v2 in _truong_proto(v)).get(1) for so, k, v in tr if so in (4, 5) and k == 2}
+    if pt is None or not 0 <= pt <= 100 or not ky.get(4) or not ky.get(5) or ky[5] <= ky[4]:
+        return None
+    con = max(0, round(100 - pt))
+    return {"ten": "Tuần (chung)", "con": con, "tong": 100, "cua_so": int(ky[5] - ky[4]),
+            "hoi_luc": float(ky[5]) if con <= 0 else None, "phan_tram": True}
+
+
+def han_muc(cookies: dict[str, str]) -> dict[str, Any] | None:
+    """{"goi", "ds"}: mỗi mục còn / tổng / cửa sổ (giây) / lúc hồi. ``tong`` 0 = máy chủ không nói tổng."""
+    luc = time.time()
+    ds: list[dict[str, Any]] = []
+    hang = 0
+    for mode, ten in _HAN_MUC_MODE.items():
+        raw = _goi_post(cookies, "/rest/rate-limits", json.dumps({"modelName": mode}).encode())
+        try:
+            d = json.loads(raw or b"")
+        except ValueError:
+            continue
+        if not isinstance(d, dict) or "remainingQueries" not in d:
+            continue
+        cho, tong = d.get("waitTimeSeconds"), int(d.get("totalQueries") or 0)
+        ds.append({"ten": ten, "con": int(d.get("remainingQueries") or 0), "tong": tong,
+                   "cua_so": int(d.get("windowSizeSeconds") or 0),
+                   "hoi_luc": luc + float(cho) if isinstance(cho, (int, float)) and cho > 0 else None})
+        h = _GOI_THEO_TONG.get((mode, tong), 0)
+        hang = h if not hang or (h and h < hang) else hang
+    if not ds:
+        return None
+    if hang >= 2:
+        tuan = quy_tuan(_goi_post(cookies, "/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig", bytes(5),
+                                  "application/grpc-web+proto") or b"", luc)
+        if tuan:
+            ds = [tuan]                      # gói trả phí: quỹ tuần thay hạn mức từng mode (như grok2api)
+    try:
+        img = json.loads(_goi_post(cookies, "/rest/media/imagine/quota_info", b"{}") or b"")
+    except ValueError:
+        img = {}
+    for khoa, ten in _IMAGINE.items():
+        v = img.get(khoa) if isinstance(img, dict) else None
+        if isinstance(v, dict) and v.get("available") and v.get("remainingQueries") is not None:
+            con = max(0, int(v["remainingQueries"]))
+            ds.append({"ten": ten, "con": con, "tong": 0, "cua_so": int(v.get("windowSizeSeconds") or 86400),
+                       "hoi_luc": _gio_iso(v["nextAvailableAt"]) if con <= 0 and v.get("nextAvailableAt") else None})
+    return {"goi": _TEN_GOI.get(hang, "chưa rõ gói"), "ds": ds}
 
 
 def _lay_han_muc(profile: str) -> None:
     try:
-        ds = han_muc(doc_cookie_file(profile))
-        if ds:
-            _han_muc[profile] = {"luc": time.time(), "ds": ds}
+        hm = han_muc(doc_cookie_file(profile))
+        if hm:
+            _han_muc[profile] = {"luc": time.time(), **hm}
     except Exception as exc:  # noqa: BLE001 — không đọc được hạn mức thì web chỉ thiếu dòng hạn mức
         _log("grok_han_muc_loi", profile=profile, loi=str(exc)[:160])
     finally:

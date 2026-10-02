@@ -25,7 +25,11 @@ export type GrokTaiKhoan = {
   profile: string; label: string; email?: string; enabled?: boolean; ordinal: number; is_primary: boolean;
   phien_song: boolean | null; da_dang_nhap: boolean; firefox_mo: boolean; cookie_luc: number | null;
   /** Hạn mức từ grok.com `/rest/rate-limits` (máy chủ lưu tạm 5 phút); null = chưa đọc được. */
-  han_muc?: { luc: number; ds: { ten: string; con: number; tong: number; cua_so: number; hoi_luc: number | null }[] } | null;
+  han_muc?: {
+    luc: number; goi: string;
+    /** tong 0 = máy chủ không nói tổng (vẽ ảnh/video); phan_tram = quỹ tuần gói trả phí, con/tong tính theo %. */
+    ds: { ten: string; con: number; tong: number; cua_so: number; hoi_luc: number | null; phan_tram?: boolean }[];
+  } | null;
 };
 
 /** 86400 → "ngày", 604800 → "tuần", 7200 → "2 giờ" — gói Grok trả phí có cửa sổ khác gói miễn phí. */
@@ -51,10 +55,11 @@ export function HanMucGrok({ tk }: { tk: GrokTaiKhoan }) {
   if (!ds?.length) return null;
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
+      <span className="rounded bg-slate-100 px-1.5 py-0 text-[10px] font-medium text-slate-700">{tk.han_muc?.goi}</span>
       {ds.map((m) => (
         <span key={m.ten} title={`Đọc lúc ${new Date((tk.han_muc?.luc || 0) * 1000).toLocaleTimeString("vi-VN")}`}
           className={`rounded px-1.5 py-0 text-[10px] font-medium ${m.con > 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
-          {m.ten} {m.con}/{m.tong}/{tenCuaSo(m.cua_so)}
+          {m.ten} {m.phan_tram ? `còn ${m.con}%` : m.tong ? `${m.con}/${m.tong}` : `còn ${m.con}`}/{tenCuaSo(m.cua_so)}
           {m.con <= 0 && m.hoi_luc ? ` · hồi sau ${conBao(m.hoi_luc)}` : ""}
         </span>
       ))}
