@@ -534,7 +534,7 @@ def _byte_anh(o: dict[str, Any], cookies: dict[str, str]) -> bytes:
         return resp.read()
 
 
-def _imagine(prompt: str, n: int, ratio: str, cookies: dict[str, str]) -> list[bytes]:
+def _imagine(prompt: str, n: int, ratio: str, cookies: dict[str, str], *, pro: bool = False) -> list[bytes]:
     """Vẽ bằng websocket của trang Imagine (``/ws/imagine/listen``), như grok2api `generateWSImageAttempt`.
 
     Đo 02/10/2026: nhờ khung chat (``/ws/mgw/``) vẽ thì Grok nhận ĐÚNG prompt mà trả ảnh phong cảnh có sẵn không liên
@@ -550,7 +550,7 @@ def _imagine(prompt: str, n: int, ratio: str, cookies: dict[str, str]) -> list[b
         gui({"type": "reset"})
         gui({"requestId": uuid.uuid4().hex, "text": prompt, "type": "input_text", "properties": {
             "section_count": 0, "is_kids_mode": False, "enable_nsfw": False, "skip_upsampler": False,
-            "enable_side_by_side": True, "is_initial": False, "aspect_ratio": ratio, "enable_pro": False,
+            "enable_side_by_side": True, "is_initial": False, "aspect_ratio": ratio, "enable_pro": pro,
             "num_generations": n}})
         while True:
             frame, buf = _ws_recv(tls, buf)
@@ -589,6 +589,21 @@ def _imagine(prompt: str, n: int, ratio: str, cookies: dict[str, str]) -> list[b
     return [_byte_anh(o, cookies) for o in dung[:n]]
 
 
+def _ve_net_nhat(prompt: str, n: int, ratio: str, cookies: dict[str, str]) -> list[bytes]:
+    """Ưu tiên Imagine PRO; tài khoản không còn đủ lượt cho Pro thì vẽ thường NGAY trên tài khoản đó.
+
+    Chủ máy 02/10/2026: "tạo ảnh grok bị mờ, tăng độ phân giải cao nhất". Đo cùng ngày, cùng prompt, khung 16:9:
+    thường và Pro đều 1280×720 (kênh Imagine không cho chọn cỡ lớn hơn) nhưng Pro nét gần gấp đôi (độ lệch biên
+    43,3 so với 23,8; 398 so với 250 KB), 18 giây so với 7 giây; Pro tốn 3 lượt, thường 1 lượt (lượt «Ảnh Pro»
+    là hạn mức vẽ chung, tài khoản miễn phí 8 lượt/ngày)."""
+    try:
+        return _imagine(prompt, n, ratio, cookies, pro=True)
+    except RuntimeError as exc:
+        if "rate_limit" not in str(exc):
+            raise
+        return _imagine(prompt, n, ratio, cookies)
+
+
 def luu_media(byte: bytes, base_url: str, response_format: str = "url") -> dict[str, str]:
     """Lưu vào thư mục ảnh (``/images/grok/...``) như Gemini Web API; trả mục ``data`` kiểu OpenAI."""
     from services.config import config
@@ -606,7 +621,7 @@ def handle_grok_web_image_gen(prompt: str, n: int = 1, response_format: str = "u
                               base_url: str = "", size: str | None = None) -> dict[str, Any]:
     """/v1/images/generations cho ``grok/imagine`` — model vẽ của trang Imagine (xem `_imagine`)."""
     n = max(1, min(int(n or 1), 4))
-    ds, p = theo_tai_khoan(lambda _p, ck: _imagine(prompt, n, ti_le(size), ck), "imagine")
+    ds, p = theo_tai_khoan(lambda _p, ck: _ve_net_nhat(prompt, n, ti_le(size), ck), "imagine")
     data = [luu_media(b, base_url, response_format) for b in ds]
     _logger().info({"event": "grok_web_image", "so_anh": len(data), "profile": p})
     return {"created": int(time.time()), "data": data}

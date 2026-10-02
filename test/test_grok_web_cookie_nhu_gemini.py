@@ -254,6 +254,18 @@ class AnhTests(unittest.TestCase):
                 mock.patch.object(gw, "tai_cookie", return_value={"sso": "x"}):
             self.assertEqual(gw.theo_tai_khoan(lam, "imagine"), ("anh", "grok-2"))
 
+    def test_uu_tien_pro_thieu_luot_thi_ve_thuong_cung_tai_khoan(self):
+        goi = []
+
+        def ve(prompt, n, ratio, ck, *, pro=False):
+            goi.append(pro)
+            if pro:
+                raise RuntimeError("Grok Imagine: rate_limit_exceeded: Image rate limit exceeded")
+            return [b"anh"]
+        with mock.patch.object(gw, "_imagine", ve):
+            self.assertEqual(gw._ve_net_nhat("p", 1, "16:9", {}), [b"anh"])
+        self.assertEqual(goi, [True, False])
+
     def test_ti_le_tu_size(self):
         self.assertEqual(gw.ti_le("1792x1024"), "16:9")
         self.assertEqual(gw.ti_le("1024x1024"), "1:1")

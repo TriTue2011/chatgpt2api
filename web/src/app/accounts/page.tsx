@@ -603,6 +603,21 @@ function AccountsPageContent() {
       console.error("buildProviderTree failed:", e);
     }
     setProviderTree(tree);
+    void napGrokDayDu();
+  };
+
+  // Cây tài khoản chỉ đọc hạn mức Grok trong bộ đệm (cho nhanh) — lần đầu mở / sau khi c2a khởi động lại thì rỗng.
+  // Chủ máy 02/10/2026: "ở tài khoản không có thông tin như trong cài đặt". Nạp thêm đúng nguồn của Cài đặt › Grok
+  // (hạn mức + phiên sống) rồi thay nhánh Grok khi về.
+  const napGrokDayDu = async () => {
+    try {
+      const r = await request.get("/api/grok-web/tai-khoan");
+      const ds = (r.data as { tai_khoan?: GrokTaiKhoan[] }).tai_khoan;
+      if (!ds) return;
+      setProviderTree((cay) => cay.map((b: any) => (b.type === "grok_web" ? { ...b, instances: ds, total: ds.length } : b)));
+    } catch {
+      /* giữ cây như cũ — chỉ thiếu dòng hạn mức */
+    }
   };
 
   const filteredAccounts = useMemo(() => {
