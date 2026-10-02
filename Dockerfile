@@ -271,6 +271,12 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then \
     fi \
     && rm -rf /var/lib/apt/lists/*
 
+# Firefox ESR — cho đăng nhập Grok bằng tay qua noVNC (api/grok_firefox.py: mở hồ sơ riêng từng tài khoản, người
+# dùng tự đăng nhập, máy đọc cookie rồi tắt). Đo 02/10/2026: ảnh KHÔNG có Firefox — lần đầu cài tay vào container nên
+# mất khi watchtower đổi ảnh, nút «Đăng nhập» báo «Máy này chưa có Firefox». Chủ máy cho phép thêm (02/10/2026).
+RUN apt-get update && apt-get install -y --no-install-recommends firefox-esr \
+    && rm -rf /var/lib/apt/lists/*
+
 # ── Python deps: nhận nguyên .venv từ stage python-builder ─────────────────
 # Toàn bộ việc cài đặt (uv, compiler, cache tải về) diễn ra ở stage kia và chết
 # theo nó. Đường dẫn PHẢI giữ đúng /app/.venv vì venv ghi đường tuyệt đối vào
