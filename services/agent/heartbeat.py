@@ -451,6 +451,11 @@ def _eval_canh_bao_nha() -> tuple[str, str]:
         from services import canh_bao_nha
         if not canh_bao_nha.is_enabled():
             return "skip", "cảnh báo nhà tắt (mqtt.canh_bao)"
+        try:
+            from services import su_co_thiet_bi
+            su_co_thiet_bi.quet()            # thiết bị bot đang tự điều khiển mà mất kết nối — báo nhanh, kèm nguyên nhân
+        except Exception as exc:  # noqa: BLE001
+            logger.warning({"event": "su_co_thiet_bi_quet_loi", "error": str(exc)[:160]})
         kq = canh_bao_nha.chay_mot_lan()
         if kq.get("gui"):
             return "act", f"báo {kq['so_loi']} lỗi tới {kq['gui']} người"

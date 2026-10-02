@@ -544,6 +544,8 @@ def _xu_ly_chu(tb: str, luat: dict[str, Any], nguon: str, luc: float) -> None:
             tt = _trang_thai_mot(tb)
             if tt in (hd, *_KHONG_RO):
                 _nk(tb, hd, "khong", nguon, f"{ten_luat}: thiết bị đang «{tt}» sẵn", luc=luc)
+                if tt in _KHONG_CO_MAT and _dieu_kien_chu(tb, luat)[0]:
+                    _bao_khong_co_mat(tb, hd, nguon, luc)
                 return
             if _vua_lam(tb, hd) or _nguoi_vua_cham(tb, luc):
                 _nk(tb, hd, "khong", nguon, f"{ten_luat}: vừa có người / bot bật tắt — tránh làm dồn", luc=luc)
@@ -1590,7 +1592,17 @@ def _lam(tb: str, hd: str, *, tu_lam: bool) -> bool:
             muc = None
         if muc:
             data[muc[0]] = muc[1]
-    return ha_client.call_service(tb.split(".")[0], "turn_on" if hd == "on" else "turn_off", data)
+    ok = ha_client.call_service(tb.split(".")[0], "turn_on" if hd == "on" else "turn_off", data)
+    # Chủ máy 02/10/2026: lệnh không tới / tới mà không đổi thì báo kèm nguyên nhân (`su_co_thiet_bi`).
+    from services import su_co_thiet_bi
+    try:
+        if ok:
+            su_co_thiet_bi.kiem_sau_lenh(tb, hd)
+        else:
+            su_co_thiet_bi.bao(tb, "lenh_hong", ten=_ten_tb(tb), hd=hd, moc=time.time() // 3600)
+    except Exception as exc:  # noqa: BLE001 — báo hỏng không được chặn việc chính
+        logger.warning({"event": "kich_hoat_su_co_loi", "thiet_bi": tb, "error": str(exc)[:160]})
+    return ok
 
 
 # ── MỨC khi bật — bot tự học theo nhiệt độ ─────────────────────────────────
@@ -1683,6 +1695,20 @@ def _bao_tu_lam(tb: str, noi_dung: str) -> None:
     from services import thong_bao
     if not (_nap()["thiet_bi"].get(tb) or {}).get("im_lang"):
         thong_bao.gui("nha.goi_y", noi_dung)
+
+
+#: Thiết bị KHÔNG CÓ MẶT (mất kết nối / không còn trong HA) — khác «unknown» (có kết nối, chưa có giá trị).
+_KHONG_CO_MAT = {"unavailable", ""}
+
+
+def _bao_khong_co_mat(tb: str, hd: str, nguon: str, luc: float) -> None:
+    """Tới lúc luật định làm mà thiết bị không có mặt → báo kèm nguyên nhân (mỗi lần mất kết nối một tin)."""
+    from services import su_co_thiet_bi
+    try:
+        vi = f"{datetime.fromtimestamp(luc, _TZ).strftime('%H:%M')} {_ten_nguon(nguon, _ten_ha())}"
+        su_co_thiet_bi.bao(tb, "den_luc", ten=_ten_tb(tb), hd=hd, vi=vi)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning({"event": "kich_hoat_su_co_loi", "thiet_bi": tb, "error": str(exc)[:160]})
 
 
 def _nk(tb: str, hd: str, ket_qua: str, nguon: str = "", ly_do: str = "",
@@ -1926,6 +1952,8 @@ def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
             tt = str(st.get("state") or "").lower()
             if tt in (hd, *_KHONG_RO):
                 _nk(tb, hd, "khong", nguon, f"thiết bị đang «{tt}» sẵn", luc=luc)
+                if tt in _KHONG_CO_MAT and xet(tb, hd, nguon, luc)["lam"] != "im":
+                    _bao_khong_co_mat(tb, hd, nguon, luc)
                 return
             if _dang_cho(tb):
                 _nk(tb, hd, "khong", nguon, "đang chờ anh trả lời câu hỏi trước", luc=luc)
