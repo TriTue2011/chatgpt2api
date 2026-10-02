@@ -19,6 +19,33 @@ class CheDoTests(unittest.TestCase):
         self.assertEqual(gw.che_do("auto"), "fast")
         self.assertEqual(gw.che_do("fast"), "fast")
 
+    def test_auto_la_fast_roi_ha_sang_auto_cua_grok(self):
+        self.assertEqual(gw.chuoi_che_do("auto"), ["fast", "auto"])
+        self.assertEqual(gw.chuoi_che_do("fast"), ["fast"])
+
+    def test_het_luot_fast_moi_tai_khoan_thi_ha_mode(self):
+        """Đo 02/10/2026: fast 0/30 lượt mà mode auto của Grok vẫn trả lời."""
+        def chay(prompt, mode, cookies, anh=None):
+            if mode == "fast":
+                raise RuntimeError("Grok web: usage_limit_reached: You've reached your usage limit.")
+            yield f"{mode}:{cookies['sso']}"
+
+        a, b = _vas_tk()
+        with a, b, mock.patch.object(gw, "_stream_chat", side_effect=chay):
+            self.assertEqual(list(gw.stream_theo_chuoi("p", ["fast", "auto"])), ["auto:grok-1"])
+
+    def test_loi_khac_het_luot_thi_khong_ha_mode(self):
+        def chay(prompt, mode, cookies, anh=None):
+            raise RuntimeError("Grok web từ chối websocket: 500")
+            yield ""
+
+        a, b = _vas_tk()
+        with a, b, mock.patch.object(gw, "_stream_chat", side_effect=chay) as sc, \
+                mock.patch("api.grok_firefox.lam_moi"):
+            with self.assertRaises(RuntimeError):
+                list(gw.stream_theo_chuoi("p", ["fast", "auto"]))
+            self.assertTrue(all(c.args[1] == "fast" for c in sc.call_args_list))
+
     def test_expert_giu_expert(self):
         self.assertEqual(gw.che_do("expert"), "expert")
         self.assertEqual(gw.che_do("grok-chat-heavy"), "heavy")

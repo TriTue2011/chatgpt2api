@@ -50,6 +50,33 @@ def che_do(model: str) -> str:
     return _MODES.get(ten, "fast")
 
 
+def chuoi_che_do(model: str) -> list[str]:
+    """Các mode thử LẦN LƯỢT. «auto» phía c2a: fast trước; mọi tài khoản hết lượt fast thì hạ sang mode «auto» của
+    chính Grok — chủ máy 02/10/2026: "hết fast hạ xuống 4". Đo cùng ngày trên tài khoản miễn phí: fast còn 0/30 lượt
+    mà mode auto vẫn trả lời và không trừ hạn mức grok-3 lẫn grok-4; mode expert / grok-4 thì bị «model_unavailable»."""
+    ten = str(model or "").strip().lower()
+    return ["fast", "auto"] if ten in ("", "auto") else [che_do(ten)]
+
+
+def _het_luot(exc: Exception) -> bool:
+    return "usage_limit" in str(exc)
+
+
+def stream_theo_chuoi(prompt: str, modes: list[str], anh: list[str] | None = None) -> Iterator[str]:
+    """`stream_chat` theo từng mode; mode trước hết lượt ở MỌI tài khoản (chưa gửi chữ nào) thì sang mode sau."""
+    for i, mode in enumerate(modes):
+        da_gui = False
+        try:
+            for manh in stream_chat(prompt, mode, anh=anh):
+                da_gui = True
+                yield manh
+            return
+        except Exception as exc:
+            if da_gui or i == len(modes) - 1 or not _het_luot(exc):
+                raise
+            _logger().warning({"event": "grok_web_ha_che_do", "tu": mode, "sang": modes[i + 1]})
+
+
 def hop_van_ban(messages: list[dict[str, Any]] | None) -> str:
     """Ghép transcript thành một prompt, cùng ý với Gemini flatten."""
     parts: list[str] = []
@@ -436,8 +463,8 @@ def handle_grok_web_chat(
     prompt = hop_van_ban(messages)
     if not prompt:
         raise RuntimeError("Tin nhắn trống")
-    mode = che_do(model)
-    shown = f"grok/{mode}"
+    modes = chuoi_che_do(model)
+    shown = "grok/auto" if len(modes) > 1 else f"grok/{modes[0]}"
     _logger().info({"event": "grok_web_request", "model": shown, "chars": len(prompt)})
     if stream:
         from services.protocol.openai_v1_chat_complete import completion_chunk
@@ -446,7 +473,7 @@ def handle_grok_web_chat(
 
         def _gen() -> Iterator[dict[str, Any]]:
             started = False
-            for piece in stream_chat(prompt, mode):
+            for piece in stream_theo_chuoi(prompt, modes):
                 delta: dict[str, Any] = {"content": piece}
                 if not started:
                     delta = {"role": "assistant", "content": piece}
@@ -455,7 +482,7 @@ def handle_grok_web_chat(
             yield completion_chunk(shown, {}, "stop", cid, created)
 
         return _gen()
-    text = "".join(stream_chat(prompt, mode))
+    text = "".join(stream_theo_chuoi(prompt, modes))
     from services.protocol.openai_v1_chat_complete import completion_response
     return completion_response(shown, text, messages=messages)
 
