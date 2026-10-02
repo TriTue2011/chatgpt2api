@@ -486,6 +486,8 @@ def mo(profile: str) -> int:
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
+    # Chờ Firefox thoát để thu dọn tiến trình — không chờ thì mỗi lần mở để lại một xác <defunct> (đo 02/10/2026).
+    threading.Thread(target=proc.wait, name=f"grok-firefox-thu-{profile}", daemon=True).start()
     _log("grok_firefox_mo", profile=profile, pid=proc.pid)
     return proc.pid
 

@@ -195,6 +195,18 @@ class HieuThietBiNhaTest(unittest.TestCase):
         self.assertEqual(self.ht.thiet_bi_hoc(), ["switch.bep_left"])
 
     # ── bot GIẢI, kiểm ở biên ──────────────────────────────────────────────
+    def test_MOI_CAP_DE_DAP_AN_duoc_ghi_lai_de_tinh_chinh(self) -> None:
+        """Sổ quyết định chỉ giữ đáp án — muốn chưng cất model nhỏ phải có cả ĐỀ (chủ máy 02/10/2026)."""
+        import services.agent.runtime as rt
+
+        tra = {"choices": [{"message": {"content": '{"bat": {}}'}}]}
+        with mock.patch.object(rt, "call_model", side_effect=[tra, {"error": "het luot"}]):
+            self.ht._goi_model("m", "# Đọc thói quen\nchi tiết", "ĐỀ 1")
+            self.ht._goi_model("m", "# Đọc thói quen\nchi tiết", "ĐỀ 2")
+        rows = self.ht._db().execute("SELECT huong_ten, de, tra, loi FROM bo_de ORDER BY id").fetchall()
+        self.assertEqual([tuple(r) for r in rows],
+                         [("# Đọc thói quen", "ĐỀ 1", '{"bat": {}}', ""), ("# Đọc thói quen", "ĐỀ 2", "", "het luot")])
+
     def test_LOI_GOI_TACH_BIET_chi_co_HUONG_DAN(self) -> None:
         """Chủ máy chốt: "promt chỉ duy mình hướng dẫn để tránh nhiễu"."""
         import services.agent.runtime as rt

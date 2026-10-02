@@ -224,3 +224,19 @@ class TheoDoiTests(unittest.TestCase):
                 mock.patch.object(gf, "han_muc_cua", return_value=None):
             gf.trang_thai(kiem_phien=False)
         bat.assert_called_once_with("grok-2")
+
+
+class ThuDonTienTrinhTests(unittest.TestCase):
+    def test_mo_firefox_co_luong_cho_thoat(self):
+        """Không chờ tiến trình con thì mỗi lần mở để lại một xác <defunct> (đo 02/10/2026)."""
+        proc = mock.Mock(pid=4321)
+        with tempfile.TemporaryDirectory() as thu, \
+                mock.patch.object(gf, "ho_so", return_value=Path(thu) / "p"), \
+                mock.patch.object(gf, "_nha", return_value=Path(thu) / "nha"), \
+                mock.patch.object(gf, "_pid_mo", return_value=None), \
+                mock.patch.object(gf, "_firefox_bin", return_value="/usr/bin/firefox-esr"), \
+                mock.patch.object(gf.subprocess, "Popen", return_value=proc), \
+                mock.patch.object(gf.threading, "Thread") as th:
+            self.assertEqual(gf.mo("grok-9"), 4321)
+        th.assert_called_once()
+        self.assertIs(th.call_args.kwargs["target"], proc.wait)

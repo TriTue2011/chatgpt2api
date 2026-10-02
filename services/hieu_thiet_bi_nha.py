@@ -193,6 +193,20 @@ def _db() -> sqlite3.Connection:
             " noi_dung TEXT NOT NULL,"
             " nguon TEXT NOT NULL DEFAULT 'nhom')"   # nhom | hh
         )
+        # Mọi cặp ĐỀ → ĐÁP ÁN của các bài học hỏi (qua `_goi_model`) — dữ liệu để chưng cất / tinh chỉnh
+        # model nhỏ chạy tại nhà (chủ máy 02/10/2026: "khi có data thói quen rồi thì model local, fine-tuning
+        # đi, không cần mấy con tham số nhiều"). Sổ `quyet_dinh` chỉ giữ ĐÁP ÁN, không giữ đề.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS bo_de ("
+            " id INTEGER PRIMARY KEY,"
+            " ts REAL NOT NULL,"
+            " model TEXT NOT NULL,"
+            " huong_sha TEXT NOT NULL,"         # sha256 hướng dẫn, 12 ký tự — cùng thang `huong_dan`
+            " huong_ten TEXT NOT NULL,"         # dòng đầu hướng dẫn: bài nào
+            " de TEXT NOT NULL,"
+            " tra TEXT NOT NULL DEFAULT '',"    # nguyên văn model trả
+            " loi TEXT NOT NULL DEFAULT '')"
+        )
         conn.commit()
         _conn = conn
     return _conn
@@ -506,13 +520,30 @@ def _goi_model(model: str, huong: str, de: str) -> dict[str, Any]:
     tránh nhiễu". Khuôn theo `bai_hoc._ai_cung_y`."""
     from services.agent.runtime import call_model
 
-    return call_model(
+    r = call_model(
         model,
         [{"role": "system", "content": huong},
          {"role": "user", "content": de}],
         timeout=180, max_tokens=6000,
         response_format={"type": "json_object"},
         no_smart_home=True, allowed_groups=set())
+    _ghi_bo_de(model, huong, de, r)
+    return r
+
+
+def _ghi_bo_de(model: str, huong: str, de: str, r: dict[str, Any]) -> None:
+    """Lưu cặp đề → đáp án (bảng ``bo_de``). Hỏng ghi thì chỉ thiếu một mẫu, không chặn bài."""
+    try:
+        tra = "" if r.get("error") else str(((r.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+        with _khoa:
+            conn = _db()
+            conn.execute("INSERT INTO bo_de (ts, model, huong_sha, huong_ten, de, tra, loi) VALUES (?,?,?,?,?,?,?)",
+                         (time.time(), model, hashlib.sha256(huong.encode()).hexdigest()[:12],
+                          huong.strip().splitlines()[0][:120] if huong.strip() else "", de, tra,
+                          str(r.get("error") or "")[:300]))
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning({"event": "hoc_hoi_ghi_bo_de_loi", "error": str(exc)[:160]})
 
 
 def _doc_json(tho: str) -> Any:
