@@ -28,6 +28,8 @@ _san: dict[str, Any] = {}
 class _KhongChayCpu:
     """Thế chỗ phiên CPU cho `onnx_xa.PhienLai`: GPU hỏng thì báo lỗi rõ ràng thay vì nạp model lên CPU."""
 
+    KHONG_CPU = True     # onnx_xa báo đúng: «bỏ qua bước này», không phải «chạy CPU»
+
     def get_outputs(self):
         return [SimpleNamespace(name="logits")]
 

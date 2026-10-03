@@ -29,8 +29,11 @@ NGHI_GIAY = 60.0
 _HET_GIO = {"det_10g": 10.0, "w600k_r50": 5.0, "kokoro_vi": 30.0, "gte_nhung": 5.0, "jina_xep": 5.0}
 
 _khoa = threading.Lock()
-_nghi_toi = 0.0
-_dang_hong = False
+#: Nghỉ GPU THEO TỪNG GRAPH. Đo 03/10/2026: lần đầu gọi jina_xep, .220 tải model 557 MB → quá 5 giây → mốc nghỉ
+#: CHUNG đẩy cả nhận mặt, gte, Kokoro về CPU .38 suốt 60 giây (và báo «đang chạy CPU tại chỗ» — sai với jina_xep,
+#: graph không có bản CPU). Một graph chậm/hỏng không được kéo cả hệ thống.
+_nghi_toi: dict[str, float] = {}
+_dang_hong: set[str] = set()
 
 
 def _dia_chi() -> tuple[str, str]:
@@ -42,27 +45,27 @@ def _dia_chi() -> tuple[str, str]:
     return (url, token) if url and token else ("", "")
 
 
-def _hong(ten: str, exc: Exception) -> None:
-    global _nghi_toi, _dang_hong
+def _hong(ten: str, exc: Exception, *, co_cpu: bool = True) -> None:
     with _khoa:
-        _nghi_toi = time.monotonic() + NGHI_GIAY
-        bao, _dang_hong = not _dang_hong, True
+        _nghi_toi[ten] = time.monotonic() + NGHI_GIAY
+        bao = ten not in _dang_hong
+        _dang_hong.add(ten)
     logger.warning({"event": "onnx_gpu_hong", "graph": ten, "loi": str(exc)[:200]})
     if bao:
         try:
             from services.notifier import notify_admin
 
-            notify_admin(f"⚠️ GPU nhà lỗi khi chạy {ten}: {str(exc)[:160]} — "
-                         "đang chạy CPU tại chỗ.", category="system")
+            du_phong = "đang chạy CPU tại chỗ" if co_cpu else "tạm bỏ qua bước này (model không có bản CPU)"
+            notify_admin(f"⚠️ GPU nhà lỗi khi chạy {ten}: {str(exc)[:160]} — {du_phong}; "
+                         f"thử lại GPU sau {NGHI_GIAY:.0f} giây. Model khác không ảnh hưởng.", category="system")
         except Exception as loi:  # noqa: BLE001 — báo hỏng không được làm hỏng việc chính
             logger.warning({"event": "onnx_gpu_bao_loi", "loi": str(loi)[:120]})
 
 
 def _da_lanh(ten: str) -> None:
-    global _dang_hong
-    if _dang_hong:
+    if ten in _dang_hong:
         with _khoa:
-            _dang_hong = False
+            _dang_hong.discard(ten)
         logger.info({"event": "onnx_gpu_da_lanh", "graph": ten})
 
 
@@ -85,11 +88,11 @@ class PhienLai:
 
     def run(self, output_names, feeds):
         url, token = _dia_chi()
-        if url and time.monotonic() >= _nghi_toi:
+        if url and time.monotonic() >= _nghi_toi.get(self.ten, 0.0):
             try:
                 ra = self._chay_gpu(url, token, output_names, feeds)
             except Exception as exc:  # noqa: BLE001 — mọi lỗi mạng/GPU đều lùi về CPU
-                _hong(self.ten, exc)
+                _hong(self.ten, exc, co_cpu=not getattr(self._tai_cho, "KHONG_CPU", False))
             else:
                 _da_lanh(self.ten)
                 self.duong = "gpu"

@@ -48,8 +48,8 @@ def _npz(**mang) -> bytes:
 def gpu(monkeypatch):
     monkeypatch.setenv("TACH_AM_URL_GPU", "http://gpu:5004/")
     monkeypatch.setenv("TACH_AM_API_TOKEN", "bi-mat")
-    monkeypatch.setattr(onnx_xa, "_nghi_toi", 0.0)
-    monkeypatch.setattr(onnx_xa, "_dang_hong", False)
+    monkeypatch.setattr(onnx_xa, "_nghi_toi", {})
+    monkeypatch.setattr(onnx_xa, "_dang_hong", set())
     bao: list[str] = []
     import services.notifier as nf
     monkeypatch.setattr(nf, "notify_admin", lambda text, **_k: bao.append(text))
@@ -94,12 +94,12 @@ def test_gpu_hong_thi_chay_cpu_nghi_va_bao_mot_lan(monkeypatch, gpu):
     assert (len(lan_post), cpu.lan, len(gpu)) == (1, 2, 1)   # nghỉ GPU, chỉ báo một lần
     assert "w600k_r50" in gpu[0]
     # Hết giờ nghỉ, vẫn hỏng: KHÔNG báo lại.
-    monkeypatch.setattr(onnx_xa, "_nghi_toi", 0.0)
+    monkeypatch.setattr(onnx_xa, "_nghi_toi", {})
     p.run(None, {"vao": x})
     assert (len(lan_post), len(gpu)) == (2, 1)
     # GPU lành rồi hỏng lại: báo lần mới.
     monkeypatch.setattr(requests, "post", lambda *a, **k: _TraLoi(_npz(o0=x, o1=x)))
-    monkeypatch.setattr(onnx_xa, "_nghi_toi", 0.0)
+    monkeypatch.setattr(onnx_xa, "_nghi_toi", {})
     p.run(None, {"vao": x})
     monkeypatch.setattr(requests, "post", hong)
     p.run(None, {"vao": x})
@@ -130,3 +130,25 @@ def test_ghi_duong_vua_chay_cho_model_nhung(monkeypatch, gpu):
     monkeypatch.setattr(requests, "post", hong)
     p.run(None, {"vao": x})
     assert p.duong == "cpu"
+
+
+
+def test_mot_graph_cham_khong_day_graph_khac_ve_cpu(monkeypatch, gpu):
+    """Đo 03/10/2026: lần đầu jina_xep tải model 557 MB, quá 5 giây → mốc nghỉ CHUNG đẩy nhận mặt/gte/Kokoro về CPU."""
+    import requests
+    x = np.ones((1, 3), np.float32)
+
+    def post(url, data, headers, timeout):
+        if "jina_xep" in url:
+            raise requests.exceptions.ReadTimeout("Read timed out. (read timeout=5.0)")
+        return _TraLoi(_npz(o0=x, o1=x))
+    monkeypatch.setattr(requests, "post", post)
+
+    class _KhongCpu(_PhienCpu):
+        KHONG_CPU = True
+    jina = onnx_xa.lai("jina_xep", _KhongCpu())
+    jina.run(None, {"vao": x})
+    mat = onnx_xa.lai("det_10g", _PhienCpu())
+    mat.run(None, {"vao": x})
+    assert mat.duong == "gpu" and jina.duong == "cpu", "nhận mặt vẫn chạy GPU"
+    assert "bỏ qua bước này" in gpu[-1] and "Model khác không ảnh hưởng" in gpu[-1]
