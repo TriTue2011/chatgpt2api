@@ -48,6 +48,7 @@ class _Router:
                                     {".id": "*M2", "comment": "mik-hk mss"},
                                     {".id": "*M3", "comment": "MANGLE: MSS for PPPoE"}],
             "/ip/firewall/nat": [{".id": "*N1", "out-interface": "mik-hk"}, {".id": "*N2", "out-interface-list": "WAN"}],
+            "/system/resource": [{"version": "7.20.5 (stable)", "uptime": "1d", "cpu-load": "3"}],
         }
         self.lenh: list[tuple] = []
 
@@ -271,3 +272,64 @@ def test_endpoint_thu_dung_o_vua_nhap_va_bao_ly_do(monkeypatch):
     assert d["router"] == {"ok": False, "error": "đăng nhập router bằng «c2a» không được: invalid user name or "
                                                   "password (6)"}
     assert d["adguard"] == {"ok": False, "error": "chưa có URL AdGuard"}
+
+
+def test_danh_sach_cho_trang_mang_nha(r):
+    mn.chan("tivi", 60)
+    mn.gioi_han("tivi", "1M/5M")
+    mn.duyet("AA:00:00:00:00:31", "Khách", "khach", 86400, now=1000.0)
+    d = mn.danh_sach()
+    assert d["ok"] and "RouterOS 7.20.5" in d["router"] and d["dhcp_khoa"] is False and d["ep_dns"] is False
+    tv = next(m for m in d["may"] if m["ip"] == "172.16.10.201")
+    assert tv["chan"] and tv["chan_con"] == "60m" and tv["toc_do"] == "1M/5M" and tv["duyet"] and tv["ten"] == "Tivi LG"
+    k = next(m for m in d["may"] if m["ip"] == "172.16.10.31")
+    assert k["nhom"] == "khach" and k["het_han"] == 1000.0 + 86400
+    assert [c["mac"] for c in d["cho"]] == ["BB:00:00:00:00:99"]
+    assert d["vpn"] == [{"gd": "mik-hk", "ten": "surfshark HK", "bat": False, "bat_tay": ""},
+                        {"gd": "mik-sg", "ten": "surfshark SING", "bat": True, "bat_tay": ""}]
+
+
+def test_dat_ten_kick_va_bo_kick(r):
+    assert "«Đèn bàn»" in mn.dat_ten("172.16.10.31", "Đèn bàn")
+    assert r.bang["/ip/dhcp-server/lease"][1]["comment"] == "Đèn bàn"
+    t = mn.kick("172.16.10.31")
+    le = r.bang["/ip/dhcp-server/lease"][1]
+    assert "Đã kick" in t and le["dynamic"] == "false" and le["block-access"] is True
+    assert any(x["address"] == "172.16.10.31" and x["timeout"] == "1d" for x in r.bang["/ip/firewall/address-list"])
+    assert "vào mạng lại" in mn.bo_kick("172.16.10.31")
+    assert le["block-access"] is False and r.bang["/ip/firewall/address-list"] == []
+    assert "Đã chặn MAC BB:00:00:00:00:99" in mn.kick("BB:00:00:00:00:99")
+    moi = r.bang["/ip/dhcp-server/lease"][-1]
+    assert moi["mac-address"] == "BB:00:00:00:00:99" and moi["block-access"] is True
+
+
+def test_bang_thong_theo_nhom(r, monkeypatch):
+    from services.config import config
+    monkeypatch.setitem(config.data, "mang_nha", {})
+    monkeypatch.setattr(config, "_save", lambda: None)
+    assert "tối đa 3M" in mn.dat_bang_thong("iot", "3M")
+    assert mn._bang_thong()["iot"] == "3M"
+    assert "không giới hạn" in mn.dat_bang_thong("khach", "")
+    assert "khach" not in mn._bang_thong(), "bỏ trần mặc định của khách"
+    assert "không hiểu" in mn.dat_bang_thong("iot", "nhanh")
+    assert "không có" in mn.dat_bang_thong("may_bay", "1M")
+
+
+def test_endpoint_viec_goi_dung_ham_va_bao_ly_do(r, monkeypatch):
+    from unittest import mock
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from api import mqtt
+    app = FastAPI()
+    with mock.patch("api.mqtt.require_admin", lambda *a, **k: None):
+        app.include_router(mqtt.create_router())
+        c = TestClient(app)
+        assert "2 giờ" in c.post("/api/mang-nha/viec", json={"viec": "chan", "may": "tivi", "phut": 120}).json()["text"]
+        assert "Thiếu máy" in c.post("/api/mang-nha/viec", json={"viec": "kick"}).json()["text"]
+        assert "không có" in c.post("/api/mang-nha/viec", json={"viec": "xoa_router"}).json()["text"]
+        t = c.post("/api/mang-nha/viec", json={"viec": "khoa_dhcp", "bat": True}).json()["text"]
+        assert t.startswith("⚠️") and r.bang["/ip/dhcp-server"][0]["address-pool"] == "dhcp_pool", "hỏi trước"
+        d = c.get("/api/mang-nha/may").json()
+    assert d["ok"] and any(m["chan"] for m in d["may"])

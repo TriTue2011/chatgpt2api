@@ -36,6 +36,7 @@ const pageTitles: Record<string, string> = {
   "/agent-runs": "Agent runs",
   "/hoc-hoi": "Học hỏi",
   "/khuon-mat": "Khuôn mặt",
+  "/mang-nha": "Mạng nhà",
   "/youtube": "YouTube",
   "/camera": "Camera",
 };

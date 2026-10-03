@@ -268,7 +268,8 @@ def _mac(s: str) -> str:
 def _bang_thong() -> dict[str, str]:
     from services.config import config
     raw = (config.data.get("mang_nha") or {}).get("bang_thong")
-    return {**BANG_THONG, **(raw if isinstance(raw, dict) else {})}
+    gop = {**BANG_THONG, **(raw if isinstance(raw, dict) else {})}
+    return {k: v for k, v in gop.items() if v}
 
 
 def _ten_lease(x: dict[str, Any]) -> str:
@@ -276,8 +277,8 @@ def _ten_lease(x: dict[str, Any]) -> str:
 
 
 def _leases(r: Any) -> list[dict[str, str]]:
-    return r.goi("/ip/dhcp-server/lease/print",
-                 **{".proplist": ".id,address,mac-address,host-name,comment,dynamic,status,server,last-seen"})
+    return r.goi("/ip/dhcp-server/lease/print", **{".proplist": ".id,address,mac-address,host-name,comment,dynamic,"
+                                                                 "status,server,last-seen,block-access"})
 
 
 def tim_may(r: Any, may: str) -> dict[str, str]:
@@ -588,6 +589,120 @@ def ep_dns(bat: bool, xac_nhan: bool = False) -> str:
                   src_address=f"!{ag}", dst_address=f"!{ag}", action="reject", reject_with=kieu, comment=LUAT_DNS,
                   **({"place-before": dau} if dau else {}))
         return f"🛡️ Đã ép DNS: mọi máy trong nhà chỉ hỏi tên miền qua AdGuard ({ag})."
+    return _ket(_lam)
+
+
+def dat_bang_thong(nhom: str, toc_do: str) -> str:
+    """Trần tốc độ mặc định của một nhóm (``mang_nha.bang_thong``) — áp cho máy duyệt SAU này; máy đã duyệt giữ
+    hàng đợi cũ tới khi đổi nhóm / đặt lại."""
+    from services.config import config
+    if nhom not in NHOM:
+        return f"Nhóm «{nhom}» không có."
+    t = str(toc_do or "").strip().replace(" ", "")
+    bo = t.lower() in ("", "0", "bo", "khong")
+    if not bo and not _TOC_DO.match(t):
+        return f"Tốc độ «{toc_do}» em không hiểu — viết kiểu «2M» hoặc «1M/5M» (tải lên/tải xuống)."
+
+    def _ghi(data: dict) -> None:
+        bt = dict((data.setdefault("mang_nha", {})).get("bang_thong") or {})
+        bt[nhom] = "" if bo else t
+        data["mang_nha"]["bang_thong"] = bt
+    config.mutate(_ghi)
+    return f"Nhóm {NHOM[nhom]}: " + ("không giới hạn." if bo else f"tối đa {t} (tải lên/tải xuống).")
+
+
+def danh_sach() -> dict[str, Any]:
+    """Một lần đọc cho trang Mạng nhà: máy (lease) kèm trạng thái chặn / tốc độ / nhóm / hạn, máy chờ duyệt, DHCP
+    khoá chưa, DNS ép chưa, VPN ra ngoài. Lỗi router → {"ok": False, "loi": lý do}."""
+    from services import routeros
+
+    try:
+        with routeros.ket_noi() as r:
+            ds = _leases(r)
+            cho = _may_dang_doi(r, ds)
+            chan = {x.get("address"): x.get("timeout") or "" for x in r.goi(
+                "/ip/firewall/address-list/print", truy_van=[f"?list={DS_CHAN}"], **{".proplist": "address,timeout"})}
+            hang = {c.get("target", "").split("/")[0]: c.get("max-limit", "") for c in r.goi(
+                "/queue/simple/print", **{".proplist": "name,target,max-limit"})
+                if c.get("name", "").startswith(TIEN_TO_HANG)}
+            sv = r.goi("/ip/dhcp-server/print", **{".proplist": "name,address-pool"})
+            fw = r.goi("/ip/firewall/filter/print", **{".proplist": "comment"})
+            peers = r.goi("/interface/wireguard/peers/print",
+                          **{".proplist": "interface,comment,endpoint-address,last-handshake"})
+            tat = {x.get("name") for x in r.goi("/interface/wireguard/print", truy_van=["?disabled=true"],
+                                                 **{".proplist": "name"})}
+            ban = r.goi("/system/resource/print", **{".proplist": "version,uptime,cpu-load"})[0]
+    except (routeros.Loi, OSError) as exc:
+        return {"ok": False, "loi": str(exc)}
+    with _khoa:
+        so = _nap().get("may") or {}
+    may = []
+    for x in ds:
+        mac = _mac(x.get("mac-address", ""))
+        ip = x.get("address", "")
+        v = so.get(mac) or {}
+        may.append({"id": x.get(".id"), "ip": ip, "mac": mac, "host": x.get("host-name", ""),
+                    "ten": x.get("comment", ""), "duyet": x.get("dynamic") != "true",
+                    "khoa": x.get("block-access") == "true", "trang_thai": x.get("status", ""),
+                    "thay": x.get("last-seen", ""), "chan": ip in chan, "chan_con": chan.get(ip, ""),
+                    "toc_do": hang.get(ip, ""), "nhom": v.get("nhom", ""), "het_han": v.get("het_han")})
+    return {"ok": True, "router": f"RouterOS {ban.get('version', '?')} · chạy {ban.get('uptime', '?')} · CPU "
+                                  f"{ban.get('cpu-load', '?')}%",
+            "may": sorted(may, key=lambda m: (m["duyet"], tuple(int(p) for p in m["ip"].split(".")) if m["ip"] else ())),
+            "cho": [{"mac": _mac(x["mac-address"]), "ip": x.get("address", ""), "host": x.get("host-name", ""),
+                     "cong": x.get("on-interface", "")} for x in cho],
+            "dhcp_khoa": bool(sv) and all(s.get("address-pool") == "static-only" for s in sv),
+            "ep_dns": any(x.get("comment") == LUAT_DNS for x in fw),
+            "vpn": [{"gd": p["interface"], "ten": p.get("comment") or p["interface"], "bat": p["interface"] not in tat,
+                     "bat_tay": p.get("last-handshake", "")} for p in peers if p.get("endpoint-address")],
+            "nhom": NHOM, "bang_thong": _bang_thong()}
+
+
+def dat_ten(may: str, ten: str) -> str:
+    ten = " ".join(str(ten or "").split())[:60]
+    if not ten:
+        return "Tên trống — em không đổi."
+
+    def _lam(r: Any) -> str:
+        x = tim_may(r, may)
+        r.goi("/ip/dhcp-server/lease/set", id=x[".id"], comment=ten)
+        return f"Đã đặt tên {x.get('address')} là «{ten}»."
+    return _ket(_lam)
+
+
+def kick(may: str) -> str:
+    """Đá một máy ra và không cho vào lại: lease TĨNH + ``block-access=yes`` (DHCP không cấp IP, bridge
+    `arp=reply-only` nên máy tự đặt IP tay cũng không nói chuyện được với router) + cắt kết nối đang mở bằng
+    ``c2a_chan`` 1 ngày. Máy chỉ có MAC (chưa có IP) thì tạo lease khoá với một IP trống của pool."""
+    def _lam(r: Any) -> str:
+        ds = _leases(r)
+        m = _mac(may)
+        x = next((l for l in ds if m and _mac(l.get("mac-address", "")) == m), None) if m else tim_may(r, may)
+        if x is None:
+            ip = _ip_trong(r, ds)
+            srv = next((l.get("server") for l in ds if l.get("server")), None)
+            r.goi("/ip/dhcp-server/lease/add", mac_address=m, address=ip, block_access=True,
+                  comment=f"c2a: đã kick {m}", **({"server": srv} if srv else {}))
+            return f"🚫 Đã chặn MAC {m}: router sẽ không cấp IP cho máy này."
+        if x.get("dynamic") == "true":
+            r.goi("/ip/dhcp-server/lease/make-static", numbers=x[".id"])
+        r.goi("/ip/dhcp-server/lease/set", id=x[".id"], block_access=True)
+        _dam_bao_luat_chan(r)
+        for c in r.goi("/ip/firewall/address-list/print", truy_van=[f"?list={DS_CHAN}", f"?address={x['address']}"]):
+            r.goi("/ip/firewall/address-list/remove", id=c[".id"])
+        r.goi("/ip/firewall/address-list/add", list=DS_CHAN, address=x["address"], timeout="1d",
+              comment=f"kick: {_ten_lease(x)}")
+        return f"🚫 Đã kick {_ten_lease(x)} ({x['address']}): cắt mạng ngay, không cấp IP lại."
+    return _ket(_lam)
+
+
+def bo_kick(may: str) -> str:
+    def _lam(r: Any) -> str:
+        x = tim_may(r, may)
+        r.goi("/ip/dhcp-server/lease/set", id=x[".id"], block_access=False)
+        for c in r.goi("/ip/firewall/address-list/print", truy_van=[f"?list={DS_CHAN}", f"?address={x['address']}"]):
+            r.goi("/ip/firewall/address-list/remove", id=c[".id"])
+        return f"✅ Đã cho {_ten_lease(x)} ({x['address']}) vào mạng lại."
     return _ket(_lam)
 
 

@@ -267,6 +267,46 @@ def create_router() -> APIRouter:
 
         return {"router": await asyncio.to_thread(_router), "adguard": await asyncio.to_thread(_adguard)}
 
+    @router.get("/api/mang-nha/may")
+    async def mang_nha_may(authorization: str | None = Header(default=None)):
+        """Trang Mạng nhà: máy trong DHCP, máy chờ duyệt, DHCP khoá / DNS ép / VPN."""
+        require_admin(authorization)
+        from services import mang_nha
+        return await asyncio.to_thread(mang_nha.danh_sach)
+
+    @router.post("/api/mang-nha/viec")
+    async def mang_nha_viec(body: dict, authorization: str | None = Header(default=None)):
+        """Một việc trên router từ trang Mạng nhà. Trả {"text"} — câu kết quả hoặc NGUYÊN lý do router từ chối."""
+        require_admin(authorization)
+        from services import mang_nha
+
+        b = body or {}
+        viec = str(b.get("viec") or "")
+        may = str(b.get("may") or "").strip()
+        try:
+            phut = int(b.get("phut") or 0) or None
+        except (TypeError, ValueError):
+            phut = None
+        lam = {
+            "chan": lambda: mang_nha.chan(may, phut),
+            "mo": lambda: mang_nha.mo(may),
+            "gioi_han": lambda: mang_nha.gioi_han(may, str(b.get("toc_do") or "")),
+            "duyet": lambda: mang_nha.duyet(may, str(b.get("ten") or ""), str(b.get("nhom") or "nha"),
+                                            phut * 60 if phut else None, nguoi_duyet="web"),
+            "dat_ten": lambda: mang_nha.dat_ten(may, str(b.get("ten") or "")),
+            "kick": lambda: mang_nha.kick(may),
+            "bo_kick": lambda: mang_nha.bo_kick(may),
+            "khoa_dhcp": lambda: mang_nha.khoa_dhcp(bool(b.get("bat")), bool(b.get("xac_nhan"))),
+            "ep_dns": lambda: mang_nha.ep_dns(bool(b.get("bat")), bool(b.get("xac_nhan"))),
+            "vpn": lambda: mang_nha.dat_vpn(str(b.get("ten") or ""), bool(b.get("bat"))),
+            "bang_thong": lambda: mang_nha.dat_bang_thong(str(b.get("nhom") or ""), str(b.get("toc_do") or "")),
+        }.get(viec)
+        if lam is None:
+            return {"text": f"Việc «{viec}» không có."}
+        if viec in ("chan", "mo", "gioi_han", "duyet", "dat_ten", "kick", "bo_kick") and not may:
+            return {"text": "Thiếu máy (IP hoặc MAC)."}
+        return {"text": await asyncio.to_thread(lam)}
+
     @router.get("/api/tuya/thiet-bi")
     async def tuya_thiet_bi(authorization: str | None = Header(default=None)):
         """Thiết bị Tuya kèm trạng thái."""

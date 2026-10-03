@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Users, Cpu, Combine, ImageIcon, Search, Archive, Settings,
   LogOut, ChevronRight, Sparkles, PanelLeftClose, Languages,
   Video, Film, Plug, MessageSquare, MessageCircle, Activity, GraduationCap,
-  ScrollText, BookOpen, Youtube, ScanFace, Cctv, Wallet,
+  ScrollText, BookOpen, Youtube, ScanFace, Cctv, Wallet, Network,
 } from "lucide-react";
 import webConfig from "@/constants/common-env";
 import { getValidatedAuthSession } from "@/lib/auth-session";
@@ -77,6 +77,7 @@ export const navGroups: NavGroup[] = [
       { href: "/backup", labelKey: "nav_backup" as TranslationKey, icon: Archive },
       { href: "/hoc-hoi", labelKey: "nav_hocHoi" as TranslationKey, icon: BookOpen },
       { href: "/khuon-mat", labelKey: "nav_khuonMat" as TranslationKey, icon: ScanFace },
+      { href: "/mang-nha", labelKey: "nav_mangNha" as TranslationKey, icon: Network },
       { href: "/settings", labelKey: "nav_settings" as TranslationKey, icon: Settings },
     ],
   },
@@ -108,6 +109,7 @@ export const adminOnlyPaths = [
   "/logs",
   "/hoc-hoi",
   "/khuon-mat",
+  "/mang-nha",
   "/youtube",
   "/camera",
   "/zalo",
