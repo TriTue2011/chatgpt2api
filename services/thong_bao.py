@@ -103,6 +103,10 @@ SU_KIEN: tuple[SuKien, ...] = (
     SuKien("nha.goi_y", "Gợi ý bật thiết bị",
            "Bot đoán nên bật gì theo nếp nhà, chờ chủ máy chấm đúng/sai.",
            "Nhà"),
+    SuKien("nha.lech_nep", "Nhắc lệch nếp",
+           "Thiết bị hôm nay không hoạt động vào giờ quen — bot hỏi nhẹ kèm nguyên nhân đo được; "
+           "trả lời tự nhiên ở kênh này. Chỉ chạy khi đã tích «Nhắc lệch nếp» ở tab Học hỏi.",
+           "Nhà"),
     SuKien("hoc_hoi.ban_tin", "Bản tin bài học",
            "Những câu bot từng trả lời sai và đã rút kinh nghiệm.", "Học hỏi"),
     SuKien("hoc_hoi.hieu_thiet_bi", "Bot hiểu thiết bị",

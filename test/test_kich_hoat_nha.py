@@ -1451,3 +1451,22 @@ def test_nhiet_do_cam_nhan_thay_cap_nhiet_am_tho(kh, monkeypatch):
     assert 36 < x["cảm nhận:Phòng khách"] < 40               # 30 °C, 80% — oi hơn nhiều so với 30 °C khô
     assert kh.nhiet_do_cam_nhan(30, 30) < kh.nhiet_do_cam_nhan(30, 80)
     assert kh._dieu_kien_doc("cảm nhận:Phòng khách", True, 31.5, {}) == "nhiệt độ cảm nhận Phòng khách ≤ 31.5°C"
+
+
+def test_khong_thay_mot_lan_chua_phai_khong_ai(monkeypatch):
+    """Đo 03/10/2026 06:49:54: radar báo có người, bot nhìn đúng một khoảnh khắc «không thấy ai» rồi bỏ —
+    Frigate đếm được người 8 giây sau. Nay chưa thấy thì nhìn lại trong một khoảng."""
+    from services import kich_hoat_nha as kh0
+    ngu: list[float] = []
+    monkeypatch.setattr(kh0.time, "sleep", lambda g: ngu.append(g))
+    lan = iter([(False, "Cam phòng khách không thấy ai"), (True, "Cam phòng khách thấy người")])
+    co, mo_ta = kh0._xem_trong_khoang(lambda t: next(lan), 0.0)
+    assert co is True and "thấy người" in mo_ta and "nhìn 2 lần" in mo_ta and ngu == [kh0.XEM_CACH_GIAY]
+    # Không ai thật: nhìn tới hết khoảng rồi mới kết luận — không lặp vô hạn.
+    dong_ho = iter(range(0, 10_000, 10))
+    monkeypatch.setattr(kh0.time, "time", lambda: float(next(dong_ho)))
+    co, _ = kh0._xem_trong_khoang(lambda t: (False, "không ai"), 0.0)
+    assert co is False
+    # Thấy ngay / không nguồn nào nhìn được thì không chờ.
+    ngu.clear()
+    assert kh0._xem_trong_khoang(lambda t: (None, "không nhìn được"), 0.0)[0] is None and ngu == []

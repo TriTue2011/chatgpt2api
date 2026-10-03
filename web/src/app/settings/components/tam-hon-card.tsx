@@ -92,7 +92,7 @@ export function TamHonCard() {
         </p>
         <label className="flex items-start gap-2 text-sm">
           <input type="checkbox" className="mt-1" checked={tt.bat_viet} onChange={(e) => void dat("bat_viet", e.target.checked)} />
-          <span>Tự viết thơ / nhật ký và vẽ tranh khi có chuyện đáng viết <span className="text-xs text-muted-foreground">(tối đa 2 bài/ngày, 6h–23h)</span></span>
+          <span>Tự viết thơ / nhật ký kèm tranh, hoặc tâm sự ngắn, khi có chuyện đáng viết <span className="text-xs text-muted-foreground">(tối đa 2 lần/ngày, 6h–23h)</span></span>
         </label>
         {tt.bat_viet && !(tb?.bat && tb.kenh.length) ? (
           <p className="text-xs text-amber-600">
@@ -138,7 +138,7 @@ export function TamHonCard() {
             {[...tt.bai].reverse().map((b) => (
               <div key={b.luc} className="rounded-md border p-2 text-sm">
                 <div className="mb-1 text-xs text-muted-foreground">
-                  {gio(b.luc)} · {b.the_loai === "tho" ? "thơ" : "nhật ký"} · {b.cam_xuc} · {b.gui ? `đã gửi ${b.gui} kênh` : "chưa gửi kênh nào"}
+                  {gio(b.luc)} · {b.the_loai === "tho" ? "thơ" : b.the_loai === "tam_su" ? "tâm sự" : "nhật ký"} · {b.cam_xuc} · {b.gui ? `đã gửi ${b.gui} kênh` : "chưa gửi kênh nào"}
                 </div>
                 {b.tieu_de ? <div className="font-medium">{b.tieu_de}</div> : null}
                 <p className="whitespace-pre-line">{b.noi_dung}</p>

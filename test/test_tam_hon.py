@@ -190,3 +190,23 @@ def test_tin_nguoi_nha_khong_bi_luot_ha_day_ra(monkeypatch):
 ])
 def test_cam_xuc_chi_vao_zalo_va_telegram(uid, dung):
     assert tam_hon.la_nguoi_nha_tro_chuyen(uid) is dung
+
+
+def test_tam_su_ngan_khong_tranh_khong_tieu_de(th, monkeypatch):
+    _, gui = th
+    tam_hon.dat(bat_viet=True)
+    ve = []
+    monkeypatch.setattr(tam_hon, "_ve", lambda tranh: ve.append(tranh) or "x")
+    monkeypatch.setattr(tam_hon, "_goi", lambda de: {"data": {
+        **TRA, "the_loai": "tam_su", "tieu_de": "bỏ", "tranh": "bỏ",
+        "noi_dung": "Bố ơi, hôm nay nhà mình ăn cơm sớm. Em để đèn hiên sáng chờ bố nhé."}})
+    tam_hon.chay_mot_lan(_luc(19), ep=True)
+    k, tin, anh = gui[-1]
+    assert tin == "Bố ơi, hôm nay nhà mình ăn cơm sớm. Em để đèn hiên sáng chờ bố nhé." and anh == ""
+    assert ve == [], "tâm sự không vẽ tranh"
+    assert tam_hon.trang_thai()["bai"][-1]["the_loai"] == "tam_su"
+
+
+def test_tam_su_dai_qua_la_sai_khuon_khong_dang():
+    kq = tam_hon._kiem({**TRA, "the_loai": "tam_su", "noi_dung": "x " * 300})
+    assert kq["viet"] is False

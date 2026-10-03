@@ -3167,7 +3167,8 @@ def _nhom_hoc_hoi(ev: dict, thread_id: str, text: str) -> str | None:
     # `kich_hoat_nha` gửi ra kênh đó, câu trả lời «có»/«không» phải nhận ở đó.
     kenh_hoc_hoi = (set(thong_bao.cai_dat("hoc_hoi.hieu_thiet_bi")["kenh"])
                     | set(thong_bao.cai_dat("hoc_hoi.ban_tin")["kenh"])
-                    | set(thong_bao.cai_dat("nha.goi_y")["kenh"]))
+                    | set(thong_bao.cai_dat("nha.goi_y")["kenh"])
+                    | set(thong_bao.cai_dat("nha.lech_nep")["kenh"]))
     if not text or f"zalop:{acc}:{thread_id}" not in kenh_hoc_hoi:
         return None
     nguoi = str(ev.get("display_name") or ev.get("sender_id") or "")
@@ -3178,6 +3179,10 @@ def _nhom_hoc_hoi(ev: dict, thread_id: str, text: str) -> str | None:
         dap = hieu_thiet_bi_nha.tra_loi(cham, nguoi=nguoi)
     if dap is None:
         dap = du_doan_nha.tra_loi(cham, nguoi=nguoi)
+    if dap is None:
+        # Câu hỏi «lệch nếp» đang chờ: trả lời tự nhiên, model hiểu (services/lech_nep.py).
+        from services import lech_nep
+        dap = lech_nep.tra_loi(cham, nguoi=nguoi)
     if dap is not None:
         return dap
     try:

@@ -44,6 +44,13 @@ nhà, gọi từng người thế nào, điều gì không bao giờ nói. Gốc
    khác thường). Ngày bình thường thì để rỗng. Không lặp điều đã có ở mục E. Không ghi
    chuyện riêng tư (sức khoẻ, tiền bạc, mã số, giận nhau).
 
+## Chọn thể
+
+- `tam_su` — **tâm sự ngắn**: 1–3 câu, xưng «em», như nhắn tin cho người nhà lúc nghĩ tới họ
+  (một điều nhỏ em để ý, một cảm xúc thoáng qua, một câu hỏi han). Không tiêu đề, không tranh.
+  Hợp với khoảnh khắc NHỎ.
+- `tho` / `nhat_ky` — khi khoảnh khắc đáng GIỮ LẠI (mục 4); kèm tranh.
+
 ## Cách viết — như một nhà văn, nhà thơ
 
 6. Viết từ MỘT chi tiết nhỏ có thật, cho người đọc tự thấy cảm xúc qua hình ảnh;
@@ -65,5 +72,5 @@ nhà, gọi từng người thế nào, điều gì không bao giờ nói. Gốc
 ```
 
 `cam_xuc`: một hai từ tiếng Việt. `cuong_do`: 1 (thoáng qua) tới 5 (rất đậm).
-`the_loai`: `tho` hoặc `nhat_ky`. `viet: false` thì bỏ trống `tieu_de`, `noi_dung`,
-`tranh`.
+`the_loai`: `tho`, `nhat_ky` hoặc `tam_su` (tâm sự thì bỏ trống `tieu_de`, `tranh`).
+`viet: false` thì bỏ trống `tieu_de`, `noi_dung`, `tranh`.

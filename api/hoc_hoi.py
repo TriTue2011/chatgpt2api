@@ -31,6 +31,7 @@ _KHOA_TANG = {
     "tinh_huong": "Nếp sinh hoạt",
     "bai_hoc": "Học từ lỗi",
     "canh_bao": "Báo thiết bị hỏng",
+    "lech_nep": "Nhắc lệch nếp (thiết bị không hoạt động đúng giờ quen thì hỏi)",
 }
 
 
@@ -229,7 +230,7 @@ def create_router() -> APIRouter:
         require_admin(authorization)
         try:
             from services import (bai_hoc, canh_bao_nha, du_doan_nha,
-                                  hieu_thiet_bi_nha, tinh_huong_nha)
+                                  hieu_thiet_bi_nha, lech_nep, tinh_huong_nha)
             from services.config import config
 
             tang = {
@@ -238,6 +239,7 @@ def create_router() -> APIRouter:
                 "tinh_huong": tinh_huong_nha.is_enabled(),
                 "bai_hoc": bai_hoc.is_enabled(),
                 "canh_bao": canh_bao_nha.is_enabled(),
+                "lech_nep": lech_nep.is_enabled(),
             }
             # `sai_gan_day` đi kèm để tab hiện rõ "còn đang theo dõi", không
             # phải một nhãn tĩnh "đã tin" đọc như đã đóng băng mãi mãi — sai

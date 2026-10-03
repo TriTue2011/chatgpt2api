@@ -55,7 +55,7 @@ import unicodedata
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from services import cam_bien_ghep as _cbg
 from services.config import DATA_DIR
@@ -2166,6 +2166,30 @@ def cua_so_bat_lai(tb: str) -> float:
     return max(float(VANG), tre[int(0.75 * (len(tre) - 1))])
 
 
+#: Một lần nhìn KHÔNG THẤY chưa phải «không có ai». Đo 03/10/2026 (chủ máy ngồi phòng khách 06:38–06:51):
+#: radar mất người ngồi yên 8 phút, bot nhìn camera ĐÚNG MỘT KHOẢNH KHẮC không thấy → 06:43 tắt đèn trần;
+#: 06:49:54 radar báo có người, xác minh ngay lúc đó «không thấy ai» — Frigate đếm được người 8 GIÂY SAU
+#: (06:50:02) mà bot đã bỏ, không sự kiện nào khiến xét lại → chủ máy ngồi tối, quạt cũng không bật.
+#: Nên: chưa thấy thì nhìn lại vài lần trong một khoảng rồi mới kết luận (cả lúc bật lại lẫn lúc tắt).
+XEM_TRONG_GIAY = 45
+XEM_CACH_GIAY = 10
+
+
+def _xem_trong_khoang(xem: Callable[[float], tuple[bool | None, str]], luc: float) -> tuple[bool | None, str]:
+    """``xem(lúc)`` trả (có người?, mô tả). Kết quả «không ai» (False) thì nhìn lại mỗi ``XEM_CACH_GIAY`` giây
+    tới hết ``XEM_TRONG_GIAY`` — thấy người lần nào là thôi. True / None (không nguồn nào nhìn được) trả ngay."""
+    co, mo_ta = xem(luc)
+    het = time.time() + XEM_TRONG_GIAY
+    lan = 1
+    while co is False and time.time() < het:
+        time.sleep(XEM_CACH_GIAY)
+        co, mo_ta = xem(time.time())
+        lan += 1
+    if lan > 1:
+        mo_ta = f"{mo_ta} (nhìn {lan} lần trong {XEM_TRONG_GIAY} giây)"
+    return co, mo_ta
+
+
 def _co_nguoi_that(tb: str, luc: float) -> tuple[bool | None, str]:
     """Xác minh bằng MỌI nguồn đã có: bài xác minh «bật» bot học (radar, khoảng cách, camera…), rồi camera của
     thiết bị (`tat_khi_vang.nhin`: số người Frigate đếm sẵn, không có thì chụp + YOLO). True = có nguồn thấy người;
@@ -2220,7 +2244,7 @@ def _bat_lai(tb: str, nguon: str, luc: float) -> None:
             ro.close()
         if nguoi:
             return                                  # người đã tự bật/tắt sau lần bot tắt — người quyết rồi
-        co, mo_ta = _co_nguoi_that(tb, luc)
+        co, mo_ta = _xem_trong_khoang(lambda t: _co_nguoi_that(tb, t), luc)
         phut = (luc - float(tat["ts"])) / 60
         if co is False:
             _nk(tb, "on", "khong", nguon, f"người quay lại sau {phut:.0f} phút — xác minh không thấy ai ({mo_ta})", luc=luc)
@@ -2266,10 +2290,16 @@ def _huong_duyet(l: dict[str, Any]) -> str:
     return "on" if l.get("chieu") == "bat" else "off"
 
 
-def _xu_ly_duyet(tb: str, khop: list[dict[str, Any]], nguon: str, luc: float) -> None:
+def _xu_ly_duyet(tb: str, khop: list[dict[str, Any]], nguon: str, luc: float, *, lan: int = 0) -> None:
     """Một sự kiện khớp ``khi`` của các luật đã duyệt: luật đầu tiên đủ điều kiện, không bị luật chặn, qua xác minh
-    thì làm (hoặc hỏi) — mỗi sự kiện tối đa MỘT việc."""
+    thì làm (hoặc hỏi) — mỗi sự kiện tối đa MỘT việc.
+
+    Chưa luật nào đủ điều kiện thì XÉT LẠI mỗi ``XEM_CACH_GIAY`` tới hết ``XEM_TRONG_GIAY`` (``lan`` = lần xét):
+    đo 03/10/2026 06:49:54 radar báo có người, luật bật quạt #5 thiếu «Frigate thấy người» — Frigate thấy 8 giây
+    sau, không sự kiện nào khiến xét lại, chủ máy ngồi không quạt. Chỉ ghi nhật ký «chưa đủ» ở lần cuối."""
     from services import du_doan_nha as dd, ha_client, luat_duyet, thong_bao
+    thieu: list[tuple[str, str]] = []
+    co_luat_du = False
     try:
         tat_ca = _luat_duyet(tb)
         st = {str(x["entity_id"]): x for x in ha_client.get_states() or []}
@@ -2280,9 +2310,9 @@ def _xu_ly_duyet(tb: str, khop: list[dict[str, Any]], nguon: str, luc: float) ->
             ten_th = next((x["truong_hop"][l["so"] - 1] for x in th if x["id"] == l["lan"]), "")[:80]
             ok, doc = luat_duyet.kiem_dieu_kien(l["neu"], luc, st)
             if not ok:
-                _nk(tb, hd, "khong", nguon, f"trường hợp duyệt #{l['so']}: chưa đủ điều kiện — {', '.join(doc)}",
-                    luc=luc)
+                thieu.append((hd, f"trường hợp duyệt #{l['so']}: chưa đủ điều kiện — {', '.join(doc)}"))
                 continue
+            co_luat_du = True
             if tt == hd:
                 continue
             if tt in _KHONG_CO_MAT:
@@ -2326,6 +2356,14 @@ def _xu_ly_duyet(tb: str, khop: list[dict[str, Any]], nguon: str, luc: float) ->
                                        f"{_TEN_HD[_NGUOC[hd]].lower()} lại và sửa luật. Không trả "
                                        f"lời trong {CHAM_TU_LAM // 60} phút là em tính đúng.")
             return
+        if thieu and not co_luat_du:
+            if (lan + 1) * XEM_CACH_GIAY <= XEM_TRONG_GIAY:
+                time.sleep(XEM_CACH_GIAY)
+                _xu_ly_duyet(tb, khop, nguon, time.time(), lan=lan + 1)
+                return
+            for hd, ly in thieu:
+                _nk(tb, hd, "khong", nguon, ly + (f" (xét {lan + 1} lần trong {XEM_TRONG_GIAY} giây)" if lan else ""),
+                    luc=luc)
     except Exception as exc:  # noqa: BLE001
         logger.warning({"event": "kich_hoat_duyet_loi", "thiet_bi": tb, "error": str(exc)[:200]})
 
@@ -2757,8 +2795,14 @@ def _tat_vi_vang(tb: str) -> None:
         from services import boi_canh_nha, xac_minh_nha
         bai = xac_minh_nha.ap(tb)
         if bai and xac_minh_nha.nguon_luc(bai["tat"], luc):
-            co, mo_ta = xac_minh_nha.xac_minh(xac_minh_nha.nguon_luc(bai["tat"], luc), boi_canh_nha.phong_cua(tb))
+            khu = boi_canh_nha.phong_cua(tb)
+            co, mo_ta = _xem_trong_khoang(
+                lambda t: xac_minh_nha.xac_minh(xac_minh_nha.nguon_luc(bai["tat"], t), khu), luc)
             logger.info({"event": "kich_hoat_xac_minh_tat", "thiet_bi": tb, "co_nguoi": co, "mo_ta": mo_ta})
+            if co is False and not _deu_vang(list(tv.get("cam_bien") or [])):
+                _nk(tb, "off", "khong", "", f"{nguon_vang} — trong lúc em nhìn lại, cảm biến lại thấy người",
+                    luc=luc)
+                return
             if co:
                 _nk(tb, "off", "khong", "", f"{nguon_vang} — tự xác minh: {mo_ta}, xét lại sau {HEN_LAI} giây",
                     luc=luc)

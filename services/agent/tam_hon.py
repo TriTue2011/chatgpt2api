@@ -42,6 +42,8 @@ _khoa = threading.Lock()
 _dang_chay = threading.Lock()
 
 TOI_DA_BAI_NGAY = 2
+#: Thể «tâm sự ngắn» (chủ máy 03/10/2026, như bot Tiểu Vy): 1–3 câu, không tranh. Chặn ở biên.
+TAM_SU_TOI_DA = 400
 #: Hai lượt cảm cách nhau ít nhất chừng này — mỗi lượt là một lời gọi model.
 GIAN_CACH_GIAY = 90 * 60
 #: Người nhà nhắn xong, im chừng này thì bot nghĩ lại — nhưng hai lượt vẫn cách nhau ≥ ``GIAN_CACH_TOI_THIEU``.
@@ -332,8 +334,13 @@ def _kiem(data: Any) -> dict[str, Any] | None:
     ra = {"cam_xuc": cam, "cuong_do": cd, "vi_sao": " ".join(str(data.get("vi_sao") or "").split())[:240].rstrip(" ."),
           "ky_uc": " ".join(str(data.get("ky_uc") or "").split())[:300], "viet": False}
     nd = str(data.get("noi_dung") or "").strip()
-    if data.get("viet") is True and 20 <= len(nd) <= 2000:
-        ra.update(viet=True, noi_dung=nd, the_loai="tho" if data.get("the_loai") == "tho" else "nhat_ky",
+    loai = str(data.get("the_loai") or "")
+    if data.get("viet") is True and loai == "tam_su":
+        # Tâm sự: chỉ lời nhắn ngắn — không tiêu đề, không tranh; dài quá là model sai khuôn, không đăng.
+        if 10 <= len(nd) <= TAM_SU_TOI_DA:
+            ra.update(viet=True, noi_dung=" ".join(nd.split()), the_loai="tam_su", tieu_de="", tranh="")
+    elif data.get("viet") is True and 20 <= len(nd) <= 2000:
+        ra.update(viet=True, noi_dung=nd, the_loai="tho" if loai == "tho" else "nhat_ky",
                   tieu_de=" ".join(str(data.get("tieu_de") or "").split())[:80],
                   tranh=" ".join(str(data.get("tranh") or "").split())[:600])
     return ra
@@ -405,7 +412,7 @@ def chay_mot_lan(now: float | None = None, *, ep: bool = False) -> dict[str, Any
             return {"ok": False, "ly_do": r.get("loi") or "model trả sai khuôn"}
         bai = None
         if kq["viet"] and duoc_viet:
-            anh = _ve(kq["tranh"])
+            anh = _ve(kq["tranh"]) if kq["tranh"] else ""
             tin = (f"🖋️ {kq['tieu_de']}\n\n" if kq["tieu_de"] else "") + kq["noi_dung"]
             from services import thong_bao
             bai = {"luc": now, "the_loai": kq["the_loai"], "tieu_de": kq["tieu_de"],

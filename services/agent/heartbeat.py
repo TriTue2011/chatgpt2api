@@ -182,6 +182,12 @@ def _parse_tasks() -> list[dict[str, Any]]:
         "system": True,
     })
     tasks.append({
+        "id": "lech_nep",
+        "intent": "read",
+        "text": "Thiết bị không hoạt động đúng giờ quen thì hỏi nhẹ kèm nguyên nhân — chỉ khi đã tích",
+        "system": True,
+    })
+    tasks.append({
         "id": "tam_hon",
         "intent": "read",
         "text": "Bot cảm và viết/vẽ từ chuyện thật trong nhà — chỉ khi chủ máy đã tích kích hoạt",
@@ -616,6 +622,19 @@ def _eval_thoi_quen_nha() -> tuple[str, str]:
         return "skip", f"error: {exc}"
 
 
+def _eval_lech_nep() -> tuple[str, str]:
+    """Nhắc lệch nếp — services.lech_nep. Mặc định TẮT (mqtt.lech_nep.bat). Chạy nền: lần đầu
+    mỗi ngày phải học lại nếp từ 21 ngày lịch sử."""
+    try:
+        from services import lech_nep
+        if not lech_nep.is_enabled():
+            return "skip", "nhắc lệch nếp tắt (mqtt.lech_nep)"
+        threading.Thread(target=lech_nep.chay_mot_lan, name="lech-nep", daemon=True).start()
+        return "act", "soát lệch nếp (chạy nền)"
+    except Exception as exc:
+        return "skip", f"error: {exc}"
+
+
 def _eval_tam_hon() -> tuple[str, str]:
     """Tâm hồn của bot — services.agent.tam_hon. Mặc định TẮT: chủ máy tích mới chạy."""
     try:
@@ -642,6 +661,7 @@ _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
     "bai_hoc": _eval_bai_hoc,
     "du_doan_nha": _eval_du_doan_nha,
     "tam_hon": _eval_tam_hon,
+    "lech_nep": _eval_lech_nep,
 }
 
 
