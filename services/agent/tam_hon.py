@@ -1,7 +1,7 @@
 """Tâm hồn của bot — cảm xúc và viết/vẽ từ chuyện THẬT trong nhà.
 
 Chủ máy 02/10/2026: *"Train cho bot có cảm xúc"*, *"Là nhà văn, nhà thơ"*, *"Train cho
-nó tự vẽ tranh, làm thơ"*; chọn «Tự viết & vẽ chủ động» + «Cảm xúc trong lời trò
+nó tự vẽ tranh, làm thơ"*; chọn «Tự viết & vẽ chủ động» (03/10: chỉ còn thơ ngắn + tâm sự, bỏ tranh) + «Cảm xúc trong lời trò
 chuyện», nhịp «Khi có chuyện đáng viết»; và *"cần có tích kích hoạt, không để bot tự
 chủ"* — nên CẢ HAI phần mặc định TẮT, chỉ chạy khi chủ máy tích trên web.
 
@@ -44,6 +44,10 @@ _dang_chay = threading.Lock()
 TOI_DA_BAI_NGAY = 2
 #: Thể «tâm sự ngắn» (chủ máy 03/10/2026, như bot Tiểu Vy): 1–3 câu, không tranh. Chặn ở biên.
 TAM_SU_TOI_DA = 400
+#: Thơ NGẮN (chủ máy 03/10/2026: "thơ ngắn, không dài … vẽ tranh thì thôi, nếu cần thì tôi yêu cầu"): ≤ 6 câu.
+#: Nhật ký và tranh đã BỎ — vẽ khi chủ máy tự yêu cầu (tool generate_image).
+THO_TOI_DA_CAU = 6
+THO_TOI_DA = 500
 #: Hai lượt cảm cách nhau ít nhất chừng này — mỗi lượt là một lời gọi model.
 GIAN_CACH_GIAY = 90 * 60
 #: Người nhà nhắn xong, im chừng này thì bot nghĩ lại — nhưng hai lượt vẫn cách nhau ≥ ``GIAN_CACH_TOI_THIEU``.
@@ -338,31 +342,13 @@ def _kiem(data: Any) -> dict[str, Any] | None:
     if data.get("viet") is True and loai == "tam_su":
         # Tâm sự: chỉ lời nhắn ngắn — không tiêu đề, không tranh; dài quá là model sai khuôn, không đăng.
         if 10 <= len(nd) <= TAM_SU_TOI_DA:
-            ra.update(viet=True, noi_dung=" ".join(nd.split()), the_loai="tam_su", tieu_de="", tranh="")
-    elif data.get("viet") is True and 20 <= len(nd) <= 2000:
-        ra.update(viet=True, noi_dung=nd, the_loai="tho" if loai == "tho" else "nhat_ky",
-                  tieu_de=" ".join(str(data.get("tieu_de") or "").split())[:80],
-                  tranh=" ".join(str(data.get("tranh") or "").split())[:600])
+            ra.update(viet=True, noi_dung=" ".join(nd.split()), the_loai="tam_su", tieu_de="")
+    elif data.get("viet") is True and loai == "tho":
+        cau = [d.strip() for d in nd.splitlines() if d.strip()]
+        if 2 <= len(cau) <= THO_TOI_DA_CAU and len(nd) <= THO_TOI_DA:    # dài là sai khuôn — không đăng
+            ra.update(viet=True, noi_dung="\n".join(cau), the_loai="tho",
+                      tieu_de=" ".join(str(data.get("tieu_de") or "").split())[:80])
     return ra
-
-
-def _ve(tranh: str) -> str:
-    """Tranh đi kèm bài — hỏng thì bài vẫn gửi, chỉ thiếu tranh."""
-    if not tranh:
-        return ""
-    try:
-        from services.agent.branches import branch_model
-        from services.agent.capabilities import _luu_anh_tu_data
-        from services.agent.runtime import call_image
-        r = call_image(tranh, model=branch_model("image_gen"))
-        if r.get("error"):
-            logger.info({"event": "tam_hon_ve_hong", "loi": str(r["error"])[:160]})
-            return ""
-        urls = _luu_anh_tu_data(r.get("data"))
-        return urls[0] if urls else ""
-    except Exception as exc:  # noqa: BLE001
-        logger.info({"event": "tam_hon_ve_hong", "loi": str(exc)[:160]})
-        return ""
 
 
 def _goi(de_: str) -> dict[str, Any]:
@@ -412,12 +398,10 @@ def chay_mot_lan(now: float | None = None, *, ep: bool = False) -> dict[str, Any
             return {"ok": False, "ly_do": r.get("loi") or "model trả sai khuôn"}
         bai = None
         if kq["viet"] and duoc_viet:
-            anh = _ve(kq["tranh"]) if kq["tranh"] else ""
             tin = (f"🖋️ {kq['tieu_de']}\n\n" if kq["tieu_de"] else "") + kq["noi_dung"]
             from services import thong_bao
             bai = {"luc": now, "the_loai": kq["the_loai"], "tieu_de": kq["tieu_de"],
-                   "noi_dung": kq["noi_dung"], "tranh": kq["tranh"], "anh": anh,
-                   "cam_xuc": kq["cam_xuc"], "gui": thong_bao.gui("bot.tam_hon", tin, anh)}
+                   "noi_dung": kq["noi_dung"], "cam_xuc": kq["cam_xuc"], "gui": thong_bao.gui("bot.tam_hon", tin)}
         with _khoa:
             d = _nap()
             d["lan_xet"] = now

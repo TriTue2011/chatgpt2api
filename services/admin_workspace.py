@@ -550,9 +550,10 @@ def start_save_prompt(platform: str, admin_chat_id: str, contact: dict[str, Any]
         lines_info.append(f"• Tên user: **{dn or gn}**" if (dn or gn) else "• Tên user: *(chưa nhận diện)*")
         if uid and uid != cid:
             lines_info.append(f"• User ID: `{uid}`")
+    from services.cap_quyen import HUONG_DAN
     return (
-        f"\n\n💾 **Lưu vào danh bạ của bạn?**\n"
-        f"Trả lời: `có` / `lưu` hoặc `không` / `bỏ`\n"
+        f"\n\n{HUONG_DAN}\n"
+        f"💾 **Lưu danh bạ** (chưa cấp quyền): `có` / `lưu` — `không` / `bỏ`\n"
         f"(Chỉ thread admin này — admin khác tự quyết riêng.)\n"
         + "\n".join(x for x in lines_info if x)
     )
@@ -602,6 +603,26 @@ def handle_admin_text(platform: str, admin_chat_id: str, text: str) -> Optional[
 
     step = pending.get("step") or "ask_yes"
     low = text.lower()
+
+    # Cấp quyền theo gói + thời hạn (chủ máy 03/10/2026) — trả lời được ở BẤT KỲ bước nào của luồng chờ:
+    # bot tự tích bộ lọc, lưu tên nền tảng vào danh bạ nếu chưa đặt, hết hạn tự gỡ (services/cap_quyen.py).
+    # KHÔNG đọc ở bước đặt tên: ở đó «1»/«2» là chọn tên, và tên tự đặt «Khách» không được thành lệnh cấp quyền.
+    from services import cap_quyen
+    lc = cap_quyen.doc_lua_chon(text) if step in ("ask_yes", "ask_quyen") else None
+    if lc is not None:
+        clear_pending(platform, admin_chat_id)
+        if lc["goi"] == "bo":
+            return "Ok, bỏ qua — chưa cấp quyền gì."
+        ten = (contact_alias_for(platform, admin_chat_id, str(pending.get("contact_key") or ""))
+               or str(pending.get("display_name") or pending.get("chat_name") or "").strip())
+        if ten and pending.get("contact_key") and not contact_alias_for(
+                platform, admin_chat_id, str(pending.get("contact_key"))):
+            set_contact_alias(platform, admin_chat_id, str(pending["contact_key"]), ten)
+        try:
+            return cap_quyen.cap(platform, str(pending.get("bot_id") or ""), str(pending.get("chat_id") or ""),
+                                 lc["goi"], lc["giay"], ten=ten, nguoi_duyet=f"{platform}:{admin_chat_id}")
+        except Exception as exc:  # noqa: BLE001 — báo admin LÝ DO, không im
+            return f"Em chưa cấp được quyền ({str(exc)[:150]}). Anh tích tay ở Cài đặt › Kênh chat › Lọc thread."
 
     if step == "ask_yes":
         if low in {"không", "khong", "no", "bỏ", "bo", "skip", "0"}:
@@ -664,7 +685,7 @@ def handle_admin_text(platform: str, admin_chat_id: str, text: str) -> Optional[
             return "Tên trống — gõ `1` / `2` (nhóm) hoặc gõ tên / `bỏ`."
         ck = str(pending.get("contact_key") or "")
         set_contact_alias(platform, admin_chat_id, ck, alias)
-        clear_pending(platform, admin_chat_id)
+        set_pending(platform, admin_chat_id, {**pending, "step": "ask_quyen"})
         bid = pending.get("bot_id")
         bl = bot_display_name(platform, str(bid or ""), admin_chat_id)
         gn = str(pending.get("chat_name") or "").strip()
@@ -676,7 +697,7 @@ def handle_admin_text(platform: str, admin_chat_id: str, text: str) -> Optional[
             f"Đã lưu **{alias}** ({source_note})\n"
             f"• key `{ck}` · bot **{bl}**{extra}\n"
             f"Lần sau họ nhắn sẽ không báo lạ. Gửi tin: "
-            f"`gửi cho {alias} bằng bot {bl}: ...`"
+            f"`gửi cho {alias} bằng bot {bl}: ...`\n\n{cap_quyen.HUONG_DAN}"
         )
 
     return None

@@ -111,9 +111,9 @@ SU_KIEN: tuple[SuKien, ...] = (
            "Những câu bot từng trả lời sai và đã rút kinh nghiệm.", "Học hỏi"),
     SuKien("hoc_hoi.hieu_thiet_bi", "Bot hiểu thiết bị",
            "Kết luận mới của bot về thiết bị trong nhà, chờ chấm.", "Học hỏi"),
-    SuKien("bot.tam_hon", "🖋️ Bot viết & vẽ",
-           "Thơ / nhật ký kèm tranh bot tự viết khi trong nhà có chuyện đáng viết "
-           "(tối đa 2 bài/ngày). Chỉ chạy khi đã tích ở Cài đặt › Tâm hồn của bot.",
+    SuKien("bot.tam_hon", "🖋️ Bot làm thơ & tâm sự",
+           "Thơ ngắn / tâm sự 1–3 câu bot tự viết khi trong nhà có chuyện đáng viết "
+           "(tối đa 2 lần/ngày, không vẽ tranh). Chỉ chạy khi đã tích ở Cài đặt › Tâm hồn của bot.",
            "Học hỏi"),
     SuKien("he_thong.loi", "🔔 Lỗi & cảnh báo hệ thống",
            "Lỗi dịch vụ, tiến trình chết, sự cố nền tảng.", "Hệ thống"),

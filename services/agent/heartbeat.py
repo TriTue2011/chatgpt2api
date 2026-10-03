@@ -182,6 +182,12 @@ def _parse_tasks() -> list[dict[str, Any]]:
         "system": True,
     })
     tasks.append({
+        "id": "cap_quyen",
+        "intent": "write",
+        "text": "Gỡ quyền dùng bot đã hết hạn (anh duyệt theo gói + thời hạn trong kênh) rồi báo anh",
+        "system": True,
+    })
+    tasks.append({
         "id": "loa_cho",
         "intent": "read",
         "text": "Thông báo loa giữ lại lúc nhà vắng — có người về thì phát",
@@ -628,6 +634,18 @@ def _eval_thoi_quen_nha() -> tuple[str, str]:
         return "skip", f"error: {exc}"
 
 
+def _eval_cap_quyen() -> tuple[str, str]:
+    """Quyền cấp theo thời hạn (services.cap_quyen): quá hạn thì gỡ — chỉ khi bản ghi lọc còn đúng như bot ghi."""
+    try:
+        from services import cap_quyen
+        if not any(v.get("het_han") for v in cap_quyen.ds().values()):
+            return "skip", "không có quyền nào có hạn"
+        n = cap_quyen.chay_mot_lan()
+        return ("act", f"gỡ {n} quyền hết hạn") if n else ("skip", "chưa có quyền nào hết hạn")
+    except Exception as exc:
+        return "skip", f"error: {exc}"
+
+
 def _eval_loa_cho() -> tuple[str, str]:
     """Tin loa giữ lúc nhà vắng (services.voice.announce): có người thì phát. Chạy nền — TTS + Cast mất vài giây."""
     try:
@@ -681,6 +699,7 @@ _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
     "tam_hon": _eval_tam_hon,
     "lech_nep": _eval_lech_nep,
     "loa_cho": _eval_loa_cho,
+    "cap_quyen": _eval_cap_quyen,
 }
 
 

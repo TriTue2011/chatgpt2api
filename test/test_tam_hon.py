@@ -18,8 +18,7 @@ _GOI_THAT = tam_hon._goi  # bản thật, trước khi fixture thay
 
 TRA = {"cam_xuc": "bồi hồi", "cuong_do": 3, "vi_sao": "bố nhắn về muộn, 22:19 mới thấy bố ở cửa",
        "viet": True, "the_loai": "tho", "tieu_de": "Bữa cơm chờ",
-       "noi_dung": "Mâm cơm hai mẹ con ngồi\nĐèn hiên vẫn sáng chờ người về khuya",
-       "tranh": "watercolor of a warm porch light at night"}
+       "noi_dung": "Mâm cơm hai mẹ con ngồi\nĐèn hiên vẫn sáng chờ người về khuya"}
 
 
 def _vec_gia(chu: str):
@@ -39,7 +38,6 @@ def th(tmp_path, monkeypatch):
     monkeypatch.setattr(tam_hon, "nguoi_ra_vao", lambda tu: ["22:19 Cam cửa thấy: Tôi"])
     monkeypatch.setattr(tam_hon, "loi_nhan", lambda tu: ["19:05 bố về muộn, hai mẹ con ăn cơm trước"])
     monkeypatch.setattr(tam_hon, "_goi", lambda de: goi.append(de) or {"data": dict(TRA)})
-    monkeypatch.setattr(tam_hon, "_ve", lambda tranh: "http://x/anh.png")
     monkeypatch.setattr(thong_bao, "gui", lambda k, t, a="": gui.append((k, t, a)) or 1)
     monkeypatch.setattr(tam_hon, "_vec", _vec_gia)
     monkeypatch.setattr(tam_hon, "_chat_cuoi", lambda: 0.0)
@@ -74,14 +72,14 @@ def test_chi_tich_cam_xuc_thi_cam_ma_khong_viet(th):
     assert tam_hon.khoi_prompt("zalop_1", now=_luc(22, 31) + 9 * 3600) == "", "tâm trạng cũ thì thôi"
 
 
-def test_tich_viet_thi_gui_bai_kem_tranh_toi_da_hai_bai_ngay(th):
+def test_tich_viet_thi_gui_tho_ngan_khong_tranh_toi_da_hai_bai_ngay(th):
     goi, gui = th
     tam_hon.dat(bat_viet=True)
     for gio in (9, 14, 20):
         tam_hon.chay_mot_lan(_luc(gio), ep=True)
     assert len(gui) == 2
     k, tin, anh = gui[0]
-    assert k == "bot.tam_hon" and tin.startswith("🖋️ Bữa cơm chờ") and anh == "http://x/anh.png"
+    assert k == "bot.tam_hon" and tin.startswith("🖋️ Bữa cơm chờ") and anh == "", "không vẽ tranh nữa"
     assert "chỉ cảm, không viết" in goi[-1], "đủ 2 bài thì lượt sau chỉ cảm"
     assert len(tam_hon.trang_thai()["bai"]) == 2
 
@@ -195,18 +193,22 @@ def test_cam_xuc_chi_vao_zalo_va_telegram(uid, dung):
 def test_tam_su_ngan_khong_tranh_khong_tieu_de(th, monkeypatch):
     _, gui = th
     tam_hon.dat(bat_viet=True)
-    ve = []
-    monkeypatch.setattr(tam_hon, "_ve", lambda tranh: ve.append(tranh) or "x")
     monkeypatch.setattr(tam_hon, "_goi", lambda de: {"data": {
         **TRA, "the_loai": "tam_su", "tieu_de": "bỏ", "tranh": "bỏ",
         "noi_dung": "Bố ơi, hôm nay nhà mình ăn cơm sớm. Em để đèn hiên sáng chờ bố nhé."}})
     tam_hon.chay_mot_lan(_luc(19), ep=True)
     k, tin, anh = gui[-1]
     assert tin == "Bố ơi, hôm nay nhà mình ăn cơm sớm. Em để đèn hiên sáng chờ bố nhé." and anh == ""
-    assert ve == [], "tâm sự không vẽ tranh"
     assert tam_hon.trang_thai()["bai"][-1]["the_loai"] == "tam_su"
 
 
 def test_tam_su_dai_qua_la_sai_khuon_khong_dang():
     kq = tam_hon._kiem({**TRA, "the_loai": "tam_su", "noi_dung": "x " * 300})
     assert kq["viet"] is False
+
+
+def test_tho_dai_hoac_nhat_ky_la_sai_khuon_khong_dang():
+    """Chủ máy 03/10/2026: «thơ ngắn, không dài», bỏ nhật ký."""
+    assert tam_hon._kiem({**TRA, "noi_dung": "\n".join(f"câu {i}" for i in range(9))})["viet"] is False
+    assert tam_hon._kiem({**TRA, "the_loai": "nhat_ky", "noi_dung": "Hôm nay em ngồi nhìn mưa rất lâu."})["viet"] is False
+    assert tam_hon._kiem(TRA)["viet"] is True
