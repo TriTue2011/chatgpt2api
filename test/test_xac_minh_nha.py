@@ -205,3 +205,23 @@ def test_chu_may_sua_bai_tren_web_ap_ngay(kh, xmn, monkeypatch):
         xmn.sua(DEN, {**bai, "bat": {**bai["bat"], "xac_minh": ["Cam bếp"]}})
     lc = xmn.lua_chon(DEN)
     assert {x["ma"] for x in lc["nguon"]} == {NGU, "Cam phòng ngủ"} and lc["ap"] == xmn.ap(DEN)
+
+
+def test_kiem_lai_khong_tat_khi_nguon_da_cho_bat_van_thay_nguoi(kh, xmn, monkeypatch):
+    """03/10/2026 15:10:57 quạt PK bật vì khoảng cách radar trong vùng; 15:12:57 kiểm lại chỉ bằng camera (người ngồi
+    yên, mất dấu) → tắt dù radar vẫn báo có người. Nguồn đủ tin để bật phải được hỏi trước khi tắt."""
+    tt = {x["entity_id"]: dict(x) for x in TT}
+    tt[DEN]["state"] = "on"
+    monkeypatch.setattr(kh, "_trang_thai_ha", lambda: list(tt.values()))
+    from services import ha_client, thong_bao
+    monkeypatch.setattr(ha_client, "get_state", lambda e: tt.get(e))
+    monkeypatch.setattr(thong_bao, "gui", lambda *a, **k: True)
+    hen = _hen_gia(kh, monkeypatch)
+    _ap(xmn)
+    monkeypatch.setattr(kh, "_nhin_lai", lambda cams, khu="": "")
+    monkeypatch.setattr(kh, "_co_nguoi_that", lambda tb, luc: (True, "khoảng cách radar trong vùng Phòng khách"))
+    kh._kiem_lai(DEN, 0)
+    assert kh.goi == [] and hen[-1].args == (DEN, 1), "radar khoảng cách còn thấy người: giữ, hẹn kiểm tiếp"
+    monkeypatch.setattr(kh, "_co_nguoi_that", lambda tb, luc: (False, "không nguồn nào thấy người"))
+    kh._kiem_lai(DEN, 1)
+    assert kh.goi == [("switch", "turn_off", {"entity_id": DEN})], "mọi nguồn cùng không thấy ai: tắt"

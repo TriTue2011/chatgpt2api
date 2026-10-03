@@ -1921,6 +1921,15 @@ def _kiem_lai(tb: str, lan: int) -> None:
         if co is None:
             _hen_kiem_lai(tb, lan + 1)
             return
+        # Nguồn đã đủ tin để BẬT thì cũng phải được hỏi trước khi TẮT. Đo 03/10/2026 15:10:57: quạt PK bật vì
+        # «khoảng cách radar trong vùng Phòng khách»; 15:12:57 kiểm lại chỉ bằng Cam PK + Frigate (người ngồi yên,
+        # camera mất dấu) → tắt, trong khi radar hiện diện báo có người liền 15:10:24–15:13:57.
+        co_bat, mt_bat = _co_nguoi_that(tb, luc)
+        if co_bat:
+            logger.info({"event": "kich_hoat_kiem_lai_giu", "thiet_bi": tb, "lan": lan, "kiem_lai": mo_ta,
+                         "nguon_bat": mt_bat})
+            _hen_kiem_lai(tb, lan + 1)
+            return
         if _lam(tb, "off", tu_lam=True):
             _nk(tb, "off", "lam", "", f"kiểm lại sau khi bật: {mo_ta} — tắt, cảm biến có thể báo ảo", luc=luc)
             thong_bao.gui("nha.canh_bao", f"⚠️ Em vừa tắt {_ten_tb(tb)}: bật vì cảm biến báo có người, nhưng kiểm "
