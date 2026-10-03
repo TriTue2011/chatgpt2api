@@ -82,6 +82,13 @@ if _cfg is not None:
 def _nha_co_nguoi_mac_dinh(request, monkeypatch):
     """Thông báo loa: nhà vắng thì GIỮ tin (03/10/2026). Mặc định test coi như CÓ NGƯỜI — không thì kết quả tuỳ
     dữ liệu lịch sử nhà test trước để lại (chạy riêng xanh, chạy chung lô đỏ). Hàng chờ thử ở test_loa_cho_nguoi."""
+    if request.module.__name__.rsplit(".", 1)[-1] != "test_rag_dau":
+        # RAG ngay câu đầu gọi hub 127.0.0.1:8005 — test không được gọi mạng (03/10/2026).
+        try:
+            from services import rag_dau as _rd
+            monkeypatch.setattr(_rd, "tim", lambda cau: [])
+        except Exception:  # noqa: BLE001
+            pass
     if request.module.__name__.rsplit(".", 1)[-1] != "test_loa_cho_nguoi":
         try:
             from services.voice import announce as _ann

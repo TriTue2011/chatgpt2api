@@ -895,6 +895,20 @@ def create_app() -> FastAPI:
         return {"ok": True, "collection": collection, "deleted": deleted,
                 "source_prefix": prefix, "where": loc or None}
 
+    @app.post("/api/rag/tim")
+    async def rag_tim(body: dict):
+        """Tìm trong MỌI kho + xếp lại — c2a gọi trước khi đưa câu cho LLM (services/rag_dau.py).
+        body: {"cau": str, "top": int ≤ 10} → {"ket_qua": [{kho, text, source, diem}]}."""
+        import asyncio as _aio
+
+        from src.rag.retriever import RAGRetriever
+        cau = str((body or {}).get("cau") or "").strip()[:1000]
+        top = max(1, min(int((body or {}).get("top") or 5), 10))
+        if not cau:
+            return {"ket_qua": []}
+        ra = await _aio.to_thread(RAGRetriever.get().tim_moi_kho, cau)
+        return {"ket_qua": ra[:top]}
+
     @app.get("/api/rag/thong-ke/{collection}")
     async def rag_thong_ke(collection: str):
         """Đếm chunk theo LỚP – MÔN – TẬP của một kho.

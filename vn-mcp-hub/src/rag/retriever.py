@@ -261,6 +261,43 @@ class RAGRetriever:
             })
         return out
 
+    def tim_moi_kho(self, text: str, so: int = UNG_VIEN_XEP, mo_kho: int = 5) -> list[dict[str, Any]]:
+        """Tìm trong MỌI kho (không cần biết trước kho nào): mỗi kho `mo_kho` đoạn gần nhất theo gte, gộp lấy `so`
+        đoạn gần nhất, xếp lại bằng cross-encoder (c2a `/api/xep_lai`). Trả [{kho, text, source, diem}] theo điểm
+        xếp lại giảm dần; xếp lại hỏng thì theo khoảng cách gte và `diem` = None. Chỉ chạy ở kho gte.
+
+        Cho c2a chèn tài liệu NGAY CÂU ĐẦU (services/rag_dau.py). Đo 03/10/2026 (130 câu hỏi từ đoạn thật + 346 tin
+        nhắn thật): ngưỡng điểm 0,0 chèn được cho 70,8% câu kiến thức, chèn nhầm 2,3% tin nhắn thường; ~230 ms."""
+        if not self._ensure_loaded() or self._duong != CHROMA_GTE_PATH or not str(text or "").strip():
+            return []
+        q = self._embed_fn([text])[0]
+        ung: list[tuple[float, str, str, dict]] = []
+        for col in self._client.list_collections():
+            ten = col if isinstance(col, str) else col.name
+            c = self._get_collection(ten)
+            if c is None or not c.count():
+                continue
+            try:
+                r = c.query(query_embeddings=[q], n_results=mo_kho, include=["documents", "metadatas", "distances"])
+            except Exception as exc:  # noqa: BLE001 — một kho hỏng không chặn các kho khác
+                logger.warning("RAG: tim_moi_kho(%s) failed: %s", ten, exc)
+                continue
+            for d, doc, m in zip(r["distances"][0], r["documents"][0], r["metadatas"][0] or [{}] * len(r["distances"][0])):
+                if doc:
+                    ung.append((float(d), ten, doc, m or {}))
+        ung.sort(key=lambda x: x[0])
+        ung = ung[:so]
+        diem: list[float] | None = None
+        try:
+            diem = _goi_c2a(C2A_XEP_URL, {"cau": text, "doan": [u[2] for u in ung]}, timeout=10)["diem"]
+        except Exception as exc:  # noqa: BLE001
+            logger.info("RAG: tim_moi_kho bỏ xếp lại (%s)", str(exc)[:120])
+        ra = [{"kho": u[1], "text": u[2], "source": u[3].get("source", "unknown"),
+               "diem": None if diem is None else float(diem[i])} for i, u in enumerate(ung)]
+        if diem is not None and len(diem) == len(ung):
+            ra.sort(key=lambda x: -x["diem"])
+        return ra
+
     def collection_stats(self, collection: str) -> dict[str, Any]:
         """Useful for admin/debug — returns document count, etc."""
         col = self._get_collection(collection)

@@ -3518,6 +3518,17 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 sys_prompt += "\n\n" + _th
     except Exception:
         pass
+    # RAG ngay câu đầu (chủ máy 03/10/2026): tài liệu kho nhà đủ điểm xếp lại thì chèn trước khi gọi LLM —
+    # xem services/rag_dau.py (ngưỡng đo trên câu thật). Việc đòi nguyên văn (dịch) thì không chèn.
+    try:
+        from services import rag_dau as _rag_dau
+        from services.agent import persona as _persona4
+        if not _persona4.viec_doi_nguyen_van(user_text):
+            _tl = _rag_dau.khoi(user_text)
+            if _tl:
+                sys_prompt += "\n\n" + _tl
+    except Exception:
+        pass
     sys_prompt = super_context.maybe_attach(
         sys_prompt, user_id, user_text, hist_before, allow=allow,
     )
