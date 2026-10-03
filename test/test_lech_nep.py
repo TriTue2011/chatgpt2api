@@ -15,8 +15,8 @@ from services import ha_client, hieu_thiet_bi_nha as ht, lech_nep as ln, lich_su
 
 
 def _luc(ngay_lui: int, h: int, m: int = 0) -> float:
-    lt = time.localtime()
-    return time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday - ngay_lui, h, m, 0, 0, 0, -1))
+    """Giờ VIỆT NAM (khung +7 cố định như module) — CI chạy UTC, dùng time.localtime là lệch ngày/giờ."""
+    return (ln._ngay(time.time()) - ngay_lui) * 86400 - ln._LECH_GIO + h * 3600 + m * 60
 
 
 def _cung_loai(ngay_lui: int) -> bool:

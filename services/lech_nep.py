@@ -188,7 +188,7 @@ def quet(now: float | None = None) -> int:
     now = now or time.time()
     if not is_enabled():
         return 0
-    gio = time.localtime(now).tm_hour
+    gio = _phut(now) // 60          # cùng khung +7 với _ngay/_phut — đừng trộn với time.localtime
     if not GIO_HOI[0] <= gio < GIO_HOI[1]:
         return 0
     try:
