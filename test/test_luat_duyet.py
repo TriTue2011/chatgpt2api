@@ -121,3 +121,47 @@ def test_bo_kich_hoat_lam_theo_luat_bi_chan_va_xac_minh(monkeypatch):
     monkeypatch.setattr(kh, "_co_nguoi_that", lambda tb, luc: (False, "camera không thấy ai"))
     kh._xu_ly_duyet("light.den", [luat[0]], "binary_sensor.pk có người vào", 3.0)
     assert len(lam) == 1, "xác minh không thấy người thì không bật"
+
+
+def test_luat_hoi_tu_kiem_bang_ngoai_vi_roi_lam_va_hoi_dung_sai(monkeypatch):
+    """Chủ máy 03/10/2026: "bật quạt phòng khách vẫn hỏi, chưa thực hiện rồi hỏi đúng sai, chưa dùng các ngoại vi để
+    kiểm tra" — trường hợp duyệt #10 («người nhà mở cửa vào rồi ở lại») nên «hỏi», xac_minh false."""
+    from services import du_doan_nha as dd, ha_client, kich_hoat_nha as kh, thong_bao
+
+    lam: list[tuple] = []
+    tin: list[str] = []
+    nk: list[str] = []
+    luat = [_luat(nen="hoi", chieu="bat", lan=1)]
+    monkeypatch.setattr(kh, "_luat_duyet", lambda tb: luat)
+    monkeypatch.setattr(ld, "so", lambda: {"fan.q": {"lan": [{"id": 1, "truong_hop": ["vào rồi ở lại"]}]}})
+    trang = {"fan.q": "off"}
+    monkeypatch.setattr(ha_client, "get_states", lambda use_cache=True: [{"entity_id": k, "state": v} for k, v in trang.items()])
+    for ten, gia in (("_vua_lam", lambda *a, **k: False), ("_nguoi_vua_cham", lambda *a: False),
+                     ("_nk", lambda tb, hd, kq, ng, ly="", *a, **k: nk.append(f"{kq}: {ly}")),
+                     ("_ten_tb", lambda tb: "Quạt phòng khách"), ("_hen_kiem_lai", lambda *a: None)):
+        monkeypatch.setattr(kh, ten, gia)
+    monkeypatch.setattr(kh, "_lam", lambda tb, hd, tu_lam: lam.append((tb, hd)) or True)
+    monkeypatch.setattr(dd, "ghi_nhan", lambda *a, **k: 9)
+    monkeypatch.setattr(dd, "_cam_tu_lam", lambda ten: False)
+    monkeypatch.setattr(thong_bao, "gui", lambda khoa, t, anh_url="": tin.append(t) or 1)
+    xm = {"kq": (True, "khoảng cách radar 2,4 m trong vùng Phòng khách")}
+    monkeypatch.setattr(kh, "_co_nguoi_that", lambda tb, luc: xm["kq"])
+
+    kh._xu_ly_duyet("fan.q", luat, "binary_sensor.pk có người vào", 1.0)
+    assert lam == [("fan.q", "on")], "ngoại vi thấy người → bật luôn, không hỏi trước"
+    assert "Em đã bật Quạt phòng khách" in tin[-1] and "tự kiểm (khoảng cách radar 2,4 m" in tin[-1]
+    assert "Đúng hay sai" in tin[-1]
+
+    xm["kq"] = (False, "Cam phòng khách không thấy ai")
+    kh._xu_ly_duyet("fan.q", luat, "binary_sensor.pk có người vào", 2.0)
+    assert len(lam) == 1 and len(tin) == 1, "ngoại vi nhìn được mà không ai → không bật, không làm phiền"
+    assert "không làm, không hỏi" in nk[-1]
+
+    xm["kq"] = (None, "camera không nhìn được")
+    kh._xu_ly_duyet("fan.q", luat, "binary_sensor.pk có người vào", 3.0)
+    assert len(lam) == 1 and "không ạ?" in tin[-1], "ngoại vi không trả lời được → mới hỏi trước"
+
+    monkeypatch.setattr(dd, "_cam_tu_lam", lambda ten: True)
+    xm["kq"] = (True, "thấy người")
+    kh._xu_ly_duyet("fan.q", luat, "binary_sensor.pk có người vào", 4.0)
+    assert len(lam) == 1 and "không ạ?" in tin[-1], "khoá cửa / bếp / bình nóng lạnh: luôn hỏi"

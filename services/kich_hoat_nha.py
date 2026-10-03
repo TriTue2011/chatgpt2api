@@ -2327,15 +2327,27 @@ def _xu_ly_duyet(tb: str, khop: list[dict[str, Any]], nguon: str, luc: float, *,
             if _vua_lam(tb, hd) or _nguoi_vua_cham(tb, luc):
                 _nk(tb, hd, "khong", nguon, f"trường hợp duyệt #{l['so']}: vừa có người / bot bật tắt", luc=luc)
                 return
-            if l.get("xac_minh"):
-                co, mo_ta = _co_nguoi_that(tb, luc)
-                if (hd == "on" and co is False) or (hd == "off" and co):
-                    _nk(tb, hd, "khong", nguon, f"trường hợp duyệt #{l['so']}: xác minh — {mo_ta}", luc=luc)
+            cam = dd._cam_tu_lam(_ten_tt(tb, hd))
+            # «Hỏi» = CHƯA CHẮC, không phải «luôn hỏi người»: tự kiểm bằng ngoại vi trước (bài xác minh bot học —
+            # radar, khoảng cách, camera/Frigate/YOLO). Chủ máy 01/10/2026: "xác nhận đúng/sai bằng ngoại vi … giảm
+            # dần phụ thuộc người"; 03/10: "bật quạt phòng khách vẫn hỏi, chưa thực hiện rồi hỏi đúng sai, chưa dùng
+            # các ngoại vi để kiểm tra" — luật bot tự học (`_xu_ly`) đã làm vậy, luật duyệt thì chưa.
+            tu_kiem = l["nen"] == "hoi" and not cam
+            co_xm: bool | None = None
+            if l.get("xac_minh") or tu_kiem:
+                co_xm, mo_ta = _co_nguoi_that(tb, luc)
+                trai = (hd == "on" and co_xm is False) or (hd == "off" and co_xm is True)
+                if trai:
+                    _nk(tb, hd, "khong", nguon, f"trường hợp duyệt #{l['so']}: xác minh — {mo_ta}"
+                        + (" — không làm, không hỏi" if tu_kiem else ""), luc=luc)
                     return
                 doc = doc + [f"xác minh: {mo_ta}"] if mo_ta else doc
             ten = _ten_tb(tb)
             nhan = {"nguon": f"trường hợp duyệt #{l['so']}", "luat_duyet": {"lan": l["lan"], "so": l["so"], "doc": doc}}
-            hoi = l["nen"] == "hoi" or dd._cam_tu_lam(_ten_tt(tb, hd))
+            # Kiểm ra ĐÚNG chiều việc (bật: thấy người; tắt: nhìn được mà không ai) thì làm rồi hỏi đúng/sai; ngoại vi
+            # không trả lời được (None) mới hỏi trước.
+            da_kiem = tu_kiem and co_xm is (hd == "on")
+            hoi = cam or (l["nen"] == "hoi" and not da_kiem)
             if hoi:
                 id_ = dd.ghi_nhan(_ten_tt(tb, hd), hd, 1.0, nhan, "hoi")
                 _nk(tb, hd, "hoi", nguon, f"trường hợp duyệt #{l['so']}: {', '.join(doc)}", luc=luc)
@@ -2351,8 +2363,10 @@ def _xu_ly_duyet(tb: str, khop: list[dict[str, Any]], nguon: str, luc: float, *,
                 _nk(tb, hd, "lam", nguon, f"trường hợp duyệt #{l['so']}: {', '.join(doc)}", luc=luc)
             if hd == "on":
                 _hen_kiem_lai(tb, 0)
+            kiem = (f" Trường hợp này anh dặn hỏi — em tự kiểm ({doc[-1].removeprefix('xác minh: ')}) nên làm luôn."
+                    if da_kiem else "")
             thong_bao.gui("nha.goi_y", f"🤖 #{id_} Em đã {_TEN_HD[hd].lower()} {ten} theo trường hợp anh duyệt "
-                                       f"#{l['so']} «{ten_th}».\nĐúng hay sai ạ? Anh trả lời «đúng» hoặc «sai» — sai thì em "
+                                       f"#{l['so']} «{ten_th}».{kiem}\nĐúng hay sai ạ? Anh trả lời «đúng» hoặc «sai» — sai thì em "
                                        f"{_TEN_HD[_NGUOC[hd]].lower()} lại và sửa luật. Không trả "
                                        f"lời trong {CHAM_TU_LAM // 60} phút là em tính đúng.")
             return
