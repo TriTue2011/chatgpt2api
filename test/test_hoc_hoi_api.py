@@ -23,6 +23,44 @@ def _app():
     return TestClient(app), bo_qua
 
 
+class NguongTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client, self._bo_qua = _app()
+        self.addCleanup(self._bo_qua.stop)
+        from services.config import config
+        cu = config.data.get("mqtt", {}).get("du_doan")
+
+        def _tra_lai() -> None:
+            if cu is None:
+                config.data.get("mqtt", {}).pop("du_doan", None)
+            else:
+                config.data.setdefault("mqtt", {})["du_doan"] = cu
+        self.addCleanup(_tra_lai)
+        config.data.setdefault("mqtt", {})["du_doan"] = {"bat": True, "kenh_nhan": ["zalop:a:b"]}
+
+    def test_LUU_NGUONG_CHAN_BIEN_va_GIU_KHOA_KHAC(self) -> None:
+        from services.config import config
+        d = self.client.post("/api/hoc-hoi/nguong", json={"khoa": "mau_len_cap", "gia_tri": 25}).json()
+        self.assertTrue(d["ok"])
+        self.assertEqual(config.data["mqtt"]["du_doan"]["nguong"]["mau_len_cap"], 25)
+        self.assertEqual(config.data["mqtt"]["du_doan"]["kenh_nhan"], ["zalop:a:b"], "không xoá khoá khác")
+        self.assertEqual(d["nguong"]["mau_len_cap"]["gia_tri"], 25)
+
+    def test_KHOA_LA_TU_CHOI(self) -> None:
+        self.assertFalse(self.client.post("/api/hoc-hoi/nguong", json={"khoa": "xyz", "gia_tri": 1}).json()["ok"])
+
+    def test_VE_MAC_DINH_KHI_RONG(self) -> None:
+        from services.config import config
+        self.client.post("/api/hoc-hoi/nguong", json={"khoa": "mau_len_cap", "gia_tri": 25})
+        d = self.client.post("/api/hoc-hoi/nguong", json={"khoa": "mau_len_cap", "gia_tri": None}).json()
+        self.assertTrue(d["ok"])
+        self.assertNotIn("mau_len_cap", config.data["mqtt"]["du_doan"].get("nguong", {}))
+        self.assertEqual(d["nguong"]["mau_len_cap"]["gia_tri"], 50)
+
+    def test_GIA_TRI_LA_TU_CHOI(self) -> None:
+        self.assertFalse(self.client.post("/api/hoc-hoi/nguong", json={"khoa": "mau_len_cap", "gia_tri": "bua"}).json()["ok"])
+
+
 class TangBatTest(unittest.TestCase):
     def setUp(self) -> None:
         self.client, self._bo_qua = _app()

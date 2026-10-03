@@ -253,7 +253,8 @@ def create_router() -> APIRouter:
                     .get("kenh_nhan") or [])
             return {"ok": True, "tang": tang, "nhan_ten_tang": _KHOA_TANG,
                     "diem": diem, "du_doan": du_doan_nha.thong_ke(),
-                    "lan_giai_gan_nhat": gan_nhat, "kenh_nhan": kenh}
+                    "lan_giai_gan_nhat": gan_nhat, "kenh_nhan": kenh,
+                    "nguong": du_doan_nha.nguong()}
         except Exception as exc:
             return _loi(exc, "tổng quan")
 
@@ -278,6 +279,33 @@ def create_router() -> APIRouter:
             return {"ok": True, "khoa": khoa, "bat": bat}
         except Exception as exc:
             return _loi(exc, "bật tầng")
+
+    @router.post("/api/hoc-hoi/nguong")
+    async def dat_nguong(body: dict, authorization: str | None = Header(default=None)):
+        """Lưu ngưỡng bộ não học hỏi. body: {khoa: 'mau_len_cap'|…, gia_tri: số | null (về mặc định)}.
+        Giá trị bị chặn trong khoảng của từng ngưỡng (``du_doan_nha._NGUONG``) nên không đặt được số phá học."""
+        require_admin(authorization)
+        from services import du_doan_nha
+        khoa = str(body.get("khoa") or "")
+        if khoa not in du_doan_nha._NGUONG:
+            return {"ok": False, "error": f"Ngưỡng không hợp lệ: {khoa}"}
+        gt = body.get("gia_tri")
+        try:
+            from services.config import config
+
+            def _sua(data: dict) -> None:
+                ng = data.setdefault("mqtt", {}).setdefault("du_doan", {}).setdefault("nguong", {})
+                if gt is None or str(gt) == "":
+                    ng.pop(khoa, None)              # về mặc định
+                else:
+                    ng[khoa] = float(gt)
+            config.mutate(_sua)
+            logger.info({"event": "hoc_hoi_nguong", "khoa": khoa, "gia_tri": gt})
+            return {"ok": True, "nguong": du_doan_nha.nguong()}
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "giá trị phải là số"}
+        except Exception as exc:
+            return _loi(exc, "lưu ngưỡng")
 
     @router.post("/api/hoc-hoi/noi-chon")
     async def dat_noi_chon(body: dict, authorization: str | None = Header(default=None)):

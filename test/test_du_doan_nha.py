@@ -208,6 +208,17 @@ class DuDoanNhaTest(unittest.TestCase):
         self._cham("light.phong_ngu", dung=0, sai=2)
         self.assertEqual(self.dd.cap("light.phong_ngu"), 1)
 
+    def test_NGUONG_CHINH_DUOC_va_CHAN_BIEN(self) -> None:
+        """Chủ máy chỉnh ngưỡng tự chủ trên web (mqtt.du_doan.nguong); backend chặn biên nên số phá học bị ép về."""
+        self._cham("light.phong_ngu", dung=30)
+        self.assertEqual(self.dd.cap("light.phong_ngu"), 1, "mặc định 50 lượt → 30 chưa đủ")
+        self.dd.config.data["mqtt"]["du_doan"]["nguong"] = {"mau_len_cap": 25, "ty_le_len_cap": 0.9}
+        self.assertEqual(self.dd.cap("light.phong_ngu"), 2, "hạ còn 25 lượt / 90% → đủ")
+        self.dd.config.data["mqtt"]["du_doan"]["nguong"] = {"ty_le_len_cap": 0.2}
+        self.assertEqual(self.dd.nguong()["ty_le_len_cap"]["gia_tri"], 0.5, "ép về cận dưới 0,5")
+        self.dd.config.data["mqtt"]["du_doan"]["nguong"] = {"mau_len_cap": "bua"}
+        self.assertEqual(self.dd.nguong()["mau_len_cap"]["gia_tri"], 50, "giá trị lạ → mặc định")
+
     def test_LUOT_LO_khong_tinh_vao_50(self) -> None:
         """Người không trả lời là quyết định của người, không phải bot sai."""
         for _ in range(60):

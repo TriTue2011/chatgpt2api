@@ -13,6 +13,7 @@
  * duyệt TOÀN BỘ danh sách thiết bị, không chỉ thứ bot từng gặp.
  */
 
+import { useEffect } from "react";
 import { LoaderCircle } from "lucide-react";
 
 import { useAuthGuard } from "@/lib/use-auth-guard";
@@ -29,6 +30,20 @@ import { LichSinhHoat } from "./components/lich-sinh-hoat";
 import { GoiY } from "./components/goi-y";
 import { NepSinhHoat } from "./components/nep-sinh-hoat";
 import { DuyetTruongHop } from "./components/duyet-truong-hop";
+import { Nguong } from "./components/nguong";
+import { TamHonCard } from "../settings/components/tam-hon-card";
+import { useSettingsStore } from "../settings/store";
+
+function TamHonMuc() {
+  const config = useSettingsStore((s) => s.config);
+  const loadConfig = useSettingsStore((s) => s.loadConfig);
+  useEffect(() => { if (!config) void loadConfig(); }, [config, loadConfig]);
+  return config ? <TamHonCard /> : (
+    <div className="flex items-center gap-2 p-3 text-xs text-muted-foreground">
+      <LoaderCircle className="size-4 animate-spin" /> Đang tải…
+    </div>
+  );
+}
 
 function HocHoiContent() {
   return (
@@ -44,6 +59,10 @@ function HocHoiContent() {
         <div className="space-y-3">
           <SettingsSection title="Tổng quan" defaultOpen tuKhoa="cong tac diem tin cay kenh">
             <TongQuan />
+          </SettingsSection>
+          <SettingsSection title="Ngưỡng bộ não (tự chủ, kiểm tiến dần)"
+            tuKhoa="nguong tu chu tu lam so luot ty le dung sai kiem tien dan ngay do chac mo mieng mac dinh">
+            <Nguong />
           </SettingsSection>
           <SettingsSection title="Bot hiểu thiết bị" tuKhoa="ket luan du kien huong dan lich su giai">
             <HieuThietBi />
@@ -72,6 +91,10 @@ function HocHoiContent() {
           </SettingsSection>
           <SettingsSection title="Nếp sinh hoạt (thói quen)" tuKhoa="tinh huong them tay thoi quen">
             <NepSinhHoat />
+          </SettingsSection>
+          <SettingsSection title="Tâm hồn (làm thơ, cảm xúc)"
+            tuKhoa="tam hon lam tho cam xuc goc tinh cach ky uc mac dinh tat">
+            <TamHonMuc />
           </SettingsSection>
         </div>
       </BoLocCaiDat>

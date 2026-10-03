@@ -134,6 +134,35 @@ def is_enabled() -> bool:
     return bool(_cfg().get("bat", True))
 
 
+#: Ngưỡng chủ máy chỉnh được trên web (tab Học hỏi › Ngưỡng bộ não), đọc từ ``mqtt.du_doan.nguong``. Mỗi khoá có
+#: (mặc định, nhỏ nhất, lớn nhất) — chặn biên để đổi bừa không phá học: ví dụ tỉ lệ đúng không cho dưới 0,5 (dưới
+#: thế là tin cả khi sai nhiều hơn đúng), số lượt không cho dưới 10. Mặc định y như hằng số chủ máy đã chốt.
+_NGUONG: dict[str, tuple[float, float, float]] = {
+    "mau_len_cap": (_MAU_LEN_CAP, 10, 500),
+    "ty_le_len_cap": (_TY_LE_LEN_CAP, 0.5, 1.0),
+    "sai_tut_cap": (_SAI_TUT_CAP, 1, 10),
+    "kiem_ngay": (_KIEM_NGAY, 3, 30),
+    "kiem_toi_thieu": (_KIEM_TOI_THIEU, 1, 50),
+    "kiem_ty_le": (_KIEM_TY_LE, 0.5, 1.0),
+    "p_goi_y": (_P_GOI_Y, 0.5, 0.99),
+}
+
+
+def _ng(ten: str) -> float:
+    mac_dinh, nho, lon = _NGUONG[ten]
+    raw = (_cfg().get("nguong") or {}).get(ten)
+    try:
+        return max(nho, min(lon, float(raw)))
+    except (TypeError, ValueError):
+        return float(mac_dinh)
+
+
+def nguong() -> dict[str, Any]:
+    """Cho web: giá trị đang dùng + khoảng cho phép của từng ngưỡng."""
+    return {ten: {"gia_tri": _ng(ten), "mac_dinh": md, "nho": nho, "lon": lon}
+            for ten, (md, nho, lon) in _NGUONG.items()}
+
+
 def _so_ngay_hoc() -> int:
     try:
         return max(3, int(_cfg().get("so_ngay") or 30))
@@ -375,7 +404,8 @@ def hoc(so_ngay: int | None = None) -> dict[str, Any]:
     tu = den - max(1, int(ngay)) * 86400
     o_giay = _O_PHUT * 60
     # Ô từ mốc này trở đi là NGÀY THỬ của phép kiểm tiến dần (`_KIEM_NGAY`).
-    o_thu = int((den - _KIEM_NGAY * 86400) // o_giay)
+    kiem_ngay = int(_ng('kiem_ngay'))
+    o_thu = int((den - kiem_ngay * 86400) // o_giay)
     ra: dict[str, Any] = {}
     try:
         ro = sqlite3.connect(f"file:{lich_su_nha._DB_PATH}?mode=ro", uri=True, timeout=10.0)
@@ -429,12 +459,12 @@ def hoc(so_ngay: int | None = None) -> dict[str, Any]:
             bang_truoc = {"n_bat": nb_truoc, "n_khong": nk_truoc, "dk": dem_truoc}
             doan = trung = 0
             for nhan, co in thu:
-                if _xac_suat(bang_truoc, nhan)[0] >= _P_GOI_Y:
+                if _xac_suat(bang_truoc, nhan)[0] >= _ng('p_goi_y'):
                     doan += 1
                     trung += int(co)
             ra[tb] = {"n_bat": n_bat, "n_khong": n_khong, "dk": dem,
                       "dieu_kien": dk_def, "ten_ngoai_vi": dict(muc.get("ten_ngoai_vi") or {}),
-                      "kiem": {"doan": doan, "trung": trung, "ngay": _KIEM_NGAY}}
+                      "kiem": {"doan": doan, "trung": trung, "ngay": kiem_ngay}}
     except sqlite3.Error as exc:
         logger.warning({"event": "du_doan_doc_loi", "error": str(exc)[:160]})
         return {}
@@ -547,13 +577,13 @@ def du_doan(ten: str, luc: float | None = None,
     c = cap(ten)
     kiem = b.get("kiem") or {}
     doan, trung = int(kiem.get("doan") or 0), int(kiem.get("trung") or 0)
-    dat = doan >= _KIEM_TOI_THIEU and trung >= _KIEM_TY_LE * doan
+    dat = doan >= _ng('kiem_toi_thieu') and trung >= _ng('kiem_ty_le') * doan
     ly_do = ""
-    if p < _P_GOI_Y:
+    if p < _ng('p_goi_y'):
         cach = "im"
     elif not dat:
         cach = "im"
-        ly_do = (f"chưa qua kiểm tiến dần: {kiem.get('ngay', _KIEM_NGAY)} ngày thử "
+        ly_do = (f"chưa qua kiểm tiến dần: {kiem.get('ngay', int(_ng('kiem_ngay')))} ngày thử "
                  f"đoán {doan} lần, trúng {trung}")
     elif c >= 2:
         cach = "tu_lam"
@@ -610,9 +640,9 @@ def cap(ten: str) -> int:
     """
     if _cam_tu_lam(ten):
         return 1
-    if sai_gan_day(ten) >= _SAI_TUT_CAP:
+    if sai_gan_day(ten) >= _ng('sai_tut_cap'):
         return 1
-    if so_luot(ten) >= _MAU_LEN_CAP and diem(ten) >= _TY_LE_LEN_CAP:
+    if so_luot(ten) >= _ng('mau_len_cap') and diem(ten) >= _ng('ty_le_len_cap'):
         return 2
     return 1
 
@@ -998,13 +1028,13 @@ def thong_ke() -> dict[str, Any]:
     for x in tt:
         x["diem"] = round(diem(str(x["ten"])), 3)
         x["cap"] = cap(str(x["ten"]))
-        x["con_thieu_luot"] = max(0, _MAU_LEN_CAP - int(x["dung"]) - int(x["sai"]))
+        x["con_thieu_luot"] = max(0, int(_ng("mau_len_cap")) - int(x["dung"]) - int(x["sai"]))
         # Cho tab Học hỏi hiện "đang theo dõi", không phải nhãn tĩnh "đã tin"
         # đọc như đóng băng mãi mãi — sai 2/10 lượt gần nhất là tụt về hỏi lại.
         x["sai_gan_day"] = sai_gan_day(str(x["ten"]))
     return {"bat": is_enabled(), "tong": tong, "theo_ket_qua": theo,
             "thanh_tich": tt, "nguong_len_cap":
-                {"so_luot": _MAU_LEN_CAP, "ty_le": _TY_LE_LEN_CAP}}
+                {"so_luot": int(_ng("mau_len_cap")), "ty_le": _ng("ty_le_len_cap")}}
 
 
 def _reset_for_tests() -> None:
