@@ -13,6 +13,7 @@ làm được vì phải mở kết nối MQTT thật:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 from fastapi import APIRouter, Header
@@ -216,6 +217,55 @@ def create_router() -> APIRouter:
             else:
                 config.data["tuya"] = cu
             tuya_nha._reset_for_tests()
+
+    @router.post("/api/mang-nha/thu")
+    async def mang_nha_thu(body: dict, authorization: str | None = Header(default=None)):
+        """Thử tài khoản router MikroTik (API-SSL) và AdGuard bằng thông tin VỪA NHẬP mà chưa lưu; ô để trống thì
+        dùng cái đã lưu. Không ghi bí mật ra log; lỗi trả nguyên lý do."""
+        require_admin(authorization)
+
+        import base64
+        import urllib.request
+
+        from services import routeros
+        from services.config import config
+
+        def _gop(khoa: str, nhap: dict) -> dict:
+            tam = dict((config.data.get("mang_nha") or {}).get("router") or {}) if khoa == "router" \
+                else dict(config.data.get("adguard") or {})
+            for k, v in (nhap or {}).items():
+                v = str(v or "").strip()
+                if v and v != "***":
+                    tam[k] = v
+            return tam
+
+        def _router() -> dict:
+            c = _gop("router", body.get("router") or {})
+            try:
+                with routeros.ket_noi(c) as r:
+                    tn = r.goi("/system/resource/print", **{".proplist": "version,board-name"})[0]
+                    so = len(r.goi("/ip/dhcp-server/lease/print", **{".proplist": "address"}))
+                return {"ok": True, "tom_tat": f"RouterOS {tn.get('version')} ({tn.get('board-name')}), "
+                                               f"{so} máy trong DHCP — tài khoản «{c.get('username')}»"}
+            except routeros.Loi as exc:
+                return {"ok": False, "error": str(exc)}
+
+        def _adguard() -> dict:
+            c = _gop("adguard", body.get("adguard") or {})
+            if not c.get("url"):
+                return {"ok": False, "error": "chưa có URL AdGuard"}
+            req = urllib.request.Request(str(c["url"]).rstrip("/") + "/control/status")
+            tk = base64.b64encode(f"{c.get('username', '')}:{c.get('password', '')}".encode()).decode()
+            req.add_header("Authorization", f"Basic {tk}")
+            try:
+                with urllib.request.urlopen(req, timeout=8) as res:  # nosec B310 — URL do admin đặt, LAN
+                    d = json.loads(res.read())
+                return {"ok": True, "tom_tat": f"AdGuard Home {d.get('version')}, lọc "
+                                               f"{'bật' if d.get('protection_enabled') else 'TẮT'}"}
+            except Exception as exc:
+                return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+
+        return {"router": await asyncio.to_thread(_router), "adguard": await asyncio.to_thread(_adguard)}
 
     @router.get("/api/tuya/thiet-bi")
     async def tuya_thiet_bi(authorization: str | None = Header(default=None)):
