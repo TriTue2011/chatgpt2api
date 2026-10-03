@@ -4216,6 +4216,14 @@ def _h_speak_to_speaker(args: dict, ctx: dict) -> dict:
     # giọng theo môn của chế độ Giáo viên, rồi giọng theo kênh/thread/topic.
     _giong_mon = teach.voice_for_text(text) if (teach.voice_vi() or teach.voice_en()) else ""
     _sid = _session_id_loa(ctx)
+    from services.voice import announce as _vann
+    if not _vann.co_nguoi_nghe():
+        # Chủ máy 03/10/2026: nhà vắng thì giữ, có người mới phát (xem `announce.giu_cho`).
+        for spk in chosen:
+            _vann.giu_cho(spk, text, voice=(str(spk.get("voice") or "").strip() or _giong_mon
+                                            or voice.giong_cho_loa(spk, session_id=_sid)), nguon="speak_to_speaker")
+        return {"text": f"[trong nhà đang không có ai — em giữ “{text}”, có người về là đọc ra "
+                        f"{', '.join(str(x.get('name')) for x in chosen)}]"}
     done, failed = [], []
     for spk in chosen:
         voice_name = (str(spk.get("voice") or "").strip() or _giong_mon
@@ -4576,7 +4584,7 @@ def _phat_nhieu_loa(text: str, ke: list[dict], theo_ten: dict, delay: float,
     from services.voice import announce as vann
 
     _khi = str(args.get("when") or args.get("thoi_diem") or "").strip()
-    xong, loi = [], []
+    xong, loi, cho = [], [], []
     for m in ke:
         rec = theo_ten.get(m["ten"])
         if rec is None:
@@ -4592,16 +4600,22 @@ def _phat_nhieu_loa(text: str, ke: list[dict], theo_ten: dict, delay: float,
                               str(rec.get("id")), text, _khi,
                               volume=volume, voice_name=giong)
             else:
-                vann.schedule(str(rec.get("id")), text, delay_seconds=delay,
-                              volume=volume, voice=giong)
+                _job = vann.schedule(str(rec.get("id")), text, delay_seconds=delay,
+                                     volume=volume, voice=giong)
+                if (_job or {}).get("status") == "cho_nguoi":
+                    cho.append(m["ten"])
+                    continue
             muc = "giữ nguyên" if v in (None, "", _GIU_NGUYEN) else f"{int(v)}%"
             xong.append(f"{m['ten']} ({muc})")
         except Exception as exc:
             loi.append(f"{m['ten']} ({str(exc)[:80]})")
+    if cho and not xong and not loi:
+        return {"text": f"[trong nhà đang không có ai — em giữ “{text}”, có người về là đọc ra {', '.join(cho)}]"}
     if xong and not loi:
         viec = ("đã đặt lịch đọc" if _khi else
                 "đã hẹn đọc" if delay > 0 else "đang đọc")
-        return {"text": f"[{viec} “{text}” ra {', '.join(xong)}]"}
+        return {"text": f"[{viec} “{text}” ra {', '.join(xong)}]"
+                        + (f" — {', '.join(cho)}: nhà đang vắng, em giữ lại đọc khi có người" if cho else "")}
     if xong:
         return {"text": f"[phát được: {', '.join(xong)}; lỗi: {'; '.join(loi)}]"}
     return {"text": f"Em phát không được ạ 😥: {'; '.join(loi)}"}
@@ -4745,8 +4759,8 @@ def _h_announce_on_speaker(args: dict, ctx: dict) -> dict:
         return {"text": f"[đã đặt lịch đọc “{text}” ra {chosen.get('name')} "
                         f"{_rem._fmt_when(_row)} — mã {_row.get('id')}]"}
     try:
-        vann.schedule(str(chosen.get("id")), text, delay_seconds=delay, volume=volume,
-                      voice=_giong)
+        _job = vann.schedule(str(chosen.get("id")), text, delay_seconds=delay, volume=volume,
+                             voice=_giong)
     except Exception as exc:
         # Phát ngay giờ chạy ĐỒNG BỘ nên lỗi thật tới được đây (trước kia nó
         # chìm trong thread nền, người dùng nhận "[đang đọc …]" sai sự thật).
@@ -4757,6 +4771,8 @@ def _h_announce_on_speaker(args: dict, ctx: dict) -> dict:
         when = (f"{mins} phút {secs} giây" if mins and secs else
                 f"{mins} phút" if mins else f"{secs} giây")
         return {"text": f"[đã hẹn đọc “{text}” ra {chosen.get('name')} sau {when}]"}
+    if (_job or {}).get("status") == "cho_nguoi":
+        return {"text": f"[trong nhà đang không có ai — em giữ “{text}”, có người về là đọc ra {chosen.get('name')}]"}
     return {"text": f"[đang đọc “{text}” ra {chosen.get('name')}]"}
 
 

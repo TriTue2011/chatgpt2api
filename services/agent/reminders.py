@@ -1085,6 +1085,12 @@ def _phat_ra_loa(meta: dict[str, Any], text: str) -> tuple[bool, str]:
     rec = vspk.get(sid) if sid else None
     if not rec:
         return False, f"không còn loa nào có id «{sid}»"
+    if not vann.co_nguoi_nghe():
+        # Chủ máy 03/10/2026: nhà vắng thì giữ, có người về mới đọc (heartbeat `loa_cho` phát lại bằng TTS).
+        vol_cho = meta.get("volume")
+        vann.giu_cho(rec, text, voice=str(meta.get("voice") or ""),
+                     volume=None if vol_cho in (None, "") else float(vol_cho), nguon="nhac_viec")
+        return True, f"{rec.get('name') or sid} (nhà đang vắng — giữ, có người về mới đọc)"
 
     muc_cu: float | None = None
     vol = meta.get("volume")

@@ -22,6 +22,96 @@ _lock = threading.RLock()
 _jobs: dict[str, dict[str, Any]] = {}
 _MAX_KEEP = 50   # giữ tối đa 50 job gần nhất cho UI xem
 
+# ── Chờ CÓ NGƯỜI mới phát ───────────────────────────────────────────────────
+# Chủ máy 03/10/2026: "Trường hợp phát thông báo thì phải xác nhận trong nhà có người không, nếu có phát
+# luôn. Không có thì chờ khi nào có người thì phát." Bằng chứng «có người» dùng lại
+# `kich_hoat_nha.nha_co_nguoi` (người bấm công tắc / mở cửa trong 6 giờ — đã đo: radar, camera báo cả khi nhà
+# vắng nên không tính). Đo 14 ngày tới 03/10 (7h–22h, mỗi nửa giờ): «vắng» chỉ rơi vào chiều ngày thường
+# ~13–16h. Hàng chờ nằm trên ĐĨA: chờ cả buổi chiều, container khởi động lại giữa chừng không được mất tin.
+GIU_TOI_DA = 24 * 3600     # chờ quá chừng này thì tin đã cũ — bỏ, ghi log
+
+
+def _duong_cho():
+    from pathlib import Path
+
+    from services.config import DATA_DIR
+    return Path(DATA_DIR) / "agent" / "loa_cho_nguoi.json"
+
+
+def co_nguoi_nghe(luc: Optional[float] = None) -> bool:
+    """Trong nhà có người nghe không. Không đọc được bằng chứng thì coi như CÓ — thà phát thừa còn hơn nuốt tin."""
+    try:
+        from services import kich_hoat_nha
+        return bool(kich_hoat_nha.nha_co_nguoi(set(), float(luc or time.time())))
+    except Exception as exc:  # noqa: BLE001
+        logger.info("announce: không xét được có người (%s) — phát luôn", str(exc)[:80])
+        return True
+
+
+def _doc_cho() -> list[dict[str, Any]]:
+    import json
+    try:
+        d = json.loads(_duong_cho().read_text(encoding="utf-8"))
+        return d if isinstance(d, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def _ghi_cho(ds: list[dict[str, Any]]) -> None:
+    import json
+    p = _duong_cho()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(ds, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(p)
+
+
+def giu_cho(rec: dict[str, Any], text: str, *, voice: str = "", volume: Optional[float] = None,
+            nguon: str = "") -> str:
+    """Giữ một thông báo tới khi có người. Trả mã chờ."""
+    ma = uuid.uuid4().hex[:10]
+    with _lock:
+        ds = _doc_cho()
+        ds.append({"id": ma, "loa": str(rec.get("id") or rec.get("name") or ""), "ten_loa": rec.get("name"),
+                   "text": text, "voice": str(voice or ""), "volume": volume, "luc": time.time(), "nguon": nguon})
+        _ghi_cho(ds)
+    logger.info("announce: nhà vắng — giữ «%s» chờ có người (%s)", text[:60], rec.get("name"))
+    return ma
+
+
+def dang_cho() -> list[dict[str, Any]]:
+    with _lock:
+        return list(_doc_cho())
+
+
+def phat_cho(now: Optional[float] = None) -> int:
+    """Heartbeat: có người rồi thì phát các tin đang giữ (cũ trước). Trả số tin đã đưa ra loa."""
+    now = float(now or time.time())
+    with _lock:
+        ds = _doc_cho()
+    if not ds:
+        return 0
+    con = [x for x in ds if now - float(x.get("luc") or 0) < GIU_TOI_DA]
+    for x in ds:
+        if x not in con:
+            logger.warning("announce: bỏ tin chờ quá %d giờ: «%s»", GIU_TOI_DA // 3600, str(x.get("text"))[:60])
+    if not con or not co_nguoi_nghe(now):
+        if len(con) != len(ds):
+            with _lock:
+                _ghi_cho([x for x in _doc_cho() if x in con])
+        return 0
+    with _lock:   # lấy ra TRƯỚC khi phát: phát lỗi cũng không lặp mãi mỗi 5 phút
+        _ghi_cho([x for x in _doc_cho() if x not in con and x not in ds])
+    n = 0
+    for x in con:
+        try:
+            schedule(x["loa"], x["text"], delay_seconds=0, volume=x.get("volume"), voice=x.get("voice") or "",
+                     bo_qua_cho=True)
+            n += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("announce: phát tin chờ lỗi (%s): %s", x.get("ten_loa"), str(exc)[:120])
+    return n
+
 
 def _resolve_one(speaker_query: str) -> dict[str, Any]:
     """Tra đúng MỘT loa theo tên/id. Nhiều kết quả = chưa rõ → bắt hỏi lại."""
@@ -120,6 +210,11 @@ def _run(jid: str) -> None:
     if not job or job.get("status") == "cancelled":
         return
     rec = job["rec"]
+    if not job.get("bo_qua_cho") and not co_nguoi_nghe():
+        giu_cho(rec, job["text"], voice=str(job.get("voice") or ""), volume=job.get("volume"), nguon="announce")
+        with _lock:
+            job["status"] = "cho_nguoi"
+        return
     muc_cu: Optional[float] = None
     try:
         vol = job.get("volume")
@@ -168,7 +263,7 @@ def _run(jid: str) -> None:
 
 
 def schedule(speaker_query: str, text: str, *, delay_seconds: float,
-             volume: Optional[float] = None, voice: str = "") -> dict[str, Any]:
+             volume: Optional[float] = None, voice: str = "", bo_qua_cho: bool = False) -> dict[str, Any]:
     """Hẹn đọc `text` ra loa `speaker_query` sau `delay_seconds`.
 
     volume: 0..1 (tỉ lệ) hoặc — với R1 — chỉ số tuyệt đối (>1). Tuỳ chọn.
@@ -205,6 +300,7 @@ def schedule(speaker_query: str, text: str, *, delay_seconds: float,
             "fire_at": int(time.time() + delay),
             "status": "scheduled",
             "timer": timer,
+            "bo_qua_cho": bool(bo_qua_cho),   # tin lấy ra từ hàng chờ — đã xét có người rồi
         }
         _prune()
     if timer is None:

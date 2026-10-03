@@ -182,6 +182,12 @@ def _parse_tasks() -> list[dict[str, Any]]:
         "system": True,
     })
     tasks.append({
+        "id": "loa_cho",
+        "intent": "read",
+        "text": "Thông báo loa giữ lại lúc nhà vắng — có người về thì phát",
+        "system": True,
+    })
+    tasks.append({
         "id": "lech_nep",
         "intent": "read",
         "text": "Thiết bị không hoạt động đúng giờ quen thì hỏi nhẹ kèm nguyên nhân — chỉ khi đã tích",
@@ -622,6 +628,18 @@ def _eval_thoi_quen_nha() -> tuple[str, str]:
         return "skip", f"error: {exc}"
 
 
+def _eval_loa_cho() -> tuple[str, str]:
+    """Tin loa giữ lúc nhà vắng (services.voice.announce): có người thì phát. Chạy nền — TTS + Cast mất vài giây."""
+    try:
+        from services.voice import announce
+        if not announce.dang_cho():
+            return "skip", "không có tin chờ"
+        threading.Thread(target=announce.phat_cho, name="loa-cho", daemon=True).start()
+        return "act", "xét phát tin loa đang chờ (chạy nền)"
+    except Exception as exc:
+        return "skip", f"error: {exc}"
+
+
 def _eval_lech_nep() -> tuple[str, str]:
     """Nhắc lệch nếp — services.lech_nep. Mặc định TẮT (mqtt.lech_nep.bat). Chạy nền: lần đầu
     mỗi ngày phải học lại nếp từ 21 ngày lịch sử."""
@@ -662,6 +680,7 @@ _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
     "du_doan_nha": _eval_du_doan_nha,
     "tam_hon": _eval_tam_hon,
     "lech_nep": _eval_lech_nep,
+    "loa_cho": _eval_loa_cho,
 }
 
 

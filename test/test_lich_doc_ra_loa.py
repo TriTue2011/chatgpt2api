@@ -307,6 +307,10 @@ class PhatKhiToiGioTests(unittest.TestCase):
         self.da_phat: list = []
         self.p1 = mock.patch("services.voice.speakers.get", lambda sid: dict(LOA))
         self.p1.start(); self.addCleanup(self.p1.stop)
+        # Nhà có người (03/10/2026: nhà vắng thì giữ tin — test_loa_cho_nguoi.py lo phần đó). Không cố định thì
+        # kết quả tuỳ dữ liệu lịch sử nhà test khác để lại: chạy riêng qua, chạy chung lô đỏ.
+        self.p0 = mock.patch("services.voice.announce.co_nguoi_nghe", lambda luc=None: True)
+        self.p0.start(); self.addCleanup(self.p0.stop)
         self.p2 = mock.patch.object(voice, "media_url", lambda p: f"http://x/{p.name}")
         self.p2.start(); self.addCleanup(self.p2.stop)
         self.p3 = mock.patch.object(voice, "play_on",
