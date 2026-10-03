@@ -569,6 +569,34 @@ def create_router(app_version: str) -> APIRouter:
             {"id": p["id"], "name": p.get("name") or "",
              "picture": p.get("picture") or ""} for p in pages]}
 
+    @router.post("/api/nhung")
+    async def nhung_vector(body: dict, authorization: str | None = Header(default=None)):
+        """Vector gte cho RAG của vn-mcp-hub (cùng container) — model nhúng chỉ nạp MỘT lần, ở tiến trình này.
+
+        Đo 03/10/2026 trên 140 câu hỏi đặt từ 140 đoạn THẬT trong kho: tài liệu đúng lọt 4 đoạn đầu — MiniLM
+        (hub đang dùng) 25,7%, gte 62,1%. body: {"texts": [...]} (≤ 64 câu) → {"model": tên đường, "vectors": [...]}.
+        Model đang nạp (vừa khởi động) thì chờ tối đa 60 giây; vẫn chưa có thì 503 kèm lý do."""
+        require_admin(authorization)
+        texts = body.get("texts") if isinstance(body, dict) else None
+        if not isinstance(texts, list) or not texts or len(texts) > 64:
+            raise HTTPException(400, "texts: danh sách 1–64 câu")
+
+        def _lam() -> dict:
+            import time as _t
+
+            from services import nhung
+            het = _t.time() + 60
+            while nhung.vec("x") is None and _t.time() < het:
+                _t.sleep(1)
+            ra = []
+            for t in texts:
+                v = nhung.vec(str(t or ""))
+                if v is None:
+                    raise HTTPException(503, "Model nhúng chưa sẵn (đang nạp hoặc hỏng) — thử lại sau.")
+                ra.append([round(float(x), 6) for x in v])
+            return {"model": nhung.ten_model(), "vectors": ra}
+        return await run_in_threadpool(_lam)
+
     @router.post("/api/settings")
     async def save_settings(body: SettingsUpdateRequest, authorization: str | None = Header(default=None)):
         require_admin(authorization)

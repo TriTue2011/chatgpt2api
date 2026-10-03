@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import os
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,23 @@ logger = logging.getLogger(__name__)
 
 # All collections share one persist dir; ingest.py writes here too.
 CHROMA_DB_PATH = Path("/app/chroma_db")
+
+# Kho vector gte (03/10/2026). Đo trên 140 câu hỏi đặt từ 140 đoạn THẬT của kho: đoạn đúng lọt 4 đoạn đầu —
+# MiniLM 25,7%, gte 62,1% (đứng đầu: 10,0% → 40,0%). gte 768 chiều, MiniLM 384 — không trộn được trong một
+# kho, nên gte nằm ở THƯ MỤC RIÊNG, cùng tên kho; kho MiniLM cũ để nguyên làm đường lùi. `chuyen_gte.py` chép
+# xong mới đặt dấu `.xong` — có dấu thì mọi đường đọc/ghi tự sang gte (`duong_kho`), không cần khởi động lại.
+CHROMA_GTE_PATH = Path("/app/data/chroma_gte")
+DAU_GTE = CHROMA_GTE_PATH / ".xong"
+#: c2a (cùng container) giữ model gte — GPU .220 lùi CPU — xem api/system.py `/api/nhung`.
+C2A_NHUNG_URL = os.getenv("C2A_NHUNG_URL", "http://127.0.0.1:80/api/nhung")
+
+
+def dung_gte() -> bool:
+    return DAU_GTE.is_file()
+
+
+def duong_kho() -> Path:
+    return CHROMA_GTE_PATH if dung_gte() else CHROMA_DB_PATH
 
 # Light, multilingual model — good enough for VN + EN technical content.
 # fastembed downloads this to its cache on first use (~120MB).
@@ -82,6 +100,40 @@ class _FastEmbedFn:
         return self._model_name
 
 
+class _GteFn:
+    """Hàm nhúng ChromaDB gọi c2a `/api/nhung` (gte). Lỗi thì RAISE — retriever log rồi trả rỗng (đường web
+    lo tiếp), không âm thầm nhúng bằng model khác: vector khác không gian thì kết quả sai mà không ai biết."""
+
+    LO = 32
+
+    def __call__(self, input: list[str]) -> list[list[float]]:
+        return self._nhung(list(input))
+
+    def _nhung(self, texts: list[str]) -> list[list[float]]:
+        import json as _json
+        import urllib.request
+        key = os.getenv("CHATGPT2API_AUTH_KEY", "")
+        ra: list[list[float]] = []
+        for i in range(0, len(texts), self.LO):
+            req = urllib.request.Request(C2A_NHUNG_URL, data=_json.dumps({"texts": texts[i:i + self.LO]}).encode(),
+                                         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                                         method="POST")
+            with urllib.request.urlopen(req, timeout=120) as r:  # noqa: S310 — URL nội bộ cố định
+                ra += _json.loads(r.read().decode())["vectors"]
+        return ra
+
+    def embed_documents(self, *args, **kwargs) -> list[list[float]]:
+        docs = args[0] if args else kwargs.get("texts", kwargs.get("input", []))
+        return self._nhung([docs] if isinstance(docs, str) else list(docs))
+
+    def embed_query(self, *args, **kwargs) -> list[list[float]]:
+        q = args[0] if args else kwargs.get("text", kwargs.get("input", ""))
+        return self._nhung([q] if isinstance(q, str) else list(q))
+
+    def name(self) -> str:
+        return "c2a-gte"
+
+
 class RAGRetriever:
     """Singleton-ish retriever shared by all kb_* MCPs.
 
@@ -95,6 +147,7 @@ class RAGRetriever:
     def __init__(self) -> None:
         self._client = None
         self._embed_fn = None
+        self._duong: Path | None = None
         self._collections: dict[str, Any] = {}
 
     @classmethod
@@ -105,25 +158,30 @@ class RAGRetriever:
             return cls._instance
 
     def _ensure_loaded(self) -> bool:
-        """Load Chroma client + embedding model on first use. Returns False on failure."""
-        if self._client is not None:
+        """Load Chroma client + embedding model on first use. Returns False on failure.
+        Kho gte vừa chép xong (có dấu `.xong`) thì nạp lại sang kho đó ngay lượt sau."""
+        duong = duong_kho()
+        if self._client is not None and self._duong == duong:
             return True
         try:
             import chromadb
 
-            self._client = chromadb.PersistentClient(path=str(CHROMA_DB_PATH))
-            self._embed_fn = _FastEmbedFn(EMBED_MODEL)
-            logger.info("RAG: chroma + fastembed loaded from %s", CHROMA_DB_PATH)
+            self._client = chromadb.PersistentClient(path=str(duong))
+            self._embed_fn = _GteFn() if duong == CHROMA_GTE_PATH else _FastEmbedFn(EMBED_MODEL)
+            self._collections = {}
+            self._duong = duong
+            logger.info("RAG: chroma loaded from %s (%s)", duong, self._embed_fn.name())
             return True
         except Exception as exc:
             logger.error("RAG: failed to load chroma/embeddings: %s", exc)
             return False
 
     def _get_collection(self, name: str):
-        if name in self._collections:
-            return self._collections[name]
+        # _ensure_loaded TRƯỚC bộ đệm: vừa chuyển sang kho gte thì bộ đệm cũ (kho MiniLM) phải bỏ.
         if not self._ensure_loaded():
             return None
+        if name in self._collections:
+            return self._collections[name]
         try:
             col = self._client.get_or_create_collection(
                 name=name,

@@ -154,12 +154,15 @@ def main() -> int:
         logger.error("chromadb not installed: %s", exc)
         return 1
 
-    from src.rag.retriever import _FastEmbedFn
+    from src.rag.retriever import RAGRetriever, duong_kho
 
-    CHROMA_DB_PATH.mkdir(parents=True, exist_ok=True)
-
-    client = chromadb.PersistentClient(path=str(CHROMA_DB_PATH))
-    embed_fn = _FastEmbedFn(EMBED_MODEL)
+    # Cùng kho, cùng hàm nhúng với lúc truy vấn (gte khi đã chuyển — xem retriever.duong_kho): nhúng tài liệu bằng
+    # model này mà hỏi bằng model khác là kết quả gần như ngẫu nhiên (đo 03/10/2026).
+    duong_kho().mkdir(parents=True, exist_ok=True)
+    r = RAGRetriever.get()
+    if not r._ensure_loaded():
+        return 1
+    client, embed_fn = r._client, r._embed_fn
 
     total = 0
     for name in COLLECTIONS:
