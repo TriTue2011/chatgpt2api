@@ -24,9 +24,9 @@ from typing import Any
 from utils.log import logger
 
 #: Graph máy GPU chạy được (tên = tên tệp bỏ ".onnx").
-TREN_GPU = frozenset({"det_10g", "w600k_r50", "kokoro_vi", "gte_nhung"})
+TREN_GPU = frozenset({"det_10g", "w600k_r50", "kokoro_vi", "gte_nhung", "jina_xep"})
 NGHI_GIAY = 60.0
-_HET_GIO = {"det_10g": 10.0, "w600k_r50": 5.0, "kokoro_vi": 30.0, "gte_nhung": 5.0}
+_HET_GIO = {"det_10g": 10.0, "w600k_r50": 5.0, "kokoro_vi": 30.0, "gte_nhung": 5.0, "jina_xep": 5.0}
 
 _khoa = threading.Lock()
 _nghi_toi = 0.0

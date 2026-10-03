@@ -597,6 +597,21 @@ def create_router(app_version: str) -> APIRouter:
             return {"model": nhung.ten_model(), "vectors": ra}
         return await run_in_threadpool(_lam)
 
+    @router.post("/api/xep_lai")
+    async def xep_lai(body: dict, authorization: str | None = Header(default=None)):
+        """Điểm xếp lại đoạn RAG cho vn-mcp-hub (services/xep_lai.py, chỉ GPU). body: {"cau": str, "doan": [≤50]}
+        → {"diem": [...]}; GPU hỏng thì 503 kèm lý do — hub giữ thứ tự gte."""
+        require_admin(authorization)
+        cau = str((body or {}).get("cau") or "").strip() if isinstance(body, dict) else ""
+        doan = body.get("doan") if isinstance(body, dict) else None
+        if not cau or not isinstance(doan, list) or not doan or len(doan) > 50:
+            raise HTTPException(400, "cau + doan (1–50 đoạn)")
+        from services import xep_lai as _xl
+        d = await run_in_threadpool(_xl.diem, cau, [str(x or "") for x in doan])
+        if d is None:
+            raise HTTPException(503, "Xếp lại không chạy được (GPU) — giữ thứ tự gte.")
+        return {"diem": d}
+
     @router.post("/api/settings")
     async def save_settings(body: SettingsUpdateRequest, authorization: str | None = Header(default=None)):
         require_admin(authorization)

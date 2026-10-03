@@ -33,6 +33,33 @@ CHROMA_GTE_PATH = Path("/app/data/chroma_gte")
 DAU_GTE = CHROMA_GTE_PATH / ".xong"
 #: c2a (cùng container) giữ model gte — GPU .220 lùi CPU — xem api/system.py `/api/nhung`.
 C2A_NHUNG_URL = os.getenv("C2A_NHUNG_URL", "http://127.0.0.1:80/api/nhung")
+#: Xếp lại 20 đoạn gte gần nhất bằng cross-encoder trên GPU (c2a `/api/xep_lai`, chỉ GPU) rồi trộn thứ hạng.
+#: Đo 03/10/2026: đoạn đúng lọt 4 đầu 62,1% → 67,1%. Không xếp được (GPU hỏng) thì giữ thứ tự gte.
+C2A_XEP_URL = os.getenv("C2A_XEP_URL", "http://127.0.0.1:80/api/xep_lai")
+UNG_VIEN_XEP = 20
+
+
+def _goi_c2a(url: str, body: dict, timeout: float) -> dict:
+    import json as _json
+    import urllib.request
+    req = urllib.request.Request(url, data=_json.dumps(body).encode(), method="POST", headers={
+        "Authorization": f"Bearer {os.getenv('CHATGPT2API_AUTH_KEY', '')}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 — URL nội bộ cố định
+        return _json.loads(r.read().decode())
+
+
+def _thu_tu_xep_lai(cau: str, docs: list[str]) -> list[int] | None:
+    """Thứ tự mới (chỉ số) sau khi trộn gte với xếp lại; None = giữ nguyên. Trộn = cộng nghịch đảo thứ hạng
+    (k=60), như `services/xep_lai.tron` của c2a — trộn hơn dùng riêng xếp lại (67,1% so với 62,9%)."""
+    try:
+        d = _goi_c2a(C2A_XEP_URL, {"cau": cau, "doan": docs}, timeout=10)["diem"]
+    except Exception as exc:  # noqa: BLE001 — xếp lại là phần thêm
+        logger.info("RAG: bỏ xếp lại (%s)", str(exc)[:120])
+        return None
+    if len(d) != len(docs):
+        return None
+    hang = {j: r for r, j in enumerate(sorted(range(len(d)), key=lambda j: -d[j]))}
+    return sorted(range(len(docs)), key=lambda i: -(1 / (60 + i) + 1 / (60 + hang[i])))
 
 
 def dung_gte() -> bool:
@@ -110,16 +137,9 @@ class _GteFn:
         return self._nhung(list(input))
 
     def _nhung(self, texts: list[str]) -> list[list[float]]:
-        import json as _json
-        import urllib.request
-        key = os.getenv("CHATGPT2API_AUTH_KEY", "")
         ra: list[list[float]] = []
         for i in range(0, len(texts), self.LO):
-            req = urllib.request.Request(C2A_NHUNG_URL, data=_json.dumps({"texts": texts[i:i + self.LO]}).encode(),
-                                         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                                         method="POST")
-            with urllib.request.urlopen(req, timeout=120) as r:  # noqa: S310 — URL nội bộ cố định
-                ra += _json.loads(r.read().decode())["vectors"]
+            ra += _goi_c2a(C2A_NHUNG_URL, {"texts": texts[i:i + self.LO]}, timeout=120)["vectors"]
         return ra
 
     def embed_documents(self, *args, **kwargs) -> list[list[float]]:
@@ -207,8 +227,9 @@ class RAGRetriever:
         col = self._get_collection(collection)
         if col is None:
             return []
+        xep = self._duong == CHROMA_GTE_PATH
         try:
-            kw: dict[str, Any] = {"query_texts": [text], "n_results": top_k}
+            kw: dict[str, Any] = {"query_texts": [text], "n_results": max(top_k, UNG_VIEN_XEP) if xep else top_k}
             if where:
                 kw["where"] = where
             res = col.query(**kw)
@@ -219,6 +240,13 @@ class RAGRetriever:
         docs = (res.get("documents") or [[]])[0]
         metas = (res.get("metadatas") or [[]])[0]
         dists = (res.get("distances") or [[]])[0]
+        if xep and len(docs) > top_k:
+            thu_tu = _thu_tu_xep_lai(text, list(docs))
+            if thu_tu:
+                docs = [docs[i] for i in thu_tu]
+                metas = [metas[i] for i in thu_tu] if len(metas) == len(thu_tu) else metas
+                dists = [dists[i] for i in thu_tu] if len(dists) == len(thu_tu) else dists
+        docs, metas, dists = docs[:top_k], metas[:top_k], dists[:top_k]
         logger.info("RAG query(%s): '%s' -> %d docs, distances=%s",
                     collection, text[:50], len(docs),
                     [round(d, 3) if d else None for d in dists[:3]] if dists else [])

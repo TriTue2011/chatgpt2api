@@ -489,6 +489,8 @@ _KOKORO_VI = ("https://huggingface.co/contextboxai/Kokoro-Vietnamese/resolve/"
               "9f210d622209fcc216fe2ac6159fed2ff381cb8a/kokoro_vi.onnx")
 _GTE_NHUNG = ("https://huggingface.co/onnx-community/gte-multilingual-base/resolve/"
               "2edbf5e672aab465f9ed4c154a8b61791c082c69/onnx/model_fp16.onnx")
+_JINA_XEP = ("https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual/resolve/"
+             "9cfeff2df7d40d1b78e75e5e9cebec92a99813c9/onnx/model_fp16.onnx")
 ONNX_GRAPH = {
     # tên: (nguồn, tệp trong zip hoặc None, sha256)
     "det_10g": (_INSIGHTFACE, "det_10g.onnx",
@@ -501,10 +503,14 @@ ONNX_GRAPH = {
     # 02/10/2026 chọn gte thay AITeamVN (~2,5 GB làm GPU vượt 8 GB lúc Qwen-VL thức). Đo: 81,6% như bản int8.
     "gte_nhung": (_GTE_NHUNG, None,
                   "f1d0f4ec988a6c17387d3b256e631deea506a891aed3a6ded4f9bf09386cc38e"),
+    # Xếp lại đoạn RAG của c2a (`services/xep_lai.py`) — fp16 ~0,56 GB. Đo 03/10/2026 trên GPU này: 20 đoạn
+    # ~94 ms; đoạn đúng lọt 4 đầu 62,1% (gte) → 67,1% (gte + xếp lại, trộn). Giấy phép CC-BY-NC 4.0: dùng nhà.
+    "jina_xep": (_JINA_XEP, None,
+                 "4ad94bcc1d7313ec5f76e18de8ffa7469e3f34b76810b8fd7206619b9cde1bc4"),
 }
 #: Graph phải nạp ở mức tối ưu CƠ BẢN: bản fp16 của gte làm ORT hỏng lúc gộp LayerNorm (SimplifiedLayerNormFusion —
 #: "Attempting to get index by a name which does not exist") ở mức mặc định; mức cơ bản nạp được, kết quả giữ nguyên.
-ONNX_TOI_UU_CO_BAN = frozenset({"gte_nhung"})
+ONNX_TOI_UU_CO_BAN = frozenset({"gte_nhung", "jina_xep"})
 ONNX_DIR = Path(os.getenv("ONNX_DIR", "/data/onnx"))
 #: Thư viện CUDA 12 + cuDNN 9 riêng cho onnxruntime-gpu (xem Dockerfile) —
 #: image gốc chỉ có CUDA 13 của torch nên thiếu nó ORT âm thầm chạy CPU.

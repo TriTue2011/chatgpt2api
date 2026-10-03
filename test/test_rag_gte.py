@@ -137,3 +137,76 @@ def test_endpoint_nhung(monkeypatch):
         r = c.post("/api/nhung", json={"texts": ["a", "b"]})
         assert r.status_code == 200 and r.json() == {"model": "gte|gpu", "vectors": [[0.5, 0.25], [0.5, 0.25]]}
         assert c.post("/api/nhung", json={"texts": []}).status_code == 400
+
+
+def test_xep_lai_diem_va_tron(monkeypatch):
+    import numpy as np
+
+    from services import xep_lai
+
+    class _Enc:
+        def __init__(self, n):
+            self.ids = [5] * n
+
+    class _Tok:
+        def encode_batch(self, cap):
+            return [_Enc(len(d)) for _, d in cap]
+
+    class _Phien:
+        def run(self, out, feeds):
+            assert feeds["input_ids"].shape == feeds["attention_mask"].shape
+            return [np.array([[0.1], [0.9], [0.5]], dtype=np.float32)]
+    monkeypatch.setattr(xep_lai, "_nap", lambda: (_Tok(), _Phien()))
+    assert xep_lai.diem("hỏi", ["a", "bb", "ccc"]) == pytest.approx([0.1, 0.9, 0.5])
+    assert xep_lai.tron(["g0", "g1", "g2"], [0.1, 0.9, 0.5])[0] == "g1"
+
+
+def test_xep_lai_gpu_hong_thi_none_khong_chay_cpu(monkeypatch):
+    from services import xep_lai
+
+    class _Tok:
+        def encode_batch(self, cap):
+            return [type("E", (), {"ids": [1, 2]})() for _ in cap]
+    monkeypatch.setattr(xep_lai, "_nap", lambda: (_Tok(), xep_lai._KhongChayCpu()))
+    assert xep_lai.diem("hỏi", ["a"]) is None
+
+
+def test_hub_xep_lai_20_ung_vien_roi_cat_top_k(tmp_path, monkeypatch):
+    monkeypatch.setattr(rt, "CHROMA_GTE_PATH", tmp_path)
+    r = rt.RAGRetriever()
+    r._duong, r._client = tmp_path, object()
+    hoi: list[int] = []
+
+    class _Col:
+        def query(self, query_texts, n_results, where=None):
+            hoi.append(n_results)
+            return {"documents": [[f"d{i}" for i in range(n_results)]],
+                    "metadatas": [[{"source": f"s{i}"} for i in range(n_results)]], "distances": [[0.1] * n_results]}
+    r._collections["kb"] = _Col()
+    monkeypatch.setattr(rt, "duong_kho", lambda: tmp_path)
+    # Xếp lại chấm rất cao đoạn thứ 6 của gte (ngoài 4 đầu) → trộn thứ hạng đưa nó vào 4 đầu.
+    monkeypatch.setattr(rt, "_goi_c2a", lambda url, body, timeout: {
+        "diem": [100.0 if i == 5 else 99.0 if i == 6 else -i for i in range(len(body["doan"]))]})
+    ra = r.query("kb", "câu hỏi", top_k=4)
+    assert hoi == [20] and len(ra) == 4 and "s5" in [x["source"] for x in ra], "đoạn xếp lại chấm cao lọt 4 đầu"
+
+    def _hong(*a, **k):
+        raise OSError("GPU")
+    monkeypatch.setattr(rt, "_goi_c2a", _hong)
+    assert [x["source"] for x in r.query("kb", "câu hỏi", top_k=4)] == ["s0", "s1", "s2", "s3"], "hỏng thì giữ thứ tự gte"
+
+
+def test_endpoint_xep_lai_503_khi_gpu_hong(monkeypatch):
+    from unittest import mock
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from api import system
+    from services import xep_lai
+    monkeypatch.setattr(xep_lai, "diem", lambda cau, doan: None)
+    app = FastAPI()
+    with mock.patch("api.system.require_admin", lambda *a, **k: None):
+        app.include_router(system.create_router("test"))
+        r = TestClient(app).post("/api/xep_lai", json={"cau": "hỏi", "doan": ["a"]})
+    assert r.status_code == 503 and "GPU" in r.json()["detail"]
