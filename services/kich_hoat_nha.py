@@ -1987,6 +1987,13 @@ def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
                         del ds[:-BAO_AO_GIU]
                         _luu()
                 return
+            # Luật bot học không nhường cả hướng nữa (`_phat_duyet`), nên phải tự tôn trọng LUẬT CHẶN đã duyệt
+            # (`khong_lam` khi bật, `giu` khi tắt) đang khớp — cùng cách `_xu_ly_duyet` xét chặn.
+            chan = _chan_duyet(tb, hd, luc)
+            if chan:
+                _nk(tb, hd, "khong", nguon, f"luật bot học khớp nhưng bị trường hợp duyệt #{chan['so']} chặn",
+                    _dk(q), luc)
+                return
             if q["lam"] == "hoi" and xm_bat is not None:
                 hoi, co, mo_ta = xm_bat
                 if co and not dd._cam_tu_lam(_ten_tt(tb, hd)):
@@ -2295,6 +2302,16 @@ def _luat_duyet(tb: str) -> list[dict[str, Any]]:
         return []
 
 
+def _chan_duyet(tb: str, hd: str, luc: float) -> dict[str, Any] | None:
+    """Luật CHẶN đã duyệt (`khong_lam` cho bật, `giu` cho tắt) mà điều kiện đang khớp lúc này; None nếu không có."""
+    luat = [c for c in _luat_duyet(tb) if c["nen"] == _CHAN[hd]]
+    if not luat:
+        return None
+    from services import ha_client, luat_duyet
+    st = {str(x["entity_id"]): x for x in ha_client.get_states() or []}
+    return next((c for c in luat if luat_duyet.kiem_dieu_kien(c["neu"], luc, st)[0]), None)
+
+
 def _huong_duyet(l: dict[str, Any]) -> str:
     return "on" if l.get("chieu") == "bat" else "off"
 
@@ -2420,13 +2437,18 @@ def _o_lai_duyet(tb: str, ma: str, khi: str, luc0: float) -> None:
 
 
 def _phat_duyet(nguon: str, luc: float, cua: bool) -> set[str]:
-    """Chạy luật đã duyệt cho mọi thiết bị; trả các hướng («tb|on») có luật duyệt — luật bot học nhường hướng đó."""
+    """Chạy luật đã duyệt cho mọi thiết bị; trả các hướng («tb|on») có luật duyệt NGHE ĐÚNG NGUỒN NÀY — luật bot học
+    chỉ nhường ở nguồn đó.
+
+    Trước đây nhường cả HƯỚNG: đèn trần có luật duyệt «bật» chỉ nghe cửa chính, nên mọi lần người vào phòng khách từ
+    phòng ngủ / bếp (không qua cửa) bị nuốt — không luật duyệt nào nghe, luật bot học (đã qua kiểm) lại bị chặn. Đo
+    04/10/2026, 7 ngày: 72 lần vào phòng khách lúc đèn tắt không được xét, 9 lần người phải tự bật trong 3 phút."""
     co: set[str] = set()
     for tb in ds_thiet_bi():
         luat = _luat_duyet(tb)
         if not luat:
             continue
-        co |= {f"{tb}|{_huong_duyet(l)}" for l in luat if l["nen"] in ("bat", "tat", "hoi")}
+        co |= {f"{tb}|{_huong_duyet(l)}" for l in luat if l["nen"] in ("bat", "tat", "hoi") and nguon in l["khi"]}
         if nguon.endswith(" có người vào"):
             ma = nguon.split(" ")[0]
             cho = {k for l in luat for k in l["khi"] if k.startswith(f"{ma} ở lại ")}
@@ -2465,7 +2487,7 @@ def _phat(nguon: str, luc: float) -> None:
                 else:
                     threading.Thread(target=_xu_ly_chu, args=(tb, l, nguon, luc),
                                      name="kich-hoat-luat-chu", daemon=True).start()
-        co_chu = {l["hanh_dong"] for l in chu}
+        co_chu = {l["hanh_dong"] for l in chu if nguon in l["khi"]}     # cùng lẽ: nhường theo NGUỒN, không cả hướng
         for hd in HANH_DONG:
             if hd in co_chu or f"{tb}|{hd}" in co_duyet:
                 continue                     # luật anh đặt / luật từ trường hợp anh duyệt thắng luật bot học
