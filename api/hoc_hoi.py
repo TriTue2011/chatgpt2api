@@ -280,6 +280,16 @@ def create_router() -> APIRouter:
         except Exception as exc:
             return _loi(exc, "bật tầng")
 
+    @router.get("/api/hoc-hoi/do-tin")
+    async def do_tin(authorization: str | None = Header(default=None)):
+        """Độ tin từng cảm biến (lành/nhiễu/kẹt) đo trên lịch sử thật — căn cứ để lọc mềm và báo lỗi setting."""
+        require_admin(authorization)
+        from services import do_tin_cam_bien
+        try:
+            return {"ok": True, **await asyncio.to_thread(do_tin_cam_bien.tat_ca, 3.0)}
+        except Exception as exc:
+            return _loi(exc, "độ tin cảm biến")
+
     @router.post("/api/hoc-hoi/nguong")
     async def dat_nguong(body: dict, authorization: str | None = Header(default=None)):
         """Lưu ngưỡng bộ não học hỏi. body: {khoa: 'mau_len_cap'|…, gia_tri: số | null (về mặc định)}.

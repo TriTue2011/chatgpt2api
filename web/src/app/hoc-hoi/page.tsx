@@ -31,6 +31,7 @@ import { GoiY } from "./components/goi-y";
 import { NepSinhHoat } from "./components/nep-sinh-hoat";
 import { DuyetTruongHop } from "./components/duyet-truong-hop";
 import { Nguong } from "./components/nguong";
+import { DoTin } from "./components/do-tin";
 import { TamHonCard } from "../settings/components/tam-hon-card";
 import { useSettingsStore } from "../settings/store";
 
@@ -59,6 +60,10 @@ function HocHoiContent() {
         <div className="space-y-3">
           <SettingsSection title="Tổng quan" defaultOpen tuKhoa="cong tac diem tin cay kenh">
             <TongQuan />
+          </SettingsSection>
+          <SettingsSection title="Độ tin cảm biến (nhiễu / kẹt / lành)"
+            tuKhoa="do tin cam bien nhieu ket lanh flap dwell doi lien tuc setting dat qua nhay radar khoang cach loc mem">
+            <DoTin />
           </SettingsSection>
           <SettingsSection title="Ngưỡng bộ não (tự chủ, kiểm tiến dần)"
             tuKhoa="nguong tu chu tu lam so luot ty le dung sai kiem tien dan ngay do chac mo mieng mac dinh">
