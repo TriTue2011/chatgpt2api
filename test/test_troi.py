@@ -43,3 +43,22 @@ def test_kiem_bien_nhan_troi_hop_le():
     import pytest
     with pytest.raises(ValueError):
         ld._kiem_dk({"ma": "troi", "la": "chieu"}, set(), set())
+
+
+def test_doc_toa_do_tu_api_config_dang_chuoi_json(monkeypatch):
+    """05/10/2026: `_api_request` trả body là CHUỖI JSON — bản đầu chờ dict nên máy thật luôn «không biết trời»."""
+    from services import ha_client
+    monkeypatch.setattr(ha_client, "_api_request", lambda m, p, *a, **k: (200, '{"latitude": 21.03, "longitude": 105.85}'))
+    monkeypatch.setattr(ha_client, "get_state", lambda m: None)
+    with troi._khoa:
+        troi._toa_do.update(luc=0.0, gt=None)
+    assert troi._toa_do_nha() == (21.03, 105.85)
+    assert troi.toi(_ts(21, 0)) is True and troi.toi(_ts(10, 0)) is False
+    monkeypatch.setattr(ha_client, "_api_request", lambda m, p, *a, **k: (0, "HA chưa cấu hình url/token"))
+    with troi._khoa:
+        troi._toa_do.update(luc=0.0, gt=None)
+    assert troi.toi(_ts(21, 0)) is None
+    monkeypatch.setattr(ha_client, "_api_request", lambda m, p, *a, **k: (200, '{"latitude": 21.03, "longitude": 105.85}'))
+    with troi._khoa:
+        troi._toa_do["luc"] -= 301            # lỗi chỉ được nhớ 5 phút
+    assert troi.toi(_ts(21, 0)) is True, "HA có lại thì hỏi lại toạ độ"

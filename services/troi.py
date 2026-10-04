@@ -10,6 +10,7 @@ Tối = mặt trời dưới đường chân trời (góc < 0°). Không biết 
 """
 from __future__ import annotations
 
+import json
 import math
 import threading
 import time
@@ -39,14 +40,16 @@ def goc_mat_troi(ts: float, vi_do: float, kinh_do: float) -> float:
 def _toa_do_nha() -> tuple[float, float] | None:
     now = time.time()
     with _khoa:
-        if now - _toa_do["luc"] < _GIU_TOA_DO:
+        # Có toạ độ thì giữ một ngày; hỏng (HA chập chờn) thì chỉ giữ 5 phút rồi hỏi lại — đừng «không biết trời» cả ngày.
+        if now - _toa_do["luc"] < (_GIU_TOA_DO if _toa_do["gt"] else 300.0):
             return _toa_do["gt"]
     gt = None
     try:
         from services import ha_client
-        code, body = ha_client._api_request("GET", "/api/config")
-        if code == 200 and isinstance(body, dict) and body.get("latitude") is not None:
-            gt = (float(body["latitude"]), float(body["longitude"]))
+        code, body = ha_client._api_request("GET", "/api/config")      # body là CHUỖI JSON, không phải dict
+        d = json.loads(body) if code == 200 and isinstance(body, str) else {}
+        if isinstance(d, dict) and d.get("latitude") is not None:
+            gt = (float(d["latitude"]), float(d["longitude"]))
     except Exception:  # noqa: BLE001 — không có HA thì không biết trời
         gt = None
     with _khoa:
