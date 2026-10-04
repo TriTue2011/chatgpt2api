@@ -32,6 +32,7 @@ import { NepSinhHoat } from "./components/nep-sinh-hoat";
 import { DuyetTruongHop } from "./components/duyet-truong-hop";
 import { Nguong } from "./components/nguong";
 import { DoTin } from "./components/do-tin";
+import { TheoNep } from "./components/theo-nep";
 import { TamHonCard } from "../settings/components/tam-hon-card";
 import { useSettingsStore } from "../settings/store";
 
@@ -87,6 +88,10 @@ function HocHoiContent() {
           </SettingsSection>
           <SettingsSection title="Bật/tắt thiết bị" tuKhoa="bat tat thiet bi kich hoat luat ngoai le tu lam bao ao vang">
             <KichHoat />
+          </SettingsSection>
+          <SettingsSection title="Tự bật theo nếp (bình nóng lạnh…)"
+            tuKhoa="tu bat theo nep lich gio binh nong lanh may loc nuoc thoi luong tu tat">
+            <TheoNep />
           </SettingsSection>
           <SettingsSection title="Nhật ký kích hoạt" tuKhoa="nhat ky lich su kich hoat bat tat khong lam ly do nguon dieu kien">
             <NhatKyKichHoat />

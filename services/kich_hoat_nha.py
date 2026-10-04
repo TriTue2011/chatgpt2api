@@ -3330,9 +3330,9 @@ def tra_loi(text: str) -> str | None:
         return f"Em chưa {_TEN_HD[hd].lower()} được {_ten_tb(tb)} — Home Assistant không nhận lệnh."
     dd.ghi_dung(int(r["id"]))
     ten = _ten_tt(tb, hd)
-    con = max(0, dd._MAU_LEN_CAP - dd.so_luot(ten))
+    con = max(0, int(dd._ng("mau_len_cap")) - dd.so_luot(ten))       # ngưỡng chỉnh được trên web, không hằng số
     return (f"Dạ, em đã {_TEN_HD[hd].lower()} {_ten_tb(tb)}."
-            + (f" Còn {con} lượt anh chấm nữa (và đúng ≥ {dd._TY_LE_LEN_CAP:.0%}) là em tự làm."
+            + (f" Còn {con} lượt anh chấm nữa (và đúng ≥ {dd._ng('ty_le_len_cap'):.0%}) là em tự làm."
                if dd.cap(ten) < 2 else " Em đã đủ tin, lần sau em tự làm."))
 
 
@@ -3436,7 +3436,7 @@ def tong_quan() -> list[dict[str, Any]]:
                    },
                    "co_so": mh.get("co_so") or "tu_do",
                    "goi_y_them": [{**x, "ten": ten_ha.get(x["ma"], x["ma"])} for x in mh.get("goi_y_them") or []],
-                   "nguong": {"so_luot": dd._MAU_LEN_CAP, "ty_le": dd._TY_LE_LEN_CAP}})
+                   "nguong": {"so_luot": int(dd._ng("mau_len_cap")), "ty_le": dd._ng("ty_le_len_cap")}})
     return ra
 
 

@@ -682,6 +682,20 @@ def _eval_luat_duyet() -> tuple[str, str]:
         return "skip", f"error: {exc}"
 
 
+def _eval_tu_bat_theo_nep() -> tuple[str, str]:
+    """Thiết bị chủ nhà bật «tự bật theo nếp» (services.tu_bat_theo_nep): tới giờ nếp thì bật, hết thời lượng thì tắt.
+    Mỗi tick — rẻ (một thiết bị đọc lịch sử 60 ngày) và giờ tắt phải được xét lại sau mỗi lần khởi động lại."""
+    try:
+        from services import tu_bat_theo_nep as tb
+        if not any(x.get("bat") for x in tb.cai_dat().values()):
+            return "skip", "chưa thiết bị nào bật chế độ"
+        ra = tb.chay_mot_lan()
+        lam = [r for r in ra if "đã bật" in r or "tới giờ tắt" in r]
+        return ("act", "; ".join(lam)) if lam else ("skip", "; ".join(ra)[:200])
+    except Exception as exc:
+        return "skip", f"error: {exc}"
+
+
 def _eval_cap_quyen() -> tuple[str, str]:
     """Quyền cấp theo thời hạn (services.cap_quyen): quá hạn thì gỡ — chỉ khi bản ghi lọc còn đúng như bot ghi."""
     try:
@@ -748,6 +762,7 @@ _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
     "lech_nep": _eval_lech_nep,
     "loa_cho": _eval_loa_cho,
     "luat_duyet": _eval_luat_duyet,
+    "tu_bat_theo_nep": _eval_tu_bat_theo_nep,
     "cap_quyen": _eval_cap_quyen,
 }
 

@@ -290,6 +290,29 @@ def create_router() -> APIRouter:
         except Exception as exc:
             return _loi(exc, "độ tin cảm biến")
 
+    @router.get("/api/hoc-hoi/theo-nep")
+    async def theo_nep_xem(authorization: str | None = Header(default=None)):
+        """Thiết bị «tự bật theo nếp»: cài đặt + nếp học được (giờ, thời lượng, vì sao chưa đủ)."""
+        require_admin(authorization)
+        from services import tu_bat_theo_nep as tb
+        try:
+            cd = tb.cai_dat()
+            return {"ok": True, "thiet_bi": [{"ma": m, **x, "nep": await asyncio.to_thread(tb.nep, m, None, x.get("nhiet"))}
+                                             for m, x in cd.items()]}
+        except Exception as exc:
+            return _loi(exc, "tự bật theo nếp")
+
+    @router.post("/api/hoc-hoi/theo-nep")
+    async def theo_nep_dat(body: dict, authorization: str | None = Header(default=None)):
+        """body: {thiet_bi, bat, nhiet?} — chỉ chủ nhà bật cho từng thiết bị."""
+        require_admin(authorization)
+        from services import tu_bat_theo_nep as tb
+        ma = str(body.get("thiet_bi") or "").strip()
+        if not ma or "." not in ma:
+            return {"ok": False, "error": "thiếu mã thiết bị"}
+        nhiet = body.get("nhiet")
+        return {"ok": True, **tb.dat(ma, bool(body.get("bat")), None if nhiet is None else str(nhiet))}
+
     @router.post("/api/hoc-hoi/nguong")
     async def dat_nguong(body: dict, authorization: str | None = Header(default=None)):
         """Lưu ngưỡng bộ não học hỏi. body: {khoa: 'mau_len_cap'|…, gia_tri: số | null (về mặc định)}.

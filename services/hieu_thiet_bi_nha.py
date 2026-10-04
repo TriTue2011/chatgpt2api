@@ -1222,7 +1222,7 @@ def can_hoi(loai: str) -> bool:
     if sai_gan_day(loai) >= dd._SAI_TUT_CAP:
         return True
     dung, sai = _thanh_tich(loai)
-    return not (dung + sai >= dd._MAU_LEN_CAP and diem(loai) >= dd._TY_LE_LEN_CAP)
+    return not (dung + sai >= dd._ng("mau_len_cap") and diem(loai) >= dd._ng("ty_le_len_cap"))
 
 
 # ── Báo nhóm học hỏi ────────────────────────────────────────────────────────
