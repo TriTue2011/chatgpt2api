@@ -96,48 +96,56 @@ def cam_bien() -> list[dict[str, str]]:
 
 
 def de(tb: str) -> str:
+    """Đề cho MỘT thiết bị của nhà thật: gom dữ liệu thật rồi trình bày bằng `de_tu` (bộ đề luyện dùng chung khuôn)."""
     from services import kich_hoat_nha as kh, lich_sinh_hoat, vung_khoang_cach
 
     ten = kh._ten_ha()
     cb = cam_bien()
-    th = truong_hop(tb)
-    dong = [f"THIẾT BỊ: {tb} | {ten.get(tb, tb)}", "", "A. TRƯỜNG HỢP CHỦ NHÀ ĐÃ DUYỆT:"]
-    dong += [f"{i}. [{'BẬT' if m['chieu'] == 'bat' else 'TẮT'}] {m['tinh_huong']} → nên {m['nen']}"
-             + (f" (cảm biến thấy: {m['cam_bien_thay']})" if m.get("cam_bien_thay") else "")
-             for i, m in enumerate(th, 1)]
-    dong += ["", "B. CẢM BIẾN kiểm được (mã | tên | khu | loại | đơn vị):"]
-    dong.append(f"- {tb} | {ten.get(tb, tb)} | (chính thiết bị đang xét) | on = đang bật")
-    dong += [f"- {c['ma']} | {c['ten']} | {c['khu']} | {c['loai']}" + (f" | {c['don_vi']}" if c["don_vi"] else "")
-             for c in cb]
     vung = []
     for ma, v in vung_khoang_cach.ds().items():
         d = vung_khoang_cach.vung_dang_dung(v)
         if d:
-            vung.append(f"- {ma}: người ở TRONG khu khi {'dưới' if d[0] == 'duoi' else 'từ'} {d[1]:g}"
-                        f" (radar {v.get('radar', '?')})")
+            vung.append((ma, d[0], d[1], v.get("radar", "?")))
+    x = so().get(tb) or {}
+    return de_tu(tb, ten.get(tb, tb), truong_hop(tb), cb, vung=vung,
+                 trung=_cam_bien_trung([c["ma"] for c in cb]), do_tin=_do_tin_cam_bien([c["ma"] for c in cb]),
+                 lich=lich_sinh_hoat.ds(), sai=(x.get("chay_sai") or [])[-10:], cham=(x.get("cham") or [])[-15:])
+
+
+def de_tu(tb: str, ten_tb: str, th: list[dict[str, Any]], cb: list[dict[str, Any]], *,
+          vung: list[tuple[str, str, float, str]] | None = None, trung: list[tuple[str, str, float]] | None = None,
+          do_tin: list[tuple[str, str]] | None = None, lich: list[dict[str, Any]] | None = None,
+          sai: list[dict[str, Any]] | None = None, cham: list[dict[str, Any]] | None = None) -> str:
+    """Trình bày đề từ dữ liệu ĐÃ GOM — hàm thuần, không đọc gì. Nhà thật (`de`) và nhà giả (bộ đề luyện) cùng khuôn."""
+    dong = [f"THIẾT BỊ: {tb} | {ten_tb}", "", "A. TRƯỜNG HỢP CHỦ NHÀ ĐÃ DUYỆT:"]
+    dong += [f"{i}. [{'BẬT' if m['chieu'] == 'bat' else 'TẮT'}] {m['tinh_huong']} → nên {m['nen']}"
+             + (f" (cảm biến thấy: {m['cam_bien_thay']})" if m.get("cam_bien_thay") else "")
+             for i, m in enumerate(th, 1)]
+    dong += ["", "B. CẢM BIẾN kiểm được (mã | tên | khu | loại | đơn vị):"]
+    dong.append(f"- {tb} | {ten_tb} | (chính thiết bị đang xét) | on = đang bật")
+    dong += [f"- {c['ma']} | {c['ten']} | {c['khu']} | {c['loai']}" + (f" | {c['don_vi']}" if c.get("don_vi") else "")
+             for c in cb]
     if vung:
-        dong += ["", "B2. VÙNG KHOẢNG CÁCH bot đã học (số đo thật, dùng làm ngưỡng):"] + vung
-    trung = _cam_bien_trung([c["ma"] for c in cb])
+        dong += ["", "B2. VÙNG KHOẢNG CÁCH bot đã học (số đo thật, dùng làm ngưỡng):"]
+        dong += [f"- {ma}: người ở TRONG khu khi {'dưới' if h == 'duoi' else 'từ'} {ng:g} (radar {rd})"
+                 for ma, h, ng, rd in vung]
     if trung:
         dong += ["", "B3. CẢM BIẾN GẦN NHƯ CÙNG MỘT TÍN HIỆU (đo trên lịch sử thật) — ĐỪNG viết điều kiện bắt chúng "
                  "KHÁC nhau (vd cái này on, cái kia off): như thế luật không bao giờ chạy. Dùng MỘT trong chúng, hoặc "
                  "cùng chiều:"]
         dong += [f"- {a} ≈ {b} (giống nhau {ti:.0%} số lần)" for a, b, ti in trung]
-    do_tin = _do_tin_cam_bien([c["ma"] for c in cb])
     if do_tin:
         dong += ["", "B4. ĐỘ TIN cảm biến (đo lịch sử thật) — «nhiễu» hay đổi chớp nhoáng, ĐỪNG dựa chính vào nó; "
                  "dùng phải kèm xac_minh=true hoặc một cảm biến «lành»:"]
         dong += [f"- {ma}: {nh}" for ma, nh in do_tin]
     dong += ["", "C. LỊCH SINH HOẠT (mã | tên | loại | giờ):"]
-    dong += [f"- {x['ma']} | {x['ten']} | {x['loai']} | {x['tu']}–{x['den']}" for x in lich_sinh_hoat.ds()] or ["(chưa có)"]
-    sai = [c for c in (so().get(tb) or {}).get("chay_sai") or []][-10:]
+    dong += [f"- {x['ma']} | {x['ten']} | {x['loai']} | {x['tu']}–{x['den']}" for x in lich or []] or ["(chưa có)"]
     if sai:
         dong += ["", "E. LẦN CHẠY BỊ CHẤM SAI — luật đã làm, chủ nhà nói sai (hoặc tự làm ngược lại ngay). Tìm điều "
                  "kiện nào khớp mà lẽ ra không được khớp (✓ là điều kiện đã đúng lúc đó), sửa luật đó cho chặt hơn "
                  "hoặc thêm luật chặn; đừng bỏ trường hợp:"]
         dong += [f"- trường hợp {c['so']} lúc {c['gio']}: {', '.join(c['doc'])}"
                  + (f" — chủ nhà: {c['loi']}" if c.get("loi") else "") for c in sai]
-    cham = [c for c in (so().get(tb) or {}).get("cham") or []][-15:]
     if cham:
         dong += ["", "D. LỜI CHẤM các lần trước:"]
         dong += [f"- ({'chủ nhà' if c['cham_boi'] == 'chu_may' else 'giáo viên'} chấm "
