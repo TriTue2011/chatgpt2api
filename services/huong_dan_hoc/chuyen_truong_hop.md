@@ -12,7 +12,9 @@ bằng cảm biến THẬT trong mục B. Em không điều khiển gì. Chỉ t
   có tín hiệu), `giu` (đừng tắt dù có tín hiệu), `hoi` (hỏi chủ nhà).
 - `khi`: SỰ KIỆN làm bộ kích hoạt xét luật — danh sách chuỗi đúng một trong ba dạng:
   - `"<mã binary_sensor> có người vào"` — cảm biến vừa báo có người (đã vắng trước đó
-    ít nhất 3 phút); với cảm biến CỬA nghĩa là cửa vừa MỞ;
+    ít nhất 3 phút); với cảm biến CỬA nghĩa là cửa vừa MỞ. Ba dạng sự kiện này
+    dùng được cho MỌI binary_sensor ở mục B, kể cả cảm biến GHÉP (vd «tivi đang
+    bật»: «có người vào» = tivi vừa bật, «vắng» = tivi tắt liền 3 phút);
   - `"<mã binary_sensor> vắng"` — cảm biến đã báo không có người LIỀN 3 phút;
   - `"<mã binary_sensor> ở lại N giây"` — cảm biến báo có người liền N giây kể từ lúc
     có người vào (N từ 10 tới 3600): dùng cho người Ở LẠI, NGỒI YÊN, phân biệt với
@@ -32,6 +34,12 @@ bằng cảm biến THẬT trong mục B. Em không điều khiển gì. Chỉ t
   - `{"ma": "gio", "tu": "HH:MM", "den": "HH:MM"}` — khung giờ (qua nửa đêm được);
   - `{"ma": "lich", "la": "<mã lịch>"}` — một mục lịch sinh hoạt (mục C) đang
     diễn ra; `{"ma": "ca_nha", "la": "ngu"|"vang"}` — cả nhà đang ngủ / đi vắng;
+  - `{"ma": "troi", "la": "toi"|"sang"}` — trời tối (mặt trời đã lặn) / sáng.
+    Tình huống nói «trời tối», «buổi tối», «ban đêm» mà mục B2 không có ngưỡng độ
+    sáng đã học thì DÙNG điều kiện này — đừng bỏ cả trường hợp vì thiếu ngưỡng lux;
+  - «trời nóng / lạnh» mà mục B2 chưa có ngưỡng nhiệt đã học: dùng MỐC TẠM nóng =
+    nhiệt độ `tren` 28 (°C), lạnh = `duoi` 22, ghi «mốc tạm» trong `vi_sao` — đừng
+    bỏ cả trường hợp; mốc sẽ chỉnh khi bot học được từ lần người bật;
   - thêm `"phu_dinh": true` vào bất kỳ điều kiện nào để lấy điều NGƯỢC lại.
 - `xac_minh`: `true` khi trường hợp cần biết CHẮC có NGƯỜI THẬT trong khu (radar
   có thể báo lây từ khu bên cạnh, báo kẹt, báo vì thú cưng) — bộ kích hoạt sẽ nhìn
@@ -46,10 +54,12 @@ bằng cảm biến THẬT trong mục B. Em không điều khiển gì. Chỉ t
 2. Trường hợp `khong_lam` / `giu` là luật CHẶN: viết điều kiện nhận ra ĐÚNG lúc
    phải chặn (vd khu bên cạnh có người mà camera khu này không thấy ai) — chặn
    thắng luật làm.
-3. Một chi tiết của tình huống mà KHÔNG cảm biến nào trong mục B nhìn ra được (ai
-   là ai khi không có nhận mặt, ý định của người…) thì đừng thay bằng điều kiện
-   gần giống: để trường hợp đó ở `khong_chuyen_duoc` kèm lý do — chủ nhà sẽ biết
-   cần thêm cảm biến gì.
+3. Một chi tiết QUYẾT ĐỊNH nên làm hay không mà KHÔNG cảm biến nào trong mục B nhìn
+   ra được (ai là ai khi không có nhận mặt, trẻ nhỏ hay người lớn…) thì đừng thay
+   bằng điều kiện gần giống: để trường hợp đó ở `khong_chuyen_duoc` kèm lý do — chủ
+   nhà sẽ biết cần thêm cảm biến gì. Còn chi tiết PHỤ chỉ tả người đang làm gì ở
+   khu (mở tủ lạnh, nấu ăn, phơi đồ, đọc sách) thì «có người ở đúng khu đó» là đủ —
+   đừng bỏ trường hợp vì không thấy được việc người đang làm.
 4. Điều kiện ÍT nhất mà vẫn đúng tình huống: thêm điều kiện thừa là luật không bao
    giờ chạy; thiếu điều kiện là luật chạy nhầm sang tình huống khác trong mục A.
    Soát chéo: hai luật `nen` khác nhau không được cùng khớp một lúc, trừ khi một
