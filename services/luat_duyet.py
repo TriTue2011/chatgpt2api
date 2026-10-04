@@ -220,6 +220,36 @@ def _do_tin_cam_bien(ma_ds: list[str]) -> list[tuple[str, str]]:
     return ra
 
 
+def _mau_thuan_trong_luat(neu: list[dict[str, Any]]) -> str | None:
+    """Lý do nếu các điều kiện của MỘT luật không bao giờ cùng đúng (cùng mã đòi hai trạng thái), None nếu ổn.
+    04/10/2026: bot giải lại quạt vẫn ra luật #1 đòi person_occupancy=on VÀ =off — chặn ở biên để luật chết không
+    vào sổ, thay vì chờ chấm tay từng cái."""
+    from collections import defaultdict
+    gom: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for x in neu:
+        if x["ma"] not in ("gio",):
+            gom[x["ma"]].append(x)
+    for ma, xs in gom.items():
+        duong: set[str] = set()
+        am: set[str] = set()
+        duois: list[float] = []
+        trens: list[float] = []
+        for x in xs:
+            if "duoi" in x:
+                duois.append(x["duoi"])
+            elif "tren" in x:
+                trens.append(x["tren"])
+            else:
+                (am if x.get("phu_dinh") else duong).add(x["la"])
+        if len(duong) >= 2:
+            return f"{ma} phải cùng lúc = {sorted(duong)}"
+        if duong & am:
+            return f"{ma} vừa = vừa ≠ «{sorted(duong & am)[0]}»"
+        if duois and trens and min(duois) <= max(trens):
+            return f"{ma} vừa < {min(duois):g} vừa > {max(trens):g}"
+    return None
+
+
 # ── Kiểm ở biên ─────────────────────────────────────────────────────────────
 def _kiem_dk(x: Any, ma_co: set[str], lich: set[str]) -> dict[str, Any]:
     if not isinstance(x, dict) or not x.get("ma"):
@@ -277,6 +307,9 @@ def kiem(data: Any, n: int, ma_co: set[str], lich: set[str]) -> tuple[list[dict[
                 if g and not O_LAI_GIAY[0] <= int(g) <= O_LAI_GIAY[1]:
                     raise ValueError(f"«{k}»: số giây ngoài {O_LAI_GIAY[0]}–{O_LAI_GIAY[1]}")
             neu = [_kiem_dk(x, ma_co, lich) for x in l.get("neu") or []]
+            mt = _mau_thuan_trong_luat(neu)
+            if mt:
+                raise ValueError(f"luật tự mâu thuẫn, không bao giờ chạy: {mt}")
             luat.append({"so": s, "nen": l["nen"], "khi": khi, "neu": neu, "xac_minh": bool(l.get("xac_minh")),
                          "vi_sao": str(l.get("vi_sao") or "")[:300]})
             da.add(s)

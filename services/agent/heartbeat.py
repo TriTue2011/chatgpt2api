@@ -634,6 +634,48 @@ def _eval_thoi_quen_nha() -> tuple[str, str]:
         return "skip", f"error: {exc}"
 
 
+def _eval_luat_duyet() -> tuple[str, str]:
+    """ĐỊNH KỲ TỰ ĐÁNH GIÁ luật đã duyệt: luật nào khớp nguồn mà bị điều kiện chặn mãi, không lần nào làm được (CHẾT)
+    thì tự chấm SAI (gỡ khỏi sổ chạy — nó vốn không làm gì) rồi cho bot GIẢI LẠI với đề đã có độ tin cảm biến + cặp
+    trùng. Chủ máy 04/10/2026: "bot giải lúc đầu, sau chạy tự động; bót định kỳ học lại, đánh giá để tối ưu".
+
+    Mỗi ngày một lần, mỗi tick chỉ lo MỘT thiết bị (mỗi lần giải là một lời gọi model). Luật giải lại là ĐỀ XUẤT,
+    chờ chấm — không tự áp."""
+    try:
+        from services import luat_duyet, nhat_ky_kich_hoat as nk
+        import time as _t
+        moc = _t.strftime("%Y-%m-%d")
+        if _state.get("luat_duyet_ngay") == moc:
+            return "skip", "hôm nay đã xét rồi"
+        chet = nk.luat_chet()
+        # Chỉ xét luật CHẾT còn đang ÁP (đã chấm đúng) — luật đã gỡ thì thôi.
+        viec: tuple[str, list[int]] | None = None
+        for tb, so_ds in chet.items():
+            dang = {l["so"] for l in luat_duyet.ap(tb)}
+            con = [s for s in so_ds if s in dang]
+            if con:
+                viec = (tb, con)
+                break
+        if viec is None:
+            _state["luat_duyet_ngay"] = moc
+            _save_state()
+            return "skip", "không có luật chết đang áp"
+        tb, so_ds = viec
+        _state["luat_duyet_ngay"] = moc
+        _save_state()
+
+        def _chay() -> None:
+            for s in so_ds:
+                luat_duyet.cham(tb, s, False, cham_boi="claude",
+                                ghi_chu="tự đánh giá: khớp nguồn nhưng điều kiện chặn mãi, không lần nào chạy — "
+                                        "giải lại tránh cảm biến nhiễu / điều kiện mâu thuẫn")
+            luat_duyet.giai_va_bao(tb)
+        threading.Thread(target=_chay, name="luat-duyet-tu-danh-gia", daemon=True).start()
+        return "act", f"luật chết của {tb} (#{', #'.join(map(str, so_ds))}) → chấm sai + giải lại (chạy nền)"
+    except Exception as exc:
+        return "skip", f"error: {exc}"
+
+
 def _eval_cap_quyen() -> tuple[str, str]:
     """Quyền cấp theo thời hạn (services.cap_quyen): quá hạn thì gỡ — chỉ khi bản ghi lọc còn đúng như bot ghi."""
     try:
@@ -699,6 +741,7 @@ _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
     "tam_hon": _eval_tam_hon,
     "lech_nep": _eval_lech_nep,
     "loa_cho": _eval_loa_cho,
+    "luat_duyet": _eval_luat_duyet,
     "cap_quyen": _eval_cap_quyen,
 }
 

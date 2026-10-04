@@ -98,6 +98,28 @@ def test_cam_bien_trung_phat_hien_cap_cung_tin_hieu(monkeypatch, tmp_path):
     assert all("binary_sensor.khac" not in c for c in cap), "cảm biến khác nhịp không bị gộp"
 
 
+def test_kiem_loai_luat_tu_mau_thuan():
+    """Luật đòi cùng cảm biến hai trạng thái (hoặc <X và >Y) bị loại ở biên, không vào sổ chạy."""
+    ma_co = {"binary_sensor.p", "sensor.kc", "binary_sensor.x"}
+    data = {"luat": [
+        {"so": 1, "nen": "bat", "khi": ["binary_sensor.x có người vào"],
+         "neu": [{"ma": "binary_sensor.p", "la": "on"}, {"ma": "binary_sensor.p", "la": "off"}]},
+        {"so": 2, "nen": "bat", "khi": ["binary_sensor.x có người vào"],
+         "neu": [{"ma": "binary_sensor.p", "la": "on"}, {"ma": "binary_sensor.p", "la": "on", "phu_dinh": True}]},
+        {"so": 3, "nen": "bat", "khi": ["binary_sensor.x có người vào"],
+         "neu": [{"ma": "sensor.kc", "duoi": 2.0}, {"ma": "sensor.kc", "tren": 3.0}]},
+        {"so": 4, "nen": "bat", "khi": ["binary_sensor.x có người vào"],
+         "neu": [{"ma": "binary_sensor.p", "la": "on"}, {"ma": "sensor.kc", "duoi": 3.0}]}]}
+    luat, khong, loi = ld.kiem(data, 4, ma_co, set())
+    hop_le = {l["so"] for l in luat}
+    assert hop_le == {4}, "chỉ luật 4 không mâu thuẫn"
+    assert any("1:" in e and "mâu thuẫn" in e for e in loi)
+    assert any("mâu thuẫn" in e for e in loi if e.startswith("luật 3"))
+    # băng Y<v<X (duoi>tren) KHÔNG phải mâu thuẫn
+    ok = ld._mau_thuan_trong_luat([{"ma": "sensor.kc", "duoi": 5.0}, {"ma": "sensor.kc", "tren": 2.0}])
+    assert ok is None
+
+
 def test_do_tin_vao_de_chi_cam_bien_trong_de(monkeypatch):
     """B4: chỉ liệt cảm biến NHIỄU/KẸT có trong đề; lành không liệt."""
     from services import do_tin_cam_bien as dt

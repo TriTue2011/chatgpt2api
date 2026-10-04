@@ -104,6 +104,34 @@ def doc(thiet_bi: str | None = None, *, gio: float = 24, ket_qua: str | None = N
     return ra
 
 
+def luat_chet(so_ngay: float = 5.0, toi_thieu_chan: int = 20) -> dict[str, list[int]]:
+    """{thiết bị: [số trường hợp duyệt CHẾT]} — luật khớp nguồn (được xét) nhưng bị điều kiện chặn ≥ ``toi_thieu_chan``
+    lần mà KHÔNG lần nào làm được trong ``so_ngay``. Dùng cho lịch tự đánh giá: luật chết thì giải lại (chủ máy
+    04/10/2026: "bót định kỳ học lại, đánh giá để tối ưu")."""
+    import re as _re
+    from collections import defaultdict
+    lam: dict[tuple[str, int], int] = defaultdict(int)
+    chan: dict[tuple[str, int], int] = defaultdict(int)
+    with _khoa:
+        rows = _db().execute(
+            "SELECT thiet_bi, ket_qua, ly_do FROM nhat_ky WHERE ts >= ? AND ly_do LIKE '%trường hợp duyệt #%'",
+            (time.time() - float(so_ngay) * 86400,)).fetchall()
+    for r in rows:
+        m = _re.search(r"trường hợp duyệt #(\d+)", str(r["ly_do"] or ""))
+        if not m:
+            continue
+        khoa = (str(r["thiet_bi"]), int(m.group(1)))
+        if r["ket_qua"] == "lam":
+            lam[khoa] += 1
+        elif r["ket_qua"] == "khong" and "chưa đủ điều kiện" in str(r["ly_do"] or ""):
+            chan[khoa] += 1
+    ra: dict[str, list[int]] = defaultdict(list)
+    for (tb, so), n in chan.items():
+        if n >= toi_thieu_chan and lam.get((tb, so), 0) == 0:
+            ra[tb].append(so)
+    return {tb: sorted(set(ds)) for tb, ds in ra.items()}
+
+
 def _reset_for_tests(duong: Path) -> None:
     global _conn, _DB_PATH, _dem
     if _conn is not None:
