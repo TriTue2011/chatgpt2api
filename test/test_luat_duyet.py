@@ -98,6 +98,23 @@ def test_cam_bien_trung_phat_hien_cap_cung_tin_hieu(monkeypatch, tmp_path):
     assert all("binary_sensor.khac" not in c for c in cap), "cảm biến khác nhịp không bị gộp"
 
 
+def test_do_tin_vao_de_chi_cam_bien_trong_de(monkeypatch):
+    """B4: chỉ liệt cảm biến NHIỄU/KẸT có trong đề; lành không liệt."""
+    from services import do_tin_cam_bien as dt
+    monkeypatch.setattr(dt, "tat_ca", lambda so_ngay=3.0: {"nhi_phan": [
+        {"ma": "binary_sensor.x", "nhan": "nhieu", "doi_ngay": 900, "ngan_tl": 0.5},
+        {"ma": "binary_sensor.y", "nhan": "ket", "im_gio": 30},
+        {"ma": "binary_sensor.z", "nhan": "lanh", "doi_ngay": 20, "ngan_tl": 0.02},
+        {"ma": "binary_sensor.ngoai_de", "nhan": "nhieu", "doi_ngay": 500, "ngan_tl": 0.5}],
+        "so": [{"ma": "sensor.kc", "nhan": "nhieu", "cham0_tl": 0.8}]})
+    ra = dict(ld._do_tin_cam_bien(["binary_sensor.x", "binary_sensor.y", "binary_sensor.z", "sensor.kc"]))
+    assert "binary_sensor.x" in ra and "NHIỄU" in ra["binary_sensor.x"]
+    assert "binary_sensor.y" in ra and "KẸT" in ra["binary_sensor.y"]
+    assert "binary_sensor.z" not in ra, "lành không liệt"
+    assert "binary_sensor.ngoai_de" not in ra, "ngoài đề không liệt"
+    assert "sensor.kc" in ra and "radar" in ra["sensor.kc"]
+
+
 def test_radar_khoang_cach_0_la_KHONG_CO_MUC_TIEU(monkeypatch):
     """Radar mmwave báo 0 = không bắt được ai, không phải «0 mét». Đo 04/10/2026: luật TẮT «distance > 3.66» bị chặn
     96 lần vì distance=0. Nay 0 → «gần hơn X» sai, «xa hơn X / không ai trong X» đúng; chỉ cho cảm biến độ dài."""

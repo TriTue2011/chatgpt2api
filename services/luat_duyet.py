@@ -123,6 +123,11 @@ def de(tb: str) -> str:
                  "KHÁC nhau (vd cái này on, cái kia off): như thế luật không bao giờ chạy. Dùng MỘT trong chúng, hoặc "
                  "cùng chiều:"]
         dong += [f"- {a} ≈ {b} (giống nhau {ti:.0%} số lần)" for a, b, ti in trung]
+    do_tin = _do_tin_cam_bien([c["ma"] for c in cb])
+    if do_tin:
+        dong += ["", "B4. ĐỘ TIN cảm biến (đo lịch sử thật) — «nhiễu» hay đổi chớp nhoáng, ĐỪNG dựa chính vào nó; "
+                 "dùng phải kèm xac_minh=true hoặc một cảm biến «lành»:"]
+        dong += [f"- {ma}: {nh}" for ma, nh in do_tin]
     dong += ["", "C. LỊCH SINH HOẠT (mã | tên | loại | giờ):"]
     dong += [f"- {x['ma']} | {x['ten']} | {x['loai']} | {x['tu']}–{x['den']}" for x in lich_sinh_hoat.ds()] or ["(chưa có)"]
     sai = [c for c in (so().get(tb) or {}).get("chay_sai") or []][-10:]
@@ -191,6 +196,27 @@ def _cam_bien_trung(ma_ds: list[str], so_ngay: int = 5, nguong: float = 0.97) ->
                 t_truoc = t
             if tong > 0 and giong / tong >= nguong:
                 ra.append((a, b, giong / tong))
+    return ra
+
+
+def _do_tin_cam_bien(ma_ds: list[str]) -> list[tuple[str, str]]:
+    """(mã, nhãn) cho cảm biến NHIỄU / KẸT trong đề — để model tránh dựa vào chúng. Lành thì không liệt (đỡ dài)."""
+    try:
+        from services import do_tin_cam_bien as dt
+        d = dt.tat_ca(3.0)
+    except Exception as exc:  # noqa: BLE001 — thiếu độ tin thì bỏ mục, không chặn soạn luật
+        logger.warning({"event": "luat_duyet_do_tin_loi", "error": str(exc)[:160]})
+        return []
+    co = set(ma_ds)
+    ra: list[tuple[str, str]] = []
+    for x in (d.get("nhi_phan") or []):
+        if x["ma"] in co and x["nhan"] == "nhieu":
+            ra.append((x["ma"], f"NHIỄU ({x.get('doi_ngay'):.0f} lần/ngày, {x.get('ngan_tl', 0) * 100:.0f}% dưới 10s)"))
+        elif x["ma"] in co and x["nhan"] == "ket":
+            ra.append((x["ma"], f"KẸT (đứng im {x.get('im_gio')} giờ)"))
+    for x in (d.get("so") or []):
+        if x["ma"] in co and x["nhan"] == "nhieu":
+            ra.append((x["ma"], f"NHIỄU (radar mất mục tiêu {x.get('cham0_tl', 0) * 100:.0f}%)"))
     return ra
 
 

@@ -62,6 +62,13 @@ bằng cảm biến THẬT trong mục B. Em không điều khiển gì. Chỉ t
    chuyện CẢM BIẾN đo được: dùng sự kiện «ở lại N giây» hoặc `lien_giay` — đừng
    xếp vào `khong_chuyen_duoc` chỉ vì có thời lượng.
 7. Mục D là lời chấm các lần trước — sửa đúng chỗ bị chỉ, giữ phần đã đúng.
+8. ĐỘ TIN cảm biến (mục B4, đo trên lịch sử thật): cảm biến «nhiễu» đổi liên tục,
+   phần lớn chỉ ở vài giây — đừng để luật DỰA CHÍNH vào nó. Ưu tiên cảm biến
+   «lành». Nếu buộc phải dùng cảm biến nhiễu để bắt đúng tình huống, đặt
+   `xac_minh: true` (bộ kích hoạt nhìn lại camera/Frigate trước khi làm) hoặc
+   kèm thêm một cảm biến lành / số khoảng cách cùng khu. Mục B3 là cặp cảm biến
+   gần như cùng một tín hiệu — đừng bắt chúng khác nhau (luật sẽ không bao giờ
+   chạy), dùng một cái hoặc để cùng chiều.
 
 ## Trả về
 
