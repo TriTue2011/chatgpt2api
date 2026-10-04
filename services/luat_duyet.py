@@ -117,6 +117,12 @@ def de(tb: str) -> str:
                         f" (radar {v.get('radar', '?')})")
     if vung:
         dong += ["", "B2. VÙNG KHOẢNG CÁCH bot đã học (số đo thật, dùng làm ngưỡng):"] + vung
+    trung = _cam_bien_trung([c["ma"] for c in cb])
+    if trung:
+        dong += ["", "B3. CẢM BIẾN GẦN NHƯ CÙNG MỘT TÍN HIỆU (đo trên lịch sử thật) — ĐỪNG viết điều kiện bắt chúng "
+                 "KHÁC nhau (vd cái này on, cái kia off): như thế luật không bao giờ chạy. Dùng MỘT trong chúng, hoặc "
+                 "cùng chiều:"]
+        dong += [f"- {a} ≈ {b} (giống nhau {ti:.0%} số lần)" for a, b, ti in trung]
     dong += ["", "C. LỊCH SINH HOẠT (mã | tên | loại | giờ):"]
     dong += [f"- {x['ma']} | {x['ten']} | {x['loai']} | {x['tu']}–{x['den']}" for x in lich_sinh_hoat.ds()] or ["(chưa có)"]
     sai = [c for c in (so().get(tb) or {}).get("chay_sai") or []][-10:]
@@ -132,6 +138,60 @@ def de(tb: str) -> str:
         dong += [f"- ({'chủ nhà' if c['cham_boi'] == 'chu_may' else 'giáo viên'} chấm "
                  f"{'ĐÚNG' if c['dung'] else 'SAI'}) trường hợp {c['so']}: {c['ghi_chu']}" for c in cham]
     return "\n".join(dong)
+
+
+def _cam_bien_trung(ma_ds: list[str], so_ngay: int = 5, nguong: float = 0.97) -> list[tuple[str, str, float]]:
+    """Cặp binary_sensor đo gần như cùng một tín hiệu (trạng thái giống nhau ≥ ``nguong`` số lần), theo lịch sử THẬT.
+
+    Vì sao cần: 04/10/2026 luật bật quạt #5 đòi ``all_occupancy=on`` VÀ ``person_occupancy=off`` — hai cảm biến này
+    giống hệt nhau (đo 5 ngày: 0/2340 lần khác nhau) nên luật KHÔNG BAO GIỜ chạy. Lớp lỗi: model không biết hai cảm
+    biến là một. Chỉ đo binary_sensor (trạng thái on/off rõ ràng); so bằng trạng thái của B TẠI mỗi mốc A đổi.
+    """
+    import sqlite3
+
+    from services import lich_su_nha
+    bs = [m for m in ma_ds if str(m).startswith("binary_sensor.")]
+    if len(bs) < 2:
+        return []
+    try:
+        ro = sqlite3.connect(f"file:{lich_su_nha._DB_PATH}?mode=ro", uri=True, timeout=10.0)
+    except sqlite3.Error:
+        return []
+    try:
+        tu = time.time() - so_ngay * 86400
+        chuoi: dict[str, list[tuple[float, str]]] = {}
+        for m in bs:
+            chuoi[m] = [(float(ts), str(g)) for ts, g in ro.execute(
+                "SELECT ts, gia_tri FROM su_kien WHERE thiet_bi=? AND truong='state' AND ts>? ORDER BY ts", (m, tu))]
+    except sqlite3.Error:
+        return []
+    finally:
+        ro.close()
+
+    ra: list[tuple[str, str, float]] = []
+    for i, a in enumerate(bs):
+        for b in bs[i + 1:]:
+            ca, cb2 = chuoi[a], chuoi[b]
+            if len(ca) < 20 or len(cb2) < 20:
+                continue
+            # Trùng theo THỜI GIAN (không theo mốc đổi), nên hai cảm biến đổi lệch nhau vài mili giây không bị tính là
+            # khác: gộp hai dòng sự kiện, áp hết thay đổi tại một mốc rồi mới đo khoảng tiếp theo.
+            sk = sorted([(t, 0, g) for t, g in ca] + [(t, 1, g) for t, g in cb2])
+            sa = sb = None
+            t_truoc = None
+            giong = tong = 0.0
+            for t, ai, g in sk:
+                if t_truoc is not None and sa is not None and sb is not None and t > t_truoc:
+                    tong += t - t_truoc
+                    giong += (t - t_truoc) if sa == sb else 0.0
+                if ai == 0:
+                    sa = g
+                else:
+                    sb = g
+                t_truoc = t
+            if tong > 0 and giong / tong >= nguong:
+                ra.append((a, b, giong / tong))
+    return ra
 
 
 # ── Kiểm ở biên ─────────────────────────────────────────────────────────────
@@ -350,11 +410,23 @@ def kiem_dieu_kien(neu: list[dict[str, Any]], luc: float,
             st = trang_thai.get(ma) or {}
             gt = str(st.get("state") or "")
             if "duoi" in x or "tren" in x:
+                # Radar mmwave báo 0 (hoặc không đọc được) = KHÔNG bắt được mục tiêu, không phải «0 mét». `vung_khoang_cach`
+                # đã xử lý thế từ lâu; đường luật duyệt trước đây so thô nên 0 < ngưỡng = «có người gần» (sai dương) và
+                # 0 > ngưỡng = False khiến luật TẮT «người rời, không ai trong X» KHÔNG BAO GIỜ chạy (đo 04/10/2026:
+                # luật #20 bị chặn 96 lần vì distance=0). Nay: không mục tiêu → «gần hơn X» sai, «xa hơn X / không ai
+                # trong X» đúng. Chỉ áp cho cảm biến ĐỘ DÀI (device_class distance hoặc đơn vị m/cm/mm), số khác giữ nguyên.
+                a = st.get("attributes") or {}
+                la_do_dai = a.get("device_class") == "distance" or a.get("unit_of_measurement") in ("m", "cm", "mm")
                 try:
-                    v = float(gt)
-                    ok = v < x["duoi"] if "duoi" in x else v > x["tren"]
+                    v: float | None = float(gt)
                 except ValueError:
+                    v = None
+                if la_do_dai and (v is None or v <= 0):
+                    ok = "tren" in x
+                elif v is None:
                     ok = False
+                else:
+                    ok = v < x["duoi"] if "duoi" in x else v > x["tren"]
             elif x.get("trong_giay"):
                 ok = gt == x["la"] or _da_o_trong(ma, x["la"], luc - x["trong_giay"])
             else:

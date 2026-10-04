@@ -58,6 +58,50 @@ def test_kiem_dieu_kien_so_lien_giay_trong_giay_va_phu_dinh(monkeypatch):
     assert not ok
 
 
+def test_cam_bien_trung_phat_hien_cap_cung_tin_hieu(monkeypatch, tmp_path):
+    """Hai cảm biến gần như cùng tín hiệu → vào mục B3 để model không viết điều kiện bắt chúng khác nhau."""
+    import sqlite3
+    from services import lich_su_nha
+    db = tmp_path / "ls.sqlite"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE su_kien (ts REAL, nguon TEXT, thiet_bi TEXT, truong TEXT, gia_tri TEXT, gia_tri_cu TEXT, do_ai INT, gio INT, thu INT)")
+    import time as _t
+    now = _t.time()
+    for k in range(60):
+        g = "on" if k % 2 else "off"
+        conn.execute("INSERT INTO su_kien (ts, thiet_bi, truong, gia_tri) VALUES (?,?,?,?)", (now - (60 - k) * 60, "binary_sensor.a_all_occupancy", "state", g))
+        conn.execute("INSERT INTO su_kien (ts, thiet_bi, truong, gia_tri) VALUES (?,?,?,?)", (now - (60 - k) * 60 + 0.01, "binary_sensor.a_person_occupancy", "state", g))
+        conn.execute("INSERT INTO su_kien (ts, thiet_bi, truong, gia_tri) VALUES (?,?,?,?)", (now - (60 - k) * 60, "binary_sensor.khac", "state", "on" if k % 5 else "off"))
+    conn.commit(); conn.close()
+    monkeypatch.setattr(lich_su_nha, "_DB_PATH", db)
+    trung = ld._cam_bien_trung(["binary_sensor.a_all_occupancy", "binary_sensor.a_person_occupancy", "binary_sensor.khac", "sensor.kc"])
+    cap = {frozenset((a, b)) for a, b, _ in trung}
+    assert frozenset(("binary_sensor.a_all_occupancy", "binary_sensor.a_person_occupancy")) in cap
+    assert all("binary_sensor.khac" not in c for c in cap), "cảm biến khác nhịp không bị gộp"
+
+
+def test_radar_khoang_cach_0_la_KHONG_CO_MUC_TIEU(monkeypatch):
+    """Radar mmwave báo 0 = không bắt được ai, không phải «0 mét». Đo 04/10/2026: luật TẮT «distance > 3.66» bị chặn
+    96 lần vì distance=0. Nay 0 → «gần hơn X» sai, «xa hơn X / không ai trong X» đúng; chỉ cho cảm biến độ dài."""
+    luc = 1_000_000.0
+
+    def kc(gt, dc="distance", unit="m"):
+        return {"entity_id": "sensor.kc", "state": gt,
+                "attributes": {"device_class": dc, "unit_of_measurement": unit}}
+
+    # 0 = không mục tiêu: KHÔNG phải «gần hơn 3.66», mà LÀ «xa hơn 3.66 / không ai trong 3.66»
+    assert ld.kiem_dieu_kien([{"ma": "sensor.kc", "duoi": 3.66}], luc, {"sensor.kc": kc("0")})[0] is False
+    assert ld.kiem_dieu_kien([{"ma": "sensor.kc", "tren": 3.66}], luc, {"sensor.kc": kc("0")})[0] is True
+    # Không đọc được (unavailable) cũng vậy
+    assert ld.kiem_dieu_kien([{"ma": "sensor.kc", "tren": 3.66}], luc, {"sensor.kc": kc("unavailable")})[0] is True
+    # Số thật vẫn so bình thường
+    assert ld.kiem_dieu_kien([{"ma": "sensor.kc", "duoi": 3.66}], luc, {"sensor.kc": kc("2.4")})[0] is True
+    assert ld.kiem_dieu_kien([{"ma": "sensor.kc", "tren": 3.66}], luc, {"sensor.kc": kc("4.4")})[0] is True
+    # Cảm biến KHÔNG phải độ dài (vd công suất) thì 0 là số thật
+    assert ld.kiem_dieu_kien([{"ma": "sensor.kc", "duoi": 10}], luc, {"sensor.kc": kc("0", dc="power", unit="W")})[0] is True
+    assert ld.kiem_dieu_kien([{"ma": "sensor.kc", "tren": 10}], luc, {"sensor.kc": kc("0", dc="power", unit="W")})[0] is False
+
+
 def test_khung_gio_qua_nua_dem():
     luc = datetime(2026, 10, 2, 23, 30, tzinfo=_TZ).timestamp()
     assert ld._trong_khung("21:45", "06:00", luc) and not ld._trong_khung("06:00", "21:45", luc)
