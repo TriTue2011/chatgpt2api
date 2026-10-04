@@ -45,3 +45,20 @@ def test_luat_chet_bo_qua_ngoai_khoang_thoi_gian(db):
                          (now - 10 * 86400, "fan.pk", "on", "khong", "", "trường hợp duyệt #5: chưa đủ điều kiện — x=off✗", ""))
         conn.commit()
     assert nk.luat_chet(so_ngay=5) == {}, "cũ hơn cửa sổ thì không tính"
+
+
+def test_luat_dao_dong_bat_roi_tat_ngay(db):
+    now = time.time()
+    # #13 bật rồi tắt 2 phút sau — 3 cặp cách nhau 1 giờ → dao động
+    for k in range(3):
+        base = now - (k + 1) * 3600
+        nk.ghi("fan.pk", "on", "lam", ly_do="trường hợp duyệt #13: person=on✓", luc=base)
+        nk.ghi("fan.pk", "off", "lam", ly_do="kiểm lại sau khi bật: không ai thấy", luc=base + 120)
+    # #10 bật rồi tắt chỉ 1 lần → dưới ngưỡng 3
+    nk.ghi("fan.pk", "on", "lam", ly_do="trường hợp duyệt #10: cửa mở✓", luc=now - 500)
+    nk.ghi("fan.pk", "off", "lam", ly_do="tắt vì vắng", luc=now - 380)
+    # #6 bật rồi 12 phút sau mới tắt → KHÔNG phải dao động
+    nk.ghi("fan.pk", "on", "lam", ly_do="trường hợp duyệt #6: ở lại✓", luc=now - 20000)
+    nk.ghi("fan.pk", "off", "lam", ly_do="tắt vì vắng", luc=now - 20000 + 720)
+    d = nk.luat_dao_dong(so_ngay=7)
+    assert d.get("fan.pk") == {13: 3}, f"chỉ #13 dao động ≥3 lần, được {d}"

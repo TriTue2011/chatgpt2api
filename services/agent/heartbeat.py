@@ -648,30 +648,36 @@ def _eval_luat_duyet() -> tuple[str, str]:
         if _state.get("luat_duyet_ngay") == moc:
             return "skip", "hôm nay đã xét rồi"
         chet = nk.luat_chet()
-        # Chỉ xét luật CHẾT còn đang ÁP (đã chấm đúng) — luật đã gỡ thì thôi.
-        viec: tuple[str, list[int]] | None = None
-        for tb, so_ds in chet.items():
+        dao = nk.luat_dao_dong()
+        # Gom luật KÉM còn đang ÁP cho MỘT thiết bị: chết (chặn mãi) + dao động (bật rồi tắt ngay = bật quá sớm).
+        viec: tuple[str, dict[int, str]] | None = None
+        for tb in sorted(set(chet) | set(dao)):
             dang = {l["so"] for l in luat_duyet.ap(tb)}
-            con = [s for s in so_ds if s in dang]
-            if con:
-                viec = (tb, con)
+            ly: dict[int, str] = {}
+            for s in chet.get(tb) or []:
+                if s in dang:
+                    ly[s] = "khớp nguồn nhưng điều kiện chặn mãi, không lần nào chạy — giải lại tránh cảm biến nhiễu / mâu thuẫn"
+            for s, n in (dao.get(tb) or {}).items():
+                if s in dang:
+                    ly[s] = (f"bật rồi phải tắt ngay {n} lần (≤5 phút, không ai ở lại) — bật QUÁ SỚM; đổi sang người "
+                             "Ở LẠI đủ lâu, hoặc chéo camera trước khi bật")
+            if ly:
+                viec = (tb, ly)
                 break
         if viec is None:
             _state["luat_duyet_ngay"] = moc
             _save_state()
-            return "skip", "không có luật chết đang áp"
-        tb, so_ds = viec
+            return "skip", "không có luật chết / dao động đang áp"
+        tb, ly = viec
         _state["luat_duyet_ngay"] = moc
         _save_state()
 
         def _chay() -> None:
-            for s in so_ds:
-                luat_duyet.cham(tb, s, False, cham_boi="claude",
-                                ghi_chu="tự đánh giá: khớp nguồn nhưng điều kiện chặn mãi, không lần nào chạy — "
-                                        "giải lại tránh cảm biến nhiễu / điều kiện mâu thuẫn")
+            for s, ghi in ly.items():
+                luat_duyet.cham(tb, s, False, cham_boi="claude", ghi_chu=f"tự đánh giá: {ghi}")
             luat_duyet.giai_va_bao(tb)
         threading.Thread(target=_chay, name="luat-duyet-tu-danh-gia", daemon=True).start()
-        return "act", f"luật chết của {tb} (#{', #'.join(map(str, so_ds))}) → chấm sai + giải lại (chạy nền)"
+        return "act", f"luật kém của {tb} (#{', #'.join(map(str, sorted(ly)))}) → chấm sai + giải lại (chạy nền)"
     except Exception as exc:
         return "skip", f"error: {exc}"
 

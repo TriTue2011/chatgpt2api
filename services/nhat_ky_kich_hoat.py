@@ -132,6 +132,32 @@ def luat_chet(so_ngay: float = 5.0, toi_thieu_chan: int = 20) -> dict[str, list[
     return {tb: sorted(set(ds)) for tb, ds in ra.items()}
 
 
+def luat_dao_dong(so_ngay: float = 7.0, cua_so_giay: float = 300.0, toi_thieu: int = 3) -> dict[str, dict[int, int]]:
+    """{thiết bị: {số luật: số lần}} — luật BẬT mà bị đảo lại (tắt) trong ``cua_so_giay`` giây, ≥ ``toi_thieu`` lần.
+    Bật rồi phải tắt ngay = bật quá sớm (người đi ngang, không ở lại). Bot tự thấy từ nhật ký, không cần ai chấm —
+    chủ máy 04/10/2026: "bot tự hiểu và đánh giá có chu kỳ để giảm dần sai lầm". Chỉ tính lần bot TỰ làm (lam)."""
+    import re as _re
+    from collections import defaultdict
+    with _khoa:
+        rows = _db().execute(
+            "SELECT ts, thiet_bi, hanh_dong, ly_do FROM nhat_ky WHERE ket_qua='lam' AND ts >= ? ORDER BY thiet_bi, ts",
+            (time.time() - float(so_ngay) * 86400,)).fetchall()
+    theo_tb: dict[str, list[tuple[float, str, str]]] = defaultdict(list)
+    for r in rows:
+        theo_tb[str(r["thiet_bi"])].append((float(r["ts"]), str(r["hanh_dong"]), str(r["ly_do"] or "")))
+    ra: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    for tb, ev in theo_tb.items():
+        for i in range(len(ev) - 1):
+            ts, hd, ly = ev[i]
+            ts2, hd2, _ = ev[i + 1]
+            if hd == "on" and hd2 == "off" and ts2 - ts <= cua_so_giay:
+                m = _re.search(r"trường hợp duyệt #(\d+)", ly)
+                if m:
+                    ra[tb][int(m.group(1))] += 1
+    return {tb: {s: n for s, n in d.items() if n >= toi_thieu} for tb, d in ra.items()
+            if any(n >= toi_thieu for n in d.values())}
+
+
 def _reset_for_tests(duong: Path) -> None:
     global _conn, _DB_PATH, _dem
     if _conn is not None:
