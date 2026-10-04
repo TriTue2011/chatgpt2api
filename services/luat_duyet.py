@@ -10,7 +10,8 @@ số bot đã học, lịch sinh hoạt, lời chấm trước) và KIỂM Ở B
 được chấm ĐÚNG (`ap`).
 
 Dạng điều kiện là dạng chung của các tầng học (câu thói quen): ``{"ma", "la"}``, ``{"ma", "duoi"|"tren"}``,
-``{"ma": "gio", "tu", "den"}``; thêm ``{"ma": "lich", "la": <mã lịch>}``, ``{"ma": "ca_nha", "la": "ngu"|"vang"}``
+``{"ma": "gio", "tu", "den"}``; thêm ``{"ma": "lich", "la": <mã lịch>}``, ``{"ma": "ca_nha", "la": "ngu"|"vang"}``,
+``{"ma": "troi", "la": "toi"|"sang"}`` (mặt trời — `services/troi.py`)
 và ``"phu_dinh"`` để lấy điều ngược lại.
 """
 
@@ -140,6 +141,8 @@ def de_tu(tb: str, ten_tb: str, th: list[dict[str, Any]], cb: list[dict[str, Any
         dong += [f"- {ma}: {nh}" for ma, nh in do_tin]
     dong += ["", "C. LỊCH SINH HOẠT (mã | tên | loại | giờ):"]
     dong += [f"- {x['ma']} | {x['ten']} | {x['loai']} | {x['tu']}–{x['den']}" for x in lich or []] or ["(chưa có)"]
+    dong += ["", "C2. TRỜI: {\"ma\": \"troi\", \"la\": \"toi\"} khi mặt trời đã lặn, \"sang\" khi đã mọc — dùng cho"
+             " «trời tối / ban ngày» khi mục B2 không có ngưỡng độ sáng đã học."]
     if sai:
         dong += ["", "E. LẦN CHẠY BỊ CHẤM SAI — luật đã làm, chủ nhà nói sai (hoặc tự làm ngược lại ngay). Tìm điều "
                  "kiện nào khớp mà lẽ ra không được khớp (✓ là điều kiện đã đúng lúc đó), sửa luật đó cho chặt hơn "
@@ -277,6 +280,10 @@ def _kiem_dk(x: Any, ma_co: set[str], lich: set[str]) -> dict[str, Any]:
         if x.get("la") not in ("ngu", "vang"):
             raise ValueError("ca_nha chỉ «ngu» hoặc «vang»")
         return {"ma": "ca_nha", "la": str(x["la"]), **pd}
+    if ma == "troi":
+        if x.get("la") not in ("toi", "sang"):
+            raise ValueError("troi chỉ «toi» hoặc «sang»")
+        return {"ma": "troi", "la": str(x["la"]), **pd}
     if ma not in ma_co:
         raise ValueError(f"mã không có trong nhà: {ma}")
     for k in ("duoi", "tren"):
@@ -473,6 +480,11 @@ def kiem_dieu_kien(neu: list[dict[str, Any]], luc: float,
             ok, gt = bool(m and lsh.trong(m, luc)), "lịch"
         elif ma == "ca_nha":
             ok, gt = lsh.ca_nha(x["la"], luc), "lịch cả nhà"
+        elif ma == "troi":
+            from services import troi
+            t = troi.toi(luc)
+            ok = (t is True) if x["la"] == "toi" else (t is False)
+            gt = "không biết trời" if t is None else ("trời tối" if t else "trời sáng")
         else:
             st = trang_thai.get(ma) or {}
             gt = str(st.get("state") or "")
@@ -533,6 +545,8 @@ def doc_luat(l: dict[str, Any], ten: dict[str, str]) -> str:
             s = f"đang lịch «{x['la']}»"
         elif x["ma"] == "ca_nha":
             s = "cả nhà đang ngủ" if x["la"] == "ngu" else "cả nhà đi vắng"
+        elif x["ma"] == "troi":
+            s = "trời tối" if x["la"] == "toi" else "trời sáng"
         else:
             s = ht._dieu_kien_doc(x, {}, ten) + (f" liền {x['lien_giay']} giây" if x.get("lien_giay") else "") + (
                 f" (trong {x['trong_giay']} giây vừa qua)" if x.get("trong_giay") else "")
