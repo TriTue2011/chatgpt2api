@@ -58,6 +58,24 @@ def test_kiem_dieu_kien_so_lien_giay_trong_giay_va_phu_dinh(monkeypatch):
     assert not ok
 
 
+def test_loc_mem_cam_bien_nhieu_phai_giu_du_lau(monkeypatch):
+    """Cảm biến NHIỄU: điều kiện «= on» chỉ đúng khi giữ ≥ ngưỡng giữ (lọc mềm). Lành thì tin ngay. Phủ định không lọc."""
+    from services import do_tin_cam_bien as dt
+    luc = 1_000_000.0
+    monkeypatch.setattr(dt, "nguong_giu_nhanh", lambda ma, now=None: 30.0 if ma == "binary_sensor.nhieu" else None)
+    # nhiễu vừa bật 10 giây trước → chưa đủ 30s giữ → chưa tin
+    st = {"binary_sensor.nhieu": _st("binary_sensor.nhieu", "on", 10), "binary_sensor.lanh": _st("binary_sensor.lanh", "on", 1)}
+    assert ld.kiem_dieu_kien([{"ma": "binary_sensor.nhieu", "la": "on"}], luc, st)[0] is False
+    # giữ 40 giây → tin
+    st["binary_sensor.nhieu"] = _st("binary_sensor.nhieu", "on", 40)
+    assert ld.kiem_dieu_kien([{"ma": "binary_sensor.nhieu", "la": "on"}], luc, st)[0] is True
+    # cảm biến lành: bật 1 giây vẫn tin ngay
+    assert ld.kiem_dieu_kien([{"ma": "binary_sensor.lanh", "la": "on"}], luc, st)[0] is True
+    # phủ định «KHÔNG on» của cảm biến nhiễu vừa chớp: tin ngay, không chờ
+    st["binary_sensor.nhieu"] = _st("binary_sensor.nhieu", "off", 2)
+    assert ld.kiem_dieu_kien([{"ma": "binary_sensor.nhieu", "la": "on", "phu_dinh": True}], luc, st)[0] is True
+
+
 def test_cam_bien_trung_phat_hien_cap_cung_tin_hieu(monkeypatch, tmp_path):
     """Hai cảm biến gần như cùng tín hiệu → vào mục B3 để model không viết điều kiện bắt chúng khác nhau."""
     import sqlite3

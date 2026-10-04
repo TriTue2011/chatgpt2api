@@ -224,7 +224,9 @@ def _mo_ta(h: dict[str, Any], ten_map: dict[str, str] | None = None,
     ma = str(h.get("thiet_bi") or "?")
     tr = str(h.get("truong") or "")
     nhan = {"chet": "🔴 chết hẳn", "do": "🟠 đơ (vẫn báo nhưng số không đổi)",
-            "chap_chon": "🟡 chập chờn", "mat_ket_noi": "🔌 mất kết nối"}.get(str(h.get("loai")), str(h.get("loai")))
+            "chap_chon": "🟡 chập chờn", "mat_ket_noi": "🔌 mất kết nối",
+            "cam_bien_nhieu": "⚙️ có thể đặt quá nhạy", "cam_bien_ket": "🧊 có thể kẹt"}.get(
+                str(h.get("loai")), str(h.get("loai")))
     ct = str(h.get("chi_tiet") or "")
     ten, khu = _ten_khu(ma, ten_map or {}, khu_map or {})
 
@@ -476,6 +478,13 @@ def quet(so_ngay: int = 7) -> dict[str, Any]:
         hong += mat_ket_noi()
     except Exception as exc:
         logger.warning({"event": "canh_bao_mat_ket_noi_loi", "error": str(exc)[:200]})
+
+    # Lỗi SETTING: cảm biến đặt quá nhạy (đổi liên tục) hoặc kẹt — chủ máy 04/10/2026.
+    try:
+        from services import do_tin_cam_bien
+        hong += do_tin_cam_bien.loi_can_bao()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning({"event": "canh_bao_do_tin_loi", "error": str(exc)[:200]})
     hong = con_ton_tai(hong)
     with _khoa:
         khong = (_doc().get("khong_phai_loi") or {})

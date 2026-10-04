@@ -167,3 +167,57 @@ def nguong_giu(ma: str, so_ngay: float = 3.0, now: float | None = None) -> float
     """Ngưỡng giữ của một cảm biến (giây) nếu nó NHIỄU; None nếu lành/không đủ dữ liệu (không cần lọc)."""
     r = do(ma, so_ngay, now)
     return r.get("nhieu_giay") if r.get("nhan") == "nhieu" else None
+
+
+#: Bộ nhớ đệm ngưỡng giữ: đo flap tốn một truy vấn lịch sử, mà `kiem_dieu_kien` gọi mỗi lượt sự kiện (hàng trăm
+#: lần/ngày). Tính lại mỗi `_CACHE_GIAY`; độ nhiễu của cảm biến đổi theo ngày chứ không theo giây.
+_cache: dict[str, tuple[float, float | None]] = {}
+_CACHE_GIAY = 1800.0
+
+
+def nguong_giu_nhanh(ma: str, now: float | None = None) -> float | None:
+    """Như `nguong_giu` nhưng có đệm — dùng trong đường nóng (lọc mềm điều kiện). Chỉ cảm biến nhị phân."""
+    if not str(ma).startswith("binary_sensor."):
+        return None
+    now = float(now or time.time())
+    c = _cache.get(ma)
+    if c and now - c[0] < _CACHE_GIAY:
+        return c[1]
+    v = nguong_giu(ma, 3.0, now)
+    _cache[ma] = (now, v)
+    return v
+
+
+def _reset_cache_for_tests() -> None:
+    _cache.clear()
+
+
+#: Báo lỗi setting ở BAR cao hơn nhãn: nhãn «nhiễu» để lọc mềm (nhạy), còn báo anh đi chỉnh độ nhạy thì chỉ ca RÕ
+#: (đổi rất dày + phần lớn chớp nhoáng), tránh làm phiền vì cảm biến hơi nhiễu.
+BAO_DOI_NGAY = 300.0
+BAO_NGAN_TL = 0.4
+
+
+def loi_can_bao(so_ngay: float = 3.0, now: float | None = None) -> list[dict[str, Any]]:
+    """Lỗi SETTING đáng báo chủ máy (dạng bản ghi của `canh_bao_nha`): cảm biến đổi quá dày (đặt quá nhạy) hoặc kẹt.
+    Đi qua cùng cơ chế im lặng / nâng bậc của `canh_bao_nha`, nên anh tắt được cái nào chấp nhận."""
+    d = tat_ca(so_ngay, now)
+    ra: list[dict[str, Any]] = []
+    for x in d.get("nhi_phan") or []:
+        ten = x.get("ten") or x["ma"]
+        if x["nhan"] == "ket":
+            ra.append({"thiet_bi": x["ma"], "truong": "state", "loai": "cam_bien_ket",
+                       "chi_tiet": f"«{ten}» đứng im {x.get('im_gio')} giờ dù trước đó đổi thường xuyên — "
+                                   "có thể cảm biến kẹt hoặc mất nguồn, anh kiểm giúp."})
+        elif x["nhan"] == "nhieu" and x.get("doi_ngay", 0) >= BAO_DOI_NGAY and x.get("ngan_tl", 0) >= BAO_NGAN_TL:
+            ra.append({"thiet_bi": x["ma"], "truong": "state", "loai": "cam_bien_nhieu",
+                       "chi_tiet": f"«{ten}» đổi {x.get('doi_ngay'):.0f} lần/ngày, {x.get('ngan_tl', 0) * 100:.0f}% chỉ "
+                                   "ở dưới 10 giây — có thể đặt quá nhạy. Chỉnh bớt độ nhạy giúp bot học chính xác hơn; "
+                                   "trong lúc đó em tự lọc nhiễu."})
+    for x in d.get("so") or []:
+        if x["nhan"] == "nhieu" and x.get("cham0_tl", 0) >= 0.7:
+            ten = x.get("ten") or x["ma"]
+            ra.append({"thiet_bi": x["ma"], "truong": "state", "loai": "cam_bien_nhieu",
+                       "chi_tiet": f"Radar «{ten}» mất mục tiêu ở {x.get('cham0_tl', 0) * 100:.0f}% thời gian "
+                                   "(khoảng cách hay về 0) — ngưỡng khoảng cách kém tin, anh kiểm vị trí/độ nhạy radar."})
+    return ra

@@ -431,12 +431,23 @@ def kiem_dieu_kien(neu: list[dict[str, Any]], luc: float,
                 ok = gt == x["la"] or _da_o_trong(ma, x["la"], luc - x["trong_giay"])
             else:
                 ok = gt == x["la"]
-                if ok and x.get("lien_giay"):
+                # Giữ bao lâu mới tin: điều kiện ghi rõ `lien_giay`, HOẶC cảm biến NHIỄU thì tự lọc mềm bằng ngưỡng
+                # giữ học từ chính nó (chủ máy 04/10/2026: "một đổi chỉ tính là thật khi giữ ≥ ngưỡng"). Lọc mềm
+                # không áp cho điều kiện phủ định (vd «cửa KHÔNG mở»): một cảm biến nhiễu vừa chớp sang «on» thì
+                # «không on» vẫn nên tin ngay, chờ đủ lâu mới coi là mở sẽ bỏ sót.
+                giu = x.get("lien_giay")
+                if ok and giu is None and not x.get("phu_dinh"):
+                    try:
+                        from services import do_tin_cam_bien
+                        giu = do_tin_cam_bien.nguong_giu_nhanh(ma, luc)
+                    except Exception:  # noqa: BLE001 — thiếu độ tin thì không lọc, tin như cũ
+                        giu = None
+                if ok and giu:
                     try:
                         tu = datetime.fromisoformat(str(st.get("last_changed"))).timestamp()
                     except ValueError:
                         tu = luc
-                    ok = luc - tu >= x["lien_giay"]
+                    ok = luc - tu >= giu
         if x.get("phu_dinh"):
             ok = not ok
         doc.append(f"{ma}={gt}{'✓' if ok else '✗'}")

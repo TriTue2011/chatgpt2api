@@ -82,3 +82,27 @@ def test_nguong_giu_nhieu_co_so_lanh_None(ro):
     _nhip(ro, "binary_sensor.lanh", now, 3, 2000)
     assert dt.nguong_giu("binary_sensor.nhieu", 3, now) is not None
     assert dt.nguong_giu("binary_sensor.lanh", 3, now) is None
+
+
+def test_loi_can_bao_chi_ca_ro(ro, monkeypatch):
+    """Báo lỗi setting ở bar cao hơn nhãn: chỉ cảm biến đổi rất dày + phần lớn chớp nhoáng, và cảm biến kẹt."""
+    now = time.time()
+    _nhip(ro, "binary_sensor.rat_nhieu", now, 3, 6)      # ~14000/ngày, gần 100% <10s → báo
+    _nhip(ro, "binary_sensor.hoi_nhieu", now, 3, 40)     # ~2000/ngày nhưng dwell 40s, 0% <10s → KHÔNG báo
+    _nhip(ro, "binary_sensor.lanh", now, 3, 3000)        # lành → không báo
+
+    from services import do_tin_cam_bien as dt
+
+    def _cb():
+        return [{"ma": m, "ten": m, "khu": "PK"} for m in
+                ("binary_sensor.rat_nhieu", "binary_sensor.hoi_nhieu", "binary_sensor.lanh")]
+    import sys
+    monkeypatch.setitem(sys.modules, "services.luat_duyet", type(sys)("services.luat_duyet"))
+    sys.modules["services.luat_duyet"].cam_bien = _cb
+    monkeypatch.setattr(dt, "_db", lambda: ro)
+    loi = dt.loi_can_bao(3.0, now)
+    ma = {x["thiet_bi"] for x in loi}
+    assert "binary_sensor.rat_nhieu" in ma
+    assert "binary_sensor.hoi_nhieu" not in ma, "dwell dài thì không phải lỗi setting"
+    assert "binary_sensor.lanh" not in ma
+    assert all(x["loai"] == "cam_bien_nhieu" for x in loi)
