@@ -316,6 +316,17 @@ class LichSuNhaTest(unittest.TestCase):
         do = [x for x in ra if x["loai"] == "do" and "phong_hoc" in x["thiet_bi"]]
         self.assertTrue(do, f"phải phát hiện cảm biến ĐƠ, nhận được: {ra}")
 
+    def test_soi_hong_dung_yen_o_0_khong_phai_do(self) -> None:
+        """04/10/2026: 17 cảm biến MikroTik mik-hk báo đơ ở "0.0" chỉ vì VPN HK không nối (connected=off).
+        Đứng yên ở 0 = KHÔNG hoạt động (lưu lượng, bắt tay = 0), không phải cảm biến chết. Ở giá trị KHÁC 0
+        (vd lux 86) thì vẫn là đơ."""
+        now = time.time()
+        self._doi_moi_ngay("sensor.mik_hk_rx", "state", 10, 2)
+        for i in range(48):   # 2 ngày cuối gửi đều, giá trị = 0.0
+            self._ghi("mqtt", "sensor.mik_hk_rx", "state", 0.0, False, now - 2 * 86400 + 1 + i * 3600)
+        self.assertNotIn("sensor.mik_hk_rx", [x["thiet_bi"] for x in self.m.soi_hong(7)],
+                         "đứng yên ở 0 = không hoạt động, không báo đơ")
+
     def test_soi_hong_phan_biet_chet_voi_do(self) -> None:
         """Đổi đều mỗi ngày rồi im hẳn = 'chet'."""
         self._doi_moi_ngay("cb_im", "illuminance", 10, 2)

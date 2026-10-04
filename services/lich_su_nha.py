@@ -1122,6 +1122,14 @@ def _ngay(ts: float) -> int:
     return int((ts + 7 * 3600) // 86400)
 
 
+def _la_so_khong(gt: Any) -> bool:
+    """Giá trị là SỐ 0 (0, 0.0, "0", "0.00") — «không có hoạt động». Chuỗi không phải số thì False."""
+    try:
+        return float(gt) == 0.0
+    except (TypeError, ValueError):
+        return False
+
+
 def _im_lau_nhat(conn: sqlite3.Connection, k: tuple[str, str], tu: float, den: float) -> float:
     """Khoảng lâu nhất giữa hai lần ĐỔI của trường ``k`` trong [tu, den] (giây)."""
     g = _o_gop_giay()
@@ -1227,6 +1235,11 @@ def soi_hong(so_ngay: int = 7) -> list[dict[str, Any]]:
             continue                    # từng im lâu như vậy rồi — chưa phải bất thường
         gt_cuoi, ts_tin = moi_nhat.get(k, (None, lan_doi))
         con_gui = now - ts_tin < _IM_HONG_GIAY
+        # Đứng yên ở 0 = KHÔNG CÓ HOẠT ĐỘNG, không phải cảm biến chết. Số đo (lưu lượng, bắt tay VPN, công suất…)
+        # bằng 0 khi cái nó đo đang tắt/không nối — khác hẳn số đông cứng ở một giá trị KHÁC 0 (mới đáng nghi đơ).
+        # Đo 04/10/2026: 17 cảm biến MikroTik mik-hk báo đơ ở "0.0" chỉ vì VPN Hong Kong đang không nối (connected=off).
+        if con_gui and _la_so_khong(gt_cuoi):
+            continue
         if con_gui and (k not in lien_tuc or (k in tang and k not in giam)):
             # Trạng thái rời rạc (bật/tắt, ON/OFF) đứng yên mà thiết bị VẪN GỬI TIN là bình thường —
             # không ai bấm. Chủ máy 29/09/2026 với "Aptomat điều hòa phòng ngủ", "Phòng ngủ ·
