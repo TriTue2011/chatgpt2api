@@ -69,6 +69,32 @@ bằng cảm biến THẬT trong mục B. Em không điều khiển gì. Chỉ t
    kèm thêm một cảm biến lành / số khoảng cách cùng khu. Mục B3 là cặp cảm biến
    gần như cùng một tín hiệu — đừng bắt chúng khác nhau (luật sẽ không bao giờ
    chạy), dùng một cái hoặc để cùng chiều.
+9. MỌI ĐƯỜNG VÀO khu: người vào khu không chỉ qua cửa chính mà còn từ phòng bên
+   cạnh. Luật BẬT chỉ nghe «cửa mở» thì người đi từ phòng khác vào sẽ không được
+   phục vụ. Nếu trường hợp nói «người vào khu», nghe cảm biến CÓ NGƯỜI của chính
+   khu đó (có người vào / ở lại), cửa chỉ là một đường thêm.
+10. Khoảng cách radar bằng 0 là KHÔNG bắt được ai, không phải «rất gần». Ngưỡng
+   «dưới X» chỉ nghĩa là có người trong vùng; muốn nói «không ai trong vùng» thì
+   dùng sự kiện vắng của cảm biến có người, đừng dùng «trên X».
+
+## Nguyên tắc theo LOẠI thiết bị (áp cho mọi nhà, mọi kiểu sơ đồ)
+
+- **Đèn chiếu sáng chính của phòng** (đèn trần): bật NGAY khi người vào lúc trời
+  tối (có người vào + độ sáng thấp); tắt khi khu VẮNG đủ lâu và mọi nguồn (radar,
+  khoảng cách, camera) cùng không thấy ai — người ngồi yên thì radar/camera hay
+  mất dấu, đừng tắt chỉ vì một nguồn.
+- **Thiết bị tiện nghi** (quạt, điều hoà): chỉ bật khi người Ở LẠI đủ lâu (dùng
+  «ở lại N giây»), không bật lúc vừa mở cửa / đi ngang — bật rồi phải tắt ngay
+  là luật sai. Kèm điều kiện nóng/lạnh nếu mục B có nhiệt độ.
+- **Đèn phụ gắn một hoạt động** (đèn tủ lạnh, đèn cửa sổ, đèn đọc): theo HOẠT
+  ĐỘNG đó (tivi bật, có người ở khu bếp / bàn đọc), không theo cả phòng.
+- **Đèn ngoài trời / ban công**: cảm biến ngoài trời hay báo ảo (gió, thú, nắng)
+  → luật bật kèm `xac_minh: true`; theo độ sáng ngoài trời.
+- **Đèn bàn học / làm việc**: người NGỒI yên lâu — dùng «ở lại», tắt chậm, đừng
+  để radar mất dấu người ngồi làm tắt đèn.
+- **Thiết bị NGUY HIỂM** (bình nóng lạnh, bếp, ổ cắm công suất lớn, khoá cửa):
+  không bao giờ `nen: bat` / `tat` tự làm — chỉ `hoi` hoặc theo lịch chủ nhà duyệt;
+  thiếu dữ liệu thì để `khong_chuyen_duoc`.
 
 ## Trả về
 
