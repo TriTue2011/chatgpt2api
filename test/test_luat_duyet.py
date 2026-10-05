@@ -337,3 +337,39 @@ def test_kiem_mot_chuan_hoa_chu_nguoi_go(monkeypatch):
         ld.kiem_mot("light.x", {**l, "neu": [{"ma": "gio", "tu": "25:00", "den": "21:45"}]})
     with pytest.raises(ValueError, match="ngoài 1–86400"):
         ld.kiem_mot("light.x", {**l, "neu": [{"ma": "binary_sensor.cam", "la": "on", "lien_giay": -5}]})
+
+
+def test_vua_chuyen_giay_kiem_bien_va_khong_di_chung():
+    """Chủ máy 06/10/2026: điều kiện cảm biến cần chế độ «chuyển trạng thái» — cửa mở sẵn không được tính."""
+    assert ld._kiem_dk({"ma": "binary_sensor.cua", "la": "on", "vua_chuyen_giay": 30}, MA, set()) == \
+        {"ma": "binary_sensor.cua", "la": "on", "vua_chuyen_giay": 30}
+    _, _, loi = ld.kiem({"luat": [_luat(neu=[{"ma": "binary_sensor.cua", "la": "on", "lien_giay": 5,
+                                              "vua_chuyen_giay": 30}])]}, 1, MA, set())
+    assert loi and "không đi chung" in loi[0]
+    assert ld._chuan_dk_nguoi({"ma": "binary_sensor.cua", "la": "on", "vua_chuyen_giay": 0}) == \
+        {"ma": "binary_sensor.cua", "la": "on"}
+
+
+def test_vua_chuyen_doc_so_lich_su_that(tmp_path, monkeypatch):
+    import sqlite3
+
+    from services import cam_bien_ghep, lich_su_nha
+    db = tmp_path / "ls.sqlite"
+    c = sqlite3.connect(db)
+    c.execute("CREATE TABLE su_kien (thiet_bi TEXT, truong TEXT, gia_tri TEXT, gia_tri_cu TEXT, ts REAL)")
+    luc = 1_000_000.0
+    c.executemany("INSERT INTO su_kien VALUES (?,?,?,?,?)", [
+        ("binary_sensor.cua", "state", "on", "off", luc - 3600),     # mở từ 1 giờ trước, để mở luôn
+        ("binary_sensor.cua2", "state", "on", "off", luc - 20),      # vừa mở 20 giây trước
+        ("binary_sensor.cua2", "state", "off", "on", luc - 10),      # rồi đóng ngay — vẫn là «vừa mở»
+        ("binary_sensor.cua3", "state", "on", "on", luc - 5),        # ghi lặp cùng trạng thái — không phải chuyển
+    ])
+    c.commit(); c.close()
+    monkeypatch.setattr(lich_su_nha, "_DB_PATH", db)
+    monkeypatch.setattr(cam_bien_ghep, "la_ghep", lambda ma: False)
+    assert not ld._vua_chuyen("binary_sensor.cua", "on", luc - 30), "cửa để mở từ trước không tính"
+    assert ld._vua_chuyen("binary_sensor.cua2", "on", luc - 30), "mở rồi đóng ngay vẫn là vừa mở"
+    assert not ld._vua_chuyen("binary_sensor.cua3", "on", luc - 30)
+    st = {"binary_sensor.cua": _st("binary_sensor.cua", "on", 3600, luc)}
+    ok, _ = ld.kiem_dieu_kien([{"ma": "binary_sensor.cua", "la": "on", "vua_chuyen_giay": 30}], luc, st)
+    assert not ok, "đang mở nhưng không VỪA mở → điều kiện sai, đèn không bật lại"

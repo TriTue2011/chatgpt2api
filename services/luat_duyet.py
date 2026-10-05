@@ -281,6 +281,14 @@ def _mau_thuan_trong_luat(neu: list[dict[str, Any]]) -> str | None:
 
 
 # ── Kiểm ở biên ─────────────────────────────────────────────────────────────
+#: Ba cách một điều kiện cảm biến tính theo thời gian (mỗi điều kiện tối đa một):
+#: - lien_giay: ĐANG ở trạng thái đó và giữ liền ≥ N giây;
+#: - trong_giay: đang ở, HOẶC đã từng ở trạng thái đó trong N giây qua;
+#: - vua_chuyen_giay: VỪA ĐỔI SANG trạng thái đó trong N giây qua — cửa để mở từ trước không tính. Chủ máy
+#:   06/10/2026: "cần có chế độ cảm biến cũng có chuyển trạng thái, chứ nếu tắt đèn mà mở cửa thì cũng bật".
+_KHOANG_GIAY = ("lien_giay", "trong_giay", "vua_chuyen_giay")
+
+
 def _kiem_dk(x: Any, ma_co: set[str], lich: set[str]) -> dict[str, Any]:
     if not isinstance(x, dict) or not x.get("ma"):
         raise ValueError("điều kiện thiếu «ma»")
@@ -314,14 +322,14 @@ def _kiem_dk(x: Any, ma_co: set[str], lich: set[str]) -> dict[str, Any]:
         if x.get(k) is not None:
             return {"ma": ma, k: float(x[k]), **pd}
     ra = {"ma": ma, "la": str(x.get("la") or "on"), **pd}
-    for k in ("lien_giay", "trong_giay"):
+    for k in _KHOANG_GIAY:
         if x.get(k) is not None:
             g = int(x[k])
             if not 1 <= g <= 86400:
                 raise ValueError(f"{k} {g} ngoài 1–86400")
             ra[k] = g
-    if "lien_giay" in ra and "trong_giay" in ra:
-        raise ValueError("lien_giay và trong_giay không đi chung một điều kiện")
+    if sum(k in ra for k in _KHOANG_GIAY) > 1:
+        raise ValueError(f"{' / '.join(k for k in _KHOANG_GIAY if k in ra)} không đi chung một điều kiện")
     return ra
 
 
@@ -705,7 +713,7 @@ def _chuan_dk_nguoi(x: Any) -> Any:
             m = _GIO_NGUOI_RE.fullmatch(str(x.get(k) or ""))
             if m and int(m.group(1)) <= 24 and int(m.group(2) or 0) <= 59:
                 x[k] = f"{int(m.group(1)):02d}:{int(m.group(2) or 0):02d}"
-    for k in ("lien_giay", "trong_giay"):
+    for k in _KHOANG_GIAY:
         if x.get(k) in (0, "0", ""):
             x.pop(k)
     return x
@@ -832,6 +840,22 @@ def _trong_khung(tu: str, den: str, luc: float) -> bool:
     return a <= p < b if a <= b else (p >= a or p < b)
 
 
+def _vua_chuyen(ma: str, la: str, tu: float) -> bool:
+    """``ma`` có ĐỔI SANG ``la`` (từ trạng thái khác) lúc nào đó từ ``tu`` tới nay không. Mở rồi đóng ngay vẫn tính
+    là vừa mở; cửa mở sẵn từ trước ``tu`` thì không."""
+    import sqlite3
+    from services import cam_bien_ghep, lich_su_nha
+    ro = sqlite3.connect(f"file:{lich_su_nha._DB_PATH}?mode=ro", uri=True, timeout=10.0)
+    try:
+        if cam_bien_ghep.la_ghep(ma):           # cảm biến ghép: dựng chuỗi từ cảm biến gốc, có cả giá trị trước mốc
+            chuoi = [g for _, g in cam_bien_ghep.chuoi(ro, ma, tu, time.time() + 1)]
+            return any(g == la and truoc != la for truoc, g in zip(chuoi, chuoi[1:]))
+        return ro.execute("SELECT 1 FROM su_kien WHERE thiet_bi=? AND truong='state' AND ts>=? AND gia_tri=?"
+                          " AND (gia_tri_cu IS NULL OR gia_tri_cu != ?) LIMIT 1", (ma, tu, la, la)).fetchone() is not None
+    finally:
+        ro.close()
+
+
 def _da_o_trong(ma: str, la: str, tu: float) -> bool:
     """``ma`` có ở trạng thái ``la`` lúc nào đó từ ``tu`` tới nay không (sổ lịch sử: đổi SANG hoặc RỜI trạng thái đó)."""
     import sqlite3
@@ -942,6 +966,8 @@ def kiem_dieu_kien(neu: list[dict[str, Any]], luc: float,
                     ok = v < x["duoi"] if "duoi" in x else v > x["tren"]
             elif x.get("trong_giay"):
                 ok = gt == x["la"] or _da_o_trong(ma, x["la"], luc - x["trong_giay"])
+            elif x.get("vua_chuyen_giay"):
+                ok = _vua_chuyen(ma, x["la"], luc - x["vua_chuyen_giay"])
             else:
                 ok = gt == x["la"]
                 # Giữ bao lâu mới tin: điều kiện ghi rõ `lien_giay`, HOẶC cảm biến NHIỄU thì tự lọc mềm bằng ngưỡng
@@ -982,7 +1008,8 @@ def _doc_dk(x: dict[str, Any], ten: dict[str, str]) -> str:
     else:
         s = ht._dieu_kien_doc(x, ten, ten) + (f" {x['_dv']}" if x.get("_dv") and ("duoi" in x or "tren" in x)
                                              else "") + (f" liền {x['lien_giay']} giây" if x.get("lien_giay") else "") + (
-            f" (trong {x['trong_giay']} giây vừa qua)" if x.get("trong_giay") else "")
+            f" (trong {x['trong_giay']} giây vừa qua)" if x.get("trong_giay") else "") + (
+            f" — VỪA chuyển sang trong {x['vua_chuyen_giay']} giây qua" if x.get("vua_chuyen_giay") else "")
     return f"KHÔNG ({s})" if x.get("phu_dinh") else s
 
 

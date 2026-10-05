@@ -19,7 +19,7 @@ import { layGet, goiPost } from "./lib";
 
 type DieuKien = {
   ma: string; la?: string; duoi?: number; tren?: number; tu?: string; den?: string;
-  lien_giay?: number; trong_giay?: number; phu_dinh?: boolean; dung_yen_giay?: number; lech?: number;
+  lien_giay?: number; trong_giay?: number; vua_chuyen_giay?: number; phu_dinh?: boolean; dung_yen_giay?: number; lech?: number;
 };
 type Luat = { chieu: "bat" | "tat"; nen: string; khi: string[]; neu: DieuKien[]; xac_minh: boolean };
 type TruongHop = Luat & {
@@ -68,6 +68,13 @@ function Gap({ tieuDe, phu, children, mo = false }: { tieuDe: React.ReactNode; p
       {m ? <div className="space-y-2 border-t border-border p-2">{children}</div> : null}
     </div>
   );
+}
+
+/** Điều kiện cảm biến đang tính thời gian theo cách nào (mỗi điều kiện tối đa một — lõi `_KHOANG_GIAY`). */
+function kieuGiay(d: DieuKien): "lien_giay" | "trong_giay" | "vua_chuyen_giay" {
+  if (d.vua_chuyen_giay !== undefined) return "vua_chuyen_giay";
+  if (d.trong_giay !== undefined) return "trong_giay";
+  return "lien_giay";
 }
 
 function tom(ds: TruongHop[]): string {
@@ -194,9 +201,18 @@ function SuaTruongHop({ chieu, ban, camBien, lich, onLuu, onHuy, them }: {
               <select className="h-8 rounded border border-border bg-background px-1" value={d.la || "on"} onChange={(e) => sua(i, { la: e.target.value })}>
                 <option value="on">có người / mở</option><option value="off">không có người / đóng</option>
               </select>
-              <span>liền</span>
-              <Input className="h-8 w-16" placeholder="giây" value={d.lien_giay ?? ""}
-                onChange={(e) => sua(i, { lien_giay: e.target.value ? Number(e.target.value.replace(/\D/g, "")) : undefined })} />
+              {/* Chủ máy 06/10/2026: cần chế độ «chuyển trạng thái» — cửa để mở sẵn thì tắt đèn xong lại bị bật. */}
+              <select className="h-8 rounded border border-border bg-background px-1" value={kieuGiay(d)}
+                onChange={(e) => sua(i, { lien_giay: undefined, trong_giay: undefined, vua_chuyen_giay: undefined,
+                  [e.target.value]: d.lien_giay ?? d.trong_giay ?? d.vua_chuyen_giay
+                    ?? (e.target.value === "lien_giay" ? undefined : 30) })}
+                title="liền: đang ở và giữ liền N giây · vừa chuyển: vừa ĐỔI SANG trong N giây qua (mở sẵn từ trước không tính) · ở trong: đang ở hoặc từng ở trong N giây qua">
+                <option value="lien_giay">liền</option>
+                <option value="vua_chuyen_giay">vừa chuyển sang, trong</option>
+                <option value="trong_giay">ở trong</option>
+              </select>
+              <Input className="h-8 w-16" placeholder="giây" value={d[kieuGiay(d)] ?? ""}
+                onChange={(e) => sua(i, { [kieuGiay(d)]: e.target.value ? Number(e.target.value.replace(/\D/g, "")) : undefined })} />
             </>) : null}
             {loai === "so_do" ? (<>
               {chon(d.ma, so, (v) => sua(i, { ma: v }))}
