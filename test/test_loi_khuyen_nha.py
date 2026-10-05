@@ -185,3 +185,63 @@ def test_viec_heartbeat_co_ham_thi_phai_duoc_chay(tmp_path):
     hb._reset_for_tests(tmp_path)
     co = {t["id"] for t in hb._parse_tasks()}
     assert set(hb._HANDLERS) - co == {"khoa_cua_nha"}
+
+
+@pytest.fixture
+def model(monkeypatch):
+    """Model đọc hiểu giả: trả JSON đặt sẵn, đếm số lần gọi."""
+    from services import hieu_thiet_bi_nha as ht
+    dap = {"json": "{}", "goi": 0}
+
+    def _goi(model, huong, de):
+        dap["goi"] += 1
+        dap["de"] = de
+        return {"choices": [{"message": {"content": dap["json"]}}]}
+    monkeypatch.setattr(ht, "_goi_model", _goi)
+    monkeypatch.setattr(ht, "_model", lambda: "m")
+    monkeypatch.setattr(ht, "huong_dan", lambda ten="": ("hd", "v"))
+    return dap
+
+
+def test_loi_tu_nhien_cua_chu_nha_tin_that_05_10(hoi, model, monkeypatch):
+    """Tin thật 05/10/2026 cho câu luật #16: «điều kiện này sai», «trường hợp 16 xoá bỏ» — bản đầu khớp chuỗi nên rơi
+    sang bot chat, bot chat đòi gửi lại danh sách."""
+    from services import kich_ban_nha as kb
+    bo: list = []
+    monkeypatch.setattr(kb, "duyet", lambda: {"light.den": {"bat": [{"tinh_huong": "vào"}, {"tinh_huong": "ở lại"}],
+                                                            "tat": []}})
+    monkeypatch.setattr(kb, "sua_duyet", lambda tb, h, viec, so=None, nd="": bo.append((tb, h, viec, so)) or "")
+    ld.hoi_tiep()
+    assert ld.tra_loi("điều kiện này sai", hieu=False) is None and model["goi"] == 0, "lượt khớp nhanh không gọi model"
+
+    model["json"] = '{"loai": "sai_chua_ro", "dap": "Dạ sai chỗ nào ạ?"}'
+    assert ld.tra_loi("điều kiện này sai") == "Dạ sai chỗ nào ạ?"
+    assert "«vào»" in model["de"] and "Khoảng cách PK" in model["de"], "model đọc lời trong NGỮ CẢNH câu đang hỏi"
+    assert ld._hoi_nap()["cho"]["so"] == 1, "chưa rõ sửa gì → vẫn chờ câu này"
+
+    model["json"] = '{"loai": "bo"}'
+    dap = ld.tra_loi("trường hợp 1 xoá bỏ")
+    assert "bỏ trường hợp 1 «vào»" in dap and bo == [("light.den", "bat", "bo", 1)]
+    c = ld.so()["light.den"]["cham"][-1]
+    assert c["dung"] is False and c["cham_boi"] == "chu_may" and "BỎ" in c["ghi_chu"]
+    assert "trường hợp 2" in hoi["tin"][-1], "bỏ xong thì sang câu kế"
+
+    model["json"] = '{"loai": "sua", "noi_dung": "thêm khoảng cách dưới 3 m"}'
+    assert "cần sửa: «thêm khoảng cách dưới 3 m»" in ld.tra_loi("phải thêm khoảng cách dưới 3m nhé em")
+
+    model["json"] = '{"loai": "khong_lien_quan"}'
+    ld.xep_hoi([{"kieu": "cai_dat", "tb": "light.den", "loai": "vang", "cu": 120}])
+    assert ld.tra_loi("tối nay ăn gì") is None, "chuyện khác → để bot chat trả lời"
+    model["json"] = '{"loai": "sua", "noi_dung": "1 phút"}'
+    assert "1 phút" in ld.tra_loi("để 1 phút thôi") and hoi["dat"][-1] == ("light.den", "vang", 60.0)
+
+
+def test_cham_qua_bot_chat_dung_thiet_bi_dang_hoi(hoi):
+    """Bot chat gọi `cham_moi_nhat` không nêu thiết bị: lấy thiết bị ĐANG HỎI, không phải thiết bị giải gần nhất."""
+    import json as _j
+    d = _j.loads(ld._PATH.read_text(encoding="utf-8"))
+    d["fan.q"] = {"lan": [{"id": 1, "luc": 9e9, "luat": [_luat(1)], "truong_hop": ["x"]}], "cham": []}
+    ld._PATH.write_text(_j.dumps(d), encoding="utf-8")
+    ld.hoi_tiep()
+    ld.cham_moi_nhat(1, False, "sai")
+    assert ld.so()["light.den"]["cham"][-1]["so"] == 1 and not ld.so()["fan.q"]["cham"]

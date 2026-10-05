@@ -3176,7 +3176,8 @@ def _nhom_hoc_hoi(ev: dict, thread_id: str, text: str) -> str | None:
     cham = _bo_tag(ev, text)
     # Câu hỏi duyệt TỪNG luật / thời gian ở lại, vắng / lời khuyên (`luat_duyet.hoi_tiep`): «đúng», «sửa …».
     from services import luat_duyet
-    dap = luat_duyet.tra_loi(cham, sau=kich_hoat_nha.cho_tra_loi_luc())
+    sau = kich_hoat_nha.cho_tra_loi_luc()
+    dap = luat_duyet.tra_loi(cham, sau=sau, hieu=False)
     if dap is None:
         dap = kich_hoat_nha.tra_loi(cham)
     if dap is None:
@@ -3187,6 +3188,9 @@ def _nhom_hoc_hoi(ev: dict, thread_id: str, text: str) -> str | None:
         # Câu hỏi «lệch nếp» đang chờ: trả lời tự nhiên, model hiểu (services/lech_nep.py).
         from services import lech_nep
         dap = lech_nep.tra_loi(cham, nguoi=nguoi)
+    if dap is None:
+        # Lời tự nhiên cho câu duyệt luật / thời gian đang chờ («điều kiện này sai», «bỏ đi») — model hiểu theo ngữ cảnh.
+        dap = luat_duyet.tra_loi(cham, sau=sau)
     if dap is not None:
         return dap
     try:
