@@ -283,6 +283,24 @@ def create_router() -> APIRouter:
                                           f"(LISTEN 0.0.0.0 3493) và tường lửa cổng 3493"}
         return {"ok": True, "tom_tat": dien_nha.tom_tat(d)}
 
+    @router.get("/api/dien-nha/trang-thai")
+    async def dien_nha_trang_thai(authorization: str | None = Header(default=None)):
+        """Bảng UPS trực quan ở tab 🔋 Điện (web hỏi 5 giây một lần): mọi biến UPS + lúc bắt đầu chạy pin + số tin
+        đang chờ gửi. Không đọc được thì trả nguyên lý do."""
+        require_admin(authorization)
+        from services import dien_nha
+
+        dc = dien_nha.dia_chi()
+        if not dc:
+            return {"ok": False, "error": "chưa khai địa chỉ NUT — điền ô bên dưới rồi Lưu"}
+        so = dien_nha.trang_thai()
+        try:
+            d = await asyncio.to_thread(dien_nha.doc, dc)
+        except (OSError, ValueError) as exc:
+            return {"ok": False, "error": f"không đọc được UPS «{dc}»: {str(exc)[:160]}",
+                    "mat_doc_tu": so.get("mat_doc_tu")}
+        return {"ok": True, "ups": d, "pin_tu": so.get("pin_tu"), "cho_gui": len(so.get("hang_doi") or [])}
+
     @router.get("/api/mang-nha/may")
     async def mang_nha_may(authorization: str | None = Header(default=None)):
         """Trang Mạng nhà: máy trong DHCP, máy chờ duyệt, DHCP khoá / DNS ép / VPN."""

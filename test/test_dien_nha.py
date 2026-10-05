@@ -196,3 +196,35 @@ def test_endpoint_o_trong_dung_dia_chi_da_luu_va_noi_ly_do(monkeypatch):
     assert d["ok"] is False and "prolink@127.0.0.1:1" in d["error"] and "3493" in d["error"]
     monkeypatch.setitem(dn.config.data, "dien_nha", {})
     assert "chưa có địa chỉ NUT" in _goi_endpoint(monkeypatch, {})["error"]
+
+
+def _get_trang_thai():
+    from unittest import mock
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from api import mqtt
+    app = FastAPI()
+    with mock.patch("api.mqtt.require_admin", lambda *a, **k: None):
+        app.include_router(mqtt.create_router())
+        return TestClient(app).get("/api/dien-nha/trang-thai").json()
+
+
+def test_trang_thai_cho_bang_truc_quan(monkeypatch, tmp_path):
+    dn._reset_for_tests(tmp_path / "dien.json")
+    cong = _upsd_gia(b'BEGIN LIST VAR prolink\nVAR prolink ups.status "OB"\nVAR prolink battery.charge "64"\n'
+                     b'END LIST VAR prolink\n')
+    monkeypatch.setitem(dn.config.data, "dien_nha", {"nut": f"prolink@127.0.0.1:{cong}"})
+    (tmp_path / "dien.json").write_text('{"pin_tu": 1791185295.0, "hang_doi": [{"khoa": "x", "tin": "y", "luc": 1}]}')
+    d = _get_trang_thai()
+    assert d == {"ok": True, "ups": {"ups.status": "OB", "battery.charge": "64"}, "pin_tu": 1791185295.0, "cho_gui": 1}
+
+
+def test_trang_thai_loi_noi_ro_ly_do(monkeypatch, tmp_path):
+    dn._reset_for_tests(tmp_path / "dien.json")
+    monkeypatch.setitem(dn.config.data, "dien_nha", {"nut": "prolink@127.0.0.1:1"})
+    d = _get_trang_thai()
+    assert d["ok"] is False and "prolink@127.0.0.1:1" in d["error"]
+    monkeypatch.setitem(dn.config.data, "dien_nha", {})
+    assert "chưa khai" in _get_trang_thai()["error"]
