@@ -3518,6 +3518,17 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 sys_prompt += "\n\n" + _th
     except Exception:
         pass
+    # Ai là ai trong nhà + ai đang nhắn (chủ máy 05/10/2026: "Bot đã biết ai là chủ nhà, vợ chủ nhà, con chủ nhà,
+    # ai là khách chưa … chat qua kênh thì sao") — chỉ kênh người nhà trò chuyện (Zalo / Telegram).
+    try:
+        from services import lich_sinh_hoat as _lsh
+        from services.agent import tam_hon as _tam_hon2
+        if _tam_hon2.la_nguoi_nha_tro_chuyen(user_id):
+            _ng = _lsh.khoi_prompt_nguoi(user_id)
+            if _ng:
+                sys_prompt += "\n\n" + _ng
+    except Exception:
+        pass
     # RAG ngay câu đầu (chủ máy 03/10/2026): tài liệu kho nhà đủ điểm xếp lại thì chèn trước khi gọi LLM —
     # xem services/rag_dau.py (ngưỡng đo trên câu thật). Việc đòi nguyên văn (dịch) thì không chèn.
     try:

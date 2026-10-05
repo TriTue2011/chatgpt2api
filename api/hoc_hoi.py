@@ -1224,6 +1224,24 @@ def create_router() -> APIRouter:
         except Exception as exc:
             return _loi(exc, "xoá cảm biến ghép")
 
+    def _lua_chon_nguoi() -> dict:
+        """Khuôn mặt đã dạy (sổ mặt) + tài khoản chat từng gặp (danh bạ kênh) — để gắn vào từng người trong nhà."""
+        from services import channel_contacts as cc, so_mat_nha
+        try:
+            mat = [{"id": str(n["id"]), "ten": str(n.get("ten") or "")} for n in so_mat_nha.danh_sach_nguoi()]
+        except Exception:
+            mat = []
+        chat: dict[str, str] = {}
+        for r in cc.list_contacts(limit=100):
+            uid, plat = str(r.get("user_id") or ""), str(r.get("platform") or "")
+            if not uid or plat not in ("zalop", "zalo", "tg"):
+                continue
+            ten = str(r.get("alias") or r.get("display_name") or "").strip()
+            khoa = f"{plat}:{uid}"
+            if ten or khoa not in chat:
+                chat[khoa] = ten or chat.get(khoa, "")
+        return {"mat": mat, "chat": [{"khoa": k, "ten": v} for k, v in sorted(chat.items(), key=lambda kv: (not kv[1], kv[0]))]}
+
     @router.get("/api/hoc-hoi/lich")
     async def lich(authorization: str | None = Header(default=None)):
         """Lịch sinh hoạt của cả nhà — mọi thiết bị dùng chung."""
@@ -1232,6 +1250,8 @@ def create_router() -> APIRouter:
             from services import lich_sinh_hoat
             return {"ok": True, "muc": lich_sinh_hoat.ds(), "loai": list(lich_sinh_hoat.LOAI),
                     "thanh_vien": lich_sinh_hoat.thanh_vien(),
+                    "vai": [{"ma": k, "ten": v} for k, v in lich_sinh_hoat.VAI.items()],
+                    "lua_chon": await asyncio.to_thread(_lua_chon_nguoi),
                     "nhom": [{"ma": m, "ten": t} for m, t, _a, _b in lich_sinh_hoat.NHOM],
                     "goi_y": {m: lich_sinh_hoat.goi_y(m) for m, _t, _a, _b in lich_sinh_hoat.NHOM}}
         except Exception as exc:
@@ -1240,7 +1260,7 @@ def create_router() -> APIRouter:
     @router.post("/api/hoc-hoi/lich")
     async def lich_dat(body: dict, authorization: str | None = Header(default=None)):
         """Thay toàn bộ lịch. body: {muc: [{ma?, ten, loai, tu, den, thu, ai?}], thanh_vien?: [{ma?, ten,
-        nam_sinh?, theo_doi?}]} — thiếu ``thanh_vien`` là giữ nguyên. Mục lịch là đặc trưng học nên mọi thiết
+        nam_sinh?, theo_doi?, vai?, mat?, chat?}]} — thiếu ``thanh_vien`` là giữ nguyên. Mục lịch là đặc trưng học nên mọi thiết
         bị học lại ngay (chạy nền)."""
         require_admin(authorization)
         try:

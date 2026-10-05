@@ -74,3 +74,33 @@ def test_doc_cho_bot_neu_ai_va_dang_dien_ra(lsh):
     assert any("Bé (3 tuổi" in d and "person.be" in d and "sensor" not in d for d in dong)
     assert any("Lịch Bé: Ngủ trưa" in d and "ĐANG DIỄN RA" in d for d in dong)
     assert any("Lịch cả nhà: Ăn tối" in d and "ĐANG" not in d for d in dong)
+
+
+def test_vai_khuon_mat_tai_khoan_chat_va_khach_quen(lsh, monkeypatch):
+    """Chủ máy 05/10/2026: "Bot đã biết ai là chủ nhà, vợ chủ nhà, con chủ nhà, ai là khách chưa … chat qua kênh".
+    Mỗi người: vai + khuôn mặt (sổ mặt) + tài khoản chat; khách quen KHÔNG tính vào cả nhà."""
+    from services import so_mat_nha
+    monkeypatch.setattr(so_mat_nha, "danh_sach_nguoi", lambda: [
+        {"id": "2cf4b697e29f", "ten": "Tôi"}, {"id": "a9790070b1f2", "ten": "vợ tôi"}, {"id": "bbbbbbbbbbbb", "ten": "Bà ngoại"}])
+    lsh.dat([{"ten": "Chồng đi làm", "loai": "vang", "tu": "07:30", "den": "17:30", "thu": [0, 1, 2, 3, 4], "ai": ["Việt"]},
+             {"ten": "Vợ đi làm", "loai": "vang", "tu": "08:00", "den": "17:00", "thu": [0, 1, 2, 3, 4], "ai": ["Vợ"]}],
+            [{"ten": "Việt", "vai": "chu_nha", "mat": "2cf4b697e29f", "chat": ["zalop:6643404425553198601"]},
+             {"ten": "Vợ", "vai": "vo_chong", "mat": "a9790070b1f2", "chat": ["zalo:41d84c53141afd44a40b"]},
+             {"ten": "Cô Lan", "vai": "khach_quen"}])
+    assert lsh.ca_nha("vang", _luc(0, "09:00")), "khách quen không phải «cả nhà» — hai vợ chồng vắng là nhà vắng"
+    assert lsh.nguoi_cua_phien("zalop_6643404425553198601")["ten"] == "Việt", "chat 1-1: mã chat là người"
+    assert lsh.nguoi_cua_phien("zalop_3133467193494275911:u6643404425553198601")["ten"] == "Việt", "nhóm: người gửi"
+    assert lsh.nguoi_cua_phien("zalo_41d84c53141afd44a40b")["vai"] == "vo_chong"
+    assert lsh.nguoi_cua_phien("zalop_999") is None
+    k = lsh.khoi_prompt_nguoi("zalo_41d84c53141afd44a40b")
+    assert "«Việt» — chủ nhà" in k and "camera gọi là «Tôi»" in k
+    assert "NGƯỜI ĐANG NHẮN VỚI EM: «Vợ» — vợ/chồng chủ nhà" in k
+    assert "KHÁCH QUEN:" in k and "«Cô Lan»" in k and "«Bà ngoại» (camera)" in k, "mặt đã đặt tên, chưa gắn ai = khách quen"
+    assert "CHƯA được gắn" in lsh.khoi_prompt_nguoi("zalop_999")
+    for sai in ({"ten": "X", "vai": "sep"}, {"ten": "X", "chat": ["facebook:1"]}, {"ten": "X", "mat": "khong-hop-le!"}):
+        with pytest.raises(ValueError):
+            lsh._chuan_tv(sai)
+
+
+def test_chua_khai_ai_thi_khong_them_gi_vao_loi_tro_chuyen(lsh):
+    assert lsh.khoi_prompt_nguoi("zalop_1") == ""

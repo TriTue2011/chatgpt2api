@@ -20,7 +20,12 @@ import { goiPost, layGet } from "./lib";
 export type MucLich = {
   ma: string; ten: string; loai: "ngu" | "vang" | "an" | "khac"; tu: string; den: string; thu: number[]; ai?: string[];
 };
-type ThanhVien = { ma: string; ten: string; nam_sinh: number | null; theo_doi: string[]; tuoi?: number | null; nhom?: string | null };
+type ThanhVien = {
+  ma: string; ten: string; nam_sinh: number | null; theo_doi: string[]; tuoi?: number | null; nhom?: string | null;
+  /** chủ nhà / vợ-chồng / con / người thân / giúp việc / khách quen — chủ máy 05/10/2026 */
+  vai?: string | null; mat?: string | null; chat?: string[];
+};
+type LuaChon = { mat: { id: string; ten: string }[]; chat: { khoa: string; ten: string }[] };
 type Nhom = { ma: string; ten: string };
 export const TEN_LOAI = { ngu: "Ngủ", vang: "Vắng nhà", an: "Bữa ăn", khac: "Khác" } as const;
 /** 0 = thứ 2 … 6 = chủ nhật — cùng quy ước với backend (datetime.weekday). */
@@ -62,12 +67,16 @@ export function LichSinhHoat() {
   const [tv, setTv] = useState<ThanhVien[]>([]);
   const [nhom, setNhom] = useState<Nhom[]>([]);
   const [goiY, setGoiY] = useState<Record<string, Omit<MucLich, "ma">[]>>({});
+  const [vaiDs, setVaiDs] = useState<{ ma: string; ten: string }[]>([]);
+  const [luaChon, setLuaChon] = useState<LuaChon>({ mat: [], chat: [] });
   const [loc, setLoc] = useState("");          // "" = mọi mục, "*" = cả nhà, khác = khoá thành viên
   const [doi, setDoi] = useState(false);
 
   const tai = useCallback(async () => {
-    const r = await layGet<{ muc?: MucLich[]; thanh_vien?: ThanhVien[]; nhom?: Nhom[]; goi_y?: Record<string, Omit<MucLich, "ma">[]> }>(
-      "/api/hoc-hoi/lich");
+    const r = await layGet<{ muc?: MucLich[]; thanh_vien?: ThanhVien[]; nhom?: Nhom[]; goi_y?: Record<string, Omit<MucLich, "ma">[]>;
+      vai?: { ma: string; ten: string }[]; lua_chon?: LuaChon }>("/api/hoc-hoi/lich");
+    setVaiDs(r.vai || []);
+    setLuaChon(r.lua_chon || { mat: [], chat: [] });
     setDs(r.muc || []);
     setTv(r.thanh_vien || []);
     setNhom(r.nhom || []);
@@ -159,9 +168,38 @@ export function LichSinhHoat() {
               <span className="text-xs text-muted-foreground">
                 {t.nam_sinh ? `${new Date().getFullYear() - t.nam_sinh} tuổi · ${tenNhom(n)}` : "chưa có năm sinh"}
               </span>
+              <select className="h-7 rounded border bg-background px-1 text-xs" value={t.vai || ""}
+                title="Vai trong nhà — bot dùng để biết ai là chủ nhà, vợ, con, khách"
+                onChange={(e) => suaTv(i, { vai: e.target.value || null })}>
+                <option value="">— vai —</option>
+                {vaiDs.map((v) => <option key={v.ma} value={v.ma}>{v.ten}</option>)}
+              </select>
+              <select className="h-7 max-w-40 rounded border bg-background px-1 text-xs" value={t.mat || ""}
+                title="Khuôn mặt camera đã học (tab Khuôn mặt) của người này"
+                onChange={(e) => suaTv(i, { mat: e.target.value || null })}>
+                <option value="">— khuôn mặt —</option>
+                {luaChon.mat.map((m) => <option key={m.id} value={m.id}>{m.ten}</option>)}
+              </select>
               <Input className="h-7 w-56" value={(t.theo_doi || []).join(", ")}
                 placeholder="person.… / device_tracker.… (tuỳ chọn)"
                 onChange={(e) => suaTv(i, { theo_doi: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} />
+              <span className="flex flex-wrap items-center gap-1 text-[11px]" title="Tài khoản Zalo / Telegram người này nhắn bot">
+                {(t.chat || []).map((c) => (
+                  <span key={c} className="flex items-center gap-1 rounded bg-sky-600/15 px-1.5 py-0.5">
+                    💬 {luaChon.chat.find((x) => x.khoa === c)?.ten || c}
+                    <button type="button" title="Bỏ tài khoản này" onClick={() => suaTv(i, { chat: (t.chat || []).filter((x) => x !== c) })}>
+                      <X className="size-3" />
+                    </button>
+                  </span>
+                ))}
+                <select className="h-7 max-w-44 rounded border bg-background px-1 text-xs" value=""
+                  onChange={(e) => { if (e.target.value) suaTv(i, { chat: [...(t.chat || []), e.target.value] }); }}>
+                  <option value="">+ tài khoản chat</option>
+                  {luaChon.chat.filter((c) => !(t.chat || []).includes(c.khoa)).map((c) => (
+                    <option key={c.khoa} value={c.khoa}>{c.ten ? `${c.ten} (${c.khoa.split(":")[0]})` : c.khoa}</option>
+                  ))}
+                </select>
+              </span>
               <Button size="sm" variant="outline" disabled={!n} onClick={() => themGoiY(t)}
                 title="Thêm khung giờ thường gặp của lứa tuổi này — sửa lại cho đúng nhà mình">
                 <Sparkles className="mr-1 size-3.5" />Gợi ý theo tuổi
@@ -173,7 +211,7 @@ export function LichSinhHoat() {
           );
         })}
         <Button variant="outline" size="sm" onClick={() => {
-          setTv([...tv, { ma: "", ten: "", nam_sinh: null, theo_doi: [] }]);
+          setTv([...tv, { ma: "", ten: "", nam_sinh: null, theo_doi: [], vai: null, mat: null, chat: [] }]);
           setDoi(true);
         }}>
           <Plus className="mr-1 size-3.5" /> Thêm người

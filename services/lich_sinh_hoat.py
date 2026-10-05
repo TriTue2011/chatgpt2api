@@ -19,7 +19,8 @@ Nên lịch không tự bật/tắt gì; nó chỉ đổi cách bot cân nhắc.
 
 THEO TỪNG NGƯỜI (chủ máy 30/09/2026: "viết lại code chia theo từng người trong gia đình, có thể tự thêm,
 căn cứ vào độ tuổi để có list thời gian phù hợp, có thể tự thêm tay"): sổ có thêm ``thanh_vien`` —
-``{"ma", "ten", "nam_sinh", "theo_doi"}`` (``theo_doi``: mã person./device_tracker. của người đó). Mục lịch
+``{"ma", "ten", "nam_sinh", "theo_doi", "vai", "mat", "chat"}`` (``theo_doi``: mã person./device_tracker. của người
+đó; ``vai``: `VAI`; ``mat``: mã khuôn mặt trong sổ mặt; ``chat``: tài khoản «kênh:mã» — 05/10/2026). Mục lịch
 có thêm ``ai`` (mã thành viên); rỗng = CẢ NHÀ, nên lịch cũ giữ nguyên nghĩa. Nhóm tuổi tính từ năm sinh
 (không lưu tuổi — sang năm vẫn đúng); ``goi_y(nhom)`` là khung giờ THƯỜNG GẶP của nhóm tuổi đó để chủ
 nhà bấm thêm rồi sửa — không tự áp.
@@ -51,6 +52,13 @@ _GIO = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
 
 TV_TOI_DA = 12
 _MA = re.compile(r"[a-z0-9_]{1,24}")
+#: Vai của từng người (chủ máy 05/10/2026: "Bot đã biết ai là chủ nhà, vợ chủ nhà, con chủ nhà, ai là khách chưa").
+#: «khach_quen» KHÔNG tính vào cả nhà (`ca_nha`). Khuôn mặt đã đặt tên mà không gắn với ai ở đây cũng là khách quen.
+VAI = {"chu_nha": "chủ nhà", "vo_chong": "vợ/chồng chủ nhà", "con": "con", "nguoi_than": "người thân",
+       "giup_viec": "giúp việc", "khach_quen": "khách quen"}
+#: Tài khoản chat của một người: «kênh:mã người dùng» (cùng mã orchestrator thấy ở khoá phiên).
+_CHAT = re.compile(r"(zalop|zalo|tg):[A-Za-z0-9_\-]{1,64}")
+_MAT = re.compile(r"[0-9a-f]{6,40}")
 
 #: Nhóm tuổi: (mã, tên, tuổi từ, tuổi tới — không gồm).
 NHOM = (("tre_nho", "Trẻ nhỏ (dưới 6 tuổi)", 0, 6), ("tieu_hoc", "Học sinh tiểu học (6–10)", 6, 11),
@@ -169,7 +177,17 @@ def _chuan_tv(x: Any) -> dict[str, Any]:
     ma = str(x.get("ma") or "").strip()
     if ma and not _MA.fullmatch(ma):
         raise ValueError(f"«{ten}»: mã chỉ gồm chữ thường không dấu, số, gạch dưới.")
-    return {"ma": ma, "ten": ten, "nam_sinh": nam, "theo_doi": theo_doi}
+    vai = str(x.get("vai") or "") or None
+    if vai and vai not in VAI:
+        raise ValueError(f"«{ten}»: vai phải là một trong {', '.join(VAI)}.")
+    mat = str(x.get("mat") or "").strip() or None
+    if mat and not _MAT.fullmatch(mat):
+        raise ValueError(f"«{ten}»: mã khuôn mặt sai dạng.")
+    chat = list(dict.fromkeys(str(c).strip() for c in x.get("chat") or [] if str(c).strip()))
+    sai = [c for c in chat if not _CHAT.fullmatch(c)]
+    if sai:
+        raise ValueError(f"«{ten}»: tài khoản chat phải dạng kênh:mã (zalop / zalo / tg) — sai: {sai[0]}")
+    return {"ma": ma, "ten": ten, "nam_sinh": nam, "theo_doi": theo_doi, "vai": vai, "mat": mat, "chat": chat}
 
 
 def _gan_ma(ds_: list[dict[str, Any]], loai: str) -> None:
@@ -242,8 +260,57 @@ def ca_nha(loai: str, luc: float) -> bool:
     dang_ = [x for x in dang(luc) if x["loai"] == loai]
     if any(not x.get("ai") for x in dang_):
         return True
-    tv = [x["ma"] for x in thanh_vien()]
+    tv = [x["ma"] for x in thanh_vien() if x.get("vai") != "khach_quen"]      # khách quen không phải «cả nhà»
     return bool(tv) and all(any(m in x["ai"] for x in dang_) for m in tv)
+
+
+def _ten_mat() -> dict[str, str]:
+    """Mã khuôn mặt → tên trong sổ mặt (camera gọi người này là gì)."""
+    try:
+        from services import so_mat_nha
+        return {str(n["id"]): str(n.get("ten") or "") for n in so_mat_nha.danh_sach_nguoi()}
+    except Exception:  # noqa: BLE001 — chưa bật nhận mặt thì thôi
+        return {}
+
+
+def _mo_ta(x: dict[str, Any], mat: dict[str, str]) -> str:
+    phan = [VAI.get(x.get("vai") or "", "")] + ([f"{x['tuoi']} tuổi"] if x.get("tuoi") is not None else [])
+    if x.get("mat") and mat.get(x["mat"]):
+        phan.append(f"camera gọi là «{mat[x['mat']]}»")
+    return f"«{x['ten']}»" + (f" — {', '.join(p for p in phan if p)}" if any(phan) else "")
+
+
+def nguoi_cua_phien(user_id: str) -> dict[str, Any] | None:
+    """Người trong nhà đang nhắn ở phiên này (khớp «kênh:mã người dùng» đã gắn), None nếu chưa gắn."""
+    from services.agent import scope
+    sc = scope.tach_khoa_phien(user_id)
+    uid = sc.actor or sc.chat
+    if not sc.kenh or not uid:
+        return None
+    khoa = f"{sc.kenh}:{uid}"
+    return next((x for x in thanh_vien() if khoa in (x.get("chat") or [])), None)
+
+
+def khoi_prompt_nguoi(user_id: str) -> str:
+    """Khối «ai là ai» cho lời trò chuyện: người trong nhà (vai, tuổi, tên camera gọi) + ai đang nhắn. Rỗng khi chưa
+    khai người nào. Khuôn mặt đã đặt tên mà không gắn với ai = khách quen; mặt chưa biết = người lạ."""
+    tv = thanh_vien()
+    if not tv:
+        return ""
+    mat = _ten_mat()
+    nha = [x for x in tv if x.get("vai") != "khach_quen"]
+    khach = [x for x in tv if x.get("vai") == "khach_quen"]
+    da_gan = {x.get("mat") for x in tv if x.get("mat")}
+    khach_mat = [t for m, t in mat.items() if m not in da_gan and t]
+    dong = ["NGƯỜI TRONG NHÀ (chủ nhà khai — dùng đúng vai, đừng đoán quan hệ khác):",
+            *[f"- {_mo_ta(x, mat)}" for x in nha]]
+    if khach or khach_mat:
+        dong.append("KHÁCH QUEN: " + ", ".join([_mo_ta(x, mat) for x in khach] + [f"«{t}» (camera)" for t in khach_mat]))
+    dong.append("Mặt camera chưa biết là NGƯỜI LẠ.")
+    ai = nguoi_cua_phien(user_id)
+    dong.append(f"NGƯỜI ĐANG NHẮN VỚI EM: {_mo_ta(ai, mat)}." if ai else
+                "Người đang nhắn CHƯA được gắn với ai trong nhà — đừng đoán là ai, cần thì hỏi lịch sự.")
+    return "\n".join(dong)
 
 
 def doc_cho_bot(luc: float | None = None) -> list[str]:
@@ -253,7 +320,8 @@ def doc_cho_bot(luc: float | None = None) -> list[str]:
     tv = thanh_vien()
     ten_nhom = {m: t for m, t, _a, _b in NHOM}
     ten_tv = {x["ma"]: x["ten"] for x in tv}
-    dong = [f"- {x['ten']}" + (f" ({x['tuoi']} tuổi, {ten_nhom.get(x['nhom'], '')})" if x["tuoi"] is not None else "")
+    dong = [f"- {x['ten']}" + (f" [{VAI[x['vai']]}]" if x.get("vai") in VAI else "")
+            + (f" ({x['tuoi']} tuổi, {ten_nhom.get(x['nhom'], '')})" if x["tuoi"] is not None else "")
             + (f" — theo dõi qua {', '.join(x['theo_doi'])}" if x["theo_doi"] else "") for x in tv]
     for x in ds():
         ai = ", ".join(ten_tv.get(a, a) for a in x["ai"]) or "cả nhà"
