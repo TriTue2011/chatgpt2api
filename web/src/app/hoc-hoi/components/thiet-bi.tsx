@@ -74,6 +74,29 @@ function tom(ds: TruongHop[]): string {
   return `${chay} đang chạy${cho ? ` · ${cho} chờ anh` : ""}`;
 }
 
+/** Chia trường hợp theo CẢM BIẾN CỬA: «cửa chuyển chế độ» (luật bắt đầu từ cửa đổi đóng ↔ mở) và «cửa giữ một chế
+ * độ» (mọi luật khác — radar, camera, khoảng cách…). Chủ máy 05/10/2026: "chia theo trường hợp cụ thể. Ví dụ cảm biến
+ * cửa chính chuyển chế độ. Cảm biến cửa chính giữ 1 chế độ". Thiết bị không có luật nào theo cửa thì chia theo cảm
+ * biến kích hoạt. */
+function nhomTruongHop(ds: TruongHop[], camBien: CamBien[]): { ten: string; ds: TruongHop[] }[] {
+  const ten = (ma: string) => camBien.find((c) => c.ma === ma)?.ten || ma;
+  const cua = new Set(camBien.filter((c) => c.loai.startsWith("cửa")).map((c) => c.ma));
+  const kichCua = (x: TruongHop) => (x.khi || []).map((k) => k.split(" ")[0]).find((m) => cua.has(m));
+  const theoCua = ds.filter(kichCua);
+  if (theoCua.length) {
+    const tenCua = ten(kichCua(theoCua[0]) as string);
+    const con = ds.filter((x) => !kichCua(x));
+    return [{ ten: `${tenCua} chuyển chế độ (đóng ↔ mở)`, ds: theoCua },
+      ...(con.length ? [{ ten: `${tenCua} giữ một chế độ`, ds: con }] : [])];
+  }
+  const nhom = new Map<string, TruongHop[]>();
+  for (const x of ds) {
+    const k = x.khi?.[0] ? `Khi ${ten(x.khi[0].split(" ")[0])}` : "Bot chưa chuyển được";
+    nhom.set(k, [...(nhom.get(k) || []), x]);
+  }
+  return [...nhom.entries()].map(([k, v]) => ({ ten: k, ds: v }));
+}
+
 // ── Sửa / thêm một trường hợp ───────────────────────────────────────────────
 type LoaiDk = "trang_thai" | "so_do" | "gio" | "lich" | "ca_nha" | "troi";
 
@@ -230,33 +253,35 @@ function Chieu({ tb, chieu, camBien, lich, tai }: {
   return (
     <Gap tieuDe={chieu === "bat" ? "Bật" : "Tắt"} phu={tom(ds)}>
       {ds.length === 0 && !tn ? <p className="text-muted-foreground">Chưa có trường hợp nào.</p> : null}
-      {ds.map((x) => dangSua === x.id ? (
-        <SuaTruongHop key={x.id} chieu={chieu} ban={x} camBien={camBien} lich={lich} onHuy={() => setDangSua(null)}
-          onLuu={(loi, l) => void quyet(x.trang_thai === "de_xuat" ? "them" : "sua", x.id, l, loi)} />
-      ) : (
-        <div key={x.id} className="flex gap-2 rounded border border-border p-2">
-          <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`rounded px-1.5 py-0.5 text-[11px] ${TRANG_THAI[x.trang_thai][1]}`}>{TRANG_THAI[x.trang_thai][0]}</span>
-              <span className="font-medium">{x.loi || "(chưa đặt tên)"}</span>
-              {x.nguon === "anh" ? <span className="text-muted-foreground">· anh nêu</span> : null}
-            </div>
-            {x.dong.length ? (
-              <ul className="list-disc pl-5 text-muted-foreground">{x.dong.map((d, i) => <li key={i}>{d}</li>)}</ul>
-            ) : <p className="text-muted-foreground">{x.ly_do}</p>}
-          </div>
-          <div className="flex shrink-0 items-start gap-0.5">
-            {x.trang_thai !== "chay" && x.trang_thai !== "chua_chuyen" ? (
-              <Button size="sm" variant="ghost" title="Chạy theo trường hợp này" onClick={() => void quyet("duyet", x.id)}>
-                <Check className="size-4 text-emerald-600" /></Button>) : null}
-            {x.trang_thai === "chay" || x.trang_thai === "de_xuat" ? (
-              <Button size="sm" variant="ghost" title={x.trang_thai === "de_xuat" ? "Bỏ đề xuất" : "Tạm dừng"}
-                onClick={() => void quyet("dung", x.id)}><X className="size-4 text-amber-600" /></Button>) : null}
-            <Button size="sm" variant="ghost" title="Sửa (lưu là chạy)" onClick={() => setDangSua(x.id)}><Pencil className="size-4" /></Button>
-            {x.trang_thai !== "de_xuat" ? (
-              <Button size="sm" variant="ghost" title="Xoá" onClick={() => void quyet("xoa", x.id)}><Trash2 className="size-4 text-rose-600" /></Button>) : null}
-          </div>
-        </div>
+      {nhomTruongHop(ds, camBien).map((g) => (
+        <Gap key={g.ten} tieuDe={g.ten} phu={tom(g.ds)}>
+          {g.ds.map((x) => dangSua === x.id ? (
+            <SuaTruongHop key={x.id} chieu={chieu} ban={x} camBien={camBien} lich={lich} onHuy={() => setDangSua(null)}
+              onLuu={(loi, l) => void quyet(x.trang_thai === "de_xuat" ? "them" : "sua", x.id, l, loi)} />
+          ) : (
+            <Gap key={x.id} tieuDe={
+              <span className="flex flex-wrap items-center gap-2 font-normal">
+                <span className={`rounded px-1.5 py-0.5 text-[11px] ${TRANG_THAI[x.trang_thai][1]}`}>{TRANG_THAI[x.trang_thai][0]}</span>
+                <span className="font-medium">{x.loi || "(chưa đặt tên)"}</span>
+              </span>}>
+              {x.dong.length ? (
+                <ul className="list-disc pl-5 text-muted-foreground">{x.dong.map((d, i) => <li key={i}>{d}</li>)}</ul>
+              ) : <p className="text-muted-foreground">{x.ly_do}</p>}
+              <div className="flex flex-wrap gap-1">
+                {x.trang_thai !== "chay" && x.trang_thai !== "chua_chuyen" ? (
+                  <Button size="sm" variant="outline" onClick={() => void quyet("duyet", x.id)}>
+                    <Check className="size-4 text-emerald-600" /> Chạy</Button>) : null}
+                {x.trang_thai === "chay" || x.trang_thai === "de_xuat" ? (
+                  <Button size="sm" variant="outline" onClick={() => void quyet("dung", x.id)}>
+                    <X className="size-4 text-amber-600" /> {x.trang_thai === "de_xuat" ? "Bỏ đề xuất" : "Tạm dừng"}</Button>) : null}
+                <Button size="sm" variant="outline" onClick={() => setDangSua(x.id)}><Pencil className="size-4" /> Sửa</Button>
+                {x.trang_thai !== "de_xuat" ? (
+                  <Button size="sm" variant="outline" onClick={() => void quyet("xoa", x.id)}>
+                    <Trash2 className="size-4 text-rose-600" /> Xoá</Button>) : null}
+              </div>
+            </Gap>
+          ))}
+        </Gap>
       ))}
       {tn && chieu === "bat" ? (
         <div className="flex items-center gap-2 rounded border border-border p-2">
