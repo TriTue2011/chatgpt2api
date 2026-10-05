@@ -257,13 +257,18 @@ function SuaTruongHop({ chieu, ban, camBien, lich, onLuu, onHuy, them }: {
               <Input className="h-8 w-28" type="time" value={d.den || ""} onChange={(e) => sua(i, { den: e.target.value })} />
               <span className="flex gap-0.5" title="Thứ trong tuần — bỏ trống = mọi ngày. Khung qua nửa đêm tính theo ngày bắt đầu.">
                 {THU.map((t, j) => {
-                  const co = (d.thu || []).includes(j);
+                  // Không có `thu` = MỌI ngày → 7 nút đều sáng (trước đây hiện tắt hết, trông như chọn đủ tuần là bị
+                  // xoá — chủ máy 06/10/2026). Bỏ hết là «không ngày nào» = luật chết → không cho.
+                  const dangChon = d.thu && d.thu.length ? d.thu : [0, 1, 2, 3, 4, 5, 6];
+                  const co = dangChon.includes(j);
                   return (
                     <button key={t} type="button"
                       className={`h-8 rounded border px-1.5 text-xs ${co ? "border-primary bg-primary/15 text-primary" : "border-border"}`}
+                      title={co && dangChon.length === 1 ? "Phải chọn ít nhất một ngày" : undefined}
                       onClick={() => {
-                        const moi = co ? (d.thu || []).filter((v) => v !== j) : [...(d.thu || []), j].sort();
-                        sua(i, { thu: moi.length && moi.length < 7 ? moi : undefined });
+                        const moi = co ? dangChon.filter((v) => v !== j) : [...dangChon, j].sort();
+                        if (!moi.length) return;
+                        sua(i, { thu: moi.length < 7 ? moi : undefined });
                       }}>{t}</button>
                   );
                 })}
