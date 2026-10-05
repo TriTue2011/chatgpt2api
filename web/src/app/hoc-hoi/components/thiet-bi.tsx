@@ -24,8 +24,8 @@ type DieuKien = {
 type Luat = { chieu: "bat" | "tat"; nen: string; khi: string[]; neu: DieuKien[]; xac_minh: boolean };
 type TruongHop = Luat & {
   id: string; loi: string; nguon: "anh" | "bot" | "bot_hoc";
-  trang_thai: "chay" | "dung" | "cho" | "sai" | "chua_chuyen" | "de_xuat";
-  dong: string[]; ly_do?: string;
+  trang_thai: "chay" | "dung" | "cho" | "sai" | "chua_chuyen" | "de_xuat" | "cho_kich_ban";
+  dong: string[]; ly_do?: string; so_kb?: number;
 };
 type TheoNep = { bat: boolean; nhiet?: string | null; nep: { du: boolean; gio?: string; phut_bat?: number; ly_do?: string } };
 type ThietBi = {
@@ -44,6 +44,7 @@ const TRANG_THAI: Record<TruongHop["trang_thai"], [string, string]> = {
   sai: ["Anh nói sai — chờ bot sửa", "bg-rose-500/15 text-rose-700 dark:text-rose-400"],
   chua_chuyen: ["Bot chưa chuyển được", "bg-muted text-muted-foreground"],
   de_xuat: ["Bot đề xuất", "bg-sky-500/15 text-sky-700 dark:text-sky-400"],
+  cho_kich_ban: ["Chờ anh duyệt kịch bản", "bg-amber-500/15 text-amber-700 dark:text-amber-400"],
 };
 const NEN: Record<"bat" | "tat", [string, string][]> = {
   bat: [["bat", "bật"], ["khong_lam", "KHÔNG bật (chặn)"], ["hoi", "hỏi anh"]],
@@ -70,7 +71,7 @@ function Gap({ tieuDe, phu, children, mo = false }: { tieuDe: React.ReactNode; p
 
 function tom(ds: TruongHop[]): string {
   const chay = ds.filter((x) => x.trang_thai === "chay").length;
-  const cho = ds.filter((x) => x.trang_thai === "cho" || x.trang_thai === "de_xuat" || x.trang_thai === "sai").length;
+  const cho = ds.filter((x) => ["cho", "de_xuat", "sai", "cho_kich_ban"].includes(x.trang_thai)).length;
   return `${chay} đang chạy${cho ? ` · ${cho} chờ anh` : ""}`;
 }
 
@@ -266,6 +267,13 @@ function Chieu({ tb, chieu, camBien, lich, tai }: {
     if (viec === "xoa" && !window.confirm("Xoá trường hợp này?")) return;
     if (await goiPost("/api/hoc-hoi/truong-hop", { thiet_bi: tb.thiet_bi, viec, id, luat, loi })) { setDangSua(null); tai(); }
   };
+  // Kịch bản bot soạn (chưa duyệt) — trước 05/10/2026 chỉ duyệt được qua Zalo; danh sách gửi đi không ai trả lời là
+  // cả hàng thiết bị đứng im. Duyệt xong cả hai chiều thì máy chủ tự cho bot chuyển thành luật (`sua_duyet`).
+  const choKb = ds.filter((x) => x.trang_thai === "cho_kich_ban");
+  const duyetKb = async (viec: "duyet" | "bo", so?: number) => {
+    if (viec === "bo" && !window.confirm("Bỏ trường hợp này khỏi kịch bản?")) return;
+    if (await goiPost("/api/hoc-hoi/kich-ban/duyet", { tb: tb.thiet_bi, huong: chieu, viec, so })) tai();
+  };
   const luuGiay = async () => {
     const g = Number(giay || 0);
     const khoa = chieu === "bat" ? "o_lai_giay" : "roi_giay";
@@ -276,6 +284,17 @@ function Chieu({ tb, chieu, camBien, lich, tai }: {
   return (
     <Gap tieuDe={chieu === "bat" ? "Bật" : "Tắt"} phu={tom(ds)}>
       {ds.length === 0 && !tn ? <p className="text-muted-foreground">Chưa có trường hợp nào.</p> : null}
+      {choKb.length ? (
+        <div className="flex flex-wrap items-center gap-2 rounded border border-amber-500/40 bg-amber-500/10 p-2">
+          <span className="text-sm">
+            {choKb.length} trường hợp {chieu === "bat" ? "bật" : "tắt"} bot soạn đang <b>chờ anh duyệt</b> — mở từng cái
+            xem, bỏ cái sai, rồi duyệt. Duyệt xong cả Bật lẫn Tắt thì bot chuyển thành luật chạy được.
+          </span>
+          <Button size="sm" className="ml-auto" onClick={() => void duyetKb("duyet")}>
+            <Check className="size-4" /> Duyệt phần {chieu === "bat" ? "Bật" : "Tắt"}
+          </Button>
+        </div>
+      ) : null}
       {nhomTruongHop(ds, camBien).map((g) => (
         <Gap key={g.ten} tieuDe={g.ten} phu={tom(g.ds)}>
           {g.ds.map((x) => (
@@ -284,7 +303,13 @@ function Chieu({ tb, chieu, camBien, lich, tai }: {
                 <span className={`rounded px-1.5 py-0.5 text-[11px] ${TRANG_THAI[x.trang_thai][1]}`}>{TRANG_THAI[x.trang_thai][0]}</span>
                 <span className="font-medium">{x.loi || "(chưa đặt tên)"}</span>
               </span>}>
-              {x.trang_thai === "chua_chuyen" ? (<>
+              {x.trang_thai === "cho_kich_ban" ? (<>
+                <p className="text-muted-foreground">
+                  Bot đề nghị: <b>{NEN[chieu].find(([v]) => v === x.nen)?.[1] || x.nen}</b> · {x.ly_do}
+                </p>
+                <Button size="sm" variant="outline" onClick={() => void duyetKb("bo", x.so_kb)}>
+                  <Trash2 className="size-4 text-rose-600" /> Bỏ trường hợp này</Button>
+              </>) : x.trang_thai === "chua_chuyen" ? (<>
                 <p className="text-muted-foreground">{x.ly_do} — bấm «Bot học &amp; đề xuất lại» ở thiết bị để bot đưa ra điều kiện.</p>
                 <Button size="sm" variant="outline" onClick={() => void quyet("xoa", x.id)}>
                   <Trash2 className="size-4 text-rose-600" /> Xoá trường hợp</Button>

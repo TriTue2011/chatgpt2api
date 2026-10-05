@@ -113,3 +113,25 @@ def test_bot_hoc_nhuong_ca_huong_khi_anh_da_duyet(monkeypatch):
     import threading
     monkeypatch.setattr(threading, "Thread", lambda *a, **k: type("T", (), {"start": lambda self: None})())
     assert kh._phat_duyet("binary_sensor.khac vắng", 1.0, False) == {f"{TB}|on"}
+
+
+def test_kich_ban_chua_duyet_la_cho_anh_khong_phai_bot_hong(so, monkeypatch):
+    """Đo 05/10/2026: 66 trường hợp của 3 đèn hiện «bot chưa chuyển» suốt 3 ngày — thật ra là chờ chủ nhà duyệt kịch
+    bản (danh sách gửi Zalo chưa ai trả lời). Đã có luật thì giữ trạng thái luật."""
+    from services import kich_ban_nha as kb
+    duyet = {TB: {"bat": [{"tinh_huong": "vào", "nguon": "bot", "nen": "bat"},
+                          {"tinh_huong": "chó đi qua", "nguon": "bot", "nen": "khong_lam"}],
+                  "tat": [{"tinh_huong": "ra ngoài", "nguon": "bot", "nen": "tat"}],
+                  "bat_xong": False, "tat_xong": False, "buoc": "bat", "gui_luc": 1791185295.0}}
+    monkeypatch.setattr(kb, "duyet", lambda: duyet)
+    ds = ld.danh_sach(TB, {})
+    tt = {x["loi"]: x for h in ds for x in ds[h]}
+    assert tt["vào"]["trang_thai"] == "cho", "đã có luật (lan 1) → giữ trạng thái luật"
+    cho = tt["chó đi qua"]
+    assert cho["trang_thai"] == "cho_kich_ban" and cho["so_kb"] == 2 and cho["nen"] == "khong_lam"
+    assert "chờ anh duyệt kịch bản phần Bật" in cho["ly_do"] and "đã gửi Zalo lúc" in cho["ly_do"]
+    ra = tt["ra ngoài"]
+    assert ra["trang_thai"] == "cho_kich_ban" and "phần Tắt" in ra["ly_do"] and "chưa gửi Zalo" in ra["ly_do"]
+    duyet[TB]["bat_xong"] = True
+    assert {x["loi"]: x["trang_thai"] for x in ld.danh_sach(TB, {})["bat"]}["chó đi qua"] == "chua_chuyen", \
+        "đã duyệt mà bot chưa chuyển → đúng là chưa chuyển"

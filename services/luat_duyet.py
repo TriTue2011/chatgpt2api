@@ -647,8 +647,17 @@ def danh_sach(tb: str, tq: dict[str, Any] | None = None) -> dict[str, list[dict[
                      if m.get("khi") else [])
         return m
 
+    kbx = kb.duyet().get(tb) or {}
     for h in ("bat", "tat"):
-        for m in (kb.duyet().get(tb) or {}).get(h) or []:
+        # Chiều CHƯA duyệt: kịch bản bot soạn đang chờ chủ nhà — bot chỉ chuyển thành luật khi đã duyệt xong cả hai
+        # chiều. Đo 05/10/2026: 66 trường hợp của 3 đèn nằm im từ 02/10 dưới nhãn «bot chưa chuyển», trong khi thật
+        # ra là chờ anh duyệt (danh sách gửi Zalo chưa được trả lời, hai đèn sau còn chưa đến lượt gửi).
+        cho_kb = not kbx.get(f"{h}_xong")
+        gui = kbx.get("gui_luc") if kbx.get("buoc") == h else None
+        ly_kb = (f"chờ anh duyệt kịch bản phần {'Bật' if h == 'bat' else 'Tắt'} — "
+                 + (f"đã gửi Zalo lúc {time.strftime('%H:%M %d/%m', time.localtime(gui))}" if gui
+                    else "chưa gửi Zalo; duyệt ngay ở đây cũng được"))
+        for so_kb, m in enumerate(kbx.get(h) or [], 1):
             loi = m["tinh_huong"]
             nguon = "anh" if m.get("nguon") == "chu_may" else "bot"
             if loi in chu:
@@ -657,6 +666,12 @@ def danh_sach(tb: str, tq: dict[str, Any] | None = None) -> dict[str, list[dict[
                 ra[h].append(_muc(c, id=f"chu:{c['id']}", loi=loi, nguon=nguon, trang_thai=tt, sua=True))
                 continue
             l = next((r for r in lan.get("luat") or [] if r["so"] <= len(th_lan) and th_lan[r["so"] - 1] == loi), None)
+            if l is None and cho_kb:
+                # Chưa có luật VÀ chiều này chưa duyệt → đang chờ anh, không phải bot hỏng. Đã có luật thì giữ trạng
+                # thái của luật (dữ liệu cũ thiếu cờ «_xong» không bị gắn nhầm).
+                ra[h].append(_muc(None, id=f"kb:{h}:{so_kb}", loi=loi, nen=m.get("nen", h), nguon=nguon,
+                                  trang_thai="cho_kich_ban", ly_do=ly_kb, so_kb=so_kb))
+                continue
             if l is None:
                 ra[h].append(_muc(None, id=f"th:{loi}", loi=loi, nen=m.get("nen", h), nguon=nguon,
                                   trang_thai="chua_chuyen", ly_do=khong.get(loi, "bot chưa chuyển trường hợp này")))
