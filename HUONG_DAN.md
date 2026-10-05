@@ -258,6 +258,7 @@ docker exec c2a /app/.venv/bin/python scripts/download_nhin_nha.py
 | Nhóm | Model | Dùng cho | Dung lượng | Lệnh |
 |---|---|---|---|---|
 | Nghe | Tiếng Việt (Zipformer) | HA Assist, tin thoại Zalo/Telegram, mic camera | ~100 MB | `download_stt_model.py` |
+| Nghe | Tiếng Việt — Gipformer 68M (tuỳ chọn) | Thay Zipformer khi nghe trong nhà ồn / hội thoại; chọn ở Cài đặt → Giọng nói → «Model nghe tiếng Việt». Đo bản tin FLEURS: ngang Zipformer, chậm hơn ~18% | ~71 MB | `docker exec c2a /app/.venv/bin/python scripts/download_stt_model.py --gipformer` |
 | Nghe | Cắt đoạn lời nói (Silero VAD) | Tách chỗ có tiếng nói; không có thì cắt theo độ lớn tiếng | 0,6 MB | `download_silero_vad.py` |
 | Nghe | Tiếng Anh (Parakeet-TDT) | Cổng Wyoming 10701, dạy tiếng Anh | ~600 MB | `download_stt_en_model.py` |
 | Nghe | Trung / Nhật / Hàn (SenseVoice) | Tab Dịch, đàm thoại, cổng 10702–10704 | ~230 MB | `download_stt_da_ngu.py --sense` |

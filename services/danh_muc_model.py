@@ -61,6 +61,10 @@ def _muc() -> list[Muc]:
         Muc("stt_vi", "Giọng nói — nghe", "Nghe tiếng Việt (Zipformer)",
             "Nhận giọng nói tiếng Việt: Home Assistant Assist, tin thoại Zalo/Telegram, mic camera",
             "~100 MB", "download_stt_model.py", lambda: v.stt_model_dir() is not None),
+        Muc("stt_vi_gip", "Giọng nói — nghe", "Nghe tiếng Việt — Gipformer 68M (tuỳ chọn)",
+            "Nhà phát triển ghi chống ồn, hội thoại, giọng vùng miền tốt hơn; đo bản tin thì ngang Zipformer, chậm hơn "
+            "~18%. Tải xong chọn ở Cài đặt → Giọng nói → Model nghe tiếng Việt",
+            "~71 MB", "download_stt_model.py --gipformer", lambda: v.stt_gip_model_dir() is not None),
         Muc("vad", "Giọng nói — nghe", "Cắt đoạn lời nói (Silero VAD)",
             "Tách chỗ có tiếng nói chính xác hơn; không có thì tự cắt theo độ lớn tiếng",
             "0,6 MB", "download_silero_vad.py", lambda: v.vad_model_path() is not None),

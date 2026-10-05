@@ -58,6 +58,19 @@ SHA256 = {
 
 DEST = Path(__file__).resolve().parents[1] / "data" / "stt"
 
+# Gipformer 1.5 68M (tuỳ chọn, `--gipformer`): commit + SHA-256 chép từ luuquangvu/wyoming-vietnamese
+# (wyoming_vietnamese/stt_model.py, «verified … 2026-09-17») và đã đối chiếu lại khi tải ngày 06/10/2026.
+# Repo không có tokens.txt — c2a tự sinh từ bpe.model lúc nạp (engines._bpe_to_tokens).
+GIP_HF_REPO = "g-group-ai-lab/gipformer1.5-68M-rnnt"
+GIP_HF_REVISION = "dd9227dcd8705c13f33bdbe59728d546ab94480f"
+GIP_SHA256 = {
+    "encoder.int8.onnx": "b528768939c7711a889be81a718ea7f2ee50d0d2d384d53f399e15b44bd9408c",
+    "decoder.int8.onnx": "e0a156b5454722a524230f9e35d5d928cfcdd3723437b418e5bd5e04f1c3a101",
+    "joiner.int8.onnx": "12636559d135315f002a1e1b477077d415e888477378db0fd450aee5b21ac551",
+    "bpe.model": "289dbb44527c13c419ae3a4d8ce6a349f01a97f8777e69934a77e3692d2f10db",
+}
+GIP_DEST = Path(__file__).resolve().parents[1] / "data" / "stt-gipformer"
+
 
 def _has_gh() -> bool:
     return shutil.which("gh") is not None
@@ -100,37 +113,47 @@ def _download_release(dest: Path) -> int:
     return 0 if ok == len(FILES) else 2
 
 
-def _download_hf(dest: Path) -> int:
+def _download_hf(dest: Path, repo: str = HF_REPO, revision: str = HF_REVISION,
+                 sha: dict[str, str] | None = None) -> int:
     """Nguon goc model — public, khong can token."""
+    sha = SHA256 if sha is None else sha
     dest.mkdir(parents=True, exist_ok=True)
     ok = 0
-    for name in FILES:
+    for name in sha:
         target = dest / name
-        if is_verified(target, SHA256[name]):
+        if is_verified(target, sha[name]):
             print(f"[bo qua] {name} (da co, SHA-256 dung)")
             ok += 1
             continue
         url = (
-            f"https://huggingface.co/{HF_REPO}/resolve/"
-            f"{HF_REVISION}/{name}?download=true"
+            f"https://huggingface.co/{repo}/resolve/"
+            f"{revision}/{name}?download=true"
         )
         print(f"[tai] {name} <- HuggingFace ...")
         try:
-            download_verified(url, target, SHA256[name])
+            download_verified(url, target, sha[name])
             ok += 1
         except Exception as exc:
             print(f"    LOI: {str(exc)[:200]}", file=sys.stderr)
-    return 0 if ok == len(FILES) else 2
+    return 0 if ok == len(sha) else 2
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Tai model STT Zipformer tieng Viet")
     ap.add_argument("--hf", action="store_true",
                     help="Tai tu HuggingFace thay vi GitHub Release")
+    ap.add_argument("--gipformer", action="store_true",
+                    help="Tai model THU HAI Gipformer 1.5 68M (HuggingFace) vao data/stt-gipformer")
     ap.add_argument("--list", action="store_true", help="Chi liet ke file can tai")
     ap.add_argument("--dest", default=str(DEST), help="Thu muc dich (mac dinh data/stt)")
     args = ap.parse_args()
 
+    if args.gipformer:
+        dest = Path(args.dest) if args.dest != str(DEST) else GIP_DEST
+        rc = _download_hf(dest, GIP_HF_REPO, GIP_HF_REVISION, GIP_SHA256)
+        if rc == 0:
+            print(f"\nXong: {dest}. Chon «Gipformer» o Cai dat -> Giong noi -> Model nghe tieng Viet.")
+        return rc
     dest = Path(args.dest)
     if args.list:
         print(f"Model: {HF_REPO}")

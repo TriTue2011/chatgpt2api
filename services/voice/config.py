@@ -29,6 +29,11 @@ from services.config import BASE_DIR, DATA_DIR, config
 # Thư mục model (ngoài image, mount volume)
 PIPER_DIR = Path(DATA_DIR) / "piper"
 STT_DIR = Path(DATA_DIR) / "stt"
+# Model nghe tiếng Việt THỨ HAI, tuỳ chọn: Gipformer 1.5 68M (g-group-ai-lab) — nhà phát triển ghi chống ồn, hội
+# thoại, giọng vùng miền tốt hơn Zipformer 30M. Đo 06/10/2026 trên FLEURS vi (150 câu đọc bản tin, greedy): sai từ
+# 9,30% bằng Zipformer, sai ký tự 6,9% vs 6,5%, chậm hơn 18% — nên chỉ là LỰA CHỌN, mặc định giữ Zipformer.
+STT_GIP_DIR = Path(DATA_DIR) / "stt-gipformer"
+STT_ENGINES = ("zipformer", "gipformer")
 STT_EN_DIR = Path(DATA_DIR) / "stt-en"   # Parakeet-TDT (tiếng Anh)
 #: Model nghe THÊM (Zipformer transducer k2-fsa — cùng dòng tiếng Việt, có
 #: ys_log_probs + timestamps). Tải bằng scripts/download_stt_da_ngu.py.
@@ -1144,17 +1149,37 @@ def _stt_install_committed(base: Path) -> bool:
         return False
 
 
-def stt_model_dir() -> Path | None:
-    """Thư mục model Zipformer (phải có ít nhất encoder*.onnx)."""
-    d = str(_sub("stt").get("model_dir") or "").strip()
-    base = Path(d) if d else STT_DIR
-    if not base.is_dir():
-        return None
-    if not _stt_install_committed(base):
-        return None
-    if not list(base.glob("encoder*.onnx")):
+def _thu_muc_stt(base: Path) -> Path | None:
+    """``base`` nếu là thư mục model transducer cài xong (có encoder*.onnx), không thì None."""
+    if not base.is_dir() or not _stt_install_committed(base) or not list(base.glob("encoder*.onnx")):
         return None
     return base
+
+
+def stt_engine() -> str:
+    """Model nghe tiếng Việt chủ nhà chọn (``voice.stt.engine``): zipformer (mặc định) | gipformer."""
+    e = str(_sub("stt").get("engine") or "zipformer").strip().lower()
+    return e if e in STT_ENGINES else "zipformer"
+
+
+def stt_gip_model_dir() -> Path | None:
+    """Thư mục Gipformer đã tải (scripts/download_stt_model.py --gipformer), hoặc None."""
+    return _thu_muc_stt(STT_GIP_DIR)
+
+
+def stt_model_dir() -> Path | None:
+    """Thư mục model nghe tiếng Việt đang dùng (phải có ít nhất encoder*.onnx).
+
+    ``voice.stt.model_dir`` khai tay thì thắng. Chọn Gipformer mà chưa tải thì LÙI về Zipformer — nghe kém hơn mong
+    đợi còn hơn mất hẳn tai (Assist, tin thoại, mic camera cùng chết)."""
+    d = str(_sub("stt").get("model_dir") or "").strip()
+    if d:
+        return _thu_muc_stt(Path(d))
+    if stt_engine() == "gipformer":
+        gip = stt_gip_model_dir()
+        if gip is not None:
+            return gip
+    return _thu_muc_stt(STT_DIR)
 
 
 def vad_model_path() -> Path | None:
@@ -1786,6 +1811,11 @@ def status() -> dict[str, Any]:
             "enabled": is_stt_enabled(),
             "backend": stt_backend(),
             "model_ready": stt_model_dir() is not None,
+            "engine": stt_engine(),
+            "gip_ready": stt_gip_model_dir() is not None,
+            # Model đang nghe THẬT (chọn Gipformer mà chưa tải thì là Zipformer) — web nói đúng sự thật.
+            "engine_dang_dung": ("gipformer" if stt_engine() == "gipformer" and stt_gip_model_dir() is not None
+                                 and not str(_sub("stt").get("model_dir") or "").strip() else "zipformer"),
             "en_enabled": stt_en_enabled(),
             "en_model_ready": stt_en_model_dir() is not None,
             "language": stt_language(),

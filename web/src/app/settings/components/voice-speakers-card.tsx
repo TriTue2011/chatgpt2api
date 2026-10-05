@@ -39,6 +39,7 @@ type VoiceStatus = {
   tts?: { enabled?: boolean; backend?: string; voice?: string; model_ready?: boolean;
           piper_bin?: string; local_voices?: string[]; wyoming_url?: string };
   stt?: { enabled?: boolean; backend?: string; model_ready?: boolean;
+          engine?: string; gip_ready?: boolean; engine_dang_dung?: string;
           en_model_ready?: boolean; language?: string;
           sherpa_installed?: boolean; wyoming_url?: string;
           them_ready?: Record<string, boolean> };
@@ -735,6 +736,21 @@ export function VoiceSpeakersCard() {
               <option value="wyoming">Chỉ Wyoming (server STT sẵn có)</option>
               <option value="off">Tắt</option>
             </select>
+            {/* Chủ máy 06/10/2026: tích hợp Gipformer (luuquangvu/wyoming-vietnamese #24) làm LỰA CHỌN — đo FLEURS
+                bản tin ngang Zipformer, chậm hơn ~18%; ưu thế nhà phát triển ghi là ồn / hội thoại / vùng miền. */}
+            <label className="mt-2 block text-xs text-muted-foreground">Model nghe tiếng Việt</label>
+            <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-base sm:text-xs h-9"
+              value={String(sttCfg.engine || stt?.engine || "zipformer")}
+              onChange={(e) => patchVoice("stt", { engine: e.target.value })}>
+              <option value="zipformer">Zipformer 30M — nhanh (mặc định)</option>
+              <option value="gipformer">Gipformer 68M — chống ồn, hội thoại{stt?.gip_ready ? "" : " (chưa tải)"}</option>
+            </select>
+            {String(sttCfg.engine || stt?.engine) === "gipformer" && stt && !stt.gip_ready ? (
+              <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">
+                Chưa tải Gipformer — đang nghe bằng Zipformer. Tải:{" "}
+                <code>python scripts/download_stt_model.py --gipformer</code> (xem «Model cần tải»).
+              </p>
+            ) : null}
           </div>
           <div>
             {/* Nhãn cũ ghi "không áp cho HA" là SAI: wyoming_server.py đọc
