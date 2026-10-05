@@ -244,9 +244,19 @@ class KhoaCuaTest(unittest.TestCase):
     # ── không bao giờ làm chết luồng ───────────────────────────────────────
     def test_tuya_hong_thi_tra_rong(self) -> None:
         from services import tuya_nha
-        with mock.patch.object(tuya_nha, "danh_sach_thiet_bi",
-                               side_effect=RuntimeError("mất mạng")):
+        with mock.patch.object(tuya_nha, "is_enabled", return_value=True), \
+             mock.patch.object(tuya_nha, "danh_sach_thiet_bi",
+                               side_effect=RuntimeError("mất mạng")) as goi:
             self.assertEqual(self.m.doc_nhat_ky(), [])
+        goi.assert_called_once()
+
+    def test_chua_khai_tuya_thi_khong_goi_khong_ghi_loi(self) -> None:
+        """Máy mới cài (05/10/2026): chưa khai Tuya mà vòng 15 giây vẫn gọi → log «khoa_cua_doc_loi» mãi."""
+        from services import tuya_nha
+        with mock.patch.object(tuya_nha, "is_enabled", return_value=False), \
+             mock.patch.object(tuya_nha, "danh_sach_thiet_bi") as goi:
+            self.assertEqual(self.m.doc_nhat_ky(), [])
+        goi.assert_not_called()
 
     def test_chua_chon_kenh_thi_khong_gui(self) -> None:
         """Từ 13/09/2026 ba tin của khoá cửa đi theo sổ đăng ký `thong_bao`.
@@ -319,6 +329,7 @@ class DocTuHomeAssistantTest(unittest.TestCase):
         now = time.time() - 300
         with mock.patch.object(lich_su_nha, "doc_cua_so",
                                return_value=self._su_kien_ha(now, "face", "17.0")), \
+             mock.patch.object(tuya_nha, "is_enabled", return_value=True), \
              mock.patch.object(tuya_nha, "danh_sach_thiet_bi",
                                side_effect=RuntimeError("bỏ qua Tuya")):
             ra = self.m.doc_nhat_ky(2)
@@ -329,6 +340,7 @@ class DocTuHomeAssistantTest(unittest.TestCase):
         from services import lich_su_nha, tuya_nha
         with mock.patch.object(lich_su_nha, "doc_cua_so",
                                side_effect=RuntimeError("mất HA")), \
+             mock.patch.object(tuya_nha, "is_enabled", return_value=True), \
              mock.patch.object(tuya_nha, "danh_sach_thiet_bi", return_value=[]):
             self.assertEqual(self.m.doc_nhat_ky(2), [])
 

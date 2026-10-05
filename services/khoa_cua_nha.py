@@ -293,6 +293,10 @@ def doc_nhat_ky(so_ngay: int = 2) -> list[dict[str, Any]]:
     from services import tuya_nha
 
     ha = _tu_ha(so_ngay)
+    if not tuya_nha.is_enabled():
+        # Máy chưa dùng Tuya (đo 05/10/2026 trên máy mới cài): gọi là lỗi «chưa khai Access ID» mỗi 15 giây, ghi log
+        # mãi mà không ai cần biết. Chỉ dùng HA, im lặng.
+        return sorted(ha, key=lambda x: -x["ts"])
 
     # Tuya hỏng (mất mạng, hết hạn IoT Core) thì VẪN dùng dữ liệu HA — bản
     # trước `return []` ở đây, tức vứt sạch đường realtime chỉ vì nguồn phụ
