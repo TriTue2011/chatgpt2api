@@ -674,12 +674,35 @@ def danh_sach(tb: str, tq: dict[str, Any] | None = None) -> dict[str, list[dict[
     return ra
 
 
+_GIO_NGUOI_RE = re.compile(r"^\s*(\d{1,2})\s*(?:[:hH.]\s*(\d{1,2})?)?\s*$")
+
+
+def _chuan_dk_nguoi(x: Any) -> Any:
+    """Điều kiện NGƯỜI gõ trên web → dạng lõi đòi. Chủ máy 05/10/2026 «Lưu & chạy» bị từ chối vì gõ ``6:30`` (lõi
+    đòi ``06:30``) và «liền 0» (lõi đòi 1–86400). Lõi `_kiem_dk` vẫn khắt khe với luật BOT viết — bot phải học viết
+    đúng; ở đây chỉ nới cho chữ người gõ: giờ ``6:30`` / ``6h30`` / ``6`` → ``06:30``; liền/trong 0 giây = không đòi
+    kéo dài → bỏ khoá. Không nhận ra thì để nguyên cho lõi báo lỗi."""
+    if not isinstance(x, dict):
+        return x
+    x = dict(x)
+    if x.get("ma") == "gio":
+        for k in ("tu", "den"):
+            m = _GIO_NGUOI_RE.fullmatch(str(x.get(k) or ""))
+            if m and int(m.group(1)) <= 24 and int(m.group(2) or 0) <= 59:
+                x[k] = f"{int(m.group(1)):02d}:{int(m.group(2) or 0):02d}"
+    for k in ("lien_giay", "trong_giay"):
+        if x.get(k) in (0, "0", ""):
+            x.pop(k)
+    return x
+
+
 def kiem_mot(tb: str, l: dict[str, Any]) -> dict[str, Any]:
     """Một luật anh nhập / sửa trên web → dạng chuẩn (kiểm ở biên như luật bot viết). Sai thì ValueError."""
     from services import lich_sinh_hoat
     chieu = str(l.get("chieu") or "")
     if chieu not in CHIEU_HD:
         raise ValueError("chiều phải là bat hoặc tat")
+    l = {**l, "neu": [_chuan_dk_nguoi(x) for x in l.get("neu") or []]}
     nen = str(l.get("nen") or chieu)
     luat, _, loi = kiem({"luat": [{**l, "so": 1, "nen": nen}]}, 1, {c["ma"] for c in cam_bien()} | {tb},
                         {x["ma"] for x in lich_sinh_hoat.ds()})

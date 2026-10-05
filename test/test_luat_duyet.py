@@ -319,3 +319,21 @@ def test_khoang_cach_dung_yen(monkeypatch, tmp_path):
     assert not ld.kiem_dieu_kien(dk, now, st)[0], "có lúc đi lại trong 30 phút → không đứng yên"
     assert ld._kiem_dk({"ma": "sensor.kc", "dung_yen_giay": 1800}, {"sensor.kc"}, set()) == \
         {"ma": "sensor.kc", "dung_yen_giay": 1800, "lech": 0.3}
+
+
+def test_kiem_mot_chuan_hoa_chu_nguoi_go(monkeypatch):
+    """Chủ máy 05/10/2026: «Lưu & chạy» bị từ chối vì gõ 6:30 và «liền 0». Chữ người gõ được chuẩn hoá ở biên web."""
+    monkeypatch.setattr(ld, "cam_bien", lambda: [{"ma": "binary_sensor.pk"}, {"ma": "binary_sensor.cam"},
+                                                  {"ma": "sensor.kc"}])
+    from services import lich_sinh_hoat
+    monkeypatch.setattr(lich_sinh_hoat, "ds", lambda: [])
+    l = {"chieu": "bat", "nen": "bat", "khi": ["binary_sensor.pk có người vào"], "xac_minh": False,
+         "neu": [{"ma": "gio", "tu": "6:30", "den": "21h45"}, {"ma": "sensor.kc", "duoi": 4},
+                 {"ma": "binary_sensor.cam", "la": "on", "lien_giay": 0}]}
+    r = ld.kiem_mot("light.x", l)
+    assert r["neu"][0] == {"ma": "gio", "tu": "06:30", "den": "21:45"}
+    assert r["neu"][2] == {"ma": "binary_sensor.cam", "la": "on"}, "liền 0 giây = không đòi kéo dài"
+    with pytest.raises(ValueError, match="khung giờ"):
+        ld.kiem_mot("light.x", {**l, "neu": [{"ma": "gio", "tu": "25:00", "den": "21:45"}]})
+    with pytest.raises(ValueError, match="ngoài 1–86400"):
+        ld.kiem_mot("light.x", {**l, "neu": [{"ma": "binary_sensor.cam", "la": "on", "lien_giay": -5}]})
