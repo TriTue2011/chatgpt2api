@@ -16,28 +16,11 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useSettingsStore } from "../store";
 import { request } from "@/lib/request";
+import { HuongDan, PHAN_MIKROTIK } from "./huong-dan-dien-mang";
 
 type Router = { host?: string; port?: string | number; username?: string; password?: unknown };
 type AdGuard = { url?: string; username?: string; password?: unknown };
 type KetQua = { ok?: boolean; tom_tat?: string; error?: string };
-
-// Lệnh RouterOS 7 dựng đúng tài khoản c2a đang chạy (đọc lại trên router 05/10/2026). Dán vào Terminal của Winbox.
-const TAO_TAI_KHOAN = `# 1. Nhóm quyền: đọc + ghi + API — KHÔNG reboot, policy, sensitive, winbox, ssh…
-/user group add name=c2a policy=read,write,api,!local,!telnet,!ssh,!ftp,!reboot,!policy,!test,!winbox,!password,!web,!sniff,!sensitive,!romon,!rest-api
-
-# 2. Tài khoản chỉ đăng nhập được từ máy chủ c2a (nhà này: 172.16.10.38)
-/user add name=c2a group=c2a address=172.16.10.38/32 password="MAT_KHAU_MANH"
-
-# 3. Chứng chỉ tự ký cho API-SSL (common-name = IP router)
-/certificate add name=c2a-api common-name=172.16.10.1 days-valid=3650 key-usage=digital-signature,key-encipherment,tls-server
-/certificate sign c2a-api
-
-# 4. Bật API-SSL (8729), chỉ nhận máy chủ c2a — đã có máy khác (vd Home Assistant .200) thì liệt kê cả hai
-/ip service set api-ssl certificate=c2a-api address=172.16.10.38/32 disabled=no
-/ip service set api disabled=yes          # tắt API không mã hoá (8728)
-
-# 5. Tường lửa: cho c2a vào cổng 8729, đặt lên ĐẦU chuỗi input (trước luật drop)
-/ip firewall filter add chain=input action=accept protocol=tcp dst-port=8729 src-address=172.16.10.38 comment="c2a API SSL" place-before=0`;
 
 const chuoi = (v: unknown) => (typeof v === "string" ? v : "");
 const daLuu = (v: unknown) => typeof v === "object" && v !== null && (v as { is_set?: boolean }).is_set === true;
@@ -155,19 +138,7 @@ function MangNhaForm({ rCu, aCu }: { rCu: Router; aCu: AdGuard }) {
         </div>
         {kq ? <div className="space-y-1">{dong("Router", kq.router)}{dong("AdGuard", kq.adguard)}</div> : null}
 
-        <details className="rounded-md border p-3 text-sm">
-          <summary className="cursor-pointer font-medium">📖 Hướng dẫn tạo tài khoản c2a trên MikroTik</summary>
-          <div className="mt-3 space-y-3">
-            <ol className="list-decimal space-y-1 pl-5 text-xs">
-              <li>Mở Winbox → <b>New Terminal</b>, dán từng khối lệnh dưới (đổi <code>MAT_KHAU_MANH</code>).</li>
-              <li>Điền ở trên: địa chỉ <code>172.16.10.1</code>, cổng <code>8729</code>, tài khoản <code>c2a</code>,
-                mật khẩu vừa đặt → <b>Kiểm tra kết nối</b> → <b>Lưu</b>.</li>
-              <li>Không dùng tài khoản <code>admin</code>: nhóm <code>c2a</code> không khởi động lại được router,
-                không đổi được quyền, không đọc được mật khẩu/khoá.</li>
-            </ol>
-            <pre className="overflow-x-auto rounded bg-muted p-3 text-[11px] leading-relaxed">{TAO_TAI_KHOAN}</pre>
-          </div>
-        </details>
+        <HuongDan phan={[PHAN_MIKROTIK]} />
       </CardContent>
     </Card>
   );

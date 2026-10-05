@@ -691,6 +691,28 @@ Cấu hình thô (khoá `nhin_nha` trong config): `yolo.model`, `yolo.nguong` (m
 Ảnh mặt đã dạy nằm ở `data/agent/khuon_mat/`, sổ ở `data/agent/khuon_mat.sqlite`
 — dữ liệu sinh trắc, không gửi model, không ghi vào log.
 
+#### 🌐 Mạng nhà (router MikroTik & AdGuard)
+
+| Ô | Ý nghĩa |
+|---|---|
+| **Router — địa chỉ / cổng API-SSL** | IP router (`172.16.10.1`), cổng `8729` |
+| **Tài khoản / mật khẩu router** | Tài khoản riêng `c2a` — **không** dùng `admin`. Lệnh tạo nằm ngay trong thẻ (khối «Tạo tài khoản c2a trên router MikroTik») |
+| **AdGuard — URL / tài khoản** | Để bot chặn trang web theo từng máy |
+
+Bấm **Kiểm tra kết nối** trước khi **Lưu** — nó thử đúng thông tin vừa gõ. Lệnh RouterOS đầy đủ:
+[docs/DIEN_UPS_VA_MANG_NHA.md, Phần A](docs/DIEN_UPS_VA_MANG_NHA.md#phần-a--tạo-tài-khoản-c2a-trên-router-mikrotik).
+
+#### 🔋 Điện (UPS)
+
+| Ô | Ý nghĩa |
+|---|---|
+| **Địa chỉ NUT** | `tên-ups@máy`, ví dụ `prolink@172.16.10.100` (cổng mặc định 3493) |
+
+c2a đọc UPS 5 giây một lần và báo khi **mất điện**, **pin yếu sắp tắt máy chủ**, **có điện lại**. Tin đi theo dòng
+«Mất điện / có điện» ở **Cài đặt → Thông báo** — phải bật dòng đó và chọn kênh. Thẻ có sẵn tám khối hướng dẫn: cài
+NUT, tắt bớt máy khi chạy pin, tự bật lại khi điện ổn định, thứ tự khởi động router → AdGuard, nối Home Assistant,
+kiểm tra. Bản đầy đủ kèm sự cố và số đo: [docs/DIEN_UPS_VA_MANG_NHA.md](docs/DIEN_UPS_VA_MANG_NHA.md).
+
 ### 3.8. Email & Lịch
 
 | Ô | Ý nghĩa |

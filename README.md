@@ -5,7 +5,7 @@ c2a (tên repo: `chatgpt2api`) là **một container** gom mọi thứ một ng�
 | Mảng | Làm được gì |
 |---|---|
 | **Bot chat** | Trợ lý tiếng Việt trên **Zalo** (bot + tài khoản cá nhân) và **Telegram**: hỏi đáp, tìm web, nhắc hẹn, đọc ảnh/tệp, trả lời bằng giọng nói, phân quyền theo từng nhóm/người |
-| **Nhà thông minh** | Điều khiển **Home Assistant** bằng lời; tự học thói quen (bật gì, lúc nào, trong điều kiện nào) rồi hỏi hoặc tự làm |
+| **Nhà thông minh** | Điều khiển **Home Assistant** bằng lời; tự học thói quen (bật gì, lúc nào, trong điều kiện nào) rồi hỏi hoặc tự làm; báo **mất điện / có điện** qua UPS (NUT) |
 | **Giọng nói tại chỗ** | Đọc (TTS) và nghe (STT) tiếng Việt ngay trên máy, không gửi tiếng ra ngoài; cổng **Wyoming** cho HA Assist; phát ra loa Google Cast / HA |
 | **Nhìn nhà (camera)** | Nhận người/vật bằng YOLO26, nhận **khuôn mặt** người nhà, canh cửa, tìm người, **trông xe** (báo động khoảng 2 giây sau khi có người đụng vào xe) — không cần Frigate |
 | **Dịch** | Máy dịch tự dựng trong stack (không tốn lượt AI): chữ, ảnh, tài liệu, phụ đề video, phiên dịch qua mic |
@@ -128,6 +128,7 @@ Danh sách đủ mọi model (giọng hay hơn, tiếng Anh/Trung/Nhật/Hàn, t
 |---|---|
 | Bật bot Zalo / Telegram | [HUONG_DAN.md, Phần 5](HUONG_DAN.md#5-kết-nối-bot-telegram--zalo), [docs/ZALO.md](docs/ZALO.md) |
 | Nối Home Assistant, camera, nhận mặt | [HUONG_DAN.md, mục 3.7](HUONG_DAN.md#37-home-assistant) |
+| UPS báo mất điện, tự tắt / tự bật máy chủ Proxmox; tài khoản c2a trên router MikroTik | [docs/DIEN_UPS_VA_MANG_NHA.md](docs/DIEN_UPS_VA_MANG_NHA.md) |
 | Giọng nói, loa, HA Assist qua Wyoming | [HUONG_DAN.md, Phần 4](HUONG_DAN.md#4-bật-giọng-nói-ttsstt-và-phát-ra-loa) |
 | Phân quyền theo nhóm / người | [HUONG_DAN.md, Phần 6](HUONG_DAN.md#6-lọc-chức-năng-theo-thread) |
 | Dịch máy tự chủ, GPU | [docs/DICH_MAY_TU_CHU.md](docs/DICH_MAY_TU_CHU.md), [docs/NGHE_GPU.md](docs/NGHE_GPU.md) |
