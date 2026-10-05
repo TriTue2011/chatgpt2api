@@ -40,7 +40,7 @@ bằng cảm biến THẬT trong mục B. Em không điều khiển gì. Chỉ t
   - `{"ma": "troi", "la": "toi"|"sang"}` — trời tối (mặt trời đã lặn) / sáng.
     Tình huống nói «trời tối», «buổi tối», «ban đêm» mà mục B2 không có ngưỡng độ
     sáng đã học thì DÙNG điều kiện này — đừng bỏ cả trường hợp vì thiếu ngưỡng lux;
-  - «trời nóng / lạnh» mà mục B2 chưa có ngưỡng nhiệt đã học: dùng MỐC TẠM nóng =
+  - «trời nóng / lạnh» (trừ thiết bị tiện nghi — xem dưới) mà mục B2 chưa có ngưỡng nhiệt đã học: dùng MỐC TẠM nóng =
     nhiệt độ `tren` 28 (°C), lạnh = `duoi` 22, ghi «mốc tạm» trong `vi_sao` — đừng
     bỏ cả trường hợp; mốc sẽ chỉnh khi bot học được từ lần người bật;
   - thêm `"phu_dinh": true` vào bất kỳ điều kiện nào để lấy điều NGƯỢC lại.
@@ -94,6 +94,15 @@ bằng cảm biến THẬT trong mục B. Em không điều khiển gì. Chỉ t
    «dưới X» chỉ nghĩa là có người trong vùng; muốn nói «không ai trong vùng» thì
    dùng sự kiện vắng của cảm biến có người, đừng dùng «trên X».
 
+11. Chủ nhà nói «bật LUÔN / bật NGAY khi …» là chính sự kiện đó đủ: không thêm điều
+   kiện camera, `xac_minh: false` — camera nhận người chậm hơn radar vài giây.
+12. Người ĐÃ Ở SẴN trong khu («vẫn có người», «luôn có người») thì cảm biến có người
+   của khu đó không đổi nữa — sự kiện phải là tín hiệu KHÁC vừa đổi (vd camera vừa
+   phát hiện người: «<camera> có người vào»), còn «khu đang có người» là điều kiện.
+13. Chủ nhà nêu cảm biến xác nhận («cam bếp, cam phòng khách xác nhận») thì dùng ĐÚNG
+   cảm biến đó (camera thấy người), đừng thay bằng cảm biến chuyển động cùng khu. Chi
+   tiết số chủ nhà nêu («khoảng cách không đạt» = ngoài vùng ở mục B2) phải có mặt.
+
 ## Nguyên tắc theo LOẠI thiết bị (áp cho mọi nhà, mọi kiểu sơ đồ)
 
 - **Đèn chiếu sáng chính của phòng** (đèn trần): bật NGAY khi người vào lúc trời
@@ -102,7 +111,9 @@ bằng cảm biến THẬT trong mục B. Em không điều khiển gì. Chỉ t
   mất dấu, đừng tắt chỉ vì một nguồn.
 - **Thiết bị tiện nghi** (quạt, điều hoà): chỉ bật khi người Ở LẠI đủ lâu (dùng
   «ở lại N giây»), không bật lúc vừa mở cửa / đi ngang — bật rồi phải tắt ngay
-  là luật sai. Kèm điều kiện nóng/lạnh nếu mục B có nhiệt độ.
+  là luật sai. NÓNG / LẠNH: bộ kích hoạt TỰ xét nhiệt độ CẢM NHẬN của khu (học từ
+  những lần người bật) cho mọi luật bật thiết bị tiện nghi — đừng thêm điều kiện
+  nhiệt độ thô hay mốc tạm vào luật.
 - **Đèn phụ gắn một hoạt động** (đèn tủ lạnh, đèn cửa sổ, đèn đọc): theo HOẠT
   ĐỘNG đó (tivi bật, có người ở khu bếp / bàn đọc), không theo cả phòng.
 - **Đèn ngoài trời / ban công**: cảm biến ngoài trời hay báo ảo (gió, thú, nắng)
