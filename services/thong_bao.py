@@ -100,6 +100,8 @@ SU_KIEN: tuple[SuKien, ...] = (
            "Chỉ khi được nhờ trông xe: xe bị dời mà không nhận ra người nhà (báo động), "
            "hoặc người nhà lấy xe. Tin luôn về chat người nhờ; kênh chọn ở đây nhận thêm.",
            "Nhà"),
+    SuKien("nha.mat_dien", "Mất điện / có điện",
+           "UPS chuyển sang chạy pin, có điện lại, pin yếu sắp tắt máy chủ Proxmox.", "Nhà"),
     SuKien("nha.goi_y", "Gợi ý bật thiết bị",
            "Bot đoán nên bật gì theo nếp nhà, chờ chủ máy chấm đúng/sai.",
            "Nhà"),

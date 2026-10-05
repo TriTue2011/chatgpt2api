@@ -262,6 +262,13 @@ def create_app() -> FastAPI:
             khoa_cua_nha.start()
         except Exception as exc:
             _record_startup_failure("khoa_cua_nha", str(exc))
+        # Mất điện: đọc UPS qua NUT 5 giây một lần (pin yếu tới lúc máy chủ tắt chỉ chừng một phút). Nằm im khi
+        # chưa khai `dien_nha.nut`.
+        try:
+            from services import dien_nha
+            dien_nha.start()
+        except Exception as exc:
+            _record_startup_failure("dien_nha", str(exc))
         # Prewarm MCP tools cache in background so the first chat request
         # doesn't pay the cold-start probe (e.g. a dead remote MCP that
         # times out at 5s adds latency to whoever asks first).
