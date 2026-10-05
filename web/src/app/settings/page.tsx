@@ -95,76 +95,87 @@ function SettingsPageContent() {
           <ModelCanTaiCard />
         </SettingsSection>
 
+        {/* Mọi provider AI về MỘT mục, mỗi provider một dòng gập — chủ máy 05/10/2026: "Gộp tất cả các tab ở tab cài
+            đặt về cài đặt AI về 1 tab «Cài đặt AI», trong tab chia lần lượt theo từng provider luôn ẩn, hiện khi kích vào". */}
         <SettingsSection
-          title="Gemini AI Studio"
-          description="Google Gemini với Google Search — miễn phí 15 RPM, hỗ trợ nhiều API key"
-          icon={<span className="text-lg">🔮</span>}
+          title="Cài đặt AI"
+          description="Từng provider: Gemini, NVIDIA, TokenRouter, Custom, Google, Grok, ChatGPT, Codex, workspace trình duyệt"
+          icon={<span className="text-lg">🤖</span>}
+          tuKhoa="gemini nvidia nim tokenrouter custom provider openai chatgpt grok codex google workspace trinh duyet api key"
         >
-          <GeminiCard />
-        </SettingsSection>
+          <div className="space-y-3">
+          <SettingsSection
+            title="Gemini AI Studio"
+            description="Google Gemini với Google Search — miễn phí 15 RPM, hỗ trợ nhiều API key"
+            icon={<span className="text-lg">🔮</span>}
+          >
+            <GeminiCard />
+          </SettingsSection>
 
-        <SettingsSection
-          title="NVIDIA NIM"
-          description="80+ model qua NVIDIA — chat, vision, tạo ảnh FLUX — build.nvidia.com"
-          icon={<span className="text-lg">🟢</span>}
-        >
-          <NvidiaNimCard />
-        </SettingsSection>
+          <SettingsSection
+            title="NVIDIA NIM"
+            description="80+ model qua NVIDIA — chat, vision, tạo ảnh FLUX — build.nvidia.com"
+            icon={<span className="text-lg">🟢</span>}
+          >
+            <NvidiaNimCard />
+          </SettingsSection>
 
-        <SettingsSection
-          title="TokenRouter"
-          description="Đường riêng tr/ — có thử lại khi lỗi mạng, xin usage cuối stream — api.tokenrouter.com"
-          icon={<span className="text-lg">🧭</span>}
-        >
-          <TokenRouterCard />
-        </SettingsSection>
+          <SettingsSection
+            title="TokenRouter"
+            description="Đường riêng tr/ — có thử lại khi lỗi mạng, xin usage cuối stream — api.tokenrouter.com"
+            icon={<span className="text-lg">🧭</span>}
+          >
+            <TokenRouterCard />
+          </SettingsSection>
 
-        <SettingsSection
-          title="Custom Providers"
-          description="Kết nối bất kỳ OpenAI-compatible API: DeepSeek, vLLM, LiteLLM, Gemini Server..."
-          icon={<Link className="size-5" />}
-        >
-          <CustomProvidersCard />
-        </SettingsSection>
+          <SettingsSection
+            title="Custom Providers"
+            description="Kết nối bất kỳ OpenAI-compatible API: DeepSeek, vLLM, LiteLLM, Gemini Server..."
+            icon={<Link className="size-5" />}
+          >
+            <CustomProvidersCard />
+          </SettingsSection>
 
-        <SettingsSection
-          title="Workspace trình duyệt"
-          description="Hồ sơ đăng nhập riêng, mở khi cần và đóng để tiết kiệm tài nguyên."
-          icon={<KeyRound className="size-5" />}
-        >
-          <BrowserWorkspacesCard />
-        </SettingsSection>
+          <SettingsSection
+            title="Workspace trình duyệt"
+            description="Hồ sơ đăng nhập riêng, mở khi cần và đóng để tiết kiệm tài nguyên."
+            icon={<KeyRound className="size-5" />}
+          >
+            <BrowserWorkspacesCard />
+          </SettingsSection>
 
-        <SettingsSection
-          title="Provider qua tài khoản Google"
-          description="Đăng nhập Google một lần, tái dùng chung cho Google Labs Flow, ChatGPT, Gemini Web API và Claude."
-          icon={<KeyRound className="size-5" />}
-        >
-          <GoogleProvidersCard />
-        </SettingsSection>
+          <SettingsSection
+            title="Provider qua tài khoản Google"
+            description="Đăng nhập Google một lần, tái dùng chung cho Google Labs Flow, ChatGPT, Gemini Web API và Claude."
+            icon={<KeyRound className="size-5" />}
+          >
+            <GoogleProvidersCard />
+          </SettingsSection>
 
-        <SettingsSection
-          title="Grok (grok.com)"
-          description="Tài khoản Grok theo thứ tự ưu tiên — mỗi tài khoản một hồ sơ Firefox, đăng nhập qua noVNC (Google hay email)."
-          icon={<KeyRound className="size-5" />}
-        >
-          <GrokWebCard />
-        </SettingsSection>
+          <SettingsSection
+            title="Grok (grok.com)"
+            description="Tài khoản Grok theo thứ tự ưu tiên — mỗi tài khoản một hồ sơ Firefox, đăng nhập qua noVNC (Google hay email)."
+            icon={<KeyRound className="size-5" />}
+          >
+            <GrokWebCard />
+          </SettingsSection>
 
-        <SettingsSection
-          title="ChatGPT bằng tài khoản OpenAI gốc"
-          description="Tài khoản có mật khẩu của chính OpenAI (không đăng nhập qua Google). Đuôi email @gmail hay @icloud đều có thể là loại này."
-          icon={<KeyRound className="size-5" />}
-        >
-          <OpenAINativeCard />
-        </SettingsSection>
+          <SettingsSection
+            title="ChatGPT bằng tài khoản OpenAI gốc"
+            description="Tài khoản có mật khẩu của chính OpenAI (không đăng nhập qua Google). Đuôi email @gmail hay @icloud đều có thể là loại này."
+            icon={<KeyRound className="size-5" />}
+          >
+            <OpenAINativeCard />
+          </SettingsSection>
 
-        <SettingsSection
-          title="Codex Auto-Login (Đăng nhập Hàng loạt)"
-          description="Danh sách tài khoản Codex (Github) để tự động đăng nhập hàng loạt lấy JWT"
-          icon={<Plug className="size-5" />}
-        >
-          <CodexOnboardCard />
+          <SettingsSection
+            title="Codex Auto-Login (Đăng nhập Hàng loạt)"
+            description="Danh sách tài khoản Codex (Github) để tự động đăng nhập hàng loạt lấy JWT"
+            icon={<Plug className="size-5" />}
+          >
+            <CodexOnboardCard />
+          </SettingsSection>
+          </div>
         </SettingsSection>
 
         <SettingsSection
