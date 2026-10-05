@@ -373,3 +373,53 @@ def test_vua_chuyen_doc_so_lich_su_that(tmp_path, monkeypatch):
     st = {"binary_sensor.cua": _st("binary_sensor.cua", "on", 3600, luc)}
     ok, _ = ld.kiem_dieu_kien([{"ma": "binary_sensor.cua", "la": "on", "vua_chuyen_giay": 30}], luc, st)
     assert not ok, "đang mở nhưng không VỪA mở → điều kiện sai, đèn không bật lại"
+
+
+def test_so_do_trong_ngoai_khoang():
+    """Chủ máy 06/10/2026: số đo có «trong khoảng», «ngoài khoảng» ngoài trên / dưới."""
+    assert ld._kiem_dk({"ma": "sensor.kc", "tren": 1, "duoi": 3}, MA, set()) == {"ma": "sensor.kc", "tren": 1.0, "duoi": 3.0}
+    with pytest.raises(ValueError, match="khoảng sai"):
+        ld._kiem_dk({"ma": "sensor.kc", "tren": 3, "duoi": 1}, MA, set())
+    luc = 1_000_000.0
+    st = lambda v: {"sensor.kc": _st("sensor.kc", v)}               # noqa: E731
+    trong = [{"ma": "sensor.kc", "tren": 1.0, "duoi": 3.0}]
+    ngoai = [{"ma": "sensor.kc", "tren": 1.0, "duoi": 3.0, "phu_dinh": True}]
+    assert ld.kiem_dieu_kien(trong, luc, st("2.1"))[0] and not ld.kiem_dieu_kien(trong, luc, st("3.5"))[0]
+    assert ld.kiem_dieu_kien(ngoai, luc, st("3.5"))[0] and not ld.kiem_dieu_kien(ngoai, luc, st("2.1"))[0]
+    assert ld._mau_thuan_trong_luat(trong + [{"ma": "sensor.kc", "duoi": 0.5}]), "dưới 0.5 VÀ trong 1–3: không bao giờ đúng"
+    assert ld._mau_thuan_trong_luat(ngoai + [{"ma": "sensor.kc", "duoi": 0.5}]) is None
+
+
+def test_gio_kem_thu_va_khoang_ngay():
+    """Chủ máy 06/10/2026: thời gian chọn kèm ngày. Khung qua nửa đêm tính theo ngày BẮT ĐẦU."""
+    x = ld._kiem_dk({"ma": "gio", "tu": "22:00", "den": "06:00", "thu": [4], "tu_ngay": "2026-10-01"}, MA, set())
+    assert x == {"ma": "gio", "tu": "22:00", "den": "06:00", "thu": [4], "tu_ngay": "2026-10-01"}
+    tz = timezone(timedelta(hours=7))
+    t6_23h = datetime(2026, 10, 9, 23, 0, tzinfo=tz).timestamp()      # thứ 6
+    t7_2h = datetime(2026, 10, 10, 2, 0, tzinfo=tz).timestamp()       # 2 giờ sáng thứ 7 — thuộc khung tối thứ 6
+    t7_23h = datetime(2026, 10, 10, 23, 0, tzinfo=tz).timestamp()
+    truoc = datetime(2026, 9, 25, 23, 0, tzinfo=tz).timestamp()       # thứ 6 nhưng trước tu_ngay
+    ok = lambda luc: ld.kiem_dieu_kien([x], luc, {})[0]               # noqa: E731
+    assert ok(t6_23h) and ok(t7_2h) and not ok(t7_23h) and not ok(truoc)
+    assert "thu" not in ld._kiem_dk({"ma": "gio", "tu": "06:00", "den": "07:00", "thu": list(range(7))}, MA, set())
+    for sai in ({"thu": []}, {"thu": [7]}, {"tu_ngay": "10/10/2026"}, {"tu_ngay": "2026-10-10", "den_ngay": "2026-10-01"}):
+        with pytest.raises(ValueError):
+            ld._kiem_dk({"ma": "gio", "tu": "06:00", "den": "07:00", **sai}, MA, set())
+
+
+def test_so_sanh_hai_cam_bien():
+    """Chủ máy 06/10/2026: "so sánh 2 cảm biến mà giống nhau thì thực hiện"."""
+    assert ld._kiem_dk({"ma": "binary_sensor.pk", "so_voi": "binary_sensor.cua"}, MA, set()) == \
+        {"ma": "binary_sensor.pk", "so_voi": "binary_sensor.cua"}
+    with pytest.raises(ValueError):
+        ld._kiem_dk({"ma": "binary_sensor.pk", "so_voi": "binary_sensor.pk"}, MA, set())
+    with pytest.raises(ValueError):
+        ld._kiem_dk({"ma": "binary_sensor.pk", "so_voi": "binary_sensor.khong_co"}, MA, set())
+    luc = 1_000_000.0
+    dk = [{"ma": "binary_sensor.pk", "so_voi": "binary_sensor.cua"}]
+    st = lambda a, b: {"binary_sensor.pk": _st("binary_sensor.pk", a), "binary_sensor.cua": _st("binary_sensor.cua", b)}  # noqa: E731
+    assert ld.kiem_dieu_kien(dk, luc, st("on", "ON"))[0]
+    assert not ld.kiem_dieu_kien(dk, luc, st("on", "off"))[0]
+    assert not ld.kiem_dieu_kien(dk, luc, st("unavailable", "unavailable"))[0], "cùng mất tín hiệu không phải giống"
+    assert ld._giong("21", "21.0") and not ld._giong("21", "21.5")
+    assert ld.kiem_dieu_kien([{**dk[0], "phu_dinh": True}], luc, st("on", "off"))[0], "phủ định = khác nhau"

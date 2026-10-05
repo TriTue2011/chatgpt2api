@@ -265,10 +265,15 @@ def _mau_thuan_trong_luat(neu: list[dict[str, Any]]) -> str | None:
         duois: list[float] = []
         trens: list[float] = []
         for x in xs:
-            if "duoi" in x:
-                duois.append(x["duoi"])
-            elif "tren" in x:
-                trens.append(x["tren"])
+            if x.get("so_voi"):
+                continue                            # so với cảm biến khác: không suy được mâu thuẫn từ một mình nó
+            if "duoi" in x or "tren" in x:
+                if x.get("phu_dinh"):
+                    continue                        # «ngoài khoảng» / «không dưới X»: không phải ràng buộc một phía
+                if "duoi" in x:
+                    duois.append(x["duoi"])
+                if "tren" in x:
+                    trens.append(x["tren"])
             else:
                 (am if x.get("phu_dinh") else duong).add(x["la"])
         if len(duong) >= 2:
@@ -298,7 +303,26 @@ def _kiem_dk(x: Any, ma_co: set[str], lich: set[str]) -> dict[str, Any]:
         tu, den = str(x.get("tu") or ""), str(x.get("den") or "")
         if not (_GIO_RE.fullmatch(tu) and _GIO_RE.fullmatch(den)):
             raise ValueError(f"khung giờ sai dạng: {tu}–{den}")
-        return {"ma": "gio", "tu": tu, "den": den, **pd}
+        ra_g: dict[str, Any] = {"ma": "gio", "tu": tu, "den": den, **pd}
+        # Chủ máy 06/10/2026: "phần thời gian có thể chọn kèm ngày" — thứ trong tuần và / hoặc khoảng ngày.
+        if x.get("thu") is not None:
+            try:
+                thu = sorted({int(v) for v in x["thu"]})
+            except (TypeError, ValueError):
+                raise ValueError("thứ phải là số 0 (thứ 2) – 6 (chủ nhật)") from None
+            if not thu or not all(0 <= v <= 6 for v in thu):
+                raise ValueError("thứ phải trong 0 (thứ 2) – 6 (chủ nhật), chọn ít nhất một ngày")
+            if len(thu) < 7:
+                ra_g["thu"] = thu
+        for k in ("tu_ngay", "den_ngay"):
+            if x.get(k):
+                v = str(x[k])
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+                    raise ValueError(f"ngày sai dạng (cần YYYY-MM-DD): {v}")
+                ra_g[k] = v
+        if ra_g.get("tu_ngay") and ra_g.get("den_ngay") and ra_g["tu_ngay"] > ra_g["den_ngay"]:
+            raise ValueError(f"khoảng ngày ngược: {ra_g['tu_ngay']} → {ra_g['den_ngay']}")
+        return ra_g
     if ma == "lich":
         if str(x.get("la")) not in lich:
             raise ValueError(f"không có lịch «{x.get('la')}»")
@@ -313,14 +337,25 @@ def _kiem_dk(x: Any, ma_co: set[str], lich: set[str]) -> dict[str, Any]:
         return {"ma": "troi", "la": str(x["la"]), **pd}
     if ma not in ma_co:
         raise ValueError(f"mã không có trong nhà: {ma}")
+    if x.get("so_voi") is not None:
+        # Chủ máy 06/10/2026: "so sánh 2 cảm biến mà giống nhau thì thực hiện". Phủ định = khác nhau.
+        khac = str(x["so_voi"])
+        if khac not in ma_co:
+            raise ValueError(f"mã không có trong nhà: {khac}")
+        if khac == ma:
+            raise ValueError("so sánh một cảm biến với chính nó")
+        return {"ma": ma, "so_voi": khac, **pd}
     if x.get("dung_yen_giay") is not None:
         g, lech = int(x["dung_yen_giay"]), float(x.get("lech") or 0.3)
         if not 60 <= g <= 86400 or not 0 < lech <= 5:
             raise ValueError(f"dung_yen_giay {g} ngoài 60–86400 hoặc lech {lech} ngoài 0–5")
         return {"ma": ma, "dung_yen_giay": g, "lech": lech, **pd}
-    for k in ("duoi", "tren"):
-        if x.get(k) is not None:
-            return {"ma": ma, k: float(x[k]), **pd}
+    so = {k: float(x[k]) for k in ("tren", "duoi") if x.get(k) is not None}
+    if so:
+        # Có cả hai = TRONG KHOẢNG (tren < giá trị < duoi); thêm phu_dinh = NGOÀI KHOẢNG.
+        if len(so) == 2 and so["tren"] >= so["duoi"]:
+            raise ValueError(f"khoảng sai: từ {so['tren']:g} phải nhỏ hơn tới {so['duoi']:g}")
+        return {"ma": ma, **so, **pd}
     ra = {"ma": ma, "la": str(x.get("la") or "on"), **pd}
     for k in _KHOANG_GIAY:
         if x.get(k) is not None:
@@ -840,6 +875,38 @@ def _trong_khung(tu: str, den: str, luc: float) -> bool:
     return a <= p < b if a <= b else (p >= a or p < b)
 
 
+def _dung_ngay(x: dict[str, Any], luc: float) -> bool:
+    """Khung giờ có kèm thứ / khoảng ngày thì ngày của khung có khớp không. Khung qua nửa đêm (22:00–06:00) tính theo
+    NGÀY BẮT ĐẦU — như lịch sinh hoạt: 2 giờ sáng thứ 7 thuộc khung tối thứ 6."""
+    if not (x.get("thu") or x.get("tu_ngay") or x.get("den_ngay")):
+        return True
+    from datetime import datetime, timedelta, timezone
+    d = datetime.fromtimestamp(luc, timezone(timedelta(hours=7)))
+    a, b = (int(v[:2]) * 60 + int(v[3:]) for v in (x["tu"], x["den"]))
+    if a > b and d.hour * 60 + d.minute < b:
+        d -= timedelta(days=1)
+    if x.get("thu") and d.weekday() not in x["thu"]:
+        return False
+    ngay = d.strftime("%Y-%m-%d")
+    return not ((x.get("tu_ngay") and ngay < x["tu_ngay"]) or (x.get("den_ngay") and ngay > x["den_ngay"]))
+
+
+_KHONG_RO = {"", "unavailable", "unknown", "none"}
+_TEN_THU = ("T2", "T3", "T4", "T5", "T6", "T7", "CN")
+
+
+def _giong(a: str, b: str) -> bool:
+    """Hai trạng thái cảm biến giống nhau: số so theo giá trị (21 = 21.0), chữ không phân biệt hoa thường. Một bên
+    mất tín hiệu thì KHÔNG coi là giống — hai cảm biến cùng «unavailable» không phải là cùng trạng thái."""
+    a, b = a.strip().lower(), b.strip().lower()
+    if a in _KHONG_RO or b in _KHONG_RO:
+        return False
+    try:
+        return abs(float(a) - float(b)) < 1e-9
+    except ValueError:
+        return a == b
+
+
 def _vua_chuyen(ma: str, la: str, tu: float) -> bool:
     """``ma`` có ĐỔI SANG ``la`` (từ trạng thái khác) lúc nào đó từ ``tu`` tới nay không. Mở rồi đóng ngay vẫn tính
     là vừa mở; cửa mở sẵn từ trước ``tu`` thì không."""
@@ -930,7 +997,7 @@ def kiem_dieu_kien(neu: list[dict[str, Any]], luc: float,
     for x in neu:
         ma = x["ma"]
         if ma == "gio":
-            ok, gt = _trong_khung(x["tu"], x["den"], luc), "giờ hiện tại"
+            ok, gt = _trong_khung(x["tu"], x["den"], luc) and _dung_ngay(x, luc), "giờ hiện tại"
         elif ma == "lich":
             m = lsh.tim(x["la"])
             ok, gt = bool(m and lsh.trong(m, luc)), "lịch"
@@ -944,7 +1011,10 @@ def kiem_dieu_kien(neu: list[dict[str, Any]], luc: float,
         else:
             st = trang_thai.get(ma) or {}
             gt = str(st.get("state") or "")
-            if x.get("dung_yen_giay"):
+            if x.get("so_voi"):
+                gt2 = str((trang_thai.get(x["so_voi"]) or {}).get("state") or "")
+                ok, gt = _giong(gt, gt2), f"{gt} | {gt2}"
+            elif x.get("dung_yen_giay"):
                 ok = _dung_yen(ma, gt, int(x["dung_yen_giay"]), float(x.get("lech") or 0.3), luc)
             elif "duoi" in x or "tren" in x:
                 # Radar mmwave báo 0 (hoặc không đọc được) = KHÔNG bắt được mục tiêu, không phải «0 mét». `vung_khoang_cach`
@@ -959,11 +1029,11 @@ def kiem_dieu_kien(neu: list[dict[str, Any]], luc: float,
                 except ValueError:
                     v = None
                 if la_do_dai and (v is None or v <= 0):
-                    ok = "tren" in x
+                    ok = "tren" in x and "duoi" not in x     # không mục tiêu = «xa hơn X», không «trong khoảng»
                 elif v is None:
                     ok = False
                 else:
-                    ok = v < x["duoi"] if "duoi" in x else v > x["tren"]
+                    ok = ("duoi" not in x or v < x["duoi"]) and ("tren" not in x or v > x["tren"])
             elif x.get("trong_giay"):
                 ok = gt == x["la"] or _da_o_trong(ma, x["la"], luc - x["trong_giay"])
             elif x.get("vua_chuyen_giay"):
@@ -996,6 +1066,17 @@ def _doc_dk(x: dict[str, Any], ten: dict[str, str]) -> str:
     from services import hieu_thiet_bi_nha as ht
     if x["ma"] == "gio":
         s = f"trong {x['tu']}–{x['den']}"
+        if x.get("thu"):
+            s += " vào " + ", ".join(_TEN_THU[v] for v in x["thu"])
+        if x.get("tu_ngay") or x.get("den_ngay"):
+            s += f" (ngày {x.get('tu_ngay') or '…'} → {x.get('den_ngay') or '…'})"
+    elif x.get("so_voi"):
+        s = (f"{ten.get(x['ma'], x['ma'])} {'KHÁC' if x.get('phu_dinh') else 'giống'} "
+             f"{ten.get(x['so_voi'], x['so_voi'])}")
+        return s
+    elif x.get("phu_dinh") and "duoi" in x and "tren" in x:
+        dv = f" {x['_dv']}" if x.get("_dv") else ""
+        return f"{ten.get(x['ma'], x['ma'])} NGOÀI khoảng {x['tren']:g}–{x['duoi']:g}{dv}"
     elif x["ma"] == "lich":
         s = f"đang lịch «{x['la']}»"
     elif x["ma"] == "ca_nha":

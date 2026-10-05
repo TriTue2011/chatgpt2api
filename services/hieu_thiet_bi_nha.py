@@ -1307,6 +1307,8 @@ def _dieu_kien_doc(x: dict[str, Any], ten_nv: dict[str, str], ten: dict[str, str
     if x["ma"] == "mua":
         return {"lanh": "mùa lạnh", "chuyen": "lúc chuyển mùa"}.get(x["la"], "mùa nóng")
     nhan = ten_nv.get(x["ma"]) or _nhan(x["ma"], ten)
+    if "duoi" in x and "tren" in x:
+        return f"{nhan} trong khoảng {x['tren']:g}–{x['duoi']:g}"
     if "duoi" in x:
         return f"{nhan} dưới {x['duoi']:g}"
     if "tren" in x:
