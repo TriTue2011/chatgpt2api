@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Plus, RefreshCw, Trash2, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -109,9 +109,9 @@ function loaiCua(d: DieuKien): LoaiDk {
   return "trang_thai";
 }
 
-function SuaTruongHop({ chieu, ban, camBien, lich, onLuu, onHuy }: {
+function SuaTruongHop({ chieu, ban, camBien, lich, onLuu, onHuy, them }: {
   chieu: "bat" | "tat"; ban: TruongHop | null; camBien: CamBien[]; lich: { ma: string; ten: string }[];
-  onLuu: (loi: string, l: Luat) => void; onHuy: () => void;
+  onLuu: (loi: string, l: Luat) => void; onHuy?: () => void; them?: React.ReactNode;
 }) {
   const nhiPhan = camBien.filter((c) => c.ma.startsWith("binary_sensor."));
   const so = camBien.filter((c) => c.ma.startsWith("sensor."));
@@ -223,7 +223,8 @@ function SuaTruongHop({ chieu, ban, camBien, lich, onLuu, onHuy }: {
         <label className="flex items-center gap-1"><input type="checkbox" checked={xm} onChange={(e) => setXm(e.target.checked)} />
           nhìn lại camera trước khi làm</label>
         <span className="ml-auto flex gap-2">
-          <Button size="sm" variant="ghost" onClick={onHuy}>Huỷ</Button>
+          {them}
+          {onHuy ? <Button size="sm" variant="ghost" onClick={onHuy}>Huỷ</Button> : null}
           <Button size="sm" disabled={!khi} onClick={() => onLuu(loi, { chieu, nen, khi: [khi], neu, xac_minh: xm })}>Lưu &amp; chạy</Button>
         </span>
       </div>
@@ -255,30 +256,32 @@ function Chieu({ tb, chieu, camBien, lich, tai }: {
       {ds.length === 0 && !tn ? <p className="text-muted-foreground">Chưa có trường hợp nào.</p> : null}
       {nhomTruongHop(ds, camBien).map((g) => (
         <Gap key={g.ten} tieuDe={g.ten} phu={tom(g.ds)}>
-          {g.ds.map((x) => dangSua === x.id ? (
-            <SuaTruongHop key={x.id} chieu={chieu} ban={x} camBien={camBien} lich={lich} onHuy={() => setDangSua(null)}
-              onLuu={(loi, l) => void quyet(x.trang_thai === "de_xuat" ? "them" : "sua", x.id, l, loi)} />
-          ) : (
+          {g.ds.map((x) => (
             <Gap key={x.id} tieuDe={
               <span className="flex flex-wrap items-center gap-2 font-normal">
                 <span className={`rounded px-1.5 py-0.5 text-[11px] ${TRANG_THAI[x.trang_thai][1]}`}>{TRANG_THAI[x.trang_thai][0]}</span>
                 <span className="font-medium">{x.loi || "(chưa đặt tên)"}</span>
               </span>}>
-              {x.dong.length ? (
-                <ul className="list-disc pl-5 text-muted-foreground">{x.dong.map((d, i) => <li key={i}>{d}</li>)}</ul>
-              ) : <p className="text-muted-foreground">{x.ly_do}</p>}
-              <div className="flex flex-wrap gap-1">
-                {x.trang_thai !== "chay" && x.trang_thai !== "chua_chuyen" ? (
-                  <Button size="sm" variant="outline" onClick={() => void quyet("duyet", x.id)}>
-                    <Check className="size-4 text-emerald-600" /> Chạy</Button>) : null}
-                {x.trang_thai === "chay" || x.trang_thai === "de_xuat" ? (
-                  <Button size="sm" variant="outline" onClick={() => void quyet("dung", x.id)}>
-                    <X className="size-4 text-amber-600" /> {x.trang_thai === "de_xuat" ? "Bỏ đề xuất" : "Tạm dừng"}</Button>) : null}
-                <Button size="sm" variant="outline" onClick={() => setDangSua(x.id)}><Pencil className="size-4" /> Sửa</Button>
-                {x.trang_thai !== "de_xuat" ? (
-                  <Button size="sm" variant="outline" onClick={() => void quyet("xoa", x.id)}>
-                    <Trash2 className="size-4 text-rose-600" /> Xoá</Button>) : null}
-              </div>
+              {x.trang_thai === "chua_chuyen" ? (<>
+                <p className="text-muted-foreground">{x.ly_do} — bấm «Bot học &amp; đề xuất lại» ở thiết bị để bot đưa ra điều kiện.</p>
+                <Button size="sm" variant="outline" onClick={() => void quyet("xoa", x.id)}>
+                  <Trash2 className="size-4 text-rose-600" /> Xoá trường hợp</Button>
+              </>) : (
+                // Mở ra là thấy TỪNG điều kiện — sửa / xoá / thêm ngay tại chỗ; «Lưu & chạy» = anh duyệt.
+                <SuaTruongHop chieu={chieu} ban={x} camBien={camBien} lich={lich}
+                  onLuu={(loi, l) => void quyet(x.trang_thai === "de_xuat" ? "them" : "sua", x.id, l, loi)}
+                  them={<>
+                    {x.trang_thai !== "chay" ? (
+                      <Button size="sm" variant="outline" title="Chạy đúng như bot đề xuất, không sửa" onClick={() => void quyet("duyet", x.id)}>
+                        <Check className="size-4 text-emerald-600" /> Chạy như cũ</Button>) : null}
+                    {x.trang_thai === "chay" || x.trang_thai === "de_xuat" ? (
+                      <Button size="sm" variant="outline" onClick={() => void quyet("dung", x.id)}>
+                        <X className="size-4 text-amber-600" /> {x.trang_thai === "de_xuat" ? "Bỏ đề xuất" : "Tạm dừng"}</Button>) : null}
+                    {x.trang_thai !== "de_xuat" ? (
+                      <Button size="sm" variant="outline" onClick={() => void quyet("xoa", x.id)}>
+                        <Trash2 className="size-4 text-rose-600" /> Xoá</Button>) : null}
+                  </>} />
+              )}
             </Gap>
           ))}
         </Gap>
@@ -320,6 +323,19 @@ function Chieu({ tb, chieu, camBien, lich, tai }: {
         </div>
       ) : null}
     </Gap>
+  );
+}
+
+/** Bước đầu là BOT học rồi đưa ra trường hợp (chủ máy 05/10/2026) — anh bấm khi muốn bot chuyển lại toàn bộ trường
+ * hợp của thiết bị thành điều kiện (một lượt gọi model), rồi sửa / duyệt từng cái. */
+function BotDeXuat({ tb, tai }: { tb: string; tai: () => void }) {
+  const [dang, setDang] = useState(false);
+  return (
+    <Button size="sm" variant="outline" disabled={dang} onClick={async () => {
+      setDang(true);
+      if (await goiPost("/api/hoc-hoi/luat-duyet", { viec: "giai", tb })) tai();
+      setDang(false);
+    }}><RefreshCw className={`size-4 ${dang ? "animate-spin" : ""}`} /> {dang ? "Bot đang học…" : "Bot học & đề xuất lại"}</Button>
   );
 }
 
@@ -372,6 +388,7 @@ export function ThietBiNha() {
               Tự động bật / tắt thiết bị này
             </label>
           ) : null}
+          <BotDeXuat tb={tb.thiet_bi} tai={tai} />
           <Chieu tb={tb} chieu="bat" camBien={camBien} lich={lich} tai={tai} />
           <Chieu tb={tb} chieu="tat" camBien={camBien} lich={lich} tai={tai} />
         </Gap>
