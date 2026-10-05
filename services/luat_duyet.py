@@ -108,9 +108,26 @@ def de(tb: str) -> str:
         if d:
             vung.append((ma, d[0], d[1], v.get("radar", "?")))
     x = so().get(tb) or {}
-    return de_tu(tb, ten.get(tb, tb), truong_hop(tb), cb, vung=vung,
+    th = truong_hop(tb)
+    return de_tu(tb, ten.get(tb, tb), th, cb, vung=vung,
                  trung=_cam_bien_trung([c["ma"] for c in cb]), do_tin=_do_tin_cam_bien([c["ma"] for c in cb]),
-                 lich=lich_sinh_hoat.ds(), sai=(x.get("chay_sai") or [])[-10:], cham=(x.get("cham") or [])[-15:])
+                 lich=lich_sinh_hoat.ds(), sai=_theo_loi(x, x.get("chay_sai") or [], th)[-10:],
+                 cham=_theo_loi(x, x.get("cham") or [], th)[-15:])
+
+
+def _theo_loi(x: dict[str, Any], ds: list[dict[str, Any]], th: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Lời chấm / lần chạy sai ghi theo SỐ của lần giải cũ → đổi sang số của danh sách trường hợp HIỆN TẠI, khớp theo
+    LỜI trường hợp; trường hợp không còn thì bỏ. 05/10/2026 chủ máy bỏ 19/24 trường hợp đèn trần: không đổi số thì
+    lời sửa của «trường hợp 14» cũ sẽ dạy nhầm sang trường hợp 14 mới (hoặc trỏ vào khoảng trống)."""
+    loi_lan = {l["id"]: l.get("truong_hop") or [] for l in x.get("lan") or []}
+    so_moi = {m["tinh_huong"]: i for i, m in enumerate(th, 1)}
+    ra = []
+    for c in ds:
+        cu = loi_lan.get(c.get("lan"), [])
+        loi = cu[c["so"] - 1] if 1 <= int(c.get("so") or 0) <= len(cu) else None
+        if loi in so_moi:
+            ra.append({**c, "so": so_moi[loi]})
+    return ra
 
 
 def de_tu(tb: str, ten_tb: str, th: list[dict[str, Any]], cb: list[dict[str, Any]], *,

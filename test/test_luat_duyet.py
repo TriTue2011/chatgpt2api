@@ -273,3 +273,12 @@ def test_luat_hoi_tu_kiem_bang_ngoai_vi_roi_lam_va_hoi_dung_sai(monkeypatch):
     xm["kq"] = (True, "thấy người")
     kh._xu_ly_duyet("fan.q", luat, "binary_sensor.pk có người vào", 4.0)
     assert len(lam) == 1 and "không ạ?" in tin[-1], "khoá cửa / bếp / bình nóng lạnh: luôn hỏi"
+
+
+def test_loi_cham_cu_doi_so_theo_loi_truong_hop():
+    """Danh sách trường hợp đổi (chủ máy bỏ 19/24): lời chấm cũ theo số phải đổi sang số mới, cái đã bỏ thì thôi."""
+    x = {"lan": [{"id": 5, "truong_hop": ["a", "b", "c"]}],
+         "cham": [{"lan": 5, "so": 1, "dung": False, "ghi_chu": "về a"}, {"lan": 5, "so": 3, "dung": False, "ghi_chu": "về c"},
+                  {"lan": 9, "so": 1, "dung": True, "ghi_chu": "lần không còn"}]}
+    th = [{"tinh_huong": "c"}, {"tinh_huong": "z"}]
+    assert [(c["so"], c["ghi_chu"]) for c in ld._theo_loi(x, x["cham"], th)] == [(1, "về c")]
