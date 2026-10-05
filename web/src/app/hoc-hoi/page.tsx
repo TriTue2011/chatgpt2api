@@ -5,7 +5,9 @@
  *
  * Chủ máy 05/10/2026: "Tab học hỏi đang dài dòng khó hiểu… càng đơn giản, trình bày mạch lạc". Còn: Thiết bị
  * (mỗi thiết bị gập; Bật / Tắt gập; trường hợp ✓ ✗ ✎ 🗑) · Người nhà & nếp sinh hoạt (gộp 3 mục cũ) · Sơ đồ nhà ·
- * Nhật ký · Tâm hồn · Kỹ thuật (gập — ngưỡng, độ tin, luật bot tự học: "ẩn rồi kích vào sẽ ra cụ thể").
+ * Nhật ký · Tâm hồn · Kỹ thuật (MỘT khung gập: công tắc tầng học, ngưỡng, độ tin cảm biến). Bỏ các mục trùng
+ * (hiểu thiết bị, sơ đồ kích hoạt, bot tự học chi tiết, nếp bot nhận ra, gợi ý) — chủ máy: "bỏ không cần thiết,
+ * trùng lặp đi"; nếp bot nhận ra thành đề xuất trong Lịch sinh hoạt.
  * API ở `api/hoc_hoi.py`.
  *
  * Tên thiết bị & khu vực KHÔNG nằm ở đây — chủ máy chốt chuyển sang Settings
@@ -21,18 +23,12 @@ import { SettingsSection } from "@/components/settings-section";
 import { BoLocCaiDat } from "@/components/settings-filter";
 
 import { TongQuan } from "./components/tong-quan";
-import { HieuThietBi } from "./components/hieu-thiet-bi";
-import { SoDo } from "./components/so-do";
 import { SoDoNha } from "./components/so-do-nha";
-import { KichHoat } from "./components/kich-hoat";
 import { NhatKyKichHoat } from "./components/nhat-ky-kich-hoat";
 import { LichSinhHoat } from "./components/lich-sinh-hoat";
-import { GoiY } from "./components/goi-y";
-import { NepSinhHoat } from "./components/nep-sinh-hoat";
 import { ThietBiNha } from "./components/thiet-bi";
 import { Nguong } from "./components/nguong";
 import { DoTin } from "./components/do-tin";
-import { TheoNep } from "./components/theo-nep";
 import { TamHonCard } from "../settings/components/tam-hon-card";
 import { useSettingsStore } from "../settings/store";
 
@@ -65,11 +61,7 @@ function HocHoiContent() {
           </SettingsSection>
           <SettingsSection title="Người nhà & nếp sinh hoạt"
             tuKhoa="nguoi thanh vien gia dinh lich sinh hoat ngu day di lam vang an toi nep thoi quen goi y du doan">
-            <div className="space-y-4">
-              <LichSinhHoat />
-              <div><h3 className="mb-1 text-xs font-medium">Nếp bot nhận ra</h3><NepSinhHoat /></div>
-              <div><h3 className="mb-1 text-xs font-medium">Gợi ý theo nếp nhà</h3><GoiY /></div>
-            </div>
+            <LichSinhHoat />
           </SettingsSection>
           <SettingsSection title="Sơ đồ nhà" tuKhoa="so do nha phong vach thong cua chinh anh camera luoi o mo ta dap an chup">
             <SoDoNha />
@@ -81,17 +73,13 @@ function HocHoiContent() {
             tuKhoa="tam hon lam tho cam xuc goc tinh cach ky uc mac dinh tat">
             <TamHonMuc />
           </SettingsSection>
-          <SettingsSection title="Kỹ thuật (chi tiết bot học)"
-            description="Ngưỡng, độ tin cảm biến, luật bot tự học, hướng dẫn — mở khi cần xem sâu."
-            tuKhoa="ky thuat tong quan cong tac do tin cam bien nhieu ket nguong tu chu hieu thiet bi so do kich hoat ngoai vi tu bat theo nep">
-            <div className="space-y-3">
-              <SettingsSection title="Tổng quan (công tắc từng tầng học)"><TongQuan /></SettingsSection>
-              <SettingsSection title="Độ tin cảm biến (nhiễu / kẹt / lành)"><DoTin /></SettingsSection>
-              <SettingsSection title="Ngưỡng bộ não (kiểm tiến dần)"><Nguong /></SettingsSection>
-              <SettingsSection title="Bot hiểu thiết bị"><HieuThietBi /></SettingsSection>
-              <SettingsSection title="Sơ đồ kích hoạt (ngoại vi)"><SoDo /></SettingsSection>
-              <SettingsSection title="Bot tự học bật/tắt (chi tiết)"><KichHoat /></SettingsSection>
-              <SettingsSection title="Thêm thiết bị tự bật theo nếp"><TheoNep /></SettingsSection>
+          <SettingsSection title="Kỹ thuật"
+            description="Công tắc từng tầng học, ngưỡng, độ tin cảm biến — mở khi cần xem sâu."
+            tuKhoa="ky thuat tong quan cong tac tang hoc nguong tu chu kiem tien dan do tin cam bien nhieu ket lanh">
+            <div className="space-y-5">
+              <TongQuan />
+              <div className="border-t pt-3"><h3 className="mb-2 text-xs font-medium">Ngưỡng</h3><Nguong /></div>
+              <div className="border-t pt-3"><h3 className="mb-2 text-xs font-medium">Độ tin cảm biến</h3><DoTin /></div>
             </div>
           </SettingsSection>
         </div>

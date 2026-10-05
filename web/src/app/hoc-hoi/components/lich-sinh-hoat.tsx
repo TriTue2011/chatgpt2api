@@ -35,7 +35,29 @@ export function docThu(thu: number[]): string {
 /** Khoá của thành viên trong `ai`: mã nếu đã lưu, tên nếu vừa thêm (backend đổi tên → mã khi lưu). */
 const khoa = (t: ThanhVien) => t.ma || t.ten;
 
+/** Nếp bot tự nhận ra (`tinh_huong_nha`) — chỉ hiện cái CHỜ DUYỆT, làm đề xuất thêm vào lịch. Chủ máy 05/10/2026:
+ * "có nếp sinh hoạt rồi thì gộp các nếp khác vào, nó thừa". */
+type NepBot = { id: number; ten: string; gio: string; lech_phut: number; so_lan: number; thu: number; trang_thai: string };
+
+function loaiTuTen(ten: string): MucLich["loai"] {
+  const t = ten.toLowerCase();
+  if (t.includes("ăn")) return "an";
+  if (t.includes("ngủ") || t.includes("nghỉ trưa")) return "ngu";
+  if (t.includes("vắng")) return "vang";
+  return "khac";
+}
+
+/** "14h39" ± lệch phút → ["14:29", "14:49"]. */
+function khungTu(gio: string, lech: number): [string, string] {
+  const m = /^(\d+)h(\d+)$/.exec(gio);
+  const phut = m ? Number(m[1]) * 60 + Number(m[2]) : 12 * 60;
+  const hh = (p: number) => { const x = ((p % 1440) + 1440) % 1440; return `${String(Math.floor(x / 60)).padStart(2, "0")}:${String(x % 60).padStart(2, "0")}`; };
+  return [hh(phut - lech), hh(phut + lech)];
+}
+
 export function LichSinhHoat() {
+  const [nepBot, setNepBot] = useState<NepBot[]>([]);
+  const [duyetKhiLuu, setDuyetKhiLuu] = useState<number[]>([]);
   const [ds, setDs] = useState<MucLich[]>([]);
   const [tv, setTv] = useState<ThanhVien[]>([]);
   const [nhom, setNhom] = useState<Nhom[]>([]);
@@ -51,6 +73,9 @@ export function LichSinhHoat() {
     setNhom(r.nhom || []);
     setGoiY(r.goi_y || {});
     setDoi(false);
+    setDuyetKhiLuu([]);
+    const n = await layGet<{ danh_sach?: NepBot[] }>("/api/mqtt/tinh-huong").catch(() => ({ danh_sach: [] as NepBot[] }));
+    setNepBot((n.danh_sach || []).filter((x) => x.trang_thai === "cho_duyet"));
   }, []);
   useEffect(() => { void tai(); }, [tai]);
 
@@ -91,7 +116,22 @@ export function LichSinhHoat() {
     setDoi(true);
   };
   const luu = async () => {
-    if (await goiPost("/api/hoc-hoi/lich", { muc: ds, thanh_vien: tv })) await tai();
+    if (await goiPost("/api/hoc-hoi/lich", { muc: ds, thanh_vien: tv })) {
+      // Nếp đã đưa vào lịch → đánh dấu đã duyệt để bot không đề xuất lại.
+      for (const id of duyetKhiLuu) await goiPost("/api/mqtt/tinh-huong/duyet", { id });
+      await tai();
+    }
+  };
+  const nhanNep = (n: NepBot) => {
+    const [tu, den] = khungTu(n.gio, n.lech_phut || 10);
+    setDs([...ds, { ma: "", ten: n.ten, loai: loaiTuTen(n.ten), tu, den,
+      thu: n.thu >= 0 ? [n.thu] : [0, 1, 2, 3, 4, 5, 6], ai: loc && loc !== "*" ? [loc] : [] }]);
+    setDuyetKhiLuu([...duyetKhiLuu, n.id]);
+    setNepBot(nepBot.filter((x) => x.id !== n.id));
+    setDoi(true);
+  };
+  const boNep = async (n: NepBot) => {
+    if (await goiPost("/api/mqtt/tinh-huong/duyet", { id: n.id, bo: true })) setNepBot(nepBot.filter((x) => x.id !== n.id));
   };
 
   const tenNhom = (m: string | null) => nhom.find((x) => x.ma === m)?.ten || "";
@@ -194,6 +234,23 @@ export function LichSinhHoat() {
           )}
         </div>
       ))}
+      {nepBot.length > 0 && (
+        <div className="space-y-1 rounded border border-dashed p-2 text-xs">
+          <p className="text-muted-foreground">Bot thấy nhà hay có những giờ này — thêm vào lịch nếu đúng:</p>
+          {nepBot.map((n) => (
+            <div key={n.id} className="flex flex-wrap items-center gap-2">
+              <span className="font-medium">{n.ten}</span>
+              <span className="text-muted-foreground">
+                ~{n.gio.replace("h", ":")} ±{n.lech_phut}p · thấy {n.so_lan} lần{n.thu >= 0 ? ` · ${THU[n.thu]}` : ""}
+              </span>
+              <span className="ml-auto flex gap-1">
+                <Button size="sm" variant="outline" className="h-7" onClick={() => nhanNep(n)}>Thêm vào lịch</Button>
+                <Button size="sm" variant="ghost" className="h-7" onClick={() => void boNep(n)}>Bỏ</Button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="flex gap-2">
         <Button variant="outline" size="sm" onClick={() => {
           const ai = loc && loc !== "*" ? [loc] : [];

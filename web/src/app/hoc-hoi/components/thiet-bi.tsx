@@ -298,6 +298,24 @@ function Chieu({ tb, chieu, camBien, lich, tai }: {
   );
 }
 
+/** Thêm thiết bị dùng theo GIỜ (bình nóng lạnh, máy lọc nước…) — bot học giờ + thời lượng từ lần người bật. */
+function ThemTheoNep({ tai }: { tai: () => void }) {
+  const [ma, setMa] = useState("");
+  const [nhiet, setNhiet] = useState("");
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+      <span>Thêm thiết bị tự bật theo nếp:</span>
+      <Input className="h-7 w-52" placeholder="switch.binh_nong_lanh" value={ma} onChange={(e) => setMa(e.target.value)} />
+      <Input className="h-7 w-56" placeholder="cảm biến nhiệt ngoài trời (tuỳ chọn)" value={nhiet} onChange={(e) => setNhiet(e.target.value)} />
+      <Button size="sm" variant="outline" disabled={!ma.trim()} onClick={async () => {
+        if (await goiPost("/api/hoc-hoi/theo-nep", { thiet_bi: ma.trim(), bat: true, nhiet: nhiet.trim() || null })) {
+          setMa(""); setNhiet(""); tai();
+        }
+      }}><Plus className="size-4" /> Thêm</Button>
+    </div>
+  );
+}
+
 export function ThietBiNha() {
   const [ds, setDs] = useState<ThietBi[] | null>(null);
   const [camBien, setCamBien] = useState<CamBien[]>([]);
@@ -333,6 +351,7 @@ export function ThietBiNha() {
           <Chieu tb={tb} chieu="tat" camBien={camBien} lich={lich} tai={tai} />
         </Gap>
       ))}
+      <ThemTheoNep tai={tai} />
     </div>
   );
 }
