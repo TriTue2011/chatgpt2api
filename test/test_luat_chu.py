@@ -126,26 +126,35 @@ def test_im_lang_khong_nhan_viec_da_tu_lam_nhung_van_ghi_nhan(kh):
     assert kh.goi == [("fan", "turn_on", {"entity_id": QUAT})] and tin == [] and len(ghi) == 1
 
 
-def test_luat_hoc_chi_nhuong_o_NGUON_ma_luat_chu_va_luat_duyet_nghe(kh):
-    """04/10/2026: đèn trần có luật duyệt «bật» chỉ nghe cửa chính → người vào phòng khách từ phòng ngủ (nguồn khác)
-    bị nuốt hẳn: 72 lần/7 ngày không được xét. Nay luật bot học chỉ nhường ở ĐÚNG nguồn luật kia nghe."""
+def test_luat_hoc_nhuong_NGUON_luat_chu_va_ca_HUONG_luat_anh_duyet(kh):
+    """Luật chủ cũ (`luat_chu`): luật bot học chỉ nhường ở ĐÚNG nguồn luật chủ nghe (04/10/2026: nhường cả hướng từng
+    nuốt 72 lần vào phòng khách / 7 ngày). Luật ANH DUYỆT (05/10/2026): hướng nào anh đã duyệt thì chỉ luật anh duyệt
+    chạy ở hướng đó — bot học chỉ còn là đề xuất ("tôi mới là người quyết định")."""
     NGUOI = "binary_sensor.phong_khach_person_occupancy"
     kh._nap()["thiet_bi"][QUAT] = {"bat": True, "luat_chu": kh._kiem_luat_chu(LUAT_QUAT)}
     kh._nap()["mo_hinh"][QUAT] = {"on": {"nguon": [f"{PK} có người vào", f"{NGUOI} có người vào"]}, "off": {"nguon": []}}
-    chay = []
-    duyet = [{"so": 14, "nen": "bat", "chieu": "bat", "khi": [f"{CUA} có người vào"], "neu": [], "lan": 1}]
-    with mock.patch.object(kh, "_xu_ly_chu", lambda tb, l, n, luc: chay.append(("chu", n))), \
-            mock.patch.object(kh, "_xu_ly", lambda tb, hd, n, luc: chay.append(("hoc", n))), \
-            mock.patch.object(kh, "_xu_ly_duyet", lambda tb, khop, n, luc, **k: chay.append(("duyet", n))), \
-            mock.patch.object(kh, "_cho_nguoi_vao", lambda f, *a: f(*a)), \
-            mock.patch.object(kh, "_luat_duyet", lambda tb: duyet), \
-            mock.patch.object(threading, "Thread", lambda target, args, **k: mock.Mock(start=lambda: target(*args))):
-        kh._phat(f"{NGUOI} có người vào", 1.0)     # không luật chủ / duyệt nào nghe → luật học xét
-        kh._phat(f"{PK} có người vào", 1.0)        # luật chủ nghe nguồn này → luật học nhường
-        kh._phat(f"{CUA} có người vào", 1.0)       # luật chủ + luật duyệt nghe cửa → luật học nhường
-    assert ("hoc", f"{NGUOI} có người vào") in chay
+
+    def _chay(duyet):
+        chay = []
+        with mock.patch.object(kh, "_xu_ly_chu", lambda tb, l, n, luc: chay.append(("chu", n))), \
+                mock.patch.object(kh, "_xu_ly", lambda tb, hd, n, luc: chay.append(("hoc", n))), \
+                mock.patch.object(kh, "_xu_ly_duyet", lambda tb, khop, n, luc, **k: chay.append(("duyet", n))), \
+                mock.patch.object(kh, "_cho_nguoi_vao", lambda f, *a: f(*a)), \
+                mock.patch.object(kh, "_luat_duyet", lambda tb: duyet), \
+                mock.patch.object(threading, "Thread", lambda target, args, **k: mock.Mock(start=lambda: target(*args))):
+            kh._phat(f"{NGUOI} có người vào", 1.0)
+            kh._phat(f"{PK} có người vào", 1.0)
+            kh._phat(f"{CUA} có người vào", 1.0)
+        return chay
+
+    chay = _chay([])                                  # chưa có luật anh duyệt
+    assert ("hoc", f"{NGUOI} có người vào") in chay, "nguồn luật chủ không nghe → luật học xét"
     assert ("hoc", f"{PK} có người vào") not in chay and ("chu", f"{PK} có người vào") in chay
-    assert ("duyet", f"{CUA} có người vào") in chay and ("hoc", f"{CUA} có người vào") not in chay
+
+    duyet = [{"so": 14, "nen": "bat", "chieu": "bat", "khi": [f"{CUA} có người vào"], "neu": [], "lan": 1}]
+    chay = _chay(duyet)
+    assert ("duyet", f"{CUA} có người vào") in chay
+    assert not [c for c in chay if c[0] == "hoc"], "anh đã duyệt hướng bật → bot học thôi chạy cả hướng bật"
 
 
 def test_luat_hoc_ton_trong_luat_chan_da_duyet(kh):

@@ -457,6 +457,18 @@ def chay_sai(tb: str, lan_id: int, so_th: int, doc: list[str], loi: str = "") ->
     """Một lần LÀM theo luật bị chấm sai → ghi kèm giá trị lúc đó, chấm luật đó SAI (thôi chạy) và cho bot giải lại
     ngay với mục E — chủ máy: "chưa đúng thì nhìn lại ở đâu không đạt, chỉnh lại cho phù hợp"."""
     from datetime import datetime, timedelta, timezone
+    if not lan_id:
+        # Luật anh tự đặt trên web: không có bài để bot giải lại — TẠM DỪNG luật đó, chờ anh sửa / bật lại.
+        with _khoa:
+            d = _nap()
+            x = d.setdefault(tb, {"lan": [], "cham": []})
+            c = next((l for l in x.get("chu") or [] if l["id"] == so_th), None)
+            if c:
+                khoa = c["loi"] if c.get("loi") in ((x.get("lan") or [{}])[-1].get("truong_hop") or []) else f"chu:{so_th}"
+                x["dung"] = sorted(set(x.get("dung") or []) | {khoa})
+                c["sai"] = f"{datetime.now(timezone(timedelta(hours=7))):%d/%m %H:%M}: {', '.join(doc)[:200]}"
+                _luu(d)
+        return
     with _khoa:
         d = _nap()
         x = d.setdefault(tb, {"lan": [], "cham": []})
@@ -487,36 +499,290 @@ def cham_moi_nhat(so_th: int, dung: bool, ghi_chu: str = "", tb: str = "") -> st
 def ap(tb: str) -> list[dict[str, Any]]:
     """Luật ĐANG ÁP: mỗi trường hợp (của lần giải mới nhất) lấy QUYẾT ĐỊNH SAU CÙNG CỦA CHỦ NHÀ về nó, ở bất kỳ lần
     giải nào — «đúng» thì luật của lần đó chạy. Lần giải mới mà chủ nhà chưa trả lời thì luật cũ anh đã duyệt vẫn chạy.
+    Cộng thêm luật CHỦ NHÀ tự thêm / sửa trên web (`x["chu"]` — sửa là duyệt; sửa sau lời chấm thì thắng), trừ luật
+    anh TẠM DỪNG (`x["dung"]`).
 
     Chỉ CHỦ NHÀ quyết. Chủ máy 05/10/2026: "Bạn không có quyền xác nhận luật, bạn chỉ chấm đúng sai dựa trên cơ sở là
     tôi mô tả, mọi việc tôi quyết mới là đúng, bot phán đoán đưa tôi quyết định là làm luôn". Lời GIÁO VIÊN chấm
     (``cham_boi='claude'``) chỉ là ghi chú vào đề lần sau (mục D), không làm luật nào chạy hay thôi chạy.
 
-    Khoá theo LỜI trường hợp, không theo số: thêm trường hợp làm số đổi, lời thì không. Mỗi luật kèm ``lan`` để lần
-    chạy sai truy về đúng bài."""
+    Khoá theo LỜI trường hợp, không theo số: thêm trường hợp làm số đổi, lời thì không. Mỗi luật kèm ``lan`` / ``so``
+    để lần chạy sai truy về đúng bài (luật anh tự đặt: ``lan`` = 0, ``so`` = mã luật) và ``loi`` để báo."""
     with _khoa:
         x = _nap().get(tb) or {}
+    return _ap_tu(x)
+
+
+def _ap_tu(x: dict[str, Any]) -> list[dict[str, Any]]:
     ds_lan = x.get("lan") or []
-    if not ds_lan:
-        return []
     theo_id = {l["id"]: l for l in ds_lan}
-    quyet: dict[str, tuple[bool, int, int]] = {}            # lời trường hợp → (đúng?, lần, số)
+    quyet: dict[str, tuple[bool, int, int, float]] = {}     # lời trường hợp → (đúng?, lần, số, lúc)
     for c in x.get("cham") or []:                           # sổ ghi theo thời gian: lời sau đè lời trước
         lan = theo_id.get(c["lan"])
         if c.get("cham_boi") != "chu_may" or lan is None:
             continue
         th = lan.get("truong_hop") or []
         if 1 <= c["so"] <= len(th):
-            quyet[th[c["so"] - 1]] = (bool(c["dung"]), lan["id"], c["so"])
+            quyet[th[c["so"] - 1]] = (bool(c["dung"]), lan["id"], c["so"], float(c.get("luc") or 0))
+    dung = set(x.get("dung") or [])
+    chu = {l["loi"]: l for l in x.get("chu") or [] if l.get("loi")}
     ra = []
-    for loi in ds_lan[-1].get("truong_hop") or []:
+    loi_moi = ds_lan[-1].get("truong_hop") or [] if ds_lan else []
+    for loi in loi_moi:
+        if loi in dung:
+            continue
         q = quyet.get(loi)
+        c = chu.get(loi)
+        if c and (not q or float(c.get("luc") or 0) >= q[3]):
+            ra.append({**c, "lan": 0, "so": c["id"]})          # anh sửa sau lời chấm → luật anh sửa chạy
+            continue
         if not q or not q[0]:
             continue
         l = next((l for l in theo_id[q[1]]["luat"] if l["so"] == q[2]), None)
         if l is not None:
-            ra.append({**l, "lan": q[1]})
+            ra.append({**l, "lan": q[1], "loi": loi})
+    ra += [{**c, "lan": 0, "so": c["id"]} for c in x.get("chu") or []
+           if c.get("loi") not in loi_moi and f"chu:{c['id']}" not in dung]
     return ra
+
+
+# ── Danh sách TRƯỜNG HỢP cho trang web: mỗi thiết bị, mỗi chiều một danh sách; anh ✓ / ✗ / 🗑 / ✎ ─────────────
+# Chủ máy 05/10/2026: "mỗi thiết bị luôn ẩn, mở ra chia làm bật và tắt … gom theo từng trường hợp. Mỗi trường hợp
+# kèm các điều kiện đi theo … cuối có tích v, x để xác nhận thực hiện theo hay tạm dừng, có thùng rác để xoá. Tất cả
+# đều có thể chỉnh sửa, thêm, xoá"; bot tự học "chỉ là học hỏi đưa ra cho tôi điều kiện hợp lý, còn đâu tôi mới là
+# người quyết định"; sửa trên web = duyệt.
+CHIEU_HD = {"bat": "on", "tat": "off"}
+
+
+def _tu_luat_hoc(chieu: str, l: dict[str, Any]) -> dict[str, Any] | None:
+    """Một lá cây bot học (`kich_hoat_nha.luat`: dk = [{key, nho_hon, nguong}]) → luật cùng dạng luật duyệt; None nếu
+    có điều kiện không nói được bằng dạng đó (vd «phút đã ở»)."""
+    from services import kich_hoat_nha as kh
+    khi = [d["key"][1:-1] for d in l.get("dk") or [] if d["key"].startswith("[") and not d["nho_hon"]]
+    if len(khi) != 1 or not _NGUON_RE.fullmatch(khi[0]):
+        return None
+    neu: list[dict[str, Any]] = []
+    tu = den = None
+    for d in l.get("dk") or []:
+        k, nho, ng = d["key"], bool(d["nho_hon"]), float(d["nguong"])
+        if k.startswith("["):
+            continue
+        if k == "giờ":
+            hhmm = f"{int(ng) % 24:02d}:{int(round((ng % 1) * 60)) % 60:02d}"
+            if nho:
+                den = min(den or "24:00", hhmm)
+            else:
+                tu = max(tu or "00:00", hhmm)
+        elif k.startswith("lịch:"):
+            neu.append({"ma": "lich", "la": k[5:], **({"phu_dinh": True} if nho else {})})
+        elif k.startswith(kh.CAM_NHAN):
+            continue                                    # nóng / lạnh: bộ kích hoạt tự xét nhiệt độ cảm nhận
+        elif k.startswith(kh.PHUT_TU):
+            neu.append({"ma": k[len(kh.PHUT_TU):], "la": "on", "trong_giay": max(1, int(ng * 60)),
+                        **({} if nho else {"phu_dinh": True})})
+        elif "." in k and not k.startswith(kh.PHUT_DA_O):
+            neu.append({"ma": k, "duoi" if nho else "tren": round(ng, 2)})
+        else:
+            return None
+    if tu or den:
+        neu.insert(0, {"ma": "gio", "tu": tu or "00:00", "den": den or "24:00"})
+    return {"chieu": chieu, "nen": chieu, "khi": khi, "neu": neu, "xac_minh": False,
+            "hoc": {"p": l.get("p"), "k": l.get("k"), "n": l.get("n")}}
+
+
+def de_xuat_hoc(tb: str, tq: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Luật bot học từ lịch sử ĐỦ CHẮC (p ≥ `P_HOI`) đổi được sang dạng luật — ĐỀ XUẤT cho anh duyệt, không tự chạy."""
+    import hashlib
+    from services import kich_hoat_nha as kh
+    if tq is None:
+        tq = next((d for d in kh.tong_quan() if d.get("thiet_bi") == tb), {}) or {}
+    with _khoa:
+        x = _nap().get(tb) or {}
+    bo = set(x.get("bo_hoc") or [])
+    co = [json.dumps([c.get("khi"), c.get("neu")], sort_keys=True) for c in x.get("chu") or []]
+    ra = []
+    for chieu, hd in CHIEU_HD.items():
+        for l in ((tq.get("huong") or {}).get(hd) or {}).get("luat") or []:
+            if float(l.get("p") or 0) < kh.P_HOI:
+                continue
+            r = _tu_luat_hoc(chieu, l)
+            if r is None:
+                continue
+            ky = json.dumps([r["khi"], r["neu"]], sort_keys=True)
+            id_ = "hoc:" + hashlib.sha1(f"{chieu}|{ky}".encode(), usedforsecurity=False).hexdigest()[:10]
+            if id_ in bo or ky in co:
+                continue
+            ra.append({**r, "id": id_, "loi": f"Bot học từ lịch sử: {l['k']}/{l['n']} lần anh {_NEN_DOC[chieu]} "
+                                              f"khi gặp điều kiện này ({float(l['p']):.0%})"})
+    return ra
+
+
+def danh_sach(tb: str, tq: dict[str, Any] | None = None) -> dict[str, list[dict[str, Any]]]:
+    """{bat: [...], tat: [...]} — mỗi trường hợp: id, loi, nen, khi, neu, xac_minh, nguon (anh | bot | bot_hoc),
+    trang_thai (chay | dung | cho | sai | chua_chuyen | de_xuat), dong (từng dòng điều kiện đọc được), ly_do."""
+    from services import kich_ban_nha as kb, kich_hoat_nha as kh
+    ten = kh._ten_ha()
+    with _khoa:
+        x = _nap().get(tb) or {}
+    lan = (x.get("lan") or [{}])[-1]
+    th_lan = lan.get("truong_hop") or []
+    dang = {(c.get("loi"), c["so"], c["lan"]) for c in _ap_tu(x)}
+    dang_loi = {c.get("loi") for c in _ap_tu(x)}
+    dung = set(x.get("dung") or [])
+    chu = {c["loi"]: c for c in x.get("chu") or [] if c.get("loi")}
+    quyet: dict[str, bool] = {}
+    for c in x.get("cham") or []:
+        l_ = next((l for l in x.get("lan") or [] if l["id"] == c["lan"]), None)
+        if c.get("cham_boi") == "chu_may" and l_ and 1 <= c["so"] <= len(l_.get("truong_hop") or []):
+            quyet[l_["truong_hop"][c["so"] - 1]] = bool(c["dung"])
+    khong = {th_lan[k["so"] - 1]: k["ly_do"] for k in lan.get("khong_chuyen_duoc") or [] if k["so"] <= len(th_lan)}
+    ra: dict[str, list[dict[str, Any]]] = {"bat": [], "tat": []}
+
+    dv = {str(s_["entity_id"]): str((s_.get("attributes") or {}).get("unit_of_measurement") or "")
+          for s_ in kh._trang_thai_ha()}
+
+    def _muc(l: dict[str, Any] | None, **k: Any) -> dict[str, Any]:
+        m = {"id": "", "loi": "", "nen": "", "khi": [], "neu": [], "xac_minh": False, **(l or {}), **k}
+        m["dong"] = (doc_dong({**m, "neu": [{**n, "_dv": dv.get(n["ma"], "")} for n in m["neu"]]}, ten)
+                     if m.get("khi") else [])
+        return m
+
+    for h in ("bat", "tat"):
+        for m in (kb.duyet().get(tb) or {}).get(h) or []:
+            loi = m["tinh_huong"]
+            nguon = "anh" if m.get("nguon") == "chu_may" else "bot"
+            if loi in chu:
+                c = chu[loi]
+                tt = "dung" if loi in dung else ("chay" if loi in dang_loi else "cho")
+                ra[h].append(_muc(c, id=f"chu:{c['id']}", loi=loi, nguon=nguon, trang_thai=tt, sua=True))
+                continue
+            l = next((r for r in lan.get("luat") or [] if r["so"] <= len(th_lan) and th_lan[r["so"] - 1] == loi), None)
+            if l is None:
+                ra[h].append(_muc(None, id=f"th:{loi}", loi=loi, nen=m.get("nen", h), nguon=nguon,
+                                  trang_thai="chua_chuyen", ly_do=khong.get(loi, "bot chưa chuyển trường hợp này")))
+                continue
+            tt = ("dung" if loi in dung else "chay" if (loi, l["so"], lan["id"]) in dang or loi in dang_loi
+                  else "sai" if quyet.get(loi) is False else "cho")
+            ra[h].append(_muc(l, id=f"lan:{lan['id']}:{l['so']}", loi=loi, nguon=nguon, trang_thai=tt))
+    for c in x.get("chu") or []:
+        if c.get("loi") in th_lan or any(c.get("loi") == m["loi"] for h in ra for m in ra[h]):
+            continue
+        ra[c["chieu"]].append(_muc(c, id=f"chu:{c['id']}", nguon=c.get("nguon", "anh"), sua=True,
+                                   trang_thai="dung" if f"chu:{c['id']}" in dung else "chay"))
+    for d in de_xuat_hoc(tb, tq):
+        ra[d["chieu"]].append(_muc(d, nguon="bot_hoc", trang_thai="de_xuat"))
+    return ra
+
+
+def kiem_mot(tb: str, l: dict[str, Any]) -> dict[str, Any]:
+    """Một luật anh nhập / sửa trên web → dạng chuẩn (kiểm ở biên như luật bot viết). Sai thì ValueError."""
+    from services import lich_sinh_hoat
+    chieu = str(l.get("chieu") or "")
+    if chieu not in CHIEU_HD:
+        raise ValueError("chiều phải là bat hoặc tat")
+    nen = str(l.get("nen") or chieu)
+    luat, _, loi = kiem({"luat": [{**l, "so": 1, "nen": nen}]}, 1, {c["ma"] for c in cam_bien()} | {tb},
+                        {x["ma"] for x in lich_sinh_hoat.ds()})
+    if not luat:
+        raise ValueError("; ".join(e for e in loi if not e.startswith("bỏ sót")) or "luật không hợp lệ")
+    return {**luat[0], "chieu": chieu}
+
+
+def quyet(tb: str, viec: str, id_: str = "", luat: dict[str, Any] | None = None, loi: str = "") -> str:
+    """Anh quyết MỘT trường hợp trên web: duyet (✓ chạy) | dung (✗ tạm dừng) | xoa (🗑) | sua (✎ — áp ngay) | them.
+    Trả lời báo lại. Lời sửa cũng vào đề lần sau (mục D) để bot hiểu."""
+    with _khoa:
+        x = _nap().get(tb) or {}
+    lan = (x.get("lan") or [{}])[-1]
+    th_lan = lan.get("truong_hop") or []
+    kieu, _, phan = id_.partition(":")
+
+    def _luu_x(f: Any) -> None:
+        with _khoa:
+            d = _nap()
+            xx = d.setdefault(tb, {"lan": [], "cham": []})
+            f(xx)
+            _luu(d)
+
+    def _bo_dung(k: str) -> None:
+        _luu_x(lambda xx: xx.__setitem__("dung", [v for v in xx.get("dung") or [] if v != k]))
+
+    if viec in ("sua", "them"):
+        r = kiem_mot(tb, luat or {})
+        if kieu == "lan":
+            l_id, so_th = (int(v) for v in phan.split(":"))
+            loi = th_lan[so_th - 1] if l_id == lan.get("id") and so_th <= len(th_lan) else loi
+        elif kieu == "th":
+            loi = phan
+        loi = (loi or (luat or {}).get("loi") or "").strip()[:300]
+        cu = next((c for c in x.get("chu") or [] if kieu == "chu" and str(c["id"]) == phan), None)
+
+        def f(xx: dict[str, Any]) -> None:
+            ds = xx.setdefault("chu", [])
+            if cu:
+                c = next(c for c in ds if c["id"] == cu["id"])
+                c.update(r, luc=time.time(), loi=loi or c.get("loi", ""))
+                c.pop("sai", None)
+            else:
+                ds.append({**r, "id": max([c["id"] for c in ds] or [0]) + 1, "loi": loi,
+                           "nguon": "bot_hoc" if kieu == "hoc" else "anh", "luc": time.time()})
+            if loi:
+                xx["dung"] = [v for v in xx.get("dung") or [] if v != loi]
+        if kieu == "lan":
+            # Lời sửa vào bài học TRƯỚC, luật anh sửa lưu SAU — `_ap_tu` để quyết định sau cùng thắng.
+            l_id, so_th = (int(v) for v in phan.split(":"))
+            cham(tb, so_th, False, cham_boi="chu_may", lan_id=l_id,
+                 ghi_chu=f"chủ nhà sửa thành: {doc_luat(r, {})}"[:300])
+        _luu_x(f)
+        return "Đã lưu — luật anh đặt chạy ngay."
+    if kieu == "lan":
+        l_id, so_th = (int(v) for v in phan.split(":"))
+        loi = th_lan[so_th - 1] if l_id == lan.get("id") and so_th <= len(th_lan) else ""
+        if viec == "duyet":
+            cham(tb, so_th, True, cham_boi="chu_may", ghi_chu="chủ nhà duyệt (web)", lan_id=l_id)
+            _bo_dung(loi)
+            return "Đã duyệt — luật chạy."
+        if viec == "dung":
+            _luu_x(lambda xx: xx.__setitem__("dung", sorted(set(xx.get("dung") or []) | {loi})))
+            return "Đã tạm dừng."
+        if viec == "xoa":
+            cham(tb, so_th, False, cham_boi="chu_may", ghi_chu="chủ nhà BỎ trường hợp này (web)", lan_id=l_id)
+            _bo_truong_hop(tb, l_id, so_th)
+            return "Đã xoá trường hợp."
+    if kieu == "chu":
+        k = int(phan)
+        c = next((c for c in x.get("chu") or [] if c["id"] == k), None)
+        if c is None:
+            raise ValueError("không còn luật đó")
+        khoa = c["loi"] if c.get("loi") in th_lan else f"chu:{k}"
+        if viec == "duyet":
+            _bo_dung(khoa)
+            _luu_x(lambda xx: [cc.pop("sai", None) for cc in xx.get("chu") or [] if cc["id"] == k])
+            return "Đã bật lại — luật chạy."
+        if viec == "dung":
+            _luu_x(lambda xx: xx.__setitem__("dung", sorted(set(xx.get("dung") or []) | {khoa})))
+            return "Đã tạm dừng."
+        if viec == "xoa":
+            _luu_x(lambda xx: xx.__setitem__("chu", [cc for cc in xx.get("chu") or [] if cc["id"] != k]))
+            return "Đã xoá luật."
+    if kieu == "th" and viec == "xoa":
+        from services import kich_ban_nha as kb
+        for h in ("bat", "tat"):
+            for i, m in enumerate((kb.duyet().get(tb) or {}).get(h) or []):
+                if m["tinh_huong"] == phan:
+                    kb.sua_duyet(tb, h, "bo", i + 1)
+                    return "Đã xoá trường hợp."
+        raise ValueError("không còn trường hợp đó")
+    if kieu == "hoc":
+        if viec == "duyet":
+            d = next((d for d in de_xuat_hoc(tb) if d["id"] == id_), None)
+            if d is None:
+                raise ValueError("đề xuất này không còn (bot vừa học lại)")
+            return quyet(tb, "them", id_, {k: d[k] for k in ("chieu", "nen", "khi", "neu", "xac_minh")}, d["loi"])
+        if viec in ("dung", "xoa"):
+            _luu_x(lambda xx: xx.__setitem__("bo_hoc", sorted(set(xx.get("bo_hoc") or []) | {id_})))
+            return "Đã bỏ đề xuất."
+    raise ValueError(f"không làm được «{viec}» cho {id_ or 'trường hợp này'}")
 
 
 # ── Kiểm điều kiện lúc chạy ────────────────────────────────────────────────
@@ -661,30 +927,40 @@ def kiem_dieu_kien(neu: list[dict[str, Any]], luc: float,
 
 
 # ── Báo ─────────────────────────────────────────────────────────────────────
-def doc_luat(l: dict[str, Any], ten: dict[str, str]) -> str:
+def _doc_dk(x: dict[str, Any], ten: dict[str, str]) -> str:
+    """Một điều kiện → chữ người đọc."""
     from services import hieu_thiet_bi_nha as ht
+    if x["ma"] == "gio":
+        s = f"trong {x['tu']}–{x['den']}"
+    elif x["ma"] == "lich":
+        s = f"đang lịch «{x['la']}»"
+    elif x["ma"] == "ca_nha":
+        s = "cả nhà đang ngủ" if x["la"] == "ngu" else "cả nhà đi vắng"
+    elif x["ma"] == "troi":
+        s = "trời tối" if x["la"] == "toi" else "trời sáng"
+    elif x.get("dung_yen_giay"):
+        s = (f"{ten.get(x['ma'], x['ma'])} đứng yên (lệch ≤ {x['lech']:g}{' ' + x['_dv'] if x.get('_dv') else ''})"
+             f" liền {x['dung_yen_giay']} giây")
+    else:
+        s = ht._dieu_kien_doc(x, ten, ten) + (f" {x['_dv']}" if x.get("_dv") and ("duoi" in x or "tren" in x)
+                                             else "") + (f" liền {x['lien_giay']} giây" if x.get("lien_giay") else "") + (
+            f" (trong {x['trong_giay']} giây vừa qua)" if x.get("trong_giay") else "")
+    return f"KHÔNG ({s})" if x.get("phu_dinh") else s
 
-    def dk(x: dict[str, Any]) -> str:
-        if x["ma"] == "gio":
-            s = f"trong {x['tu']}–{x['den']}"
-        elif x["ma"] == "lich":
-            s = f"đang lịch «{x['la']}»"
-        elif x["ma"] == "ca_nha":
-            s = "cả nhà đang ngủ" if x["la"] == "ngu" else "cả nhà đi vắng"
-        elif x["ma"] == "troi":
-            s = "trời tối" if x["la"] == "toi" else "trời sáng"
-        elif x.get("dung_yen_giay"):
-            s = (f"{ten.get(x['ma'], x['ma'])} đứng yên (lệch ≤ {x['lech']:g}{' ' + x['_dv'] if x.get('_dv') else ''})"
-                 f" liền {x['dung_yen_giay']} giây")
-        else:
-            s = ht._dieu_kien_doc(x, {}, ten) + (f" {x['_dv']}" if x.get("_dv") and ("duoi" in x or "tren" in x)
-                                                 else "") + (f" liền {x['lien_giay']} giây" if x.get("lien_giay") else "") + (
-                f" (trong {x['trong_giay']} giây vừa qua)" if x.get("trong_giay") else "")
-        return f"KHÔNG ({s})" if x.get("phu_dinh") else s
 
-    khi = " hoặc ".join(f"{ten.get(k.split(' ')[0], k.split(' ')[0])} {k.split(' ', 1)[1]}" for k in l["khi"])
-    neu = (", nếu " + ", ".join(dk(x) for x in l["neu"])) if l["neu"] else ""
-    return f"khi {khi}{neu} → {_NEN_DOC[l['nen']]}" + (" (nhìn lại camera trước)" if l["xac_minh"] else "")
+def _doc_khi(l: dict[str, Any], ten: dict[str, str]) -> str:
+    return " hoặc ".join(f"{ten.get(k.split(' ')[0], k.split(' ')[0])} {k.split(' ', 1)[1]}" for k in l["khi"])
+
+
+def doc_dong(l: dict[str, Any], ten: dict[str, str]) -> list[str]:
+    """Từng dòng đọc được — «Khi …», mỗi điều kiện một dòng, «nhìn lại camera» nếu có — cho trang web."""
+    return ([f"Khi {_doc_khi(l, ten)}"] + [_doc_dk(x, ten) for x in l.get("neu") or []]
+            + (["Nhìn lại camera trước khi làm"] if l.get("xac_minh") else []))
+
+
+def doc_luat(l: dict[str, Any], ten: dict[str, str]) -> str:
+    neu = (", nếu " + ", ".join(_doc_dk(x, ten) for x in l["neu"])) if l["neu"] else ""
+    return f"khi {_doc_khi(l, ten)}{neu} → {_NEN_DOC[l['nen']]}" + (" (nhìn lại camera trước)" if l["xac_minh"] else "")
 
 
 def bao(tb: str, kq: dict[str, Any]) -> str:
@@ -744,7 +1020,11 @@ def _chua_hoi() -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
             continue
         lan = x["lan"][-1]
         da = {c["so"] for c in x.get("cham") or [] if c["lan"] == lan["id"] and c["cham_boi"] == "chu_may"}
-        ra += [(tb, lan, l) for l in lan["luat"] if l["so"] not in da]
+        # Anh đã quyết trên web (tạm dừng / sửa thành luật của anh) thì khỏi hỏi qua Zalo nữa.
+        xong = set(x.get("dung") or []) | {c.get("loi") for c in x.get("chu") or []}
+        th = lan.get("truong_hop") or []
+        ra += [(tb, lan, l) for l in lan["luat"] if l["so"] not in da
+               and (th[l["so"] - 1] if l["so"] <= len(th) else None) not in xong]
     return ra
 
 

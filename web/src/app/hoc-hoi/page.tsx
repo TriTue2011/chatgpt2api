@@ -3,10 +3,10 @@
 /**
  * Tab "Học hỏi" — xem / sửa / xoá những gì bot đã học, và tự thêm tay.
  *
- * Gom mọi tầng học về một chỗ, mỗi mục là một SettingsSection gập/mở (bám khuôn
- * trang Cài đặt): Tổng quan · Bot hiểu thiết bị · Sơ đồ kích hoạt · Lịch sinh hoạt ·
- * Bật/tắt thiết bị · Gợi ý theo
- * nếp nhà · Nếp sinh hoạt (thói quen). API ở `api/hoc_hoi.py`.
+ * Chủ máy 05/10/2026: "Tab học hỏi đang dài dòng khó hiểu… càng đơn giản, trình bày mạch lạc". Còn: Thiết bị
+ * (mỗi thiết bị gập; Bật / Tắt gập; trường hợp ✓ ✗ ✎ 🗑) · Người nhà & nếp sinh hoạt (gộp 3 mục cũ) · Sơ đồ nhà ·
+ * Nhật ký · Tâm hồn · Kỹ thuật (gập — ngưỡng, độ tin, luật bot tự học: "ẩn rồi kích vào sẽ ra cụ thể").
+ * API ở `api/hoc_hoi.py`.
  *
  * Tên thiết bị & khu vực KHÔNG nằm ở đây — chủ máy chốt chuyển sang Settings
  * → Home Assistant → "Thiết bị & tên" (ha-devices-card.tsx), vì đó là nơi cần
@@ -29,7 +29,7 @@ import { NhatKyKichHoat } from "./components/nhat-ky-kich-hoat";
 import { LichSinhHoat } from "./components/lich-sinh-hoat";
 import { GoiY } from "./components/goi-y";
 import { NepSinhHoat } from "./components/nep-sinh-hoat";
-import { DuyetTruongHop } from "./components/duyet-truong-hop";
+import { ThietBiNha } from "./components/thiet-bi";
 import { Nguong } from "./components/nguong";
 import { DoTin } from "./components/do-tin";
 import { TheoNep } from "./components/theo-nep";
@@ -59,52 +59,40 @@ function HocHoiContent() {
       </div>
       <BoLocCaiDat>
         <div className="space-y-3">
-          <SettingsSection title="Tổng quan" defaultOpen tuKhoa="cong tac diem tin cay kenh">
-            <TongQuan />
+          <SettingsSection title="Thiết bị" defaultOpen
+            tuKhoa="thiet bi bat tat truong hop dieu kien kich hoat kiem chung ngoai vi duyet sua xoa o lai vang binh nong lanh theo nep">
+            <ThietBiNha />
           </SettingsSection>
-          <SettingsSection title="Độ tin cảm biến (nhiễu / kẹt / lành)"
-            tuKhoa="do tin cam bien nhieu ket lanh flap dwell doi lien tuc setting dat qua nhay radar khoang cach loc mem">
-            <DoTin />
-          </SettingsSection>
-          <SettingsSection title="Ngưỡng bộ não (tự chủ, kiểm tiến dần)"
-            tuKhoa="nguong tu chu tu lam so luot ty le dung sai kiem tien dan ngay do chac mo mieng mac dinh">
-            <Nguong />
-          </SettingsSection>
-          <SettingsSection title="Bot hiểu thiết bị" tuKhoa="ket luan du kien huong dan lich su giai">
-            <HieuThietBi />
-          </SettingsSection>
-          <SettingsSection title="Sơ đồ kích hoạt" tuKhoa="nhan to chinh ngoai vi dieu kien tich bot dieu khien">
-            <SoDo />
+          <SettingsSection title="Người nhà & nếp sinh hoạt"
+            tuKhoa="nguoi thanh vien gia dinh lich sinh hoat ngu day di lam vang an toi nep thoi quen goi y du doan">
+            <div className="space-y-4">
+              <LichSinhHoat />
+              <div><h3 className="mb-1 text-xs font-medium">Nếp bot nhận ra</h3><NepSinhHoat /></div>
+              <div><h3 className="mb-1 text-xs font-medium">Gợi ý theo nếp nhà</h3><GoiY /></div>
+            </div>
           </SettingsSection>
           <SettingsSection title="Sơ đồ nhà" tuKhoa="so do nha phong vach thong cua chinh anh camera luoi o mo ta dap an chup">
             <SoDoNha />
           </SettingsSection>
-          <SettingsSection title="Người trong nhà & lịch sinh hoạt"
-            tuKhoa="nguoi thanh vien gia dinh ca nha tuoi nam sinh con tre em lich sinh hoat ngu day di lam vang nha an toi thu">
-            <LichSinhHoat />
-          </SettingsSection>
-          <SettingsSection title="Duyệt trường hợp bật/tắt" tuKhoa="duyet truong hop tinh huong kich ban bat tat sua them bo">
-            <DuyetTruongHop />
-          </SettingsSection>
-          <SettingsSection title="Bật/tắt thiết bị" tuKhoa="bat tat thiet bi kich hoat luat ngoai le tu lam bao ao vang">
-            <KichHoat />
-          </SettingsSection>
-          <SettingsSection title="Tự bật theo nếp (bình nóng lạnh…)"
-            tuKhoa="tu bat theo nep lich gio binh nong lanh may loc nuoc thoi luong tu tat">
-            <TheoNep />
-          </SettingsSection>
           <SettingsSection title="Nhật ký kích hoạt" tuKhoa="nhat ky lich su kich hoat bat tat khong lam ly do nguon dieu kien">
             <NhatKyKichHoat />
-          </SettingsSection>
-          <SettingsSection title="Gợi ý theo nếp nhà" tuKhoa="du doan goi y cham dung sai">
-            <GoiY />
-          </SettingsSection>
-          <SettingsSection title="Nếp sinh hoạt (thói quen)" tuKhoa="tinh huong them tay thoi quen">
-            <NepSinhHoat />
           </SettingsSection>
           <SettingsSection title="Tâm hồn (làm thơ, cảm xúc)"
             tuKhoa="tam hon lam tho cam xuc goc tinh cach ky uc mac dinh tat">
             <TamHonMuc />
+          </SettingsSection>
+          <SettingsSection title="Kỹ thuật (chi tiết bot học)"
+            description="Ngưỡng, độ tin cảm biến, luật bot tự học, hướng dẫn — mở khi cần xem sâu."
+            tuKhoa="ky thuat tong quan cong tac do tin cam bien nhieu ket nguong tu chu hieu thiet bi so do kich hoat ngoai vi tu bat theo nep">
+            <div className="space-y-3">
+              <SettingsSection title="Tổng quan (công tắc từng tầng học)"><TongQuan /></SettingsSection>
+              <SettingsSection title="Độ tin cảm biến (nhiễu / kẹt / lành)"><DoTin /></SettingsSection>
+              <SettingsSection title="Ngưỡng bộ não (kiểm tiến dần)"><Nguong /></SettingsSection>
+              <SettingsSection title="Bot hiểu thiết bị"><HieuThietBi /></SettingsSection>
+              <SettingsSection title="Sơ đồ kích hoạt (ngoại vi)"><SoDo /></SettingsSection>
+              <SettingsSection title="Bot tự học bật/tắt (chi tiết)"><KichHoat /></SettingsSection>
+              <SettingsSection title="Thêm thiết bị tự bật theo nếp"><TheoNep /></SettingsSection>
+            </div>
           </SettingsSection>
         </div>
       </BoLocCaiDat>

@@ -1120,6 +1120,71 @@ def create_router() -> APIRouter:
             return {"ok": False, "error": str(exc)}
         return {"ok": False, "error": "viec phải là giai hoặc cham."}
 
+    # ── Thiết bị: MỘT chỗ cho mỗi thiết bị — trường hợp bật / tắt (anh ✓ ✗ 🗑 ✎), ở lại, vắng, ngoại vi ──
+    # Chủ máy 05/10/2026: tab Học hỏi dài dòng — "mỗi thiết bị luôn ẩn, mở ra chia làm bật và tắt … gom theo từng
+    # trường hợp … tích v, x … thùng rác … tất cả đều có thể chỉnh sửa, thêm, xoá".
+    @router.get("/api/hoc-hoi/thiet-bi")
+    async def thiet_bi_ds(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        try:
+            from services import kich_hoat_nha, luat_duyet, tu_bat_theo_nep
+
+            def _gom() -> list[dict]:
+                theo_nep = tu_bat_theo_nep.cai_dat()
+                ten = kich_hoat_nha._ten_ha()
+                ra = []
+                tq_ds = kich_hoat_nha.tong_quan()
+                for tq in tq_ds:
+                    tb = tq["thiet_bi"]
+                    tv = tq.get("tat_khi_vang") or {}
+                    ra.append({
+                        "thiet_bi": tb, "ten": tq.get("ten") or ten.get(tb, tb), "bat": bool(tq.get("bat")),
+                        "o_lai_giay": tq.get("o_lai_giay"), "roi_giay": tq.get("roi_giay"),
+                        "tat_khi_vang": {"bat": bool(tv.get("bat")), "phut": tv.get("phut"),
+                                         "cam_bien": [c.get("ma") if isinstance(c, dict) else c
+                                                      for c in tv.get("cam_bien") or []],
+                                         "nhin": tv.get("nhin") or []},
+                        "ngoai_vi": [{"ma": n["ma"], "ten": n.get("ten") or n["ma"], "vai_tro": n.get("vai_tro")}
+                                     for n in ((tq.get("ngoai_vi") or {}).get("ds") or [])],
+                        "truong_hop": luat_duyet.danh_sach(tb, tq),
+                        "theo_nep": ({**theo_nep[tb], "nep": tu_bat_theo_nep.nep(tb, None, theo_nep[tb].get("nhiet"))}
+                                     if tb in theo_nep else None),
+                    })
+                co = {x["thiet_bi"] for x in ra}
+                for tb, cd in theo_nep.items():          # thiết bị chỉ chạy theo nếp (bình nóng lạnh) — vẫn là MỘT thiết bị
+                    if tb not in co:
+                        ra.append({"thiet_bi": tb, "ten": ten.get(tb, tb), "bat": bool(cd.get("bat")),
+                                   "truong_hop": {"bat": [], "tat": []}, "ngoai_vi": [], "tat_khi_vang": None,
+                                   "theo_nep": {**cd, "nep": tu_bat_theo_nep.nep(tb, None, cd.get("nhiet"))}})
+                return ra
+            return {"ok": True, "danh_sach": await asyncio.to_thread(_gom)}
+        except Exception as exc:
+            return _loi(exc, "thiết bị")
+
+    @router.post("/api/hoc-hoi/truong-hop")
+    async def truong_hop_quyet(body: dict, authorization: str | None = Header(default=None)):
+        """body: {thiet_bi, viec: duyet|dung|xoa|sua|them, id?, luat?: {chieu, nen?, khi, neu, xac_minh}, loi?}."""
+        require_admin(authorization)
+        from services import luat_duyet
+        try:
+            tin = await asyncio.to_thread(luat_duyet.quyet, str(body.get("thiet_bi") or ""), str(body.get("viec") or ""),
+                                          str(body.get("id") or ""), body.get("luat") if isinstance(body.get("luat"), dict)
+                                          else None, str(body.get("loi") or ""))
+            return {"ok": True, "tin": tin}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+
+    @router.get("/api/hoc-hoi/cam-bien-luat")
+    async def cam_bien_luat(authorization: str | None = Header(default=None)):
+        """Cảm biến dùng được trong luật (mã, tên, khu, loại, đơn vị) + mục lịch — cho ô chọn khi anh sửa luật."""
+        require_admin(authorization)
+        from services import lich_sinh_hoat, luat_duyet
+        try:
+            return {"ok": True, "cam_bien": await asyncio.to_thread(luat_duyet.cam_bien),
+                    "lich": [{"ma": x["ma"], "ten": x["ten"]} for x in lich_sinh_hoat.ds()]}
+        except Exception as exc:
+            return _loi(exc, "cảm biến")
+
     # ── Cảm biến ghép: bot tự tính từ cảm biến gốc (`cam_bien_ghep`) ──
     @router.get("/api/hoc-hoi/cam-bien-ghep")
     async def cam_bien_ghep_ds(authorization: str | None = Header(default=None)):

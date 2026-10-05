@@ -46,7 +46,7 @@ def hoi(tmp_path, monkeypatch):
 def test_hoi_tung_luat_dung_thi_chay_sua_thi_giai_lai(hoi):
     ld.hoi_tiep()
     assert len(hoi["tin"]) == 1 and "trường hợp 1" in hoi["tin"][0]
-    assert "Khoảng cách PK [sensor] dưới 3.5 m" in hoi["tin"][0], "khoảng cách kèm đơn vị cho chủ nhà đọc"
+    assert "Khoảng cách PK dưới 3.5 m" in hoi["tin"][0], "khoảng cách kèm đơn vị cho chủ nhà đọc"
     assert ld.hoi_tiep() is None, "đang có câu chờ thì không gửi chồng"
     h = ld._hoi_nap()
     h["cho"]["luc"] -= ld.CHO_HOI_GIAY + 60                        # quá 24 giờ chưa trả lời

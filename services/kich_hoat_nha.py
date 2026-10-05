@@ -2481,7 +2481,7 @@ def _xu_ly_duyet(tb: str, khop: list[dict[str, Any]], nguon: str, luc: float, *,
         th = (luat_duyet.so().get(tb) or {}).get("lan") or []
         for l in khop:
             hd = _huong_duyet(l)
-            ten_th = next((x["truong_hop"][l["so"] - 1] for x in th if x["id"] == l["lan"]), "")[:80]
+            ten_th = (l.get("loi") or next((x["truong_hop"][l["so"] - 1] for x in th if x["id"] == l["lan"]), ""))[:80]
             ok, doc = luat_duyet.kiem_dieu_kien(l["neu"], luc, st)
             if not ok:
                 thieu.append((hd, f"trường hợp duyệt #{l['so']}: chưa đủ điều kiện — {', '.join(doc)}"))
@@ -2601,7 +2601,10 @@ def _phat_duyet(nguon: str, luc: float, cua: bool) -> set[str]:
         luat = _luat_duyet(tb)
         if not luat:
             continue
-        co |= {f"{tb}|{_huong_duyet(l)}" for l in luat if l["nen"] in ("bat", "tat", "hoi") and nguon in l["khi"]}
+        # Hướng nào ANH đã duyệt luật thì chỉ luật anh duyệt chạy ở hướng đó — luật bot học chỉ còn là ĐỀ XUẤT
+        # (`luat_duyet.de_xuat_hoc`). Chủ máy 05/10/2026: bot tự học "chỉ là học hỏi đưa ra cho tôi điều kiện hợp lý,
+        # còn đâu tôi mới là người quyết định". Hướng chưa có luật anh duyệt: bot học vẫn tạm chạy như trước.
+        co |= {f"{tb}|{_huong_duyet(l)}" for l in luat if l["nen"] in ("bat", "tat", "hoi")}
         if nguon.endswith(" có người vào"):
             ma = nguon.split(" ")[0]
             cho = {k for l in luat for k in l["khi"] if k.startswith(f"{ma} ở lại ")}

@@ -248,6 +248,12 @@ export function NhinNhaCard() {
       </CardHeader>
       <CardContent className="space-y-5">
 
+        {/* Cài đặt luôn gập — chủ máy 05/10/2026: "luôn ẩn cài đặt, Dữ liệu nhận diện thì giữ nguyên". */}
+        <details className="group rounded border border-border p-2">
+          <summary className="cursor-pointer select-none text-sm font-medium">
+            Cài đặt (model, canh camera, ngưỡng nhận diện…)
+          </summary>
+          <div className="mt-3 space-y-5">
         {/* ── Model ───────────────────────────────────────────────────── */}
         <div className="space-y-2">
           <p className="text-sm font-medium">Model</p>
@@ -481,6 +487,8 @@ export function NhinNhaCard() {
           <Button onClick={luu}>{saved ? "Đã lưu!" : "Lưu cài đặt"}</Button>
           {msg ? <span className="text-xs text-muted-foreground">{msg}</span> : null}
         </div>
+          </div>
+        </details>
 
         {/* ── 1. Dữ liệu nhận diện: ảnh mẫu dùng để so các lần chụp sau ── */}
         <div className="space-y-2">
