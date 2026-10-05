@@ -48,6 +48,11 @@ def test_hoi_tung_luat_dung_thi_chay_sua_thi_giai_lai(hoi):
     assert len(hoi["tin"]) == 1 and "trường hợp 1" in hoi["tin"][0]
     assert "Khoảng cách PK [sensor] dưới 3.5 m" in hoi["tin"][0], "khoảng cách kèm đơn vị cho chủ nhà đọc"
     assert ld.hoi_tiep() is None, "đang có câu chờ thì không gửi chồng"
+    h = ld._hoi_nap()
+    h["cho"]["luc"] -= ld.CHO_HOI_GIAY + 60                        # quá 24 giờ chưa trả lời
+    ld._hoi_luu(h)
+    assert "trường hợp 1" in ld.hoi_tiep(), "chủ máy: «khi nào có câu trả lời thì mới đến 2» — nhắc lại câu 1"
+    hoi["tin"].pop()
     assert "anh duyệt" in ld.tra_loi("Đúng")
     assert [l["so"] for l in ld.ap("light.den")] == [1]
     assert "trường hợp 2" in hoi["tin"][-1], "trả lời xong tự gửi câu kế"
