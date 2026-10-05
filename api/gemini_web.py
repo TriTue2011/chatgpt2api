@@ -190,9 +190,11 @@ def _solver_cfg() -> dict[str, str]:
         c = providers.get(name) or {}
         raw = str(c.get("captcha_solver_url") or "").strip()
         if raw:
-            from services.captcha import captcha_base
-            return {"url": captcha_base(raw), "api_key": str(c.get("captcha_solver_api_key") or "")}
-    return {"url": "", "api_key": ""}
+            from services.captcha import captcha_base, khoa_solver
+            return {"url": captcha_base(raw), "api_key": khoa_solver(c)}
+    # Chưa provider nào khai: solver vẫn chạy NỘI BỘ trong container (máy mới cài) — đừng coi như không có.
+    from services.captcha import INTERNAL, khoa_solver
+    return {"url": INTERNAL, "api_key": khoa_solver()}
 
 
 def generate_music_via_browser(prompt: str, timeout: int = 240) -> dict[str, Any]:

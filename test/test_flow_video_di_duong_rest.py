@@ -249,7 +249,7 @@ class GoiSolverBangKHOA_CUA_SOLVER(unittest.TestCase):
     """
 
     def test_doc_khoa_tu_cau_hinh(self):
-        self.assertIn('flow_cfg.get("captcha_solver_api_key")', MA)
+        self.assertIn('_khoa_solver(flow_cfg)', MA)   # khoá CỦA SOLVER (services.captcha.khoa_solver), không phải của người gọi
 
     def test_khong_con_chuyen_tiep_khoa_nguoi_goi(self):
         self.assertNotIn('headers={"authorization": authorization or ""}', MA)

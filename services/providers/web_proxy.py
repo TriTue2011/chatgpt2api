@@ -57,12 +57,12 @@ def _persist_web_quota_failure(profile: str, account_type: str, is_image: bool =
 
 def _captcha_solver_cfg() -> dict[str, str]:
     """Reuse the captcha-solver connection settings from providers.flow."""
-    from services.captcha import captcha_base
+    from services.captcha import captcha_base, khoa_solver
     providers = config.data.get("providers") or {}
     flow = providers.get("flow") or {}
     return {
         "url": captcha_base(flow.get("captcha_solver_url")),  # /api/captcha (proxy) → internal
-        "api_key": str(flow.get("captcha_solver_api_key") or ""),
+        "api_key": khoa_solver(flow),
     }
 
 

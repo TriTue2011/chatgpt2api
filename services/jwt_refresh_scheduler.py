@@ -66,12 +66,12 @@ def _profile_for_email(email: str) -> str:
 
 
 def _captcha_solver_cfg() -> tuple[str, str]:
-    from services.captcha import captcha_base
+    from services.captcha import captcha_base, khoa_solver
     providers = config.data.get("providers") or {}
     flow = providers.get("flow") or {}
     return (
         captcha_base(flow.get("captcha_solver_url")),  # /api/captcha (proxy) → internal
-        str(flow.get("captcha_solver_api_key") or ""),
+        khoa_solver(flow),
     )
 
 

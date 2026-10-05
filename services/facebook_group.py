@@ -45,9 +45,10 @@ def _solver_cfg() -> tuple[str, str]:
         c = prov.get(n) or {}
         raw = str(c.get("captcha_solver_url") or "").strip()
         if raw:
-            from services.captcha import captcha_base
-            return captcha_base(raw), str(c.get("captcha_solver_api_key") or "")
-    return "http://127.0.0.1:8010", ""
+            from services.captcha import captcha_base, khoa_solver
+            return captcha_base(raw), khoa_solver(c)
+    from services.captcha import INTERNAL, khoa_solver
+    return INTERNAL, khoa_solver()
 
 
 def _headers() -> dict[str, str]:

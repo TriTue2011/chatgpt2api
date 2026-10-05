@@ -333,7 +333,8 @@ async def handle_video_generation(
         # "Flow Video generation failed: invalid api key" — hỏng ngay ở 0 giây,
         # chưa từng chạm tới Google. Đường ẢNH đã dùng khoá cấu hình từ trước
         # (`flow_google.build_headers`); đường video thì chưa bao giờ.
-        khoa_solver = str(flow_cfg.get("captcha_solver_api_key") or "")
+        from services.captcha import khoa_solver as _khoa_solver
+        khoa_solver = _khoa_solver(flow_cfg)
         dau_solver = {"Authorization": f"Bearer {khoa_solver}"} if khoa_solver else {}
 
         acc = _next_account()

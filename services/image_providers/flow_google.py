@@ -560,7 +560,8 @@ class FlowImageAdapter(BaseImageAdapter):
         body: dict[str, Any],
     ) -> dict[str, str]:
         cfg = _pool_config()
-        api_key = str(cfg.get("captcha_solver_api_key") or "")
+        from services.captcha import khoa_solver
+        api_key = khoa_solver(cfg)
         account = (credentials or {}).get("_flow_account")
         if account is None and credentials is None:
             account = _next_account()        # gọi lẻ ngoài vòng thử của dispatcher

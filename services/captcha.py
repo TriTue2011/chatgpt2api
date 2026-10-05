@@ -23,3 +23,19 @@ def captcha_base(value: str | None = None) -> str:
         return v
     # empty or relative ("/api/captcha") → internal
     return INTERNAL
+
+
+def khoa_solver(cfg: dict | None = None) -> str:
+    """Khoá Bearer cho lời gọi PHÍA MÁY CHỦ tới captcha-solver.
+
+    Solver NỘI BỘ kiểm đúng biến ``CAPTCHA_SOLVER_API_KEY`` → dùng biến đó. Khoá chép trong cấu hình
+    (``providers.*.captcha_solver_api_key``) chỉ tồn tại khi ai đó từng lưu trang Cài đặt — ``config.get()`` điền nó
+    từ biến môi trường cho WEB nhưng không ghi vào ``config.data``. Đo 05/10/2026: máy mới cài chưa lưu Flow/Gemini
+    → mọi nơi đọc ``config.data`` gửi khoá RỖNG → «401 Unauthorized … /v1/openai-native/onboard».
+    Solver RIÊNG (URL lạ, ``captcha_base`` giữ nguyên) có khoá riêng → dùng khoá trong cấu hình (cùng luật
+    ``branch_health.kiem_khoa_captcha``)."""
+    c = cfg if isinstance(cfg, dict) else {}
+    rieng = str(c.get("captcha_solver_api_key") or "").strip()
+    if captcha_base(c.get("captcha_solver_url")) != INTERNAL:
+        return rieng
+    return os.getenv("CAPTCHA_SOLVER_API_KEY", "").strip() or rieng

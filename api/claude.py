@@ -230,14 +230,14 @@ def _fetch_session_key_from_solver(cfg: dict[str, Any], excluded_keys: set[str] 
     This enables automatic pool rotation through all Google accounts already
     onboarded in the captcha-solver — no manual session key entry needed.
     """
-    from services.captcha import captcha_base
+    from services.captcha import captcha_base, khoa_solver
     base = captcha_base(cfg.get("captcha_solver_url"))
     if not base:
         return ""
     excluded = excluded_keys or set()
     profiles = claude_profiles(cfg)
 
-    api_key = str(cfg.get("captcha_solver_api_key") or "")
+    api_key = khoa_solver(cfg)
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
     # PASS 1 — REUSE: cached or freshly-scraped sessionKey for any profile.

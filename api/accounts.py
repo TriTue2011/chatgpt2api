@@ -154,10 +154,10 @@ def _cleanup_captcha_profiles(accounts: list[dict]) -> None:
     """
     import httpx
     flow = (config.data.get("providers") or {}).get("flow") or {}
-    from services.captcha import captcha_base
+    from services.captcha import captcha_base, khoa_solver
     _raw_cs = str(flow.get("captcha_solver_url") or "").strip()
     cs_url = captcha_base(_raw_cs) if _raw_cs else ""
-    cs_key = str(flow.get("captcha_solver_api_key") or "")
+    cs_key = khoa_solver(flow)
     if not cs_url:
         return
     headers = {"Authorization": f"Bearer {cs_key}"} if cs_key else {}

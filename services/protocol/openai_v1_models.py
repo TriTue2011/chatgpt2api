@@ -228,15 +228,15 @@ def _fetch_web_models(provider_key: str, endpoint_path: str) -> set[str]:
         return set()
     # captcha_solver_url + key live on `providers.flow` historically; some
     # deployments duplicate them on each web provider. Check both.
-    from services.captcha import captcha_base
+    from services.captcha import captcha_base, khoa_solver
     _raw = str(cfg.get("captcha_solver_url") or "").strip()
     cs_url = captcha_base(_raw) if _raw else ""  # /api/captcha (proxy) → internal
-    cs_key = str(cfg.get("captcha_solver_api_key") or "").strip()
+    cs_key = khoa_solver(cfg) if _raw else ""
     if not cs_url or not cs_key:
         flow_cfg = (config.data.get("providers") or {}).get("flow") or {}
         _raw2 = str(flow_cfg.get("captcha_solver_url") or "").strip()
         cs_url = cs_url or (captcha_base(_raw2) if _raw2 else "")
-        cs_key = cs_key or str(flow_cfg.get("captcha_solver_api_key") or "").strip()
+        cs_key = cs_key or khoa_solver(flow_cfg)
     if not cs_url or not cs_key:
         logger.info({"event": "list_models_web_skip", "provider": provider_key, "reason": "no_captcha_solver_config"})
         return set()
