@@ -267,6 +267,22 @@ def create_router() -> APIRouter:
 
         return {"router": await asyncio.to_thread(_router), "adguard": await asyncio.to_thread(_adguard)}
 
+    @router.post("/api/dien-nha/thu")
+    async def dien_nha_thu(body: dict, authorization: str | None = Header(default=None)):
+        """Thử đọc UPS qua NUT bằng địa chỉ VỪA NHẬP (ô trống thì dùng cái đã lưu). Lỗi trả nguyên lý do."""
+        require_admin(authorization)
+        from services import dien_nha
+
+        dc = str((body or {}).get("nut") or "").strip() or dien_nha.dia_chi()
+        if not dc:
+            return {"ok": False, "error": "chưa có địa chỉ NUT — dạng ups@máy, vd prolink@172.16.10.100"}
+        try:
+            d = await asyncio.to_thread(dien_nha.doc, dc)
+        except (OSError, ValueError) as exc:
+            return {"ok": False, "error": f"không đọc được UPS «{dc}»: {str(exc)[:160]} — kiểm nut-server "
+                                          f"(LISTEN 0.0.0.0 3493) và tường lửa cổng 3493"}
+        return {"ok": True, "tom_tat": dien_nha.tom_tat(d)}
+
     @router.get("/api/mang-nha/may")
     async def mang_nha_may(authorization: str | None = Header(default=None)):
         """Trang Mạng nhà: máy trong DHCP, máy chờ duyệt, DHCP khoá / DNS ép / VPN."""

@@ -86,6 +86,24 @@ def doc(dc: str) -> dict[str, str]:
     return ra
 
 
+_TEN_CO = {"OL": "đang dùng điện lưới", "OB": "ĐANG CHẠY PIN", "LB": "PIN YẾU", "FSD": "ĐANG TẮT MÁY",
+           "CHRG": "đang sạc", "RB": "cần thay ắc quy", "OFF": "UPS tắt nguồn ra"}
+
+
+def tom_tat(d: dict[str, str]) -> str:
+    """Một câu cho nút «Kiểm tra kết nối»: máy nào, đang thế nào, ngưỡng tắt."""
+    co = [_TEN_CO.get(x, x) for x in d.get("ups.status", "").split()] or ["không rõ trạng thái"]
+    ten = " ".join(x for x in (d.get("device.mfr"), d.get("device.model")) if x) or "UPS"
+    ra = f"{ten} — {', '.join(co)}, pin {d.get('battery.charge', '?')}%"
+    if d.get("battery.charge.low"):
+        ra += f" (máy chủ tắt khi dưới {d['battery.charge.low']}%)"
+    if d.get("ups.load"):
+        ra += f", tải {d['ups.load']}%"
+    if d.get("input.voltage"):
+        ra += f", điện vào {d['input.voltage']} V"
+    return ra
+
+
 # ── Trạng thái → tin ────────────────────────────────────────────────────────
 def _gio(ts: float) -> str:
     return datetime.fromtimestamp(ts, _TZ).strftime("%H:%M %d/%m")

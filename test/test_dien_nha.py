@@ -160,3 +160,39 @@ def test_doc_ups_sai_ten_thi_loi():
 def test_dia_chi_sai_dang():
     with pytest.raises(ValueError):
         dn.doc("172.16.10.100")
+
+
+def test_tom_tat_cho_nut_kiem_tra():
+    d = {"device.mfr": "Prolink", "device.model": "PRO1201SFC", "ups.status": "OB LB", "battery.charge": "12",
+         "battery.charge.low": "15", "ups.load": "28", "input.voltage": "0.0"}
+    assert dn.tom_tat(d) == ("Prolink PRO1201SFC — ĐANG CHẠY PIN, PIN YẾU, pin 12% (máy chủ tắt khi dưới 15%), "
+                             "tải 28%, điện vào 0.0 V")
+
+
+def _goi_endpoint(monkeypatch, body):
+    from unittest import mock
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from api import mqtt
+    app = FastAPI()
+    with mock.patch("api.mqtt.require_admin", lambda *a, **k: None):
+        app.include_router(mqtt.create_router())
+        return TestClient(app).post("/api/dien-nha/thu", json=body).json()
+
+
+def test_endpoint_thu_dia_chi_vua_nhap(monkeypatch):
+    monkeypatch.setitem(dn.config.data, "dien_nha", {"nut": "cu@127.0.0.1:1"})
+    cong = _upsd_gia(b'BEGIN LIST VAR prolink\nVAR prolink ups.status "OL"\nVAR prolink battery.charge "100"\n'
+                     b'END LIST VAR prolink\n')
+    d = _goi_endpoint(monkeypatch, {"nut": f"prolink@127.0.0.1:{cong}"})
+    assert d == {"ok": True, "tom_tat": "UPS — đang dùng điện lưới, pin 100%"}
+
+
+def test_endpoint_o_trong_dung_dia_chi_da_luu_va_noi_ly_do(monkeypatch):
+    monkeypatch.setitem(dn.config.data, "dien_nha", {"nut": "prolink@127.0.0.1:1"})
+    d = _goi_endpoint(monkeypatch, {"nut": ""})
+    assert d["ok"] is False and "prolink@127.0.0.1:1" in d["error"] and "3493" in d["error"]
+    monkeypatch.setitem(dn.config.data, "dien_nha", {})
+    assert "chưa có địa chỉ NUT" in _goi_endpoint(monkeypatch, {})["error"]
