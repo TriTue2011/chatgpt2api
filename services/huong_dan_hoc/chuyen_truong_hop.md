@@ -34,6 +34,10 @@ bằng cảm biến THẬT trong mục B. Em không điều khiển gì. Chỉ t
   - `{"ma": "<mã sensor số>", "duoi": số}` hoặc `{"ma": …, "tren": số}` — số đo
     (khoảng cách tới radar, độ sáng, số người camera đếm, nhiệt độ…) dưới / trên
     ngưỡng; dùng ĐÚNG đơn vị ghi trong mục B;
+  - `{"ma": "<mã khoảng cách>", "dung_yen_giay": N, "lech": X}` — người KHÔNG đi lại
+    suốt N giây (số đo lệch không quá X m; số 0 = radar không thấy cử động, vẫn tính
+    là yên). Luôn kèm cảm biến có người của khu `"la": "on", "lien_giay": N` để phân
+    biệt «nằm yên» với «không có ai» (vd người ngủ ở phòng khách);
   - `{"ma": "gio", "tu": "HH:MM", "den": "HH:MM"}` — khung giờ (qua nửa đêm được);
   - `{"ma": "lich", "la": "<mã lịch>"}` — một mục lịch sinh hoạt (mục C) đang
     diễn ra; `{"ma": "ca_nha", "la": "ngu"|"vang"}` — cả nhà đang ngủ / đi vắng;

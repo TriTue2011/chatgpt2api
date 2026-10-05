@@ -282,3 +282,40 @@ def test_loi_cham_cu_doi_so_theo_loi_truong_hop():
                   {"lan": 9, "so": 1, "dung": True, "ghi_chu": "lần không còn"}]}
     th = [{"tinh_huong": "c"}, {"tinh_huong": "z"}]
     assert [(c["so"], c["ghi_chu"]) for c in ld._theo_loi(x, x["cham"], th)] == [(1, "về c")]
+
+
+def test_cam_bien_ghep_doc_duoc_trong_dieu_kien(monkeypatch, tmp_path):
+    """Đo 05/10/2026: «Tivi phòng khách đang bật» (cảm biến GHÉP do c2a tính) không có trong trạng thái HA — điều
+    kiện dùng nó luôn sai. Nay tính từ chính trạng thái đang xét."""
+    from services import cam_bien_ghep
+    cam_bien_ghep._reset_for_tests(tmp_path / "ghep.json")
+    cam_bien_ghep.dat("binary_sensor.c2a_tivi", "Tivi đang bật", {"ma": "media_player.tv", "la": ["on", "playing"]})
+    st = {"media_player.tv": {"entity_id": "media_player.tv", "state": "playing"}}
+    assert ld.kiem_dieu_kien([{"ma": "binary_sensor.c2a_tivi", "la": "on"}], 1.0, st)[0]
+    st["media_player.tv"]["state"] = "off"
+    assert not ld.kiem_dieu_kien([{"ma": "binary_sensor.c2a_tivi", "la": "on"}], 1.0, st)[0]
+
+
+def test_khoang_cach_dung_yen(monkeypatch, tmp_path):
+    """Nhận ra người NẰM YÊN (ngủ ở phòng khách): những lúc có số đo thì gần như không đổi suốt N giây; số 0 (radar
+    không thấy cử động — đo thật: người nằm yên làm khoảng cách về 0) không phá đứng yên."""
+    import sqlite3
+    import time as _t
+    from services import lich_su_nha as ls
+    db = tmp_path / "ls.sqlite"
+    monkeypatch.setattr(ls, "_DB_PATH", db)
+    c = sqlite3.connect(db)
+    c.execute("CREATE TABLE so_do (o_5p INT, thiet_bi TEXT, truong TEXT, nho REAL, lon REAL, tb REAL, n INT)")
+    now = _t.time()
+    for k in range(7):
+        c.execute("INSERT INTO so_do VALUES (?,?,?,?,?,?,?)", (int(now // 300) - k, "sensor.kc", "state", 2.1, 2.3, 2.2, 5))
+    c.commit()
+    dk = [{"ma": "sensor.kc", "dung_yen_giay": 1800, "lech": 0.3}]
+    st = {"sensor.kc": {"state": "2.2"}}
+    assert ld.kiem_dieu_kien(dk, now, st)[0]
+    assert ld.kiem_dieu_kien(dk, now, {"sensor.kc": {"state": "0"}})[0], "0 = radar không thấy cử động — nằm yên"
+    c.execute("UPDATE so_do SET lon=3.4 WHERE o_5p=?", (int(now // 300) - 3,))
+    c.commit()
+    assert not ld.kiem_dieu_kien(dk, now, st)[0], "có lúc đi lại trong 30 phút → không đứng yên"
+    assert ld._kiem_dk({"ma": "sensor.kc", "dung_yen_giay": 1800}, {"sensor.kc"}, set()) == \
+        {"ma": "sensor.kc", "dung_yen_giay": 1800, "lech": 0.3}

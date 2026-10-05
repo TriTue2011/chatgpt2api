@@ -73,7 +73,9 @@ def cam_bien() -> list[dict[str, str]]:
     ghep = cam_bien_ghep.ds()
     nen = (ha_client.get_ha_area_index() or {}).get("entity_platform") or {}
     ra = []
-    for s in ha_client.get_states() or []:
+    # Cảm biến GHÉP do c2a tính, KHÔNG có trong trạng thái HA (đo 05/10/2026: «Tivi phòng khách đang bật» vắng mặt
+    # khỏi đề và mọi điều kiện dùng nó luôn sai) — lấy cả hai như bộ kích hoạt (`_trang_thai_ha`).
+    for s in kh._trang_thai_ha():
         ma = str(s["entity_id"])
         a = s.get("attributes") or {}
         lop, dv = a.get("device_class"), a.get("unit_of_measurement")
@@ -303,6 +305,11 @@ def _kiem_dk(x: Any, ma_co: set[str], lich: set[str]) -> dict[str, Any]:
         return {"ma": "troi", "la": str(x["la"]), **pd}
     if ma not in ma_co:
         raise ValueError(f"mã không có trong nhà: {ma}")
+    if x.get("dung_yen_giay") is not None:
+        g, lech = int(x["dung_yen_giay"]), float(x.get("lech") or 0.3)
+        if not 60 <= g <= 86400 or not 0 < lech <= 5:
+            raise ValueError(f"dung_yen_giay {g} ngoài 60–86400 hoặc lech {lech} ngoài 0–5")
+        return {"ma": ma, "dung_yen_giay": g, "lech": lech, **pd}
     for k in ("duoi", "tren"):
         if x.get(k) is not None:
             return {"ma": ma, k: float(x[k]), **pd}
@@ -524,24 +531,73 @@ def _trong_khung(tu: str, den: str, luc: float) -> bool:
 def _da_o_trong(ma: str, la: str, tu: float) -> bool:
     """``ma`` có ở trạng thái ``la`` lúc nào đó từ ``tu`` tới nay không (sổ lịch sử: đổi SANG hoặc RỜI trạng thái đó)."""
     import sqlite3
-    from services import lich_su_nha
+    from services import cam_bien_ghep, lich_su_nha
     ro = sqlite3.connect(f"file:{lich_su_nha._DB_PATH}?mode=ro", uri=True, timeout=10.0)
     try:
+        if cam_bien_ghep.la_ghep(ma):           # cảm biến ghép không có sổ riêng — dựng từ cảm biến gốc
+            return any(g == la for _, g in cam_bien_ghep.chuoi(ro, ma, tu, time.time() + 1))
         return ro.execute("SELECT 1 FROM su_kien WHERE thiet_bi=? AND truong='state' AND ts>=?"
                           " AND (gia_tri=? OR gia_tri_cu=?) LIMIT 1", (ma, tu, la, la)).fetchone() is not None
     finally:
         ro.close()
 
 
+def _doi_luc(ma: str, st: dict[str, Any], luc: float) -> float:
+    """Lúc ``ma`` đổi sang trạng thái hiện tại: `last_changed` của HA; cảm biến ghép thì dựng từ cảm biến gốc."""
+    from datetime import datetime
+    from services import cam_bien_ghep
+    if cam_bien_ghep.la_ghep(ma):
+        import sqlite3
+        from services import lich_su_nha
+        ro = sqlite3.connect(f"file:{lich_su_nha._DB_PATH}?mode=ro", uri=True, timeout=10.0)
+        try:
+            ch = cam_bien_ghep.chuoi(ro, ma, luc - 86400, luc + 1)
+        finally:
+            ro.close()
+        return ch[-1][0] if ch else luc
+    try:
+        return datetime.fromisoformat(str(st.get("last_changed"))).timestamp()
+    except ValueError:
+        return luc
+
+
+def _dung_yen(ma: str, gt: str, giay: int, lech: float, luc: float) -> bool:
+    """Khoảng cách ``ma`` ĐỨNG YÊN suốt ``giay`` giây vừa qua: các số đo CÓ mục tiêu (> 0; gộp 5 phút: nhỏ nhất / lớn
+    nhất) cùng giá trị hiện tại lệch nhau không quá ``lech``. Số 0 = radar không thấy CỬ ĐỘNG — người nằm yên cũng
+    về 0 — nên không phá «đứng yên»; luật phải kèm cảm biến có người bật liền để 0 không bị hiểu là «nhà trống».
+
+    Chủ máy 05/10/2026: nhận ra «có người ngủ ở phòng khách» = giờ ngủ + radar có người liên tục 30 phút + khoảng cách
+    đứng yên. Đo 14 đêm: radar phòng khách về 0 ở 371/392 ô 5 phút giờ ngủ, chuỗi liền có số dài nhất 10 phút — bản
+    «mọi số > 0» không bao giờ đúng với radar này."""
+    import sqlite3
+    from services import lich_su_nha
+    ro = sqlite3.connect(f"file:{lich_su_nha._DB_PATH}?mode=ro", uri=True, timeout=10.0)
+    try:
+        hang = ro.execute("SELECT nho, lon FROM so_do WHERE thiet_bi=? AND truong='state' AND o_5p>=? AND o_5p<=?",
+                          (ma, int((luc - giay) // 300), int(luc // 300))).fetchall()
+    finally:
+        ro.close()
+    try:
+        so = [float(gt)]
+    except ValueError:
+        so = []
+    so = [x for x in so + [float(v) for r in hang for v in r if v is not None] if x > 0]
+    return not so or max(so) - min(so) <= lech
+
+
 def kiem_dieu_kien(neu: list[dict[str, Any]], luc: float,
                    trang_thai: dict[str, dict[str, Any]] | None = None) -> tuple[bool, list[str]]:
     """(mọi điều kiện cùng đúng?, giá trị đọc được từng điều kiện). Trạng thái HA đọc MỘT lần cho cả luật; giá trị
     lưu kèm lần làm để khi bị chấm sai thì bot thấy điều kiện nào đã khớp với số nào."""
-    from datetime import datetime
     from services import ha_client, lich_sinh_hoat as lsh
 
     if trang_thai is None:
         trang_thai = {str(s["entity_id"]): s for s in ha_client.get_states() or []}
+    from services import cam_bien_ghep
+    if cam_bien_ghep.ds():
+        # Cảm biến ghép không có trong trạng thái HA — tính từ CHÍNH trạng thái đang xét (cùng một lúc).
+        tt = {m: str(v.get("state") or "").lower() for m, v in trang_thai.items()}
+        trang_thai = {**trang_thai, **{g["entity_id"]: g for g in cam_bien_ghep.hien_tai(tt)}}
     dung, doc = True, []
     for x in neu:
         ma = x["ma"]
@@ -560,7 +616,9 @@ def kiem_dieu_kien(neu: list[dict[str, Any]], luc: float,
         else:
             st = trang_thai.get(ma) or {}
             gt = str(st.get("state") or "")
-            if "duoi" in x or "tren" in x:
+            if x.get("dung_yen_giay"):
+                ok = _dung_yen(ma, gt, int(x["dung_yen_giay"]), float(x.get("lech") or 0.3), luc)
+            elif "duoi" in x or "tren" in x:
                 # Radar mmwave báo 0 (hoặc không đọc được) = KHÔNG bắt được mục tiêu, không phải «0 mét». `vung_khoang_cach`
                 # đã xử lý thế từ lâu; đường luật duyệt trước đây so thô nên 0 < ngưỡng = «có người gần» (sai dương) và
                 # 0 > ngưỡng = False khiến luật TẮT «người rời, không ai trong X» KHÔNG BAO GIỜ chạy (đo 04/10/2026:
@@ -594,11 +652,7 @@ def kiem_dieu_kien(neu: list[dict[str, Any]], luc: float,
                     except Exception:  # noqa: BLE001 — thiếu độ tin thì không lọc, tin như cũ
                         giu = None
                 if ok and giu:
-                    try:
-                        tu = datetime.fromisoformat(str(st.get("last_changed"))).timestamp()
-                    except ValueError:
-                        tu = luc
-                    ok = luc - tu >= giu
+                    ok = luc - _doi_luc(ma, st, luc) >= giu
         if x.get("phu_dinh"):
             ok = not ok
         doc.append(f"{ma}={gt}{'✓' if ok else '✗'}")
@@ -619,6 +673,9 @@ def doc_luat(l: dict[str, Any], ten: dict[str, str]) -> str:
             s = "cả nhà đang ngủ" if x["la"] == "ngu" else "cả nhà đi vắng"
         elif x["ma"] == "troi":
             s = "trời tối" if x["la"] == "toi" else "trời sáng"
+        elif x.get("dung_yen_giay"):
+            s = (f"{ten.get(x['ma'], x['ma'])} đứng yên (lệch ≤ {x['lech']:g}{' ' + x['_dv'] if x.get('_dv') else ''})"
+                 f" liền {x['dung_yen_giay']} giây")
         else:
             s = ht._dieu_kien_doc(x, {}, ten) + (f" {x['_dv']}" if x.get("_dv") and ("duoi" in x or "tren" in x)
                                                  else "") + (f" liền {x['lien_giay']} giây" if x.get("lien_giay") else "") + (
