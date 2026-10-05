@@ -119,6 +119,11 @@ NGUOI_VUA_CHAM = 300
 #: Bot tự làm mà ngần này giây không ai làm ngược lại → lần đó ĐÚNG ("tôi không cần
 #: phải trả lời"). Làm ngược lại trong khoảng đó → SAI. Cùng cửa sổ `soi_bi_huy`.
 CHAM_TU_LAM = 600
+#: Bot tắt vì vắng mà người quay lại SỚM hơn ngần này phút thì mới là TẮT NHẦM. Chủ máy chốt 05/10/2026: quay lại
+#: sau 3 phút là người đi thật — tắt là đúng (tiết kiệm điện), bot vẫn bật lại khi người về. Đo trước khi chốt: 10/13
+#: lần «tắt nhầm» của đèn trần phòng khách là người quay lại sau 5–16 phút — điểm 52% đánh giá oan bot, và học theo
+#: đó là chờ tới 10–16 phút (chủ máy từng nói «50 phút thì lâu quá, không tiết kiệm điện»).
+TAT_NHAM_PHUT = 3
 
 HANH_DONG = ("on", "off")
 _TEN_HD = {"on": "Bật", "off": "Tắt"}
@@ -2384,7 +2389,8 @@ def _co_nguoi_that(tb: str, luc: float) -> tuple[bool | None, str]:
 def _bat_lai(tb: str, nguon: str, luc: float) -> None:
     """Cảm biến «có người» của chính thiết bị báo người MỚI vào trong cửa sổ quay lại sau lần bot tắt vì vắng →
     xác minh bằng mọi nguồn, có người thì BẬT LẠI rồi hỏi đúng/sai (kể cả thiết bị đặt «im lặng» — chủ máy muốn
-    được hỏi việc này); lần tắt vừa rồi ghi SAI và nới giờ chờ như khi người tự bật lại."""
+    được hỏi việc này). Người quay lại trong TAT_NHAM_PHUT thì lần tắt vừa rồi ghi SAI và nới giờ chờ; muộn hơn là
+    người đi thật — lần tắt ghi ĐÚNG, không nới."""
     from services import du_doan_nha as dd, lich_su_nha, thong_bao
     try:
         cd = ds_thiet_bi().get(tb) or {}
@@ -2421,12 +2427,16 @@ def _bat_lai(tb: str, nguon: str, luc: float) -> None:
                 _nk(tb, "on", "khong", nguon, "bật lại: lệnh tới thiết bị không thành", luc=luc)
                 return
             gio_tat = datetime.fromtimestamp(float(tat["ts"]), _TZ).strftime("%H:%M")
-            vi = (f"có người quay lại {phut:.0f} phút sau khi em tắt lúc {gio_tat} vì tưởng vắng; "
+            vi = (f"có người quay lại {phut:.0f} phút sau khi em tắt lúc {gio_tat} "
+                  + ("vì tưởng vắng; " if phut < TAT_NHAM_PHUT else "(đi thật rồi về — lần tắt đó vẫn đúng); ")
                   + (f"xác minh: {mo_ta}" if co else "cảm biến có người báo"))
             id_ = dd.ghi_nhan(_ten_tt(tb, "on"), "on", 1.0, {"nguon": vi, "bat_lai": 1}, "tu_lam")
             _nk(tb, "on", "lam", nguon, f"bật lại — {vi}", {"cua_so_phut": round(cua_so / 60, 1)}, luc)
-        if dd.ghi_sai(int(tat["id"])):
-            _noi_vang(tb, tat["boi_canh"], luc)
+        if phut < TAT_NHAM_PHUT:
+            if dd.ghi_sai(int(tat["id"])):
+                _noi_vang(tb, tat["boi_canh"], luc)
+        else:
+            dd.ghi_dung(int(tat["id"]))             # đi thật rồi mới về — tắt lúc đó là đúng
         thong_bao.gui("nha.goi_y", f"🤖 #{id_} Em đã bật lại {_ten_tb(tb)} ({vi}).\nĐúng hay sai ạ? Anh trả lời "
                                    f"«đúng» hoặc «sai» — sai thì em tắt lại ngay. Không trả lời trong "
                                    f"{CHAM_TU_LAM // 60} phút là em tính đúng.")
@@ -2692,9 +2702,12 @@ def _nguoi_lam(tb: str, gt: str, luc: float) -> None:
     nguoc = "off" if gt == "on" else "on"
     with dd._khoa:
         r = dd._db().execute(
-            "SELECT id, boi_canh FROM du_doan WHERE ten=? AND cach='tu_lam' AND ket_qua='cho' AND ts>?",
+            "SELECT id, ts, boi_canh FROM du_doan WHERE ten=? AND cach='tu_lam' AND ket_qua='cho' AND ts>?",
             (_ten_tt(tb, nguoc), luc - CHAM_TU_LAM)).fetchall()
     for x in r:
+        if nguoc == "off" and (luc - float(x["ts"])) / 60 >= TAT_NHAM_PHUT:
+            dd.ghi_dung(int(x["id"]))               # tự tắt vì vắng, người về sau ≥3 phút mới bật — tắt là đúng
+            continue
         if dd.ghi_sai(int(x["id"])):
             _duyet_sai(tb, x["boi_canh"], "người tự làm ngược lại ngay sau đó")
             if nguoc == "off":
@@ -2783,18 +2796,33 @@ MAT_DAU_LAN = 1
 MAT_DAU_MAU = 5
 
 
-def phut_vang(cd: dict[str, Any], luc: float) -> float:
-    """Số phút chờ «tắt khi vắng» khi phòng trống từ ``luc``. Chủ nhà đặt thời gian RỜI ĐI (`roi_giay`) thì dùng
-    đúng số đó — thắng số bot học, cùng cách với mốc «ở lại» (chủ máy 30/09/2026: "thời gian rời đi, thời gian ở
-    lại đều setting được như nhau cho từng thiết bị"). Chưa đặt: lớn nhất trong mức sàn, số bot học cho giờ đó,
-    và lần nới gần nhất vì tắt nhầm (còn hiệu lực tới lượt học sau)."""
+def _san_vang(cd: dict[str, Any]) -> float:
+    """Mức SÀN (phút) của «tắt khi vắng»: thời gian RỜI ĐI chủ nhà đặt (`roi_giay`), chưa đặt thì mức mặc định."""
     if cd.get("roi_giay"):
         return float(cd["roi_giay"]) / 60
-    goc = float((cd.get("tat_khi_vang") or {}).get("phut") or MAC_DINH_VANG_PHUT)
-    h = str(datetime.fromtimestamp(luc, _TZ).hour)
-    hoc = float((cd.get("cho_vang") or {}).get(h) or 0)
-    noi = float(((cd.get("noi_vang") or {}).get(h) or {}).get("phut") or 0)
-    return max(goc, hoc, noi)
+    return float((cd.get("tat_khi_vang") or {}).get("phut") or MAC_DINH_VANG_PHUT)
+
+
+def _hoc_vang(cd: dict[str, Any], h: int) -> float:
+    """Số phút bot đo được cho giờ ``h``: số học theo giờ, hoặc lần nới gần nhất vì tắt nhầm (lớn hơn thì thắng)."""
+    hoc = float((cd.get("cho_vang") or {}).get(str(h)) or 0)
+    noi = float(((cd.get("noi_vang") or {}).get(str(h)) or {}).get("phut") or 0)
+    return max(hoc, noi)
+
+
+def phut_vang(cd: dict[str, Any], luc: float) -> float:
+    """Số phút chờ «tắt khi vắng» khi phòng trống từ ``luc``: lớn nhất giữa mức SÀN và số bot đo cho giờ đó.
+
+    Chủ máy chốt 05/10/2026: thời gian RỜI ĐI anh đặt là mức TỐI THIỂU. Trước đó nó thắng tuyệt đối — đo thật:
+    đèn trần phòng khách đặt 2 phút, bot đo thấy 20–23h cần 4–5 phút, vẫn tắt sau 2 phút → 21/44 lần tự tắt bị
+    sai (người quay lại, bot phải bật lại); đèn phòng ngủ đặt 3 phút trong khi 17–22h cần 7–9 phút."""
+    return max(_san_vang(cd), _hoc_vang(cd, datetime.fromtimestamp(luc, _TZ).hour))
+
+
+def cho_vang_them(cd: dict[str, Any]) -> dict[str, float]:
+    """Giờ nào bot chờ LÂU HƠN mức sàn, và chờ bao nhiêu phút — để web / lời mô tả nói rõ vì sao."""
+    san = _san_vang(cd)
+    return {str(h): v for h in range(24) if (v := _hoc_vang(cd, h)) > san}
 
 
 def _quang_vang(ro: sqlite3.Connection, cam_bien: list[str], tu: float, den: float) -> list[tuple[float, float]]:
@@ -3568,6 +3596,7 @@ def tong_quan() -> list[dict[str, Any]]:
                    "hoi_de_hoc": bool(cd.get("hoi_de_hoc")),
                    "muc": mh.get("muc") or None, "nhieu": mh.get("nhieu") or None,
                    "o_lai_giay": cd.get("o_lai_giay"), "roi_giay": cd.get("roi_giay"),
+                   "cho_vang_them": cho_vang_them(cd),
                    "o_lai": ({"phut": mh["o_lai"].get("phut"), "lan": mh["o_lai"].get("lan", 0),
                               "cam_bien": [{"ma": m, "ten": ten_ha.get(m, m)} for m in mh["o_lai"].get("cam_bien") or []]}
                              if mh.get("o_lai") else None),

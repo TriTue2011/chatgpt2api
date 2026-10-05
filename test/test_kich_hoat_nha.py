@@ -525,6 +525,24 @@ def test_tich_thi_mac_dinh_tat_khi_vang_theo_so_do(kh, monkeypatch):
     assert kh.dat_thiet_bi("switch.khac", bat=True)["tat_khi_vang"]["bat"] is False
 
 
+
+def test_quay_lai_sau_3_phut_la_di_that_tat_dung(kh, monkeypatch):
+    """Chủ máy chốt 05/10/2026: người quay lại SAU 3 phút là đi thật — lần bot tắt vì vắng là ĐÚNG, không nới giờ
+    chờ. Đo: 10/13 lần «tắt nhầm» của đèn trần là quay lại sau 5–16 phút, điểm 52% đánh giá oan bot."""
+    from services import du_doan_nha as dd
+    kh.dat_thiet_bi(DEN, bat=True, tat_khi_vang={"bat": True, "cam_bien": [NGU], "phut": 3})
+    cd = lambda: kh._nap()["thiet_bi"][DEN]                     # noqa: E731
+    luc = _luc(0, 19, 30)
+    id_ = dd.ghi_nhan(kh._ten_tt(DEN, "off"), "off", 1.0, {"nguon": "vắng 3 phút", "vang_tu": luc}, "tu_lam")
+    with dd._khoa:
+        dd._db().execute("UPDATE du_doan SET ts=? WHERE id=?", (luc + 180, id_)); dd._db().commit()
+    monkeypatch.setattr(kh.time, "time", lambda: luc + 480)
+    kh._nguoi_lam(DEN, "on", luc + 480)                          # 5 phút sau khi bot tắt mới có người bật
+    kq = dd._db().execute("SELECT ket_qua FROM du_doan WHERE id=?", (id_,)).fetchone()["ket_qua"]
+    assert kq == "dung", "đi thật rồi về — tắt lúc đó là đúng"
+    assert kh.phut_vang(cd(), luc) == 3, "không nới giờ chờ vì một lần tắt đúng"
+
+
 def test_bang_vang_roi_quay_lai(kh, monkeypatch):
     _nep_30_ngay()                                     # mỗi tối vắng 600 s rồi vào lại
     monkeypatch.setattr(kh, "_so_do", lambda tb: ({NGU}, {LUX}))
@@ -1353,7 +1371,15 @@ def test_chu_nha_dat_moc_o_lai_bang_loi(kh, monkeypatch):
     assert kh.phut_vang(cd, time.time()) == 9.0, "chưa đặt: số bot học"
     assert kh.cai_bang_loi("đèn phòng ngủ", roi_giay=15)["ok"]
     cd = kh.ds_thiet_bi()[DEN]
-    assert cd["roi_giay"] == 15.0 and kh.phut_vang(cd, time.time()) == 0.25, "đã đặt: đúng số anh đặt, thắng số học"
+    # Chủ máy chốt 05/10/2026: số anh đặt là mức TỐI THIỂU — giờ nào bot đo thấy người hay quay lại thì chờ lâu hơn.
+    assert cd["roi_giay"] == 15.0 and kh.phut_vang(cd, time.time()) == 0.25, "giờ chưa đo: đúng số anh đặt"
+    cd["cho_vang"] = {str(h): 9.0 for h in range(24)}
+    assert kh.phut_vang(cd, time.time()) == 9.0, "đã đặt: mức sàn, số học lớn hơn thắng"
+    assert kh.cho_vang_them(cd) == {str(h): 9.0 for h in range(24)}
+    cd["cho_vang"] = {"20": 4.0}
+    gio20 = datetime(2026, 10, 5, 20, 30, tzinfo=timezone(timedelta(hours=7))).timestamp()
+    assert kh.phut_vang(cd, gio20) == 4.0 and kh.phut_vang(cd, gio20 - 6 * 3600) == 0.25, "giờ chưa đo: đúng số anh đặt"
+    assert kh.cho_vang_them(cd) == {"20": 4.0}
     assert not kh.cai_bang_loi("đèn phòng ngủ", roi_giay=1)["ok"]
     kh.cai_bang_loi("đèn phòng ngủ", roi_giay=0)
     assert "roi_giay" not in kh.ds_thiet_bi()[DEN]

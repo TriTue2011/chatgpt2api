@@ -1139,7 +1139,7 @@ def create_router() -> APIRouter:
                     tv = tq.get("tat_khi_vang") or {}
                     ra.append({
                         "thiet_bi": tb, "ten": tq.get("ten") or ten.get(tb, tb), "bat": bool(tq.get("bat")),
-                        "o_lai_giay": tq.get("o_lai_giay"), "roi_giay": tq.get("roi_giay"),
+                        "o_lai_giay": tq.get("o_lai_giay"), "roi_giay": tq.get("roi_giay"), "cho_vang_them": tq.get("cho_vang_them") or {},
                         "tat_khi_vang": {"bat": bool(tv.get("bat")), "phut": tv.get("phut"),
                                          "cam_bien": [c.get("ma") if isinstance(c, dict) else c
                                                       for c in tv.get("cam_bien") or []],

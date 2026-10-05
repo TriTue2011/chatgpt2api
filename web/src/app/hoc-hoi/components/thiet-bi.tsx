@@ -30,6 +30,7 @@ type TruongHop = Luat & {
 type TheoNep = { bat: boolean; nhiet?: string | null; nep: { du: boolean; gio?: string; phut_bat?: number; ly_do?: string } };
 type ThietBi = {
   thiet_bi: string; ten: string; bat: boolean; o_lai_giay?: number | null; roi_giay?: number | null;
+  cho_vang_them?: Record<string, number>;   // giờ → phút bot chờ LÂU HƠN mức sàn (đo thấy người hay quay lại)
   tat_khi_vang: { bat: boolean; phut?: number; cam_bien: string[]; nhin: string[] } | null;
   ngoai_vi: { ma: string; ten: string; vai_tro?: string }[];
   truong_hop: { bat: TruongHop[]; tat: TruongHop[] };
@@ -359,9 +360,15 @@ function Chieu({ tb, chieu, camBien, lich, tai }: {
           <div className="flex flex-wrap items-center gap-2">
             <span>{chieu === "bat" ? "Chờ người ở lại" : "Phòng vắng"}</span>
             <Input className="h-7 w-20" placeholder="bot học" value={giay} onChange={(e) => setGiay(e.target.value.replace(/\D/g, ""))} />
-            <span>giây {chieu === "bat" ? "rồi mới bật" : "thì tắt"} (trống = bot tự học)</span>
+            <span>giây {chieu === "bat" ? "rồi mới bật" : "thì tắt"} {chieu === "tat" ? "(ít nhất — trống = bot tự học)" : "(trống = bot tự học)"}</span>
             <Button size="sm" variant="ghost" onClick={() => void luuGiay()}>Lưu</Button>
           </div>
+          {chieu === "tat" && Object.keys(tb.cho_vang_them || {}).length ? (
+            <p className="text-amber-700 dark:text-amber-400">
+              Bot chờ lâu hơn ở những giờ đo thấy người hay quay lại:{" "}
+              {Object.entries(tb.cho_vang_them || {}).map(([h, p]) => `${h}h ${p} phút`).join(" · ")}
+            </p>
+          ) : null}
           {chieu === "tat" ? (
             <p>Kiểm chứng vắng: {tb.tat_khi_vang.cam_bien.join(", ") || "—"}
               {tb.tat_khi_vang.nhin.length ? ` · nhìn lại: ${tb.tat_khi_vang.nhin.join(", ")}` : ""}</p>

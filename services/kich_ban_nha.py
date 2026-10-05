@@ -128,7 +128,10 @@ def _viec_dang_cai(tb: str, cd: dict[str, Any], mh: dict[str, Any], ten: dict[st
     tv = cd.get("tat_khi_vang") or {}
     if tv.get("bat"):
         if cd.get("roi_giay"):
-            cho_tat = f"{cd['roi_giay']} giây (anh đặt)"
+            them = kh.cho_vang_them(cd)
+            cho_tat = f"ít nhất {cd['roi_giay']:g} giây (anh đặt)" + (
+                f"; lúc {', '.join(f'{h}h' for h in them)} bot chờ tới {max(them.values()):g} phút vì đo thấy người hay "
+                "quay lại" if them else "")
         else:
             cho = sorted({round(kh.phut_vang(cd, time.time() + h * 3600)) for h in range(24)})
             cho_tat = f"{cho[0]}–{cho[-1]} phút (bot tự học theo giờ)"
