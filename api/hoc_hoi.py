@@ -1383,24 +1383,31 @@ def create_router() -> APIRouter:
     async def tam_hon_xem(authorization: str | None = Header(default=None)):
         require_admin(authorization)
         try:
-            from services import thong_bao
             from services.agent import tam_hon
-            return {"ok": True, **tam_hon.trang_thai(), "thong_bao": thong_bao.cai_dat("bot.tam_hon")}
+            return {"ok": True, **tam_hon.trang_thai()}
         except Exception as exc:
             return _loi(exc, "xem tâm hồn")
 
     @router.post("/api/tam-hon")
     async def tam_hon_dat(body: dict, authorization: str | None = Header(default=None)):
-        """body: {bat_viet?: bool, bat_cam_xuc?: bool, goc?: str}. ``goc`` chỉ ghi được qua đây."""
+        """body: {goc?: str}. ``goc`` chỉ ghi được qua đây. Bật / tắt tâm hồn nay theo TỪNG thread (Lọc thread)."""
         require_admin(authorization)
         try:
             from services.agent import tam_hon
-            kw = {k: bool(body[k]) for k in ("bat_viet", "bat_cam_xuc") if k in body}
-            if "goc" in body:
-                kw["goc"] = str(body["goc"] or "")
-            return {"ok": True, **tam_hon.dat(**kw)}
+            return {"ok": True, **tam_hon.dat(goc=str(body["goc"] or "") if "goc" in body else None)}
         except Exception as exc:
             return _loi(exc, "đặt tâm hồn")
+
+    @router.post("/api/tam-hon/thread")
+    async def tam_hon_thread(body: dict, authorization: str | None = Header(default=None)):
+        """body: {khoa: "plat:bot:chat[#topic]", kieu: ["tho"|"van"|"phiem", …]} — tâm hồn theo TỪNG thread (Lọc thread)."""
+        require_admin(authorization)
+        try:
+            from services.agent import tam_hon
+            kieu = body.get("kieu") if isinstance(body.get("kieu"), list) else []
+            return {"ok": True, "kieu": tam_hon.dat_thread(str(body.get("khoa") or ""), kieu)}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
 
     @router.post("/api/tam-hon/ky-uc/xoa")
     async def tam_hon_xoa_ky_uc(body: dict, authorization: str | None = Header(default=None)):

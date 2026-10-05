@@ -1,6 +1,7 @@
 "use client";
 
 import { PersonaInline } from "./personas-card";
+import { TamHonThread } from "./tam-hon-thread";
 
 import { useEffect, useRef, useState } from "react";
 import { Save, MessageCircle, Cloud } from "lucide-react";
@@ -2089,6 +2090,7 @@ export function TelegramCloudflareCard() {
                     💬 Tag người hỏi khi bot trả lời — câu trả lời mở đầu bằng @tên người vừa hỏi
                   </label>
                 )}
+                {row.chatId.trim() ? <TamHonThread khoa={`${row.botKey}:${row.chatId.trim()}`} /> : null}
                 <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
                   <input
                     type="checkbox"

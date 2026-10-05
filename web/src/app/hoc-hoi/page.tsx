@@ -5,7 +5,7 @@
  *
  * Chủ máy 05/10/2026: "Tab học hỏi đang dài dòng khó hiểu… càng đơn giản, trình bày mạch lạc". Còn: Thiết bị
  * (mỗi thiết bị gập; Bật / Tắt gập; trường hợp ✓ ✗ ✎ 🗑) · Người nhà & nếp sinh hoạt (gộp 3 mục cũ) · Sơ đồ nhà ·
- * Nhật ký · Tâm hồn · Kỹ thuật (MỘT khung gập: công tắc tầng học, ngưỡng, độ tin cảm biến). Bỏ các mục trùng
+ * Nhật ký · Kỹ thuật (MỘT khung gập: công tắc tầng học, ngưỡng, độ tin cảm biến). Bỏ các mục trùng
  * (hiểu thiết bị, sơ đồ kích hoạt, bot tự học chi tiết, nếp bot nhận ra, gợi ý) — chủ máy: "bỏ không cần thiết,
  * trùng lặp đi"; nếp bot nhận ra thành đề xuất trong Lịch sinh hoạt.
  * API ở `api/hoc_hoi.py`.
@@ -15,7 +15,6 @@
  * duyệt TOÀN BỘ danh sách thiết bị, không chỉ thứ bot từng gặp.
  */
 
-import { useEffect } from "react";
 import { LoaderCircle } from "lucide-react";
 
 import { useAuthGuard } from "@/lib/use-auth-guard";
@@ -29,19 +28,6 @@ import { LichSinhHoat } from "./components/lich-sinh-hoat";
 import { ThietBiNha } from "./components/thiet-bi";
 import { Nguong } from "./components/nguong";
 import { DoTin } from "./components/do-tin";
-import { TamHonCard } from "../settings/components/tam-hon-card";
-import { useSettingsStore } from "../settings/store";
-
-function TamHonMuc() {
-  const config = useSettingsStore((s) => s.config);
-  const loadConfig = useSettingsStore((s) => s.loadConfig);
-  useEffect(() => { if (!config) void loadConfig(); }, [config, loadConfig]);
-  return config ? <TamHonCard /> : (
-    <div className="flex items-center gap-2 p-3 text-xs text-muted-foreground">
-      <LoaderCircle className="size-4 animate-spin" /> Đang tải…
-    </div>
-  );
-}
 
 function HocHoiContent() {
   return (
@@ -68,10 +54,6 @@ function HocHoiContent() {
           </SettingsSection>
           <SettingsSection title="Nhật ký kích hoạt" tuKhoa="nhat ky lich su kich hoat bat tat khong lam ly do nguon dieu kien">
             <NhatKyKichHoat />
-          </SettingsSection>
-          <SettingsSection title="Tâm hồn (làm thơ, cảm xúc)"
-            tuKhoa="tam hon lam tho cam xuc goc tinh cach ky uc mac dinh tat">
-            <TamHonMuc />
           </SettingsSection>
           <SettingsSection title="Kỹ thuật"
             description="Công tắc từng tầng học, ngưỡng, độ tin cảm biến — mở khi cần xem sâu."

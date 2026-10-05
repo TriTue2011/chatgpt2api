@@ -3,9 +3,9 @@
 /**
  * Tâm hồn của bot — services/agent/tam_hon.py.
  *
- * Chủ máy 02/10/2026: "cần có tích kích hoạt, không để bot tự chủ" — hai ô dưới
- * đây mặc định TRỐNG; chưa tích thì bot không cảm, không viết, không vẽ gì cả.
- * Bài viết đi qua thông báo «🖋️ Bot làm thơ & tâm sự» (Cài đặt › Thông báo chọn kênh).
+ * Chủ máy 02/10/2026: "cần có tích kích hoạt, không để bot tự chủ" — chưa thread nào tích thì bot không cảm, không
+ * viết. 05/10/2026: bật THEO TỪNG THREAD ở Lọc thread (Thơ · Văn · Nói chuyện phiếm), bài gửi thẳng vào thread đó.
+ * Thẻ này chỉ còn gốc, tâm trạng, ký ức, bài đã viết.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -19,10 +19,9 @@ import { request } from "@/lib/request";
 type Bai = { luc: number; the_loai: string; tieu_de: string; noi_dung: string; cam_xuc: string; gui: number };
 type KyUc = { id: number; luc: number; noi_dung: string; cam_xuc: string };
 type TrangThai = {
-  bat_viet: boolean; bat_cam_xuc: boolean; goc: string; ky_uc: KyUc[];
+  goc: string; ky_uc: KyUc[]; thread: { khoa: string; kieu: string[] }[];
   tam_trang: { cam_xuc?: string; cuong_do?: number; vi_sao?: string; luc?: number };
   bai: Bai[];
-  thong_bao?: { bat: boolean; kenh: string[] };
 };
 
 const gio = (ts?: number) => (ts ? new Date(ts * 1000).toLocaleString("vi-VN") : "");
@@ -58,14 +57,6 @@ export function TamHonCard() {
     } catch { toast.error("Xoá thất bại"); }
   };
 
-  const dat = async (khoa: "bat_viet" | "bat_cam_xuc", v: boolean) => {
-    try {
-      const r = await request.post("/api/tam-hon", { [khoa]: v });
-      if (r.data?.ok) await tai();
-      else toast.error(r.data?.error || "Lưu thất bại");
-    } catch { toast.error("Lưu thất bại"); }
-  };
-
   const camNgay = async () => {
     setBusy(true);
     try {
@@ -78,31 +69,23 @@ export function TamHonCard() {
   };
 
   if (!tt) return null;
-  const tb = tt.thong_bao;
+  const TEN = { tho: "thơ", van: "văn", phiem: "phiếm" } as Record<string, string>;
   return (
     <Card>
       <CardContent className="space-y-3 pt-4">
         <div className="flex items-center gap-2">
           <Feather className="size-4" />
-          <span className="text-sm font-medium">Tâm hồn của bot — cảm xúc, thơ ngắn</span>
+          <span className="text-sm font-medium">Tâm hồn của bot — gốc, tâm trạng, ký ức</span>
         </div>
         <p className="text-xs text-muted-foreground">
           Bot đọc chuyện THẬT trong ngày (camera thấy ai về lúc nào, lời người nhà nhắn, thời tiết) rồi tự cảm.
           Chưa tích thì bot không làm gì.
         </p>
-        <label className="flex items-start gap-2 text-sm">
-          <input type="checkbox" className="mt-1" checked={tt.bat_viet} onChange={(e) => void dat("bat_viet", e.target.checked)} />
-          <span>Tự viết thơ ngắn hoặc tâm sự ngắn khi có chuyện đáng viết <span className="text-xs text-muted-foreground">(tối đa 2 lần/ngày, 6h–23h)</span></span>
-        </label>
-        {tt.bat_viet && !(tb?.bat && tb.kenh.length) ? (
-          <p className="text-xs text-amber-600">
-            Chưa chọn kênh nhận: vào Cài đặt › Thông báo, bật «🖋️ Bot làm thơ &amp; tâm sự» và chọn kênh — không thì bài chỉ lưu ở đây.
-          </p>
-        ) : null}
-        <label className="flex items-start gap-2 text-sm">
-          <input type="checkbox" className="mt-1" checked={tt.bat_cam_xuc} onChange={(e) => void dat("bat_cam_xuc", e.target.checked)} />
-          <span>Cảm xúc trong lời trò chuyện <span className="text-xs text-muted-foreground">(Zalo/Telegram; không áp cho loa HA)</span></span>
-        </label>
+        <p className="text-sm">
+          {tt.thread.length
+            ? <>Đang bật ở: {tt.thread.map((t) => `${t.khoa.split(":").pop()} (${t.kieu.map((k) => TEN[k] || k).join(", ")})`).join(" · ")}</>
+            : <span className="text-amber-600">Chưa thread nào bật — tích «🖋️ Tâm hồn» ở Lọc thread của từng thread.</span>}
+        </p>
         <div className="space-y-1">
           <div className="text-sm font-medium">Gốc của bot <span className="text-xs font-normal text-muted-foreground">(chỉ anh sửa được — bot là ai trong nhà, gọi từng người thế nào, điều gì không bao giờ nói)</span></div>
           <textarea className="min-h-20 w-full rounded-md border bg-background p-2 text-sm" maxLength={1500}
@@ -115,7 +98,7 @@ export function TamHonCard() {
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span>Tâm trạng: <b>{tt.tam_trang.cam_xuc || "—"}</b>{tt.tam_trang.cuong_do ? ` (${tt.tam_trang.cuong_do}/5)` : ""}</span>
           {tt.tam_trang.vi_sao ? <span className="text-xs text-muted-foreground">vì {tt.tam_trang.vi_sao}</span> : null}
-          <Button size="sm" variant="outline" className="h-7" disabled={busy || !(tt.bat_viet || tt.bat_cam_xuc)} onClick={() => void camNgay()}>
+          <Button size="sm" variant="outline" className="h-7" disabled={busy || !tt.thread.length} onClick={() => void camNgay()}>
             <Sparkles className="mr-1 size-3.5" /> {busy ? "Đang cảm…" : "Cảm ngay"}
           </Button>
         </div>
@@ -138,7 +121,7 @@ export function TamHonCard() {
             {[...tt.bai].reverse().map((b) => (
               <div key={b.luc} className="rounded-md border p-2 text-sm">
                 <div className="mb-1 text-xs text-muted-foreground">
-                  {gio(b.luc)} · {b.the_loai === "tho" ? "thơ" : b.the_loai === "tam_su" ? "tâm sự" : b.the_loai} · {b.cam_xuc} · {b.gui ? `đã gửi ${b.gui} kênh` : "chưa gửi kênh nào"}
+                  {gio(b.luc)} · {b.the_loai === "tho" ? "thơ" : b.the_loai === "van" ? "văn" : b.the_loai === "tam_su" ? "phiếm" : b.the_loai} · {b.cam_xuc} · {b.gui ? `đã gửi ${b.gui} thread` : "chưa gửi thread nào"}
                 </div>
                 {b.tieu_de ? <div className="font-medium">{b.tieu_de}</div> : null}
                 <p className="whitespace-pre-line">{b.noi_dung}</p>

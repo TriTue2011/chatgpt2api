@@ -54,6 +54,11 @@ nhà, gọi từng người thế nào, điều gì không bao giờ nói. Gốc
   (một điều nhỏ em để ý, một cảm xúc thoáng qua, một câu hỏi han). Không tiêu đề.
   Hợp với khoảnh khắc NHỎ.
 - `tho` — **thơ ngắn**: khi khoảnh khắc đáng GIỮ LẠI (mục 4).
+- `van` — **văn ngắn** (tản văn): 3–10 câu văn xuôi kể lại một khoảnh khắc, có thể đặt
+  tiêu đề. Hợp khi chuyện có diễn biến, nhiều hình ảnh hơn một bài thơ chứa nổi.
+
+Đề ghi «Thể được viết lần này» thì CHỈ chọn trong các thể đó (`tam_su` là nói chuyện
+phiếm, tâm sự ngắn).
 
 ## Cách viết — như một nhà văn, nhà thơ
 
@@ -72,5 +77,5 @@ nhà, gọi từng người thế nào, điều gì không bao giờ nói. Gốc
 ```
 
 `cam_xuc`: một hai từ tiếng Việt. `cuong_do`: 1 (thoáng qua) tới 5 (rất đậm).
-`the_loai`: `tho` hoặc `tam_su` (tâm sự thì bỏ trống `tieu_de`).
+`the_loai`: `tho`, `van` hoặc `tam_su` (tâm sự thì bỏ trống `tieu_de`).
 `viet: false` thì bỏ trống `tieu_de`, `noi_dung`.

@@ -10,7 +10,8 @@ nhà nhắn, thời tiết) và chặn ở biên (≤ ``TOI_DA_BAI_NGAY`` bài/n
 Cảm gì, có đáng viết không, viết ra sao là việc của bot theo hướng dẫn
 ``services/huong_dan_hoc/tam_hon.md`` — không có danh sách từ khoá cảm xúc nào ở đây.
 
-Bài viết đi qua sổ thông báo ``bot.tam_hon`` (chủ máy chọn kênh ở Cài đặt › Thông báo).
+Bài viết gửi THẲNG vào những thread chủ máy tích kiểu tương ứng ở Kênh chat › Lọc thread (05/10/2026 — trước đó đi
+qua sổ thông báo ``bot.tam_hon``, nay đã gỡ).
 
 Ba phần thêm sau khi so với bản thiết kế «Tiểu Vy» (chủ máy duyệt 02/10/2026):
 
@@ -62,6 +63,52 @@ GIO_THUC = (6, 23)
 TAM_TRANG_SONG_GIAY = 8 * 3600
 #: Kênh người nhà trò chuyện (`run_journal._channel_of`); ha/web/openapi là máy hỏi.
 _KENH_NGUOI = ("zalop", "zalo", "tg")
+#: Văn ngắn (tản văn): 3–10 câu.
+VAN_TOI_DA = 900
+#: Cờ tâm hồn của TỪNG thread (Kênh chat › Lọc thread; sổ riêng ``tam_hon.json`` › ``thread``) → thể bài.
+#: Chủ máy 05/10/2026: "Tâm hồn (làm thơ, cảm xúc) phải gán vào trong lọc thread ID chứ sao lại để ở học hỏi. Ngoài
+#: thơ thì văn, nói chuyện phiếm". «phiem» còn cho cảm xúc thấm vào lời trò chuyện ở thread đó.
+LOAI = {"tho": "tho", "van": "van", "phiem": "tam_su"}
+
+
+def thread_tam_hon() -> list[tuple[str, set[str]]]:
+    """[(khoá thread «plat:bot:chat[#topic]», {tho, van, phiem})] — chỉ thread đã tích ít nhất một kiểu. Lưu trong
+    sổ riêng của tâm hồn (``thread``), chủ máy tích ở Kênh chat › Lọc thread (`dat_thread`)."""
+    t = _nap().get("thread") or {}
+    return [(str(k), {str(x) for x in v} & set(LOAI)) for k, v in (t.items() if isinstance(t, dict) else [])
+            if {str(x) for x in (v or [])} & set(LOAI)]
+
+
+def dat_thread(khoa: str, kieu: list[str]) -> list[str]:
+    """Chủ máy tích kiểu tâm hồn cho MỘT thread (rỗng = tắt). Trả các kiểu đã lưu."""
+    khoa = str(khoa or "").strip()
+    if khoa.count(":") < 1 or len(khoa) > 200:
+        raise ValueError("khoá thread sai dạng (plat:bot:chat)")
+    giu = sorted({str(x) for x in kieu or []} & set(LOAI))
+    with _khoa:
+        d = _nap()
+        t = d.setdefault("thread", {})
+        if giu:
+            t[khoa] = giu
+        else:
+            t.pop(khoa, None)
+        _luu(d)
+    return giu
+
+
+def kieu_cua_phien(user_id: str) -> set[str]:
+    """Kiểu tâm hồn của thread đang trò chuyện (khoá phiên → kênh / chat / topic, khớp khoá Lọc thread)."""
+    from services.agent import scope
+    sc = scope.tach_khoa_phien(user_id)
+    if not sc.chat:
+        return set()
+    hop: set[str] = set()
+    for k, kieu in thread_tam_hon():
+        phan = k.split(":")
+        chat, _, topic = phan[-1].partition("#")
+        if phan[0] == sc.kenh and chat == sc.chat and (not topic or topic == sc.topic):
+            hop |= kieu
+    return hop
 
 
 def _nap() -> dict[str, Any]:
@@ -80,20 +127,16 @@ def _luu(d: dict[str, Any]) -> None:
 
 
 def cai_dat() -> dict[str, Any]:
+    """Gốc (chủ máy viết) + thread nào đang bật kiểu nào (bật / tắt ở Lọc thread, không còn công tắc chung)."""
     d = _nap()
-    return {"bat_viet": bool(d.get("bat_viet")), "bat_cam_xuc": bool(d.get("bat_cam_xuc")),
-            "goc": str(d.get("goc") or "")}
+    return {"goc": str(d.get("goc") or ""),
+            "thread": [{"khoa": k, "kieu": sorted(v)} for k, v in thread_tam_hon()]}
 
 
-def dat(*, bat_viet: bool | None = None, bat_cam_xuc: bool | None = None,
-        goc: str | None = None) -> dict[str, Any]:
+def dat(*, goc: str | None = None) -> dict[str, Any]:
     """Chỉ API web của chủ máy gọi hàm này — bot không có tool nào ghi được ``goc``."""
     with _khoa:
         d = _nap()
-        if bat_viet is not None:
-            d["bat_viet"] = bool(bat_viet)
-        if bat_cam_xuc is not None:
-            d["bat_cam_xuc"] = bool(bat_cam_xuc)
         if goc is not None:
             d["goc"] = str(goc).strip()[:GOC_TOI_DA]
         _luu(d)
@@ -258,7 +301,7 @@ def _chat_cuoi() -> float:
         return 0.0
 
 
-def de(now: float, tu: float, *, duoc_viet: bool) -> tuple[str, bool]:
+def de(now: float, tu: float, *, duoc_viet: bool, the: list[str] | None = None) -> tuple[str, bool]:
     """(đề, có nguyên liệu mới kể từ lượt trước)."""
     d = _nap()
     lan_xet = float(d.get("lan_xet") or 0)
@@ -279,7 +322,7 @@ def de(now: float, tu: float, *, duoc_viet: bool) -> tuple[str, bool]:
         *[f"   đã viết {time.strftime('%d/%m %H:%M', time.localtime(b['luc']))}: {b.get('tieu_de', '')} — "
           f"{str(b.get('noi_dung', ''))[:80]}" for b in bai],
         *(["E. Ký ức cũ em gợi lại được (chỉ dùng nếu thật sự liên quan):", *_dong_ky_uc(cu)] if cu else []),
-        "" if duoc_viet else "Lần này: chỉ cảm, không viết.",
+        (f"Thể được viết lần này: {', '.join(the)}." if the else "") if duoc_viet else "Lần này: chỉ cảm, không viết.",
     ]
     return "\n".join(p for p in phan if p is not None).strip(), moi
 
@@ -305,9 +348,8 @@ def bai_hom_nay(now: float | None = None) -> int:
 
 def nen_chay(now: float | None = None) -> tuple[bool, str]:
     now = now or time.time()
-    c = cai_dat()
-    if not (c["bat_viet"] or c["bat_cam_xuc"]):
-        return False, "chưa tích kích hoạt (Cài đặt › Tâm hồn của bot)"
+    if not thread_tam_hon():
+        return False, "chưa thread nào bật Tâm hồn (Kênh chat › Lọc thread)"
     gio = time.localtime(now).tm_hour
     if not GIO_THUC[0] <= gio < GIO_THUC[1]:
         return False, "giờ yên"
@@ -343,6 +385,11 @@ def _kiem(data: Any) -> dict[str, Any] | None:
         # Tâm sự: chỉ lời nhắn ngắn — không tiêu đề, không tranh; dài quá là model sai khuôn, không đăng.
         if 10 <= len(nd) <= TAM_SU_TOI_DA:
             ra.update(viet=True, noi_dung=" ".join(nd.split()), the_loai="tam_su", tieu_de="")
+    elif data.get("viet") is True and loai == "van":
+        cau = [d.strip() for d in nd.splitlines() if d.strip()]
+        if 40 <= len(nd) <= VAN_TOI_DA:                                   # dài quá là sai khuôn — không đăng
+            ra.update(viet=True, noi_dung="\n".join(cau), the_loai="van",
+                      tieu_de=" ".join(str(data.get("tieu_de") or "").split())[:80])
     elif data.get("viet") is True and loai == "tho":
         cau = [d.strip() for d in nd.splitlines() if d.strip()]
         if 2 <= len(cau) <= THO_TOI_DA_CAU and len(nd) <= THO_TOI_DA:    # dài là sai khuôn — không đăng
@@ -374,16 +421,17 @@ def chay_mot_lan(now: float | None = None, *, ep: bool = False) -> dict[str, Any
     """Một lượt cảm. ``ep``: chủ máy bấm «Cảm ngay» — bỏ qua giãn cách và «chưa có gì mới»,
     nhưng KHÔNG bỏ qua ô kích hoạt và hạn mức bài/ngày."""
     now = now or time.time()
-    c = cai_dat()
-    if not (c["bat_viet"] or c["bat_cam_xuc"]):
-        return {"ok": False, "ly_do": "chưa tích kích hoạt"}
+    luong = thread_tam_hon()
+    if not luong:
+        return {"ok": False, "ly_do": "chưa thread nào bật Tâm hồn (Kênh chat › Lọc thread)"}
     if not _dang_chay.acquire(blocking=False):
         return {"ok": False, "ly_do": "đang cảm dở"}
     try:
-        duoc_viet = c["bat_viet"] and bai_hom_nay(now) < TOI_DA_BAI_NGAY
+        the = sorted({LOAI[k] for _, kieu in luong for k in kieu})
+        duoc_viet = bai_hom_nay(now) < TOI_DA_BAI_NGAY
         lt = time.localtime(now)
         nua_dem = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
-        de_, moi = de(now, nua_dem, duoc_viet=duoc_viet)
+        de_, moi = de(now, nua_dem, duoc_viet=duoc_viet, the=the)
         tt = _nap().get("tam_trang") or {}
         if not ep and not moi and now - float(tt.get("luc") or 0) < 4 * 3600:
             with _khoa:
@@ -397,11 +445,13 @@ def chay_mot_lan(now: float | None = None, *, ep: bool = False) -> dict[str, Any
             logger.warning({"event": "tam_hon_tra_sai", "loi": r.get("loi", "JSON không đúng khuôn")})
             return {"ok": False, "ly_do": r.get("loi") or "model trả sai khuôn"}
         bai = None
-        if kq["viet"] and duoc_viet:
+        if kq["viet"] and duoc_viet and kq["the_loai"] in the:
             tin = (f"🖋️ {kq['tieu_de']}\n\n" if kq["tieu_de"] else "") + kq["noi_dung"]
-            from services import thong_bao
+            # Gửi THẲNG vào những thread bật đúng kiểu này (thơ → thread tích «Thơ»…), không qua kênh thông báo chung.
+            from services import digest
+            toi = [k for k, kieu in luong if any(LOAI[x] == kq["the_loai"] for x in kieu)]
             bai = {"luc": now, "the_loai": kq["the_loai"], "tieu_de": kq["tieu_de"],
-                   "noi_dung": kq["noi_dung"], "cam_xuc": kq["cam_xuc"], "gui": thong_bao.gui("bot.tam_hon", tin)}
+                   "noi_dung": kq["noi_dung"], "cam_xuc": kq["cam_xuc"], "gui": digest.send_targets(toi, tin)}
         with _khoa:
             d = _nap()
             d["lan_xet"] = now
@@ -435,9 +485,9 @@ def la_nguoi_nha_tro_chuyen(user_id: str) -> bool:
 def khoi_prompt(user_id: str, user_text: str = "", now: float | None = None) -> str:
     """Khối gốc + tâm trạng + ký ức gợi lại cho system prompt. Rỗng khi chưa tích, hoặc lượt từ
     HA (loa đọc lệnh nhà — cảm xúc chen vào chỉ làm câu trả lời dài và lạc)."""
-    c = cai_dat()
-    if not c["bat_cam_xuc"] or not la_nguoi_nha_tro_chuyen(user_id):
+    if not la_nguoi_nha_tro_chuyen(user_id) or "phiem" not in kieu_cua_phien(user_id):
         return ""
+    c = cai_dat()
     phan = []
     if c["goc"]:
         phan.append("GỐC CỦA EM (chủ nhà viết, luôn giữ): " + c["goc"])

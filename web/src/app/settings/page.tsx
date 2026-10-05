@@ -191,7 +191,11 @@ function SettingsPageContent() {
           description="Bot token, admin, lọc thread, nhánh agent — từng kênh độc lập"
           icon={<MessageCircle className="size-5" />}
         >
-          <TelegramCloudflareCard />
+          <div className="space-y-3">
+            <TelegramCloudflareCard />
+            {/* Tâm hồn bật theo TỪNG thread ở Lọc thread phía trên; ở đây chỉ còn gốc, tâm trạng, ký ức, bài đã viết. */}
+            <TamHonCard />
+          </div>
         </SettingsSection>
 
         <SettingsSection
@@ -253,7 +257,6 @@ function SettingsPageContent() {
         >
           <TeacherSettingsCard />
           <PersonasCard />
-          <TamHonCard />
         </SettingsSection>
 
         <SettingsSection

@@ -1,5 +1,6 @@
 """Tâm hồn của bot (chủ máy 02/10/2026): cảm & viết từ chuyện thật; "cần có tích kích hoạt, không để
-bot tự chủ" — chưa tích thì không gọi model, không gửi gì. Không gọi mạng."""
+bot tự chủ" — chưa tích thì không gọi model, không gửi gì. 05/10/2026: tích theo TỪNG thread ở Lọc thread
+(thơ / văn / nói chuyện phiếm), bài gửi thẳng vào thread tích đúng kiểu. Không gọi mạng."""
 from __future__ import annotations
 
 import os
@@ -11,7 +12,7 @@ import pytest
 
 os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
 
-from services import thong_bao  # noqa: E402
+from services import digest  # noqa: E402
 from services.agent import heartbeat, tam_hon  # noqa: E402
 
 _GOI_THAT = tam_hon._goi  # bản thật, trước khi fixture thay
@@ -38,10 +39,20 @@ def th(tmp_path, monkeypatch):
     monkeypatch.setattr(tam_hon, "nguoi_ra_vao", lambda tu: ["22:19 Cam cửa thấy: Tôi"])
     monkeypatch.setattr(tam_hon, "loi_nhan", lambda tu: ["19:05 bố về muộn, hai mẹ con ăn cơm trước"])
     monkeypatch.setattr(tam_hon, "_goi", lambda de: goi.append(de) or {"data": dict(TRA)})
-    monkeypatch.setattr(thong_bao, "gui", lambda k, t, a="": gui.append((k, t, a)) or 1)
+    monkeypatch.setattr(digest, "send_targets", lambda toi, t, a="": gui.append((list(toi), t, a)) or len(toi))
+    monkeypatch.setattr(tam_hon, "thread_tam_hon", lambda: list(_THREAD))
+    _THREAD.clear()
     monkeypatch.setattr(tam_hon, "_vec", _vec_gia)
     monkeypatch.setattr(tam_hon, "_chat_cuoi", lambda: 0.0)
     return goi, gui
+
+
+_THREAD: list[tuple[str, set[str]]] = []
+
+
+def _bat(*kieu: str, khoa: str = "zalop:acc:1") -> None:
+    """Tích kiểu tâm hồn cho một thread (như chủ máy tích ở Lọc thread)."""
+    _THREAD.append((khoa, set(kieu)))
 
 
 def _luc(h: int, m: int = 0) -> float:
@@ -51,7 +62,7 @@ def _luc(h: int, m: int = 0) -> float:
 
 def test_chua_tich_thi_khong_lam_gi(th):
     goi, gui = th
-    assert tam_hon.cai_dat() == {"bat_viet": False, "bat_cam_xuc": False, "goc": ""}, "mặc định TẮT"
+    assert tam_hon.cai_dat() == {"goc": "", "thread": []}, "mặc định TẮT — chưa thread nào tích"
     assert not tam_hon.nen_chay(_luc(20))[0]
     assert tam_hon.chay_mot_lan(_luc(20), ep=True)["ok"] is False
     assert heartbeat._eval_tam_hon()[0] == "skip"
@@ -59,12 +70,12 @@ def test_chua_tich_thi_khong_lam_gi(th):
     assert goi == [] and gui == []
 
 
-def test_chi_tich_cam_xuc_thi_cam_ma_khong_viet(th):
+def test_chi_tich_phiem_thi_cam_va_chi_viet_tam_su(th):
     goi, gui = th
-    tam_hon.dat(bat_cam_xuc=True)
+    _bat("phiem")
     kq = tam_hon.chay_mot_lan(_luc(22, 30))
-    assert kq["ok"] and kq["bai"] is None and gui == []
-    assert "chỉ cảm, không viết" in goi[-1]
+    assert kq["ok"] and kq["bai"] is None and gui == [], "model trả thơ mà thread chỉ tích phiếm → không đăng"
+    assert "Thể được viết lần này: tam_su" in goi[-1]
     assert "bố về muộn" in goi[-1] and "22:19 Cam cửa thấy: Tôi" in goi[-1], "đề mang chuyện thật"
     k = tam_hon.khoi_prompt("zalop_1", now=_luc(22, 31))
     assert "bồi hồi" in k and "nội dung giữ nguyên" in k
@@ -74,19 +85,20 @@ def test_chi_tich_cam_xuc_thi_cam_ma_khong_viet(th):
 
 def test_tich_viet_thi_gui_tho_ngan_khong_tranh_toi_da_hai_bai_ngay(th):
     goi, gui = th
-    tam_hon.dat(bat_viet=True)
+    _bat("tho")
+    _bat("phiem", khoa="zalop:acc:2")
     for gio in (9, 14, 20):
         tam_hon.chay_mot_lan(_luc(gio), ep=True)
     assert len(gui) == 2
     k, tin, anh = gui[0]
-    assert k == "bot.tam_hon" and tin.startswith("🖋️ Bữa cơm chờ") and anh == "", "không vẽ tranh nữa"
+    assert k == ["zalop:acc:1"] and tin.startswith("🖋️ Bữa cơm chờ") and anh == "", "thơ chỉ vào thread tích Thơ"
     assert "chỉ cảm, không viết" in goi[-1], "đủ 2 bài thì lượt sau chỉ cảm"
     assert len(tam_hon.trang_thai()["bai"]) == 2
 
 
 def test_khong_co_gi_moi_thi_khong_goi_model(th, monkeypatch):
     goi, _ = th
-    tam_hon.dat(bat_cam_xuc=True)
+    _bat("phiem")
     tam_hon.chay_mot_lan(_luc(22, 30))
     n = len(goi)
     assert tam_hon.chay_mot_lan(_luc(23, 50) - 3600)["ly_do"] == "chưa có chuyện gì mới"
@@ -94,7 +106,7 @@ def test_khong_co_gi_moi_thi_khong_goi_model(th, monkeypatch):
 
 
 def test_nhip_va_gio_yen(th):
-    tam_hon.dat(bat_viet=True)
+    _bat("tho", "phiem")
     assert tam_hon.nen_chay(_luc(3))[1] == "giờ yên"
     assert tam_hon.nen_chay(_luc(10))[0]
     tam_hon.chay_mot_lan(_luc(10), ep=True)
@@ -103,7 +115,7 @@ def test_nhip_va_gio_yen(th):
 
 def test_model_tra_sai_khuon_thi_khong_doi_gi(th, monkeypatch):
     _, gui = th
-    tam_hon.dat(bat_viet=True)
+    _bat("tho", "phiem")
     monkeypatch.setattr(tam_hon, "_goi", lambda de: {"data": {"viet": True, "noi_dung": "x" * 50}})
     assert tam_hon.chay_mot_lan(_luc(10), ep=True)["ok"] is False
     assert gui == [] and tam_hon.trang_thai()["tam_trang"] == {}
@@ -117,7 +129,7 @@ def test_kiem_cat_o_bien():
 
 def test_ky_uc_bot_chon_thi_luu_va_goi_lai_theo_nghia(th, monkeypatch):
     goi, _ = th
-    tam_hon.dat(bat_cam_xuc=True)
+    _bat("phiem")
     monkeypatch.setattr(tam_hon, "_goi", lambda de: goi.append(de) or {"data": {
         **TRA, "ky_uc": "Thứ Sáu 02/10/2026: bố về muộn, hai mẹ con ăn cơm trước"}})
     tam_hon.chay_mot_lan(_luc(22, 30))
@@ -131,7 +143,7 @@ def test_ky_uc_bot_chon_thi_luu_va_goi_lai_theo_nghia(th, monkeypatch):
 
 
 def test_ky_uc_ngay_binh_thuong_thi_khong_luu_va_xoa_duoc(th):
-    tam_hon.dat(bat_cam_xuc=True)
+    _bat("phiem")
     tam_hon.chay_mot_lan(_luc(10), ep=True)
     assert tam_hon.ky_uc_gan() == [], "model để ky_uc rỗng thì không lưu"
     tam_hon.ghi_ky_uc("x y z", "vui", 2, _luc(9))
@@ -146,7 +158,8 @@ def test_ky_uc_luu_luc_model_chua_san_thi_nhung_bu(th, monkeypatch):
 
 
 def test_goc_chi_chu_may_dat_va_vao_ca_hai_noi(th, monkeypatch):
-    tam_hon.dat(bat_cam_xuc=True, goc="Em là Bắp. Gọi chủ nhà là bố." + "x" * 3000)
+    _bat("phiem")
+    tam_hon.dat(goc="Em là Bắp. Gọi chủ nhà là bố." + "x" * 3000)
     assert len(tam_hon.cai_dat()["goc"]) == tam_hon.GOC_TOI_DA
     assert "GỐC CỦA EM" in tam_hon.khoi_prompt("zalop_1", "chào em")
     from services import hieu_thiet_bi_nha as ht
@@ -161,7 +174,7 @@ def test_goc_chi_chu_may_dat_va_vao_ca_hai_noi(th, monkeypatch):
 
 
 def test_nghi_lai_sau_khi_nguoi_nha_nhan_xong(th, monkeypatch):
-    tam_hon.dat(bat_cam_xuc=True)
+    _bat("phiem")
     tam_hon.chay_mot_lan(_luc(18), ep=True)
     monkeypatch.setattr(tam_hon, "_chat_cuoi", lambda: _luc(18, 40))
     assert tam_hon.nen_chay(_luc(18, 50)) == (False, "người nhà đang nhắn — chờ im rồi nghĩ lại")
@@ -192,7 +205,7 @@ def test_cam_xuc_chi_vao_zalo_va_telegram(uid, dung):
 
 def test_tam_su_ngan_khong_tranh_khong_tieu_de(th, monkeypatch):
     _, gui = th
-    tam_hon.dat(bat_viet=True)
+    _bat("tho", "phiem")
     monkeypatch.setattr(tam_hon, "_goi", lambda de: {"data": {
         **TRA, "the_loai": "tam_su", "tieu_de": "bỏ", "tranh": "bỏ",
         "noi_dung": "Bố ơi, hôm nay nhà mình ăn cơm sớm. Em để đèn hiên sáng chờ bố nhé."}})
@@ -212,3 +225,38 @@ def test_tho_dai_hoac_nhat_ky_la_sai_khuon_khong_dang():
     assert tam_hon._kiem({**TRA, "noi_dung": "\n".join(f"câu {i}" for i in range(9))})["viet"] is False
     assert tam_hon._kiem({**TRA, "the_loai": "nhat_ky", "noi_dung": "Hôm nay em ngồi nhìn mưa rất lâu."})["viet"] is False
     assert tam_hon._kiem(TRA)["viet"] is True
+
+
+def test_van_ngan_gui_vao_thread_tich_van(th, monkeypatch):
+    _, gui = th
+    _bat("van", khoa="zalop:acc:9")
+    _bat("tho")
+    monkeypatch.setattr(tam_hon, "_goi", lambda de: {"data": {
+        **TRA, "the_loai": "van", "tieu_de": "Chiều mưa",
+        "noi_dung": "Chiều nay mưa. Hai mẹ con dọn mâm sớm.\nĐèn hiên để sáng, chờ một bước chân quen."}})
+    tam_hon.chay_mot_lan(_luc(19), ep=True)
+    assert gui[-1][0] == ["zalop:acc:9"] and gui[-1][1].startswith("🖋️ Chiều mưa")
+    assert tam_hon._kiem({**TRA, "the_loai": "van", "noi_dung": "x" * 1200})["viet"] is False, "dài quá — không đăng"
+
+
+def test_cam_xuc_chi_vao_thread_tich_phiem(th):
+    _bat("tho")
+    _bat("phiem", khoa="zalop:acc:2")
+    tam_hon.chay_mot_lan(_luc(22, 30))
+    assert tam_hon.khoi_prompt("zalop_2", now=_luc(22, 31)), "thread tích phiếm"
+    assert tam_hon.khoi_prompt("zalop_1", now=_luc(22, 31)) == "", "thread chỉ tích thơ — không bơm cảm xúc"
+
+
+def test_tich_theo_thread_va_khop_khoa_phien(tmp_path, monkeypatch):
+    tam_hon._reset_for_tests(tmp_path / "th.json")
+    assert tam_hon.dat_thread("zalop:475:8845", ["tho", "phiem", "la"]) == ["phiem", "tho"]
+    tam_hon.dat_thread("tg:bot:-100#7", ["van"])
+    tam_hon.dat_thread("zalop:475:111", [])
+    assert sorted(tam_hon.thread_tam_hon()) == [("tg:bot:-100#7", {"van"}), ("zalop:475:8845", {"tho", "phiem"})]
+    assert tam_hon.kieu_cua_phien("zalop_8845:u99") == {"tho", "phiem"}
+    assert tam_hon.kieu_cua_phien("-100#7:u5") == {"van"} and tam_hon.kieu_cua_phien("-100#8:u5") == set()
+    assert tam_hon.kieu_cua_phien("zalop_111") == set()
+    tam_hon.dat_thread("zalop:475:8845", [])
+    assert [k for k, _ in tam_hon.thread_tam_hon()] == ["tg:bot:-100#7"], "bỏ hết tick = tắt"
+    with pytest.raises(ValueError):
+        tam_hon.dat_thread("", ["tho"])
