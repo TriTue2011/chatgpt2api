@@ -6,8 +6,8 @@ chỉnh lại cho phù hợp". Trường hợp đã duyệt là LỜI; bộ kíc
 
 Cùng khung các tầng học khác (vai giáo viên): CODE bày đề (trường hợp đã duyệt, cảm biến THẬT kèm mã / loại / đơn vị /
 số bot đã học, lịch sinh hoạt, lời chấm trước) và KIỂM Ở BIÊN (mã có thật, dạng điều kiện đúng); BOT (hướng dẫn
-`chuyen_truong_hop.md`) viết luật; giáo viên / chủ nhà CHẤM từng luật, lời chấm vào đề lần sau. Luật chỉ áp khi
-được chấm ĐÚNG (`ap`).
+`chuyen_truong_hop.md`) viết luật; bot HỎI CHỦ NHÀ TỪNG LUẬT (`hoi_tiep`: «đúng» / «sửa …»). Chỉ CHỦ NHÀ quyết luật
+nào chạy (`ap`); giáo viên chỉ chấm đúng/sai theo mô tả của chủ nhà — lời chấm đó vào đề lần sau để dạy bot.
 
 Dạng điều kiện là dạng chung của các tầng học (câu thói quen): ``{"ma", "la"}``, ``{"ma", "duoi"|"tren"}``,
 ``{"ma": "gio", "tu", "den"}``; thêm ``{"ma": "lich", "la": <mã lịch>}``, ``{"ma": "ca_nha", "la": "ngu"|"vang"}``,
@@ -31,8 +31,8 @@ _PATH = Path(DATA_DIR) / "agent" / "luat_duyet.json"
 _khoa = threading.RLock()
 NEN = ("bat", "tat", "khong_lam", "giu", "hoi")
 _NEN_DOC = {"bat": "bật", "tat": "tắt", "khong_lam": "KHÔNG bật", "giu": "GIỮ (không tắt)", "hoi": "hỏi anh"}
-_NGUON_RE = re.compile(r"^binary_sensor\.[a-z0-9_]+ (có người vào|vắng|ở lại (\d{1,4}) giây)$")
-#: «ở lại N giây»: N trong khoảng này (dưới 10 giây là nhiễu, trên một giờ là chuyện khác).
+_NGUON_RE = re.compile(r"^binary_sensor\.[a-z0-9_]+ (có người vào|vắng|(?:ở lại|vắng) (\d{1,4}) giây)$")
+#: «ở lại N giây» / «vắng N giây»: N trong khoảng này (dưới 10 giây là nhiễu, trên một giờ là chuyện khác).
 O_LAI_GIAY = (10, 3600)
 _GIO_RE = re.compile(r"^([01]\d|2[0-4]):[0-5]\d$")
 _LOAI_SO = {"distance": "khoảng cách", "illuminance": "độ sáng", "temperature": "nhiệt độ", "humidity": "độ ẩm"}
@@ -369,9 +369,43 @@ def giai(tb: str) -> dict[str, Any]:
                "model": model, "luat": luat, "khong_chuyen_duoc": khong, "loi": loi,
                "truong_hop": [m["tinh_huong"] for m in th]}
         x["lan"] = (x["lan"] + [lan])[-10:]
+        giu = _mang_sang(x, lan)
         _luu(d)
-    logger.info({"event": "luat_duyet_giai", "thiet_bi": tb, "luat": len(luat), "khong": len(khong), "loi": loi[:3]})
-    return {"ok": True, **lan}
+    logger.info({"event": "luat_duyet_giai", "thiet_bi": tb, "luat": len(luat), "khong": len(khong), "loi": loi[:3],
+                 "giu": giu})
+    return {"ok": True, **lan, "giu": giu}
+
+
+def _cung_luat(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    k = ("nen", "khi", "neu", "xac_minh")
+    return json.dumps([a.get(x) for x in k], sort_keys=True) == json.dumps([b.get(x) for x in k], sort_keys=True) \
+        or (a.get("nen") == b.get("nen") and a.get("xac_minh") == b.get("xac_minh")
+            and sorted(a.get("khi") or []) == sorted(b.get("khi") or [])
+            and sorted(json.dumps(n, sort_keys=True) for n in a.get("neu") or [])
+            == sorted(json.dumps(n, sort_keys=True) for n in b.get("neu") or []))
+
+
+def _mang_sang(x: dict[str, Any], lan: dict[str, Any]) -> list[int]:
+    """Luật của lần giải mới GIỐNG HỆT luật CHỦ NHÀ đã duyệt cho cùng trường hợp → ghi lời duyệt sang lần mới, khỏi hỏi
+    lại. Chỉ lời chủ nhà mới mang sang (giáo viên không có quyền duyệt). Chủ máy 05/10/2026: hỏi duyệt từng trường hợp —
+    chỉ hỏi cái chưa duyệt / đã đổi."""
+    cuoi: dict[tuple[int, int], dict[str, Any]] = {}
+    for c in x.get("cham") or []:
+        if c.get("cham_boi") == "chu_may":
+            cuoi[(c["lan"], c["so"])] = c
+    th_moi = lan.get("truong_hop") or []
+    da = [(l, (cu.get("truong_hop") or [])[l["so"] - 1]) for cu in x["lan"][:-1] for l in cu["luat"]
+          if (c := cuoi.get((cu["id"], l["so"]))) and c["dung"] and l["so"] <= len(cu.get("truong_hop") or [])]
+    giu = []
+    for l in lan["luat"]:
+        loi = th_moi[l["so"] - 1] if l["so"] <= len(th_moi) else None
+        if any(loi == loi_cu and _cung_luat(l, d) for d, loi_cu in da):
+            x["cham"] = (x.get("cham") or []) + [{"lan": lan["id"], "so": l["so"], "dung": True, "cham_boi": "chu_may",
+                                                  "ghi_chu": "giữ — luật không đổi so với lần anh duyệt",
+                                                  "luc": time.time()}]
+            giu.append(l["so"])
+    x["cham"] = (x.get("cham") or [])[-60:]
+    return giu
 
 
 def cham(tb: str, so_th: int, dung: bool, *, cham_boi: str, ghi_chu: str = "", lan_id: int | None = None) -> bool:
@@ -425,19 +459,38 @@ def cham_moi_nhat(so_th: int, dung: bool, ghi_chu: str = "", tb: str = "") -> st
 
 
 def ap(tb: str) -> list[dict[str, Any]]:
-    """Luật ĐANG ÁP: của lần giải MỚI NHẤT đã được chấm (lần mới chưa ai chấm thì lần đã chấm trước vẫn chạy), chỉ
-    những luật chấm ĐÚNG (lần chấm sau cùng thắng). Mỗi luật kèm ``lan`` để lần chạy sai truy về đúng bài."""
+    """Luật ĐANG ÁP: mỗi trường hợp (của lần giải mới nhất) lấy QUYẾT ĐỊNH SAU CÙNG CỦA CHỦ NHÀ về nó, ở bất kỳ lần
+    giải nào — «đúng» thì luật của lần đó chạy. Lần giải mới mà chủ nhà chưa trả lời thì luật cũ anh đã duyệt vẫn chạy.
+
+    Chỉ CHỦ NHÀ quyết. Chủ máy 05/10/2026: "Bạn không có quyền xác nhận luật, bạn chỉ chấm đúng sai dựa trên cơ sở là
+    tôi mô tả, mọi việc tôi quyết mới là đúng, bot phán đoán đưa tôi quyết định là làm luôn". Lời GIÁO VIÊN chấm
+    (``cham_boi='claude'``) chỉ là ghi chú vào đề lần sau (mục D), không làm luật nào chạy hay thôi chạy.
+
+    Khoá theo LỜI trường hợp, không theo số: thêm trường hợp làm số đổi, lời thì không. Mỗi luật kèm ``lan`` để lần
+    chạy sai truy về đúng bài."""
     with _khoa:
         x = _nap().get(tb) or {}
-    cham = x.get("cham") or []
-    for lan in reversed(x.get("lan") or []):
-        kq: dict[int, bool] = {}
-        for c in cham:
-            if c["lan"] == lan["id"]:
-                kq[c["so"]] = c["dung"]
-        if kq:
-            return [{**l, "lan": lan["id"]} for l in lan["luat"] if kq.get(l["so"])]
-    return []
+    ds_lan = x.get("lan") or []
+    if not ds_lan:
+        return []
+    theo_id = {l["id"]: l for l in ds_lan}
+    quyet: dict[str, tuple[bool, int, int]] = {}            # lời trường hợp → (đúng?, lần, số)
+    for c in x.get("cham") or []:                           # sổ ghi theo thời gian: lời sau đè lời trước
+        lan = theo_id.get(c["lan"])
+        if c.get("cham_boi") != "chu_may" or lan is None:
+            continue
+        th = lan.get("truong_hop") or []
+        if 1 <= c["so"] <= len(th):
+            quyet[th[c["so"] - 1]] = (bool(c["dung"]), lan["id"], c["so"])
+    ra = []
+    for loi in ds_lan[-1].get("truong_hop") or []:
+        q = quyet.get(loi)
+        if not q or not q[0]:
+            continue
+        l = next((l for l in theo_id[q[1]]["luat"] if l["so"] == q[2]), None)
+        if l is not None:
+            ra.append({**l, "lan": q[1]})
+    return ra
 
 
 # ── Kiểm điều kiện lúc chạy ────────────────────────────────────────────────
@@ -548,7 +601,8 @@ def doc_luat(l: dict[str, Any], ten: dict[str, str]) -> str:
         elif x["ma"] == "troi":
             s = "trời tối" if x["la"] == "toi" else "trời sáng"
         else:
-            s = ht._dieu_kien_doc(x, {}, ten) + (f" liền {x['lien_giay']} giây" if x.get("lien_giay") else "") + (
+            s = ht._dieu_kien_doc(x, {}, ten) + (f" {x['_dv']}" if x.get("_dv") and ("duoi" in x or "tren" in x)
+                                                 else "") + (f" liền {x['lien_giay']} giây" if x.get("lien_giay") else "") + (
                 f" (trong {x['trong_giay']} giây vừa qua)" if x.get("trong_giay") else "")
         return f"KHÔNG ({s})" if x.get("phu_dinh") else s
 
@@ -558,21 +612,221 @@ def doc_luat(l: dict[str, Any], ten: dict[str, str]) -> str:
 
 
 def bao(tb: str, kq: dict[str, Any]) -> str:
+    """Báo lần chuyển rồi HỎI TỪNG LUẬT một (`hoi_tiep`). Chủ máy 05/10/2026: "bot phải hỏi tôi duyệt từng trường
+    hợp, khoảng cách như nào. Nếu đúng thì nhắn đúng, nếu sai thì tôi nhắn «sửa …» các thông tin sai"."""
     from services import hieu_thiet_bi_nha as ht, kich_hoat_nha as kh
 
     ten = kh._ten_ha()
     th = kq.get("truong_hop") or []
-    dong = [f"⚙️ Luật em chuyển từ trường hợp anh đã duyệt — {ten.get(tb, tb)} (lần {kq['id']}):"]
-    for l in kq["luat"]:
-        dong.append(f"{l['so']}. «{th[l['so'] - 1][:70]}» → {doc_luat(l, ten)}")
+    giu = set(kq.get("giu") or [])
+    hoi = [l for l in kq["luat"] if l["so"] not in giu]
+    dong = [f"⚙️ {ten.get(tb, tb)}: em chuyển {len(kq['luat'])} trường hợp anh duyệt thành luật (lần {kq['id']})."]
+    if giu:
+        dong.append(f"{len(giu)} luật giữ nguyên như anh đã duyệt: {', '.join(str(x) for x in sorted(giu))}.")
+    if hoi:
+        dong.append(f"Em hỏi anh lần lượt {len(hoi)} luật còn lại — luật anh nhắn «đúng» mới chạy.")
     for k in kq.get("khong_chuyen_duoc") or []:
         dong.append(f"{k['so']}. «{th[k['so'] - 1][:70]}» → chưa chuyển được: {k['ly_do']}")
     if kq.get("loi"):
         dong.append("Lỗi em tự loại: " + "; ".join(kq["loi"][:4]))
-    dong.append("Anh thấy luật nào sai thì nói «luật 3 sai, …» — em sửa lần sau. Luật được chấm đúng mới chạy.")
     tin = "\n".join(dong)
     ht.bao_nhom(tin)
+    from services import loi_khuyen_nha
+    xep_hoi(loi_khuyen_nha.muc_xac_nhan(tb))       # sau các luật: hỏi thời gian ở lại, thời gian vắng — từng cái
     return tin
+
+
+# ── Hỏi chủ nhà TỪNG luật ──────────────────────────────────────────────────
+#: Câu hỏi chờ quá ngần này thì thôi chờ (tin trôi): lượt hỏi kế gửi lại đúng câu đó.
+CHO_HOI_GIAY = 24 * 3600
+
+
+def _hoi_path() -> Path:
+    return _PATH.with_name("luat_duyet_hoi.json")
+
+
+def _hoi_nap() -> dict[str, Any]:
+    try:
+        return json.loads(_hoi_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _hoi_luu(d: dict[str, Any]) -> None:
+    p = _hoi_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(p)
+
+
+def _chua_hoi() -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    """(thiết bị, lần, luật) của lần giải MỚI NHẤT mỗi thiết bị mà chủ nhà chưa trả lời."""
+    ra = []
+    for tb, x in _nap().items():
+        if not x.get("lan"):
+            continue
+        lan = x["lan"][-1]
+        da = {c["so"] for c in x.get("cham") or [] if c["lan"] == lan["id"] and c["cham_boi"] == "chu_may"}
+        ra += [(tb, lan, l) for l in lan["luat"] if l["so"] not in da]
+    return ra
+
+
+def xep_hoi(muc: list[dict[str, Any]]) -> None:
+    """Thêm câu hỏi THỜI GIAN (xác nhận / lời khuyên — `loi_khuyen_nha`) vào hàng; câu trùng (cùng kiểu, thiết bị,
+    loại) thay câu cũ. Gửi câu kế nếu chưa có câu nào chờ."""
+    with _khoa:
+        h = _hoi_nap()
+        hang = [x for x in h.get("hang") or []
+                if not any((x["kieu"], x["tb"], x["loai"]) == (m["kieu"], m["tb"], m["loai"]) for m in muc)]
+        h["hang"] = hang + list(muc)
+        _hoi_luu(h)
+    hoi_tiep()
+
+
+def _cau(tb: str, lan: dict[str, Any], l: dict[str, Any], con: int) -> str:
+    from services import ha_client, kich_hoat_nha as kh
+
+    ten = kh._ten_ha()
+    th = lan.get("truong_hop") or []
+    dv = {str(s["entity_id"]): str((s.get("attributes") or {}).get("unit_of_measurement") or "")
+          for s in ha_client.get_states() or []}
+    l2 = {**l, "neu": [{**n, "_dv": dv.get(n["ma"], "")} for n in l["neu"]]}
+    return (f"⚙️ {ten.get(tb, tb)} — trường hợp {l['so']} (lần {lan['id']}, còn {con} câu chờ anh):\n"
+            f"«{th[l['so'] - 1] if l['so'] <= len(th) else ''}»\n"
+            f"→ Em hiểu: {doc_luat(l2, ten)}.\n"
+            "Đúng thì anh nhắn «đúng»; sai chỗ nào anh nhắn «sửa …» (vd «sửa khoảng cách dưới 3 m», «sửa vắng 30 "
+            "giây», «sửa thêm cam bếp xác nhận»).")
+
+
+def _cau_thoi_gian(m: dict[str, Any], con: int) -> str:
+    from services import kich_hoat_nha as kh, loi_khuyen_nha as lk
+
+    ten = kh._ten_ha().get(m["tb"], m["tb"])
+    loai = lk._TEN[m["loai"]]
+    y = ("chờ người ở lại bao lâu mới bật" if m["loai"] == "o_lai" else "phòng vắng bao lâu thì tắt")
+    if m["kieu"] == "cai_dat":
+        return (f"⏱️ {ten} — {loai} ({y}), còn {con} câu chờ anh:\nEm đang dùng: {lk.doc_giay(m['cu'])}.\n"
+                "Đúng thì anh nhắn «đúng»; khác thì nhắn «sửa …» (vd «sửa 30 giây», «sửa 2 phút»).")
+    return (f"💡 {ten} — lời khuyên {loai} ({y}), còn {con} câu chờ anh:\n{m['vi']}.\n"
+            f"Em khuyên đổi {lk.doc_giay(m['cu'])} → {lk.doc_giay(m['moi'])}.\n"
+            "Anh nhắn «đồng ý» để em đổi, «không» để giữ nguyên, hoặc «sửa …» số khác.")
+
+
+def hoi_tiep(*, ep: bool = False) -> str | None:
+    """Gửi câu hỏi kế — MỘT luật hoặc MỘT thời gian (luật trước). Đang có câu chờ chưa quá hạn thì thôi (``ep`` = gửi
+    ngay câu kế)."""
+    from services import hieu_thiet_bi_nha as ht
+
+    with _khoa:
+        h = _hoi_nap()
+        c = h.get("cho")
+        if c and not ep and time.time() - float(c.get("luc") or 0) < CHO_HOI_GIAY:
+            return None
+        ds = _chua_hoi()
+        hang = h.get("hang") or []
+        con = len(ds) + len(hang)
+        if ds:
+            tb, lan, l = ds[0]
+            h["cho"] = {"kieu": "luat", "tb": tb, "lan": lan["id"], "so": l["so"], "luc": time.time()}
+            tin = _cau(tb, lan, l, con)
+        elif hang:
+            m = hang[0]
+            h["cho"] = {**m, "luc": time.time()}
+            tin = _cau_thoi_gian(m, con)
+        else:
+            h.pop("cho", None)
+            _hoi_luu(h)
+            return None
+        _hoi_luu(h)
+    ht.bao_nhom(tin)
+    return tin
+
+
+_DUNG = {"đúng", "dung", "đúng rồi", "dung roi", "đúng ạ", "chuẩn", "ok", "duyệt", "đồng ý", "dong y", "có", "co"}
+_KHONG = {"không", "khong", "ko", "giữ", "giữ nguyên", "giu nguyen", "không đổi"}
+
+
+def _tra_loi_thoi_gian(c: dict[str, Any], dung: bool, khong: bool, sua: str | None) -> str:
+    from services import kich_hoat_nha as kh, loi_khuyen_nha as lk
+
+    ten = kh._ten_ha().get(c["tb"], c["tb"])
+    loai = lk._TEN[c["loai"]]
+    if sua is not None:
+        g = lk.doc_so(sua)
+        if g is None:
+            raise ValueError(f"Em chưa đọc được số trong «{sua}» — anh nhắn kiểu «sửa 30 giây» / «sửa 2 phút» ạ.")
+        lk.dat(c["tb"], c["loai"], g)
+        return f"Dạ, {ten}: em đặt {loai} = {lk.doc_giay(g)}."
+    if c["kieu"] == "khuyen" and dung:
+        lk.dat(c["tb"], c["loai"], float(c["moi"]))
+        return f"Dạ, {ten}: em đổi {loai} {lk.doc_giay(c['cu'])} → {lk.doc_giay(c['moi'])}."
+    if c["kieu"] == "khuyen" or khong:
+        return f"Dạ, {ten}: em giữ nguyên {loai} {lk.doc_giay(c['cu'])}."
+    return f"Dạ, {ten}: {loai} {lk.doc_giay(c['cu'])} anh xác nhận."
+
+
+def tra_loi(text: str, *, sau: float = 0.0) -> str | None:
+    """Lời chủ nhà cho câu đang chờ.
+
+    * Câu LUẬT: «đúng» → chấm đúng (luật chạy); «sửa …» → chấm sai kèm lời sửa (vào đề lần sau, mục D). Hỏi hết các
+      luật của thiết bị mà có luật bị sửa thì bot chuyển lại thiết bị đó.
+    * Câu THỜI GIAN: «đúng» giữ; «sửa 30 giây» đặt số mới. Câu LỜI KHUYÊN: «đồng ý» đổi theo lời khuyên, «không» giữ.
+
+    ``sau``: mốc câu hỏi KHÁC đang chờ (vd bot vừa tự bật đèn hỏi đúng/sai) — câu này cũ hơn mốc đó thì «đúng» /
+    «không» trơn không thuộc về nó. None = không phải lời cho câu đang chờ."""
+    import unicodedata
+    t = unicodedata.normalize("NFC", str(text or "")).strip()
+    thap = t.lower()
+    m = re.match(r"^(sửa|sua)\b\s*[:：]?\s*(.+)$", thap, re.S)
+    tron = " ".join(re.sub(r"[^\w\s]", " ", thap).split())
+    dung, khong = tron in _DUNG, tron in _KHONG
+    if not (m or dung or khong):
+        return None
+    sua = t[m.start(2):].strip() if m else None
+    with _khoa:
+        c = _hoi_nap().get("cho")
+        if not c or time.time() - float(c.get("luc") or 0) >= 3 * CHO_HOI_GIAY:
+            return None
+        if not m and float(c["luc"]) < sau:
+            return None
+        kieu = c.get("kieu") or "luat"
+        if kieu != "luat":
+            try:
+                dap = _tra_loi_thoi_gian(c, dung, khong, sua)
+            except ValueError as exc:
+                return str(exc)
+            h = _hoi_nap()
+            h.pop("cho", None)
+            h["hang"] = [x for x in h.get("hang") or []
+                         if (x["kieu"], x["tb"], x["loai"]) != (c["kieu"], c["tb"], c["loai"])]
+            _hoi_luu(h)
+            threading.Thread(target=hoi_tiep, kwargs={"ep": True}, name="luat-duyet-hoi", daemon=True).start()
+            return dap
+        if khong and not m:
+            return "Luật này sai chỗ nào anh nhắn «sửa …» giúp em (vd «sửa khoảng cách dưới 3 m») ạ."
+        tb, lan_id, so_th = c["tb"], int(c["lan"]), int(c["so"])
+        if m:
+            ok = cham(tb, so_th, False, cham_boi="chu_may", ghi_chu=f"chủ nhà sửa: {sua}", lan_id=lan_id)
+        else:
+            ok = cham(tb, so_th, True, cham_boi="chu_may", ghi_chu="chủ nhà duyệt", lan_id=lan_id)
+        h = _hoi_nap()
+        h.pop("cho", None)
+        if m and ok:
+            h.setdefault("sua", {})[tb] = lan_id
+        con_tb = any(t_ == tb for t_, _, _ in _chua_hoi())
+        lai = None if con_tb else h.get("sua", {}).pop(tb, None)
+        _hoi_luu(h)
+    if not ok:
+        return "Luật đó em không còn giữ (đã chuyển lần mới) ạ."
+    dap = (f"Dạ, em ghi trường hợp {so_th} cần sửa: «{sua}». Hỏi xong các luật còn lại em chuyển lại theo lời anh."
+           if m else f"Dạ, luật trường hợp {so_th} anh duyệt — từ giờ em chạy theo luật này.")
+    if lai is not None:
+        threading.Thread(target=giai_va_bao, args=(tb,), name="luat-duyet-sua", daemon=True).start()
+        dap += " Em đang chuyển lại các luật anh sửa, xong em hỏi lại anh."
+    else:
+        threading.Thread(target=hoi_tiep, kwargs={"ep": True}, name="luat-duyet-hoi", daemon=True).start()
+    return dap
 
 
 def giai_va_bao(tb: str) -> dict[str, Any]:

@@ -3174,7 +3174,11 @@ def _nhom_hoc_hoi(ev: dict, thread_id: str, text: str) -> str | None:
     nguoi = str(ev.get("display_name") or ev.get("sender_id") or "")
     from services import kich_hoat_nha
     cham = _bo_tag(ev, text)
-    dap = kich_hoat_nha.tra_loi(cham)
+    # Câu hỏi duyệt TỪNG luật / thời gian ở lại, vắng / lời khuyên (`luat_duyet.hoi_tiep`): «đúng», «sửa …».
+    from services import luat_duyet
+    dap = luat_duyet.tra_loi(cham, sau=kich_hoat_nha.cho_tra_loi_luc())
+    if dap is None:
+        dap = kich_hoat_nha.tra_loi(cham)
     if dap is None:
         dap = hieu_thiet_bi_nha.tra_loi(cham, nguoi=nguoi)
     if dap is None:

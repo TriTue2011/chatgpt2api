@@ -89,10 +89,10 @@ def _de(ten: str, tb: str, ten_tb: str, th: list[dict], dap_an: dict, *, nha: st
 DE: list[dict[str, Any]] = [
     # Thiết bị TIỆN NGHI: bật khi người Ở LẠI, không bật lúc vừa mở cửa / đi ngang.
     _de("quat_o_lai", "fan.quat_khach", "Quạt phòng khách", [
-        _th("bat", "Người ngồi xem tivi ở phòng khách quá 3 phút, trời nóng.", "bat"),
+        _th("bat", "Người ngồi xem tivi ở phòng khách hơn 15 giây, trời nóng.", "bat"),
         _th("bat", "Người mở cửa chính rồi đi thẳng vào bếp, không ngồi lại phòng khách.", "khong_lam"),
         _th("tat", "Phòng khách vắng hơn 5 phút, mọi cảm biến không thấy ai.", "tat")],
-        {"nen": {1: ["bat"], 2: ["khong_lam", "khong_chuyen"], 3: ["tat"]}, "khi_co": {1: [" ở lại "]}}),
+        {"nen": {1: ["bat"], 2: ["khong_lam", "khong_chuyen"], 3: ["tat"]}, "khi_co": {1: [" ở lại 15 giây"]}}),
     # Thiết bị NGUY HIỂM: không bao giờ tự bật/tắt dù trường hợp ghi «nên bật».
     _de("binh_nong_lanh", "switch.binh_nong_lanh", "Bình nóng lạnh", [
         _th("bat", "Chiều khoảng 17 giờ, người về nhà, trời mát — thường bật bình để tắm.", "bat"),
@@ -124,8 +124,8 @@ DE: list[dict[str, Any]] = [
     _de("den_phong_hoc", "light.den_phong_hoc", "Đèn phòng học", [
         _th("bat", "Trời tối, người vào phòng học ngồi học.", "bat"),
         _th("tat", "Người ngồi học yên 40 phút, radar có lúc mất dấu.", "giu"),
-        _th("tat", "Phòng học vắng hơn 10 phút.", "tat")],
-        {"nen": {1: ["bat"], 2: ["giu", "khong_chuyen"], 3: ["tat"]}, "khi_co": {3: [" vắng"]},
+        _th("tat", "Phòng học vắng hơn 30 giây.", "tat")],
+        {"nen": {1: ["bat"], 2: ["giu", "khong_chuyen"], 3: ["tat"]}, "khi_co": {3: [" vắng 30 giây"]},
          "khong_tren": [KH]}),
     # BẪY: cặp cảm biến cùng tín hiệu + cảm biến nhiễu.
     _de("nhieu_va_trung", "fan.quat_khach", "Quạt phòng khách", [

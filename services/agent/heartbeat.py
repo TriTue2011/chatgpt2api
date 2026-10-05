@@ -187,6 +187,26 @@ def _parse_tasks() -> list[dict[str, Any]]:
         "text": "Gỡ quyền dùng bot đã hết hạn (anh duyệt theo gói + thời hạn trong kênh) rồi báo anh",
         "system": True,
     })
+    # Ba việc dưới đây từng chỉ có hàm xử lý trong `_HANDLERS` mà KHÔNG có ở danh sách này → không bao giờ chạy (phát
+    # hiện 05/10/2026: tự đánh giá luật duyệt và tự bật bình nóng lạnh theo nếp chưa chạy lần nào). Có test canh.
+    tasks.append({
+        "id": "luat_duyet",
+        "intent": "read",
+        "text": "Tự đánh giá luật đã duyệt mỗi ngày: luật chết / bật rồi tắt ngay → chấm sai, giải lại, hỏi anh",
+        "system": True,
+    })
+    tasks.append({
+        "id": "tu_bat_theo_nep",
+        "intent": "write",
+        "text": "Thiết bị anh bật «tự bật theo nếp» (bình nóng lạnh): tới giờ nếp thì bật, đủ thời lượng thì tắt",
+        "system": True,
+    })
+    tasks.append({
+        "id": "loi_khuyen_nha",
+        "intent": "read",
+        "text": "Chu kỳ học (5, 5, 7×4 ngày rồi mỗi tháng): lời khuyên thời gian ở lại / vắng từ nhật ký, hỏi anh",
+        "system": True,
+    })
     tasks.append({
         "id": "loa_cho",
         "intent": "read",
@@ -682,6 +702,22 @@ def _eval_luat_duyet() -> tuple[str, str]:
         return "skip", f"error: {exc}"
 
 
+def _eval_loi_khuyen_nha() -> tuple[str, str]:
+    """CHU KỲ HỌC giãn dần (2 lần × 5 ngày, 4 lần × 7 ngày, rồi mỗi tháng): rút lời khuyên thời gian ở lại / vắng từ
+    nhật ký kích hoạt, xếp vào hàng hỏi chủ nhà (`services.loi_khuyen_nha`). Chưa tới kỳ thì chỉ đọc một file.
+    Mỗi tick cũng nhắc lại câu hỏi đang chờ quá hạn (tin có thể trôi)."""
+    try:
+        from services import loi_khuyen_nha as lk, luat_duyet
+        luat_duyet.hoi_tiep()
+        ra = lk.chay()
+        if not ra:
+            ck = lk.chu_ky()
+            return "skip", f"chu kỳ {ck['lan']} — kỳ tới {time.strftime('%d/%m', time.localtime(ck['toi']))}"
+        return "act", f"{len(ra)} lời khuyên thời gian ở lại / vắng → hỏi chủ nhà"
+    except Exception as exc:
+        return "skip", f"error: {exc}"
+
+
 def _eval_tu_bat_theo_nep() -> tuple[str, str]:
     """Thiết bị chủ nhà bật «tự bật theo nếp» (services.tu_bat_theo_nep): tới giờ nếp thì bật, hết thời lượng thì tắt.
     Mỗi tick — rẻ (một thiết bị đọc lịch sử 60 ngày) và giờ tắt phải được xét lại sau mỗi lần khởi động lại."""
@@ -763,6 +799,7 @@ _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
     "loa_cho": _eval_loa_cho,
     "luat_duyet": _eval_luat_duyet,
     "tu_bat_theo_nep": _eval_tu_bat_theo_nep,
+    "loi_khuyen_nha": _eval_loi_khuyen_nha,
     "cap_quyen": _eval_cap_quyen,
 }
 

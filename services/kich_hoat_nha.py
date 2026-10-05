@@ -254,7 +254,8 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
                  hoi_de_hoc: bool | None = None,
                  o_lai_giay: float | None = None,
                  roi_giay: float | None = None,
-                 ghim: dict[str, dict[str, float]] | None = None) -> dict[str, Any]:
+                 ghim: dict[str, dict[str, float]] | None = None,
+                 nhiet_ngoai: str | None = None) -> dict[str, Any]:
     """Chủ máy sửa sơ đồ: bật/tắt, cho TỰ LÀM ngay, BỎ nguồn, đặt khung giờ NGOẠI LỆ
     (``{"hanh_dong": "on"|"off", "tu": "HH:MM", "den": "HH:MM", "thu"?: [0..6]}`` hoặc
     ĐI THEO LỊCH SINH HOẠT ``{"hanh_dong", "lich": "<mã mục lịch>"}`` — trong khung đó
@@ -289,6 +290,8 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
         raise ValueError("Mốc «ở lại»: 5–3600 giây (0 = để bot tự học).")
     if roi_giay is not None and roi_giay != 0 and not 5 <= float(roi_giay) <= 14400:
         raise ValueError("Thời gian «rời đi»: 5–14400 giây (0 = để bot tự học).")
+    if nhiet_ngoai and not str(nhiet_ngoai).startswith("sensor."):
+        raise ValueError("nhiet_ngoai phải là mã sensor.*")
     _gop_guong()
     tb = _chinh(tb)          # tích công tắc gốc hay đèn bọc thì cũng là một thiết bị
     with _khoa:
@@ -329,6 +332,13 @@ def dat_thiet_bi(tb: str, *, bat: bool | None = None, bo_nguon: list[str] | None
         if hoi_de_hoc is not None:
             cu["hoi_de_hoc"] = bool(hoi_de_hoc)
             d["mo_hinh"].pop(tb, None)          # thêm/bỏ nguồn «ở lại» là phải học lại
+        if nhiet_ngoai is not None:
+            # Cảm biến nhiệt NGOÀI TRỜI cho thiết bị tiện nghi (vd ban công); "" = bỏ, dùng nhiệt độ thời tiết.
+            if nhiet_ngoai:
+                cu["nhiet_ngoai"] = str(nhiet_ngoai)
+            else:
+                cu.pop("nhiet_ngoai", None)
+            _tn_dem.pop(tb, None)
         if bat is not None:
             cu["bat"] = bool(bat)
             if bat and "tat_khi_vang" not in cu and tat_khi_vang is None:
@@ -1674,8 +1684,142 @@ def _la_lua_chon(g: str) -> bool:
     return False
 
 
+# ── Thiết bị TIỆN NGHI (quạt, điều hoà): cổng nhiệt độ cảm nhận + mức theo trời ngoài ─────────────────────
+# Chủ máy 05/10/2026: "quạt bật khi người có mặt hơn 15s … theo nhiệt độ cảm nhận"; "nên sử dụng thêm cảm biến ban
+# công, nhiệt độ thời tiết, mùa nào để xem có bật không … quạt thì vẫn bật nhưng ở mức low". Đo 30 ngày: người bật
+# quạt 132 lần, 95% ở cảm nhận ≥ 36,9°C — kể cả khi ban công chỉ 24,3°C. Lịch sử chỉnh MỨC thì không học được (17 lần
+# trong 3 ngày, bấm vòng qua cả 3 mức một phút) → mức theo quy tắc chủ máy nêu: trời ngoài mát / mưa → mức thấp.
+_MIEN_TIEN_NGHI = ("fan.", "climate.")
+_TIEN_NGHI_NGAY = 60
+_TIEN_NGHI_MAU = 20
+_TIEN_NGHI_DEM_GIAY = 6 * 3600
+_tn_dem: dict[str, tuple[float, dict[str, Any]]] = {}
+_TROI_MUA = {"rainy", "pouring", "lightning-rainy", "snowy-rainy", "hail"}     # trạng thái chuẩn của weather.* HA
+
+
+def _cam_bien_cam_nhan(tb: str) -> tuple[str, str] | None:
+    """(cảm biến nhiệt, cảm biến ẩm) cùng khu với thiết bị — để tính nhiệt độ cảm nhận."""
+    from services import boi_canh_nha
+    khu = boi_canh_nha.phong_cua(tb)
+    if not khu:
+        return None
+    ma = [str(s["entity_id"]) for s in _trang_thai_ha()]
+    return next(((t, h) for k, t, h in cap_cam_nhan(ma) if k == CAM_NHAN + khu), None)
+
+
+def _nhiet_ngoai(tb: str) -> float | None:
+    """Nhiệt độ ngoài trời lúc này: cảm biến chủ nhà chọn (`nhiet_ngoai`, vd ban công), không có thì weather.*."""
+    ma = (_nap()["thiet_bi"].get(tb) or {}).get("nhiet_ngoai")
+    tt = {str(s["entity_id"]): s for s in _trang_thai_ha()}
+    if ma:
+        try:
+            return float((tt.get(ma) or {}).get("state"))
+        except (TypeError, ValueError):
+            pass
+    for m, s in sorted(tt.items()):
+        if m.startswith("weather."):
+            try:
+                return float((s.get("attributes") or {}).get("temperature"))
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _troi_dang_mua() -> bool:
+    return any(str(s.get("state") or "") in _TROI_MUA for s in _trang_thai_ha() if str(s["entity_id"]).startswith("weather."))
+
+
+def _hoc_tien_nghi(tb: str, now: float | None = None) -> dict[str, Any]:
+    """Từ các lần NGƯỜI bật (do_ai=0, `_TIEN_NGHI_NGAY` ngày): ``nguong`` = p5 nhiệt độ cảm nhận lúc bật (dưới mức đó
+    người gần như không bật), ``ngoai_p25`` = p25 nhiệt ngoài trời lúc bật (dưới đó là trời «mát» với nhà này). Đệm."""
+    now = float(now or time.time())
+    c = _tn_dem.get(tb)
+    if c and now - c[0] < _TIEN_NGHI_DEM_GIAY:
+        return c[1]
+    from services import lich_su_nha
+    ra: dict[str, Any] = {}
+    cb = _cam_bien_cam_nhan(tb)
+    ngoai_ma = (_nap()["thiet_bi"].get(tb) or {}).get("nhiet_ngoai")
+    try:
+        ro = sqlite3.connect(f"file:{lich_su_nha._DB_PATH}?mode=ro", uri=True, timeout=10.0)
+    except sqlite3.Error:
+        return ra
+    try:
+        tu = now - _TIEN_NGHI_NGAY * 86400
+        bat = [float(t) for t, in ro.execute(
+            "SELECT ts FROM su_kien WHERE thiet_bi=? AND truong='state' AND gia_tri='on' AND do_ai=0 AND ts>?",
+            (tb, tu))]
+
+        def _so(ma: str) -> tuple[list[float], list[float]]:
+            rows = [(float(o) * 300, float(v)) for o, v in ro.execute(
+                "SELECT o_5p, tb FROM so_do WHERE thiet_bi=? AND o_5p>? ORDER BY o_5p", (ma, int(tu // 300)))]
+            return [r[0] for r in rows], [r[1] for r in rows]
+
+        def _luc(chuoi: tuple[list[float], list[float]], t: float) -> float | None:
+            i = bisect.bisect_right(chuoi[0], t) - 1
+            return chuoi[1][i] if i >= 0 and t - chuoi[0][i] < 1800 else None
+
+        if cb:
+            ct, ch = _so(cb[0]), _so(cb[1])
+            cn = sorted(nhiet_do_cam_nhan(a, b) for t in bat
+                        if (a := _luc(ct, t)) is not None and (b := _luc(ch, t)) is not None)
+            if len(cn) >= _TIEN_NGHI_MAU:
+                ra.update(nguong=round(cn[int(len(cn) * 0.05)], 1), so_mau=len(cn))
+        if ngoai_ma:
+            cg = _so(ngoai_ma)
+            ng = sorted(v for t in bat if (v := _luc(cg, t)) is not None)
+            if len(ng) >= _TIEN_NGHI_MAU:
+                ra["ngoai_p25"] = round(ng[int(len(ng) * 0.25)], 1)
+    except sqlite3.Error:
+        pass
+    finally:
+        ro.close()
+    _tn_dem[tb] = (now, ra)
+    return ra
+
+
+def cong_tien_nghi(tb: str, luc: float | None = None) -> str | None:
+    """Lý do KHÔNG tự bật thiết bị tiện nghi lúc này (trời mát hơn mức người hay bật), None = cho bật."""
+    if not tb.startswith(_MIEN_TIEN_NGHI):
+        return None
+    h = _hoc_tien_nghi(tb, luc)
+    cb = _cam_bien_cam_nhan(tb)
+    if not h.get("nguong") or not cb:
+        return None                                  # chưa học được thì không chặn — người chấm đúng/sai sẽ dạy
+    tt = {str(s["entity_id"]): s.get("state") for s in _trang_thai_ha()}
+    try:
+        cn = nhiet_do_cam_nhan(float(tt.get(cb[0])), float(tt.get(cb[1])))
+    except (TypeError, ValueError):
+        return None
+    if cn < h["nguong"]:
+        return f"trời mát: cảm nhận {cn:.1f}°C dưới mức anh hay bật ({h['nguong']:g}°C, {h['so_mau']} lần)"
+    return None
+
+
+def _muc_tien_nghi(tb: str) -> tuple[str, Any] | None:
+    """Mức khi bật theo TRỜI NGOÀI (quy tắc chủ máy): mát hơn lúc anh hay bật, hoặc đang mưa → mức thấp nhất. Không
+    mát thì để thiết bị giữ mức anh dùng gần nhất (None)."""
+    if not tb.startswith("fan."):
+        return None
+    s = next((x for x in _trang_thai_ha() if str(x["entity_id"]) == tb), None)
+    modes = list(((s or {}).get("attributes") or {}).get("preset_modes") or [])
+    if not modes:
+        return None
+    thap = "low" if "low" in modes else modes[0]
+    p25 = _hoc_tien_nghi(tb).get("ngoai_p25")
+    ngoai = _nhiet_ngoai(tb)
+    if _troi_dang_mua() or (p25 is not None and ngoai is not None and ngoai < p25):
+        return ("preset_mode", thap)
+    return None
+
+
 def _chon_muc(tb: str) -> tuple[str, Any] | None:
-    """Mức ứng với nhiệt độ lúc này: giá trị có nhiệt trung vị GẦN nhất."""
+    """Mức khi bật. Quy tắc CHỦ MÁY trước (trời ngoài mát / mưa → mức thấp — `_muc_tien_nghi`), rồi mới tới mức máy
+    học (giá trị có nhiệt trung vị gần nhất). Đo 05/10/2026: bảng mức máy học của quạt dựng từ những lần bấm xoay vòng
+    cả 3 mức trong một phút → ra «high» lúc trời mưa 24°C, trái ý chủ máy."""
+    chu = _muc_tien_nghi(tb)
+    if chu:
+        return chu
     m = ((_nap()["mo_hinh"].get(tb) or {}).get("muc")) or {}
     if not m.get("moc"):
         return None
@@ -1993,6 +2137,10 @@ def _xu_ly(tb: str, hd: str, nguon: str, luc: float) -> None:
             if chan:
                 _nk(tb, hd, "khong", nguon, f"luật bot học khớp nhưng bị trường hợp duyệt #{chan['so']} chặn",
                     _dk(q), luc)
+                return
+            mat = cong_tien_nghi(tb, luc) if hd == "on" else None
+            if mat:
+                _nk(tb, hd, "khong", nguon, mat, _dk(q), luc)
                 return
             if q["lam"] == "hoi" and xm_bat is not None:
                 hoi, co, mo_ta = xm_bat
@@ -2368,6 +2516,10 @@ def _xu_ly_duyet(tb: str, khop: list[dict[str, Any]], nguon: str, luc: float, *,
                         + (" — không làm, không hỏi" if tu_kiem else ""), luc=luc)
                     return
                 doc = doc + [f"xác minh: {mo_ta}"] if mo_ta else doc
+            mat = cong_tien_nghi(tb, luc) if hd == "on" else None
+            if mat:
+                _nk(tb, hd, "khong", nguon, f"trường hợp duyệt #{l['so']}: {mat}", luc=luc)
+                return
             ten = _ten_tb(tb)
             nhan = {"nguon": f"trường hợp duyệt #{l['so']}", "luat_duyet": {"lan": l["lan"], "so": l["so"], "doc": doc}}
             # Kiểm ra ĐÚNG chiều việc (bật: thấy người; tắt: nhìn được mà không ai) thì làm rồi hỏi đúng/sai; ngoại vi
@@ -2419,16 +2571,17 @@ def _duyet_sai(tb: str, boi_canh: Any, loi: str) -> None:
         logger.warning({"event": "kich_hoat_duyet_sai_loi", "thiet_bi": tb, "error": str(exc)[:160]})
 
 
-def _o_lai_duyet(tb: str, ma: str, khi: str, luc0: float) -> None:
-    """«<ma> ở lại N giây»: sau N giây ``ma`` vẫn báo có người, LIỀN từ lúc vào → xét các luật có sự kiện đó."""
+def _o_lai_duyet(tb: str, ma: str, khi: str, luc0: float, la: str = "on") -> None:
+    """«<ma> ở lại N giây» / «<ma> vắng N giây»: sau N giây ``ma`` vẫn ở trạng thái ``la`` (on = có người, off =
+    vắng), LIỀN từ lúc đổi → xét các luật có sự kiện đó."""
     from datetime import datetime
     from services import ha_client
     try:
         st = ha_client.get_state(ma) or {}
-        if str(st.get("state") or "").lower() != "on":
+        if str(st.get("state") or "").lower() != la:
             return
         if datetime.fromisoformat(str(st.get("last_changed"))).timestamp() > luc0 + 2:
-            return                          # đã tắt rồi bật lại trong lúc chờ — không liền
+            return                          # đã đổi rồi đổi lại trong lúc chờ — không liền
         khop = [l for l in _luat_duyet(tb) if khi in l["khi"] and l["nen"] in ("bat", "tat", "hoi")]
         if khop:
             _xu_ly_duyet(tb, khop, khi, time.time())
@@ -2466,6 +2619,16 @@ def _phat_duyet(nguon: str, luc: float, cua: bool) -> set[str]:
             threading.Thread(target=_xu_ly_duyet, args=(tb, khop, nguon, luc), name="kich-hoat-duyet",
                              daemon=True).start()
     return co
+
+
+def _hen_vang_duyet(ma: str, luc: float) -> None:
+    """``ma`` vừa báo vắng: hẹn các sự kiện «<ma> vắng N giây» của luật đã duyệt (chủ máy 05/10/2026: đèn phòng học
+    tắt sau 30 giây vắng — sự kiện «vắng» cố định 3 phút không nói được)."""
+    for tb in ds_thiet_bi():
+        for k in {k for l in _luat_duyet(tb) for k in l["khi"] if k.startswith(f"{ma} vắng ")}:
+            t = threading.Timer(int(k.rsplit(" ", 2)[1]), _o_lai_duyet, args=(tb, ma, k, luc, "off"))
+            t.daemon = True
+            t.start()
 
 
 def _phat(nguon: str, luc: float) -> None:
@@ -3258,6 +3421,8 @@ def su_kien(ma: str, gia_tri: Any, *, do_ai: bool = False) -> None:
             threading.Thread(target=_nguoi_lam, args=(ma, gt, luc), daemon=True).start()
         for nguon in _nguon_cua(ma, gt, luc):
             _phat(nguon, luc)
+        if gt == "off" and ma.startswith("binary_sensor."):
+            _hen_vang_duyet(ma, luc)
     except Exception as exc:  # noqa: BLE001
         logger.warning({"event": "kich_hoat_su_kien_loi", "error": str(exc)[:160]})
 
@@ -3280,6 +3445,18 @@ _CO = {"có", "co", "ok", "oke", "okay", "ừ", "ừm", "uh", "um", "đồng ý"
        "được", "duoc", "có em", "co em", "có đi", "co di", "làm đi", "lam di", "đúng", "đúng rồi"}
 _KHONG = {"không", "khong", "ko", "k", "kg", "thôi", "thoi", "không cần", "khong can", "no",
           "dừng", "dừng lại", "không phải", "khong phai", "sai"}
+
+
+def cho_tra_loi_luc() -> float:
+    """Mốc câu hỏi bật/tắt (hoặc lần tự làm chờ «đúng»/«sai») mới nhất còn chờ; 0 = không có. Câu hỏi khác (luật,
+    thời gian — `luat_duyet.tra_loi`) chỉ nhận «đúng» / «không» trơn khi nó MỚI hơn mốc này."""
+    from services import du_doan_nha as dd
+    with dd._khoa:
+        r = dd._db().execute(
+            "SELECT MAX(ts) FROM du_doan WHERE ket_qua='cho' AND ten LIKE '%#%'"
+            " AND ((cach='hoi' AND ts>?) OR (cach='tu_lam' AND ts>?))",
+            (time.time() - HAN_HOI, time.time() - CHAM_TU_LAM)).fetchone()
+    return float(r[0] or 0) if r else 0.0
 
 
 def tra_loi(text: str) -> str | None:

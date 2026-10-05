@@ -18,9 +18,12 @@ bằng cảm biến THẬT trong mục B. Em không điều khiển gì. Chỉ t
   - `"<mã binary_sensor> vắng"` — cảm biến đã báo không có người LIỀN 3 phút;
   - `"<mã binary_sensor> ở lại N giây"` — cảm biến báo có người liền N giây kể từ lúc
     có người vào (N từ 10 tới 3600): dùng cho người Ở LẠI, NGỒI YÊN, phân biệt với
-    người chỉ đi ngang.
+    người chỉ đi ngang;
+  - `"<mã binary_sensor> vắng N giây"` — cảm biến báo không có người liền N giây kể
+    từ lúc vừa tắt (N từ 10 tới 3600): dùng khi tình huống nêu thời gian vắng KHÁC 3
+    phút («vắng 30 giây», «vắng hơn 10 phút»).
   Chọn sự kiện xảy ra ĐÚNG LÚC tình huống bắt đầu (bước vào → có người vào; ở lại →
-  ở lại N giây; rời đi → vắng).
+  ở lại N giây; rời đi → vắng / vắng N giây).
 - `neu`: ĐIỀU KIỆN phải cùng đúng lúc đó (VÀ). Mỗi điều kiện một trong:
   - `{"ma": "<mã>", "la": "on"}` — cảm biến/thiết bị đang ở trạng thái đó; thêm
     `"lien_giay": N` khi phải ở trạng thái đó LIỀN ít nhất N giây (vd camera khu
@@ -69,9 +72,13 @@ bằng cảm biến THẬT trong mục B. Em không điều khiển gì. Chỉ t
    khung giờ khi tình huống nói về một khoảng (ban đêm, giờ ăn tối, sau 21:45) —
    ưu tiên mục lịch sinh hoạt (mục C) nếu có mục khớp.
 6. Thời lượng ("ở lại 30 giây", "ngồi quá 3 phút", "vắng liên tục 90 giây") là
-   chuyện CẢM BIẾN đo được: dùng sự kiện «ở lại N giây» hoặc `lien_giay` — đừng
-   xếp vào `khong_chuyen_duoc` chỉ vì có thời lượng.
-7. Mục D là lời chấm các lần trước — sửa đúng chỗ bị chỉ, giữ phần đã đúng.
+   chuyện CẢM BIẾN đo được: dùng sự kiện «ở lại N giây» / «vắng N giây» (đúng số
+   giây tình huống nêu) hoặc `lien_giay` — đừng xếp vào `khong_chuyen_duoc` chỉ vì
+   có thời lượng.
+7. Mục D là lời chấm các lần trước — sửa đúng chỗ bị chỉ, giữ phần đã đúng. Lời
+   «chủ nhà sửa: …» là ĐÁP ÁN: làm theo đúng con số / cảm biến / thời gian chủ nhà
+   nói (vd «khoảng cách dưới 3 m» → `duoi: 3`), kể cả khi khác số bot đã học; luật
+   chủ nhà đã chấm ĐÚNG thì giữ nguyên từng chữ.
 8. ĐỘ TIN cảm biến (mục B4, đo trên lịch sử thật): cảm biến «nhiễu» đổi liên tục,
    phần lớn chỉ ở vài giây — đừng để luật DỰA CHÍNH vào nó. Ưu tiên cảm biến
    «lành». Nếu buộc phải dùng cảm biến nhiễu để bắt đúng tình huống, đặt

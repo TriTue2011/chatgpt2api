@@ -809,7 +809,8 @@ def create_router() -> APIRouter:
                 hoi_de_hoc=bool(body["hoi_de_hoc"]) if "hoi_de_hoc" in body else None,
                 o_lai_giay=float(body["o_lai_giay"] or 0) if "o_lai_giay" in body else None,
                 roi_giay=float(body["roi_giay"] or 0) if "roi_giay" in body else None,
-                ghim=body["ghim"] if isinstance(body.get("ghim"), dict) else None)
+                ghim=body["ghim"] if isinstance(body.get("ghim"), dict) else None,
+                nhiet_ngoai=str(body.get("nhiet_ngoai") or "") if "nhiet_ngoai" in body else None)
             return {"ok": True, "cai_dat": cd}
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}

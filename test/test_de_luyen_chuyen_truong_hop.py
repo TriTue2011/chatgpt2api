@@ -33,7 +33,7 @@ def test_quat_bat_luc_mo_cua_bi_bat_loi():
     sai = _cham("quat_o_lai", [_l(1, "bat", [f"{bo.CUA} có người vào"]), _l(2, "khong_lam", [f"{bo.CUA} có người vào"]),
                                _l(3, "tat", [f"{bo.RK} vắng"])])
     assert any("ở lại" in e for e in sai)
-    dung = _cham("quat_o_lai", [_l(1, "bat", [f"{bo.RK} ở lại 180 giây"]), _l(2, "khong_lam", [f"{bo.CUA} có người vào"]),
+    dung = _cham("quat_o_lai", [_l(1, "bat", [f"{bo.RK} ở lại 15 giây"]), _l(2, "khong_lam", [f"{bo.CUA} có người vào"]),
                                 _l(3, "tat", [f"{bo.RK} vắng"])])
     assert dung == []
 

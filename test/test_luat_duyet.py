@@ -170,17 +170,24 @@ def so(tmp_path, monkeypatch):
     d = {"light.den": {"lan": [
         {"id": 1, "luc": 1, "luat": [_luat(chieu="bat"), _luat(so=2, nen="khong_lam", chieu="bat")], "truong_hop": ["a", "b"]},
         {"id": 2, "luc": 2, "luat": [_luat(chieu="bat")], "truong_hop": ["a"]}],
-        "cham": [{"lan": 1, "so": 1, "dung": True}, {"lan": 1, "so": 2, "dung": True}]}}
+        "cham": [{"lan": 1, "so": 1, "dung": True, "cham_boi": "chu_may"},
+                 {"lan": 1, "so": 2, "dung": True, "cham_boi": "chu_may"}]}}
     (tmp_path / "ld.json").write_text(json.dumps(d), encoding="utf-8")
     giai: list[str] = []
     monkeypatch.setattr(ld, "giai_va_bao", lambda tb: giai.append(tb) or {})
     return giai
 
 
-def test_ap_lan_moi_chua_cham_thi_lan_da_cham_van_chay(so):
-    assert [(l["lan"], l["so"]) for l in ld.ap("light.den")] == [(1, 1), (1, 2)]
-    ld.cham("light.den", 1, True, cham_boi="claude")             # chấm lần 2
+def test_ap_chi_chu_nha_quyet_theo_tung_truong_hop(so):
+    """Lần 2 chỉ còn trường hợp «a»: luật «b» thôi chạy. Lần 2 chưa ai trả lời → luật «a» anh duyệt ở lần 1 vẫn chạy.
+    Giáo viên chấm KHÔNG làm luật nào chạy hay thôi chạy (chủ máy 05/10/2026: "bạn chỉ chấm đúng sai")."""
+    assert [(l["lan"], l["so"]) for l in ld.ap("light.den")] == [(1, 1)]
+    ld.cham("light.den", 1, False, cham_boi="claude")            # giáo viên chấm sai lần 2 — chỉ là ghi chú
+    assert [(l["lan"], l["so"]) for l in ld.ap("light.den")] == [(1, 1)]
+    ld.cham("light.den", 1, True, cham_boi="chu_may")            # chủ nhà duyệt luật lần 2
     assert [(l["lan"], l["so"]) for l in ld.ap("light.den")] == [(2, 1)]
+    ld.cham("light.den", 1, False, cham_boi="chu_may")
+    assert ld.ap("light.den") == [], "chủ nhà nói sai → thôi chạy"
 
 
 def test_chay_sai_ghi_gia_tri_cham_sai_va_giai_lai(so):
@@ -188,7 +195,7 @@ def test_chay_sai_ghi_gia_tri_cham_sai_va_giai_lai(so):
     ld.chay_sai("light.den", 1, 1, ["binary_sensor.pk=on✓"], "chủ nhà trả lời sai")
     time.sleep(0.2)
     assert so == ["light.den"]
-    assert [l["so"] for l in ld.ap("light.den")] == [2], "luật chạy sai thôi chạy"
+    assert ld.ap("light.den") == [], "luật chạy sai (chủ nhà nói sai) thôi chạy"
     x = ld.so()["light.den"]
     assert x["chay_sai"][-1]["doc"] == ["binary_sensor.pk=on✓"]
 
