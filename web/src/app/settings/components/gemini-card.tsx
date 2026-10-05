@@ -8,10 +8,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { request } from "@/lib/request";
+import { boNhanSecret, demSecret } from "@/lib/secret-markers";
 
 export function GeminiCard() {
   const [geminiKey, setGeminiKey]           = useState("");
   const [geminiEnabled, setGeminiEnabled]   = useState(true);
+  // Số key ĐÃ LƯU khi máy chủ che bí mật (chỉ trả {is_set, count}) — ô để trống thì giữ nguyên chúng.
+  const [soDaLuu, setSoDaLuu]               = useState(0);
 
   const [loading, setLoading]               = useState(true);
   const [saving, setSaving]                 = useState(false);
@@ -22,10 +25,13 @@ export function GeminiCard() {
     try {
       // Lấy config
       const data = await request.get("/api/settings");
-      const cfg  = (data.data as any)?.config || {};
+      const goc  = (data.data as any)?.config || {};
+      // Bỏ nhãn che TRƯỚC khi đọc: `...p.api_keys` trên nhãn {is_set, count} là lỗi "not iterable", vỡ cả thẻ.
+      const cfg  = boNhanSecret(goc).config as any;
       const p    = (cfg.providers || {}).gemini_free || {};
       const keys = [p.api_key || "", ...(p.api_keys || [])].filter(Boolean);
       setGeminiKey([...new Set(keys)].join("\n"));
+      setSoDaLuu(keys.length ? 0 : demSecret(goc, "providers.gemini_free.api_keys"));
       setGeminiEnabled(p.enabled !== false);
 
     } catch (e) { console.error(e); }
@@ -50,7 +56,7 @@ export function GeminiCard() {
     finally { setSaving(false); }
   }
 
-  const keyCount = geminiKey.split("\n").map((k) => k.trim()).filter(Boolean).length;
+  const keyCount = geminiKey.split("\n").map((k) => k.trim()).filter(Boolean).length || soDaLuu;
 
   if (loading) return (
     <Card className="rounded-2xl card-3d card-tint-violet">
@@ -100,7 +106,7 @@ export function GeminiCard() {
           <Textarea
             value={geminiKey}
             onChange={(e) => setGeminiKey(e.target.value)}
-            placeholder={"AIzaSyKey1...\nAIzaSyKey2..."}
+            placeholder={soDaLuu ? `Đã lưu ${soDaLuu} key — để trống nếu không đổi, gõ key mới để thay cả danh sách` : "AIzaSyKey1...\nAIzaSyKey2..."}
             className="min-h-28 rounded-xl border-[var(--border)] bg-[var(--secondary)] text-[var(--foreground)] font-mono text-base sm:text-xs placeholder:text-[var(--muted-foreground)]"
           />
           <p className="text-xs text-[var(--muted-foreground)]">

@@ -26,6 +26,8 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { request } from "@/lib/request";
+import { khoaGoiCaptcha } from "@/lib/captcha-key";
+import { boNhanSecret } from "@/lib/secret-markers";
 import { SavedAccountsSelect } from "@/components/saved-accounts-select";
 import { generateTotpCode, totpSecondsRemaining } from "@/lib/totp";
 import {
@@ -141,6 +143,9 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
     gmailEmail: "",
     gmailAppPassword: "",
   });
+  // Mật khẩu IMAP dùng chung đã lưu trên máy chủ nhưng bị che (không gửi về trình duyệt): để trống ô thì proxy
+  // /api/captcha tự điền khi gọi v1/codex-onboard.
+  const [imapDaLuu, setImapDaLuu] = useState(false);
   const [csCfg, setCsCfg] = useState<{ url: string; apiKey: string }>({
     url: "/api/captcha",
     apiKey: "",
@@ -175,13 +180,13 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
     void (async () => {
       try {
         const data = await request.get("/api/settings");
-        const flow = ((data.data as any)?.config?.providers || {}).flow || {};
-          setCsCfg({
-            url: "/api/captcha",
-            apiKey: flow.captcha_solver_api_key || "",
-          });
-        
-        const config = (data.data as any)?.config || {};
+        const goc = (data.data as any)?.config || {};
+        const flow = (goc.providers || {}).flow || {};
+        setCsCfg({ url: "/api/captcha", apiKey: await khoaGoiCaptcha(flow.captcha_solver_api_key) });
+
+        // Bỏ nhãn che: String({is_set:true}) là "[object Object]" — từng đi thẳng vào gmail_app_password.
+        const { config, daDat } = boNhanSecret(goc) as { config: any; daDat: Record<string, boolean> };
+        setImapDaLuu(daDat["codex_imap_gmail_app_password"] === true);
         if (config.codex_auto_list) {
           setCodexDraft(prev => ({ ...prev, githubEmail: config.codex_auto_list }));
         }
@@ -1054,7 +1059,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
                   <GmailAppPasswordLabel className="text-[10px] text-[var(--muted-foreground)]" />
                   <Input 
                     type="password" 
-                    placeholder="abcd efgh ijkl mnop" 
+                    placeholder={imapDaLuu ? "đã lưu trên máy chủ — để trống nếu không đổi" : "abcd efgh ijkl mnop"} 
                     value={codexDraft.gmailAppPassword} 
                     onChange={e => {
                       setCodexDraft({...codexDraft, gmailAppPassword: e.target.value});
@@ -1098,7 +1103,8 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
                       if (!imapEmail) imapEmail = codexDraft.gmailEmail;
                       if (!imapPass) imapPass = codexDraft.gmailAppPassword;
 
-                      if (!imapEmail || !imapPass) {
+                      // Ô trống mà máy chủ đã lưu mật khẩu IMAP chung → proxy tự điền, không bắt gõ lại.
+                      if (!imapEmail || (!imapPass && !imapDaLuu)) {
                         toast.error(`Thiếu cấu hình IMAP cho dòng ${i + 1}: ${email}`);
                         failCount++;
                         continue;
@@ -1119,7 +1125,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
                             github_email: email.trim(),
                             github_password: pass.trim(),
                             gmail_email: imapEmail.trim(),
-                            gmail_app_password: imapPass.trim()
+                            gmail_app_password: (imapPass || "").trim()
                           }),
                         });
                         const rData = await res.json();

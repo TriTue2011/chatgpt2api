@@ -11,6 +11,7 @@ Frontend: fetch("/api/captcha/v1/...") with the dashboard auth key.
 
 from __future__ import annotations
 
+import json
 import os
 
 import httpx
@@ -64,6 +65,31 @@ def _authorized(authorization: str | None) -> bool:
     return _const_eq(token, _captcha_key())
 
 
+def _dien_imap_chung(path: str, method: str, body: bytes) -> bytes:
+    """``v1/codex-onboard`` để trống mật khẩu IMAP → điền IMAP DÙNG CHUNG đã lưu (``codex_imap_gmail_*``).
+
+    Khi ``/api/settings`` che bí mật, trình duyệt không còn thấy mật khẩu IMAP để tự gửi đi. Cùng luật với đường
+    khôi phục ở máy chủ (``services/account_recovery.py``): dòng không ghi IMAP riêng thì dùng IMAP chung. Chỉ điền
+    khi email IMAP trống hoặc ĐÚNG email chung — điền mật khẩu chung cho một hộp thư khác là đăng nhập hỏng.
+    """
+    if method != "POST" or path.strip("/") != "v1/codex-onboard" or not body:
+        return body
+    try:
+        d = json.loads(body)
+    except ValueError:
+        return body
+    if not isinstance(d, dict) or str(d.get("gmail_app_password") or "").strip():
+        return body
+    chung_mail = str(config.data.get("codex_imap_gmail_email") or "").strip()
+    chung_pass = str(config.data.get("codex_imap_gmail_app_password") or "").strip()
+    mail = str(d.get("gmail_email") or "").strip()
+    if not chung_pass or (mail and mail.lower() != chung_mail.lower()):
+        return body
+    d["gmail_email"] = mail or chung_mail
+    d["gmail_app_password"] = chung_pass
+    return json.dumps(d).encode()
+
+
 def create_router() -> APIRouter:
     router = APIRouter()
 
@@ -76,6 +102,7 @@ def create_router() -> APIRouter:
             body = await read_body_limited(request, _MAX_PROXY_BODY)
         except BodyTooLarge:
             raise HTTPException(status_code=413, detail={"error": "payload too large"})
+        body = _dien_imap_chung(path, request.method, body)
         fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in _DROP_REQ}
         key = _captcha_key()
         if key:

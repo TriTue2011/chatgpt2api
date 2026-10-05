@@ -12,6 +12,7 @@ import { ReuseProfilePicker } from "./reuse-profile-picker";
 import { generateTotpCode, totpSecondsRemaining } from "@/lib/totp";
 import { TotpSecretGuide, TotpSecretLabel } from "@/components/google-security-hints";
 import { moNoVNC } from "@/lib/duong-dan";
+import { khoaGoiCaptcha } from "@/lib/captcha-key";
 
 type FlowAccount = {
   profile: string;
@@ -78,6 +79,9 @@ function nextLabel(existing: string[]): string {
 }
 
 export function FlowCard() {
+  // Khoá GỌI /api/captcha — tách khỏi cfg.captcha_solver_api_key (thứ được LƯU) vì khi cài đặt bị che, khoá gọi
+  // là khoá dashboard và không được ghi đè lên khoá captcha.
+  const [khoaGoi, setKhoaGoi] = useState("");
   const [cfg, setCfg] = useState<FlowConfig>({
     enabled: true,
     captcha_solver_url: "/api/captcha",
@@ -159,10 +163,12 @@ export function FlowCard() {
     try {
       const data = await request.get("/api/settings");
       const flow = ((data.data as any)?.config?.providers || {}).flow || {};
+      setKhoaGoi(await khoaGoiCaptcha(flow.captcha_solver_api_key));
       setCfg({
         enabled: flow.enabled !== false,
         captcha_solver_url: "/api/captcha",
-        captcha_solver_api_key: flow.captcha_solver_api_key || "",
+        // Bị che thì là nhãn {is_set} → để rỗng; lưu rỗng thì máy chủ giữ khoá đang có (loc_ghi).
+        captcha_solver_api_key: typeof flow.captcha_solver_api_key === "string" ? flow.captcha_solver_api_key : "",
         accounts: Array.isArray(flow.accounts) ? flow.accounts : [],
         cooldown_seconds: typeof flow.cooldown_seconds === "number" ? flow.cooldown_seconds : 3600,
       });
@@ -217,7 +223,7 @@ export function FlowCard() {
       return;
     }
     const url = cfg.captcha_solver_url;
-    const key = cfg.captcha_solver_api_key;
+    const key = khoaGoi;
     try {
       toast.info(`Äang láº¥y Flow project cho ${prof}â€¦`);
       const res = await fetch(`${url}/v1/google/flow/get-or-create-project`, {
@@ -255,7 +261,7 @@ export function FlowCard() {
       const res = await fetch(`${cfg.captcha_solver_url}/v1/session/manual-login`, {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${cfg.captcha_solver_api_key}`,
+          "Authorization": `Bearer ${khoaGoi}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -283,7 +289,7 @@ export function FlowCard() {
     try {
       const res = await fetch(
         `${cfg.captcha_solver_url}/v1/session/${encodeURIComponent(profile)}/auto-login-status`,
-        { headers: { Authorization: `Bearer ${cfg.captcha_solver_api_key}` } },
+        { headers: { Authorization: `Bearer ${khoaGoi}` } },
       );
       if (!res.ok) return;
       const data = await res.json();
@@ -329,7 +335,7 @@ export function FlowCard() {
       const loginRes = await fetch(`${cfg.captcha_solver_url}/v1/session/auto-login`, {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${cfg.captcha_solver_api_key}`,
+          "Authorization": `Bearer ${khoaGoi}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -355,7 +361,7 @@ export function FlowCard() {
           const projRes = await fetch(`${cfg.captcha_solver_url}/v1/google/flow/get-or-create-project`, {
             method: "POST",
             headers: {
-              "Authorization": `Bearer ${cfg.captcha_solver_api_key}`,
+              "Authorization": `Bearer ${khoaGoi}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({ profile, headless: false, timeout: 90 }),
@@ -418,7 +424,7 @@ export function FlowCard() {
       const res = await fetch(`${cfg.captcha_solver_url}/v1/session/auto-login`, {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${cfg.captcha_solver_api_key}`,
+          "Authorization": `Bearer ${khoaGoi}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -461,7 +467,7 @@ export function FlowCard() {
         {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${cfg.captcha_solver_api_key}`,
+            "Authorization": `Bearer ${khoaGoi}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ code: autoLogin.code.trim() }),
@@ -494,7 +500,7 @@ export function FlowCard() {
     try {
       await fetch(`${cfg.captcha_solver_url}/v1/accounts/saved`, {
         method: "POST",
-        headers: { "Authorization": `Bearer ${cfg.captcha_solver_api_key}`, "Content-Type": "application/json" },
+        headers: { "Authorization": `Bearer ${khoaGoi}`, "Content-Type": "application/json" },
         body: JSON.stringify({ email: autoLogin.email.trim(), password: autoLogin.password, totp_secret: autoLogin.totpSecret.trim() }),
       });
       toast.success("ÄÃ£ lÆ°u tÃ i khoáº£n");
@@ -708,7 +714,7 @@ export function FlowCard() {
           </p>
           <SavedAccountsSelect
             csUrl={cfg.captcha_solver_url}
-            csApiKey={cfg.captcha_solver_api_key}
+            csApiKey={khoaGoi}
             selected={selectedAccount}
             onSelect={(email, acct) => {
               setSelectedAccount(email);
@@ -779,7 +785,7 @@ export function FlowCard() {
               TÃ¡i dÃ¹ng profile Ä‘Ã£ onboard (Flow/Gemini/ChatGPT) â€” tá»± láº¥y project_id, khÃ´ng cáº§n nháº­p láº¡i email/máº­t kháº©u:
             </p>
             <ReuseProfilePicker
-              cs={{ url: cfg.captcha_solver_url, apiKey: cfg.captcha_solver_api_key }}
+              cs={{ url: cfg.captcha_solver_url, apiKey: khoaGoi }}
               onReuse={reuseAccount}
             />
           </div>

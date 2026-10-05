@@ -12,6 +12,7 @@ import { generateTotpCode, totpSecondsRemaining } from "@/lib/totp";
 import { TotpSecretGuide, TotpSecretLabel } from "@/components/google-security-hints";
 import { ReuseProfilePicker } from "./reuse-profile-picker";
 import { moNoVNC } from "@/lib/duong-dan";
+import { khoaGoiCaptcha } from "@/lib/captcha-key";
 
 type OnboardState = {
   profile: string;
@@ -26,11 +27,13 @@ type OnboardState = {
   has_session_key?: boolean;
 };
 
-type CaptchaSolverCfg = { url: string; apiKey: string };
+// apiKey: khoá GỌI /api/captcha (khoá captcha, hoặc khoá dashboard khi cài đặt bị che).
+// khoaLuu: khoá captcha THẬT đọc từ cài đặt — rỗng khi bị che; chỉ thứ này được ghi lại khi lưu.
+type CaptchaSolverCfg = { url: string; apiKey: string; khoaLuu: string };
 
 export function ClaudeCard() {
   // Reuse the same captcha-solver creds the Flow card stores under providers.flow.
-  const [cs, setCs] = useState<CaptchaSolverCfg>({ url: "/api/captcha", apiKey: "" });
+  const [cs, setCs] = useState<CaptchaSolverCfg>({ url: "/api/captcha", apiKey: "", khoaLuu: "" });
   const [draft, setDraft] = useState({ email: "", password: "", code: "", totpSecret: "" });
   const [running, setRunning] = useState(false);
   const [session, setSession] = useState<OnboardState | null>(null);
@@ -69,10 +72,9 @@ export function ClaudeCard() {
       const provs = ((data.data as any)?.config?.providers || {});
       const flow = provs.flow || {};
       const claude = provs.claude || {};
-      setCs({
-        url: "/api/captcha",
-        apiKey: claude.captcha_solver_api_key || flow.captcha_solver_api_key || "",
-      });
+      const khoaLuu = [claude.captcha_solver_api_key, flow.captcha_solver_api_key]
+        .find((k): k is string => typeof k === "string" && k.trim() !== "") || "";
+      setCs({ url: "/api/captcha", apiKey: await khoaGoiCaptcha(khoaLuu), khoaLuu });
     } catch (e) {
       console.error(e);
     }
@@ -103,7 +105,8 @@ export function ClaudeCard() {
       ...(config.providers.claude || {}),
       enabled: true,
       captcha_solver_url: cs.url,
-      captcha_solver_api_key: cs.apiKey,
+      // Bị che thì không gửi: máy chủ giữ khoá đang lưu (loc_ghi). Đừng ghi cs.apiKey — có thể là khoá dashboard.
+      ...(cs.khoaLuu ? { captcha_solver_api_key: cs.khoaLuu } : {}),
       profiles: currentProfiles,
       model: config.providers.claude?.model || "auto",
     };
