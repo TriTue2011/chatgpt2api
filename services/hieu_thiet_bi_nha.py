@@ -255,6 +255,26 @@ def _ma(r: dict[str, Any]) -> str:
     return tb if tr == "state" else f"{tb}#{tr}"
 
 
+def mqtt_da_mat(ma_s: set[str]) -> set[str]:
+    """Mã MQTT (``chủ đề#trường``) của thiết bị ĐÃ ĐỔI TÊN hay ĐÃ GỠ — cùng luật với mã HA không còn trong HA.
+
+    Nhánh có TỰ KHAI BÁO (zigbee2mqtt…) mà chủ đề không còn ai khai = tên cũ (`mqtt_nha.chu_de_con_khai`). Chủ máy
+    06/10/2026: radar Zigbee đổi tên «Cảm biến phòng khách» → «Hiện diện phòng khách» lúc 15:25 ngày 15/09; tên cũ
+    vẫn ra đề suốt 30 ngày (lịch sử còn) rồi nằm trong ngoại vi đèn trần — bot học trên nguồn chết. Nhánh không tự
+    khai (frigate/…) không xét được thì giữ; chưa đọc được bản khai nào (MQTT chưa nối) thì không bỏ gì."""
+    from services import mqtt_nha
+    doc, nhanh = mqtt_nha.chu_de_con_khai()
+    if not doc:
+        return set()
+    ra = set()
+    for ma in ma_s:
+        goc = ma.split("#")[0]
+        if "/" in goc and goc.split("/")[0] in nhanh and goc not in doc \
+                and not any(goc.startswith(d + "/") for d in doc):
+            ra.add(ma)
+    return ra
+
+
 def ho_so(so_ngay: int | None = None, *, den: float | None = None) -> dict[str, Any]:
     """Đo hồ sơ các mã bật tắt được và các mã đổi cùng lúc với chúng.
 
@@ -302,6 +322,8 @@ def ho_so(so_ngay: int | None = None, *, den: float | None = None) -> dict[str, 
     for ma in la_ha - con_trong_ha:
         del su_kien[ma]
     la_ha &= con_trong_ha
+    for ma in mqtt_da_mat(set(su_kien) - la_ha):
+        del su_kien[ma]
     ung_vien = {ma for ma in la_ha
                 if ma.split(".")[0] in mien
                 and any(du_doan_nha._la_bat(g) for _, g, _ in su_kien[ma])}
@@ -944,6 +966,11 @@ def ngoai_vi_hoc() -> dict[str, dict[str, Any]]:
     ra = {d["khoa"]: dict(d["gia_tri"]) for d in dang_hieu_luc()
           if d["loai_cau_hoi"] == "ngoai_vi" and d["ket_qua"] != "sai"
           and d["khoa"] in hoc}
+    # Ngoại vi bot chọn từ trước khi thiết bị MQTT đổi tên: bỏ khi đọc (sổ giữ nguyên — tên quay lại thì dùng lại).
+    mat = mqtt_da_mat({str(x.get("ma")) for g in ra.values() for x in g.get("ngoai_vi") or []})
+    if mat:
+        for g in ra.values():
+            g["ngoai_vi"] = [x for x in g.get("ngoai_vi") or [] if str(x.get("ma")) not in mat]
     for khoa, cu in _doc_sua().items():
         if khoa not in hoc:
             continue

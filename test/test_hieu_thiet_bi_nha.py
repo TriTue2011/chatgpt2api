@@ -172,6 +172,28 @@ class HieuThietBiNhaTest(unittest.TestCase):
         self.assertIn("light.hien", ma)
         self.assertNotIn("binary_sensor.cua", ma)
 
+    def test_MQTT_DOI_TEN_thi_TEN_CU_khong_ra_de(self) -> None:
+        """Chủ máy 06/10/2026: radar Zigbee đổi tên «Cảm biến phòng khách» → «Hiện diện phòng khách» (15/09); tên cũ
+        còn lịch sử 30 ngày nên vẫn ra đề rồi vào ngoại vi đèn trần — cùng luật với mã HA không còn trong HA."""
+        from services import mqtt_nha
+
+        goc = time.time() - 5 * 86400
+        for i in range(10):
+            gt = "on" if i % 2 == 0 else "off"
+            self._sk("zigbee2mqtt/Cũ", gt.upper(), goc + i * 3600 - 0.003, truong="state_left")
+            self._sk("zigbee2mqtt/Mới", gt.upper(), goc + i * 3600 - 0.002, truong="state_left")
+            self._sk("light.hien", gt, goc + i * 3600)
+        khai = ({"zigbee2mqtt/Mới", "zigbee2mqtt/Phòng khách"}, {"zigbee2mqtt"})
+        with mock.patch.object(mqtt_nha, "chu_de_con_khai", return_value=khai):
+            self.assertEqual({"zigbee2mqtt/Cũ#state_left", "zigbee2mqtt/Cũ/set"}, self.ht.mqtt_da_mat({
+                "zigbee2mqtt/Cũ#state_left", "zigbee2mqtt/Cũ/set", "zigbee2mqtt/Mới#state_left",
+                "zigbee2mqtt/Phòng khách/l4", "frigate/ban-cong#person", "light.hien"}))
+            de = json.dumps(self.ht.ho_so(so_ngay=30), ensure_ascii=False)
+        self.assertNotIn("zigbee2mqtt/Cũ", de)
+        self.assertIn("zigbee2mqtt/Mới", de)
+        with mock.patch.object(mqtt_nha, "chu_de_con_khai", return_value=(set(), set())):
+            self.assertEqual(set(), self.ht.mqtt_da_mat({"zigbee2mqtt/Cũ#presence"}), "MQTT chưa nối: không bỏ gì")
+
     def test_DOI_DONG_LOAT_duoc_DO_ra(self) -> None:
         """Mười hai công tắc đổi cùng giây — code đo ra con số, bot mới phán rác."""
         goc = time.time() - 5 * 86400
