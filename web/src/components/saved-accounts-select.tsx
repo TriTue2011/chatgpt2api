@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Copy, Eye, EyeOff, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 
@@ -64,6 +64,27 @@ export function SavedAccountsSelect({ csUrl, csApiKey, selected, onSelect, disab
   // lần, hạt giống không rời solver. So với app Authenticator trên điện thoại:
   // trùng số nghĩa là hạt giống lưu đúng.
   const [maTotp, setMaTotp] = useState<{ code: string; remaining: number } | null>(null);
+  // Thông tin đầy đủ của tài khoản đang chọn (chủ máy 06/10/2026: "hiển thị toàn bộ thông tin đã lưu khi kích vào").
+  // Mật khẩu + hạt giống TOTP chỉ về trình duyệt khi bấm 👁 (`/reveal`, máy chủ ghi nhật ký mỗi lần xem).
+  const [chiTiet, setChiTiet] = useState<{ label: string; created_at: string; updated_at: string } | null>(null);
+  const [lo, setLo] = useState<{ password: string; totp_secret: string } | null>(null);
+
+  async function xemBiMat() {
+    if (lo) { setLo(null); return; }
+    if (!selected) return;
+    try {
+      const res = await fetch(`${csUrl}/v1/accounts/saved/${encodeURIComponent(selected)}/reveal?loai=${loai}`, {
+        headers: { Authorization: `Bearer ${csApiKey}` },
+      });
+      const d = await res.json().catch(() => null);
+      if (res.ok && d) { setLo({ password: String(d.password || ""), totp_secret: String(d.totp_secret || "") }); return; }
+      toast.error(String(d?.detail || `Không xem được (HTTP ${res.status})`));
+    } catch { toast.error("Không xem được (mạng/captcha-solver)"); }
+  }
+
+  function chep(v: string) {
+    void navigator.clipboard?.writeText(v).then(() => toast.success("Đã chép"), () => toast.error("Không chép được"));
+  }
 
   // Mã chết theo cửa sổ 30 giây: đếm ngược mỗi giây, hết giờ tự xin mã mới thay
   // vì tiếp tục hiển thị một con số đã vô dụng.
@@ -120,6 +141,8 @@ export function SavedAccountsSelect({ csUrl, csApiKey, selected, onSelect, disab
   async function loadAccount(email: string) {
     setFlags(null);
     setMaTotp(null);
+    setChiTiet(null);
+    setLo(null);
     if (!email) {
       onSelect("", { email: "", password: "", totp_secret: "" });
       return;
@@ -138,6 +161,8 @@ export function SavedAccountsSelect({ csUrl, csApiKey, selected, onSelect, disab
       if (res.ok) {
         const acct = await res.json();
         setFlags({ pw: Boolean(acct?.has_password), totp: Boolean(acct?.has_totp) });
+        setChiTiet({ label: String(acct?.label || ""), created_at: String(acct?.created_at || ""),
+                     updated_at: String(acct?.updated_at || "") });
         onSelect(email, {
           email: String(acct?.email || email),
           password: "",
@@ -167,6 +192,8 @@ export function SavedAccountsSelect({ csUrl, csApiKey, selected, onSelect, disab
       if (selected === email) {
         setFlags(null);
         setMaTotp(null);
+        setChiTiet(null);
+        setLo(null);
         onSelect("", { email: "", password: "", totp_secret: "" });
       }
       fetchAccounts();
@@ -228,6 +255,37 @@ export function SavedAccountsSelect({ csUrl, csApiKey, selected, onSelect, disab
               <span className="text-[var(--muted-foreground)]">({maTotp.remaining}s)</span>
             </>
           )}
+        </div>
+      )}
+      {selected && chiTiet && (
+        <div className="mt-1.5 space-y-1 rounded-lg border border-[var(--border)] p-2 text-[11px]">
+          <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+            <span>📧 <span className="font-mono">{selected}</span></span>
+            {chiTiet.label && chiTiet.label !== selected ? <span>🏷 {chiTiet.label}</span> : null}
+            {chiTiet.created_at ? <span className="text-[var(--muted-foreground)]">tạo {chiTiet.created_at.slice(0, 16).replace("T", " ")}</span> : null}
+            {chiTiet.updated_at ? <span className="text-[var(--muted-foreground)]">sửa {chiTiet.updated_at.slice(0, 16).replace("T", " ")}</span> : null}
+          </div>
+          {flags && (flags.pw || flags.totp) ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" className="flex items-center gap-1 text-blue-600 disabled:opacity-50" disabled={disabled}
+                onClick={() => void xemBiMat()}>
+                {lo ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                {lo ? "Ẩn mật khẩu / hạt giống TOTP" : "Xem mật khẩu / hạt giống TOTP"}
+              </button>
+            </div>
+          ) : null}
+          {lo ? (
+            <div className="space-y-0.5 font-mono">
+              {lo.password ? (
+                <div className="flex items-center gap-1.5">🔑 <span className="break-all">{lo.password}</span>
+                  <button type="button" title="Chép" onClick={() => chep(lo.password)}><Copy className="size-3" /></button></div>
+              ) : null}
+              {lo.totp_secret ? (
+                <div className="flex items-center gap-1.5">🛡 <span className="break-all">{lo.totp_secret}</span>
+                  <button type="button" title="Chép" onClick={() => chep(lo.totp_secret)}><Copy className="size-3" /></button></div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       )}
     </div>

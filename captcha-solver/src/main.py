@@ -2428,6 +2428,22 @@ class DatTotpReq(BaseModel):
     totp_secret: str = ""
 
 
+@app.get("/v1/accounts/saved/{email}/reveal", dependencies=[Depends(require_api_key)])
+async def api_accounts_reveal(email: str, loai: str = "") -> dict[str, Any]:
+    """Mật khẩu + hạt giống TOTP — CHỈ khi người quản trị bấm 👁 trên ô «Tài khoản đã lưu».
+
+    Chủ máy duyệt 06/10/2026 («Hiện đủ, có nút 👁 mới lộ»): trước đó kho không bao giờ trả credential về trình duyệt
+    (08/08), nên chọn tài khoản chỉ thấy email + cờ có/không. Không tự lộ khi chọn — phải gọi đúng đường này; mỗi lần
+    xem ghi nhật ký (ai cũng truy được ai đã xem lúc nào). Cùng lớp khoá `require_api_key` như các đường kho khác.
+    """
+    acct = get_account(email, loai.strip().lower() or None)
+    if not acct:
+        raise HTTPException(404, "Account not found")
+    logger.warning("vault_reveal email=%s loai=%s", acct.get("email") or email, loai or "google")
+    return {"email": acct.get("email") or email, "password": str(acct.get("password") or ""),
+            "totp_secret": str(acct.get("totp_secret") or ""), "label": acct.get("label") or ""}
+
+
 @app.put("/v1/accounts/saved/{email}/totp", dependencies=[Depends(require_api_key)])
 async def api_accounts_set_totp(email: str, req: DatTotpReq, loai: str = "") -> dict[str, Any]:
     """Đặt/xoá hạt giống TOTP. Nhận vào, KHÔNG bao giờ trả ra."""
