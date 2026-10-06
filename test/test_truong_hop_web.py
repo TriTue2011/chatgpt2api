@@ -83,6 +83,25 @@ def test_them_luat_cua_anh_va_chay_sai_thi_tam_dung(so):
     assert not ld.so()[TB]["chu"]
 
 
+def test_luu_va_chay_bat_lai_luat_chua_dat_ten_dang_tam_dung(so):
+    """Chủ máy 06/10/2026 «lưu chạy có thấy được đâu»: luật KHÔNG tên dừng theo khoá `chu:<id>`; lưu phải chạy lại."""
+    l = {"chieu": "bat", "khi": ["binary_sensor.cua có người vào"], "neu": []}
+    ld.quyet(TB, "them", "", l, "")
+    k = ld.so()[TB]["chu"][0]["id"]
+    ld.quyet(TB, "dung", f"chu:{k}")
+    assert _tt(f"chu:{k}") == "dung" and ld.ap(TB) == []
+    ld.quyet(TB, "sua", f"chu:{k}", {**l, "neu": [{"ma": "gio", "tu": "06:30", "den": "09:45"}]}, "")
+    assert _tt(f"chu:{k}") == "chay" and len(ld.ap(TB)) == 1
+    # Bật «ngày» mà chưa chọn ngày nào, «thứ» đủ 7 ngày: lưu được, coi như không giới hạn.
+    ld.quyet(TB, "sua", f"chu:{k}", {**l, "neu": [{"ma": "gio", "tu_ngay": "", "den_ngay": ""},
+                                                 {"ma": "gio", "thu": list(range(7))}]}, "")
+    assert ld.so()[TB]["chu"][0]["neu"] == []
+    # Đặt tên lúc lưu cũng thế — khoá cũ `chu:<id>` không được bỏ sót.
+    ld.quyet(TB, "dung", f"chu:{k}")
+    ld.quyet(TB, "sua", f"chu:{k}", l, "cửa mở buổi sáng")
+    assert _tt(f"chu:{k}") == "chay"
+
+
 def test_de_xuat_tu_luat_bot_hoc(so, monkeypatch):
     from services import kich_hoat_nha as kh
     tq = {"thiet_bi": TB, "huong": {"on": {"luat": [

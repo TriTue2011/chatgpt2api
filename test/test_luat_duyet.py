@@ -407,6 +407,31 @@ def test_gio_kem_thu_va_khoang_ngay():
             ld._kiem_dk({"ma": "gio", "tu": "06:00", "den": "07:00", **sai}, MA, set())
 
 
+def test_thoi_gian_nhieu_che_do_chi_thu_chi_ngay_hoac_ket_hop():
+    """Chủ máy 06/10/2026: "1 chỉ theo giờ, theo ngày trong tuần, theo ngày; 2 theo 2 điều kiện thời gian; 3 dùng cả 3"."""
+    tz = timezone(timedelta(hours=7))
+    t7_10h = datetime(2026, 10, 10, 10, 0, tzinfo=tz).timestamp()     # thứ 7
+    cn_10h = datetime(2026, 10, 11, 10, 0, tzinfo=tz).timestamp()
+    ok = lambda dk, luc: ld.kiem_dieu_kien([ld._kiem_dk({"ma": "gio", **dk}, MA, set())], luc, {})[0]  # noqa: E731
+    # 1 — chỉ một phần
+    assert ld._kiem_dk({"ma": "gio", "thu": [5, 6]}, MA, set()) == {"ma": "gio", "thu": [5, 6]}
+    assert ok({"thu": [5]}, t7_10h) and not ok({"thu": [5]}, cn_10h)
+    assert ok({"tu_ngay": "2026-10-11"}, cn_10h) and not ok({"tu_ngay": "2026-10-11"}, t7_10h)
+    assert ok({"tu": "09:00", "den": "11:00"}, t7_10h)
+    # 2 — thứ + ngày, không giờ
+    assert ok({"thu": [6], "den_ngay": "2026-10-31"}, cn_10h) and not ok({"thu": [6], "den_ngay": "2026-10-10"}, cn_10h)
+    # 3 — cả ba; «ngoài» đảo cả điều kiện
+    ca_ba = {"tu": "09:00", "den": "11:00", "thu": [5], "tu_ngay": "2026-10-01", "den_ngay": "2026-10-31"}
+    assert ok(ca_ba, t7_10h) and not ok(ca_ba, cn_10h) and ok({**ca_ba, "phu_dinh": True}, cn_10h)
+    assert ld._doc_dk(ld._kiem_dk({"ma": "gio", "thu": [5, 6]}, MA, set()), {}) == "vào T7, CN"
+    for trong in ({}, {"thu": list(range(7))}, {"tu": "09:00"}):
+        with pytest.raises(ValueError):
+            ld._kiem_dk({"ma": "gio", **trong}, MA, set())
+    # Người bật chế độ mà để trống = không giới hạn → bỏ điều kiện, KHÔNG báo lỗi (luật bot viết vẫn bị lõi chặn).
+    assert all(ld._gio_trong({"ma": "gio", **t}) for t in ({}, {"thu": list(range(7))}, {"tu_ngay": "", "den_ngay": ""}))
+    assert not any(ld._gio_trong({"ma": "gio", **t}) for t in ({"thu": [1]}, {"tu_ngay": "2026-10-01"}, {"tu": "09:00", "den": "10:00"}))
+
+
 def test_so_sanh_hai_cam_bien():
     """Chủ máy 06/10/2026: "so sánh 2 cảm biến mà giống nhau thì thực hiện"."""
     assert ld._kiem_dk({"ma": "binary_sensor.pk", "so_voi": "binary_sensor.cua"}, MA, set()) == \

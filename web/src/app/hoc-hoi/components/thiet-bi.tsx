@@ -72,10 +72,20 @@ function Gap({ tieuDe, phu, children, mo = false }: { tieuDe: React.ReactNode; p
 }
 
 /** Điều kiện cảm biến đang tính thời gian theo cách nào (mỗi điều kiện tối đa một — lõi `_KHOANG_GIAY`). */
-function kieuGiay(d: DieuKien): "lien_giay" | "trong_giay" | "vua_chuyen_giay" {
+function kieuGiay(d: DieuKien): "dang" | "lien_giay" | "trong_giay" | "vua_chuyen_giay" {
   if (d.vua_chuyen_giay !== undefined) return "vua_chuyen_giay";
   if (d.trong_giay !== undefined) return "trong_giay";
-  return "lien_giay";
+  return d.lien_giay !== undefined ? "lien_giay" : "dang";
+}
+
+/** Chữ cho hai trạng thái theo LOẠI cảm biến (`loai` của /api/hoc-hoi/cam-bien-luat) — chủ máy 06/10/2026: «có người
+ *  / mở» cho mọi cảm biến đọc không ổn. Cửa mở/đóng, camera thấy người, radar có người; loại khác giữ bật/tắt. */
+function chuTrangThai(c?: CamBien): [string, string] {
+  const l = c?.loai || "";
+  if (l.startsWith("cửa")) return ["mở", "đóng"];
+  if (l.startsWith("camera")) return ["thấy người", "không thấy người"];
+  if (l.startsWith("có người")) return ["có người", "không có người"];
+  return ["bật", "tắt"];
 }
 
 function tom(ds: TruongHop[]): string {
@@ -159,6 +169,7 @@ function SuaTruongHop({ chieu, ban, camBien, lich, onLuu, onHuy, them }: {
   const [neu, setNeu] = useState<DieuKien[]>((ban?.neu || []).map(boPhuDinh));
   const [xm, setXm] = useState(Boolean(ban?.xac_minh));
 
+  const chuKhi = chuTrangThai(nhiPhan.find((c) => c.ma === camKhi));
   const khi = camKhi ? `${camKhi} ${kieuKhi === "o_lai" ? `ở lại ${giayKhi} giây` : kieuKhi === "vang_n" ? `vắng ${giayKhi} giây` : kieuKhi}` : "";
   const sua = (i: number, d: Partial<DieuKien> | null) =>
     setNeu(d === null ? neu.filter((_, j) => j !== i) : neu.map((x, j) => (j === i ? { ...x, ...d } : x)));
@@ -186,13 +197,13 @@ function SuaTruongHop({ chieu, ban, camBien, lich, onLuu, onHuy, them }: {
         <span>Khi</span>
         {chon(camKhi, nhiPhan, setCamKhi)}
         <select className="h-8 rounded border border-border bg-background px-1" value={kieuKhi} onChange={(e) => setKieuKhi(e.target.value)}>
-          <option value="có người vào">có người vào / mở</option>
-          <option value="vắng">vắng 3 phút</option>
-          <option value="o_lai">ở lại … giây</option>
-          <option value="vang_n">vắng … giây</option>
+          <option value="có người vào">chuyển từ {chuKhi[1]} sang {chuKhi[0]}</option>
+          <option value="vắng">{chuKhi[1]} 3 phút</option>
+          <option value="o_lai">{chuKhi[0]} được … giây</option>
+          <option value="vang_n">{chuKhi[1]} được … giây</option>
         </select>
         {kieuKhi === "o_lai" || kieuKhi === "vang_n" ? (
-          <Input className="h-8 w-20" value={giayKhi} onChange={(e) => setGiayKhi(e.target.value.replace(/\D/g, ""))} />
+          <><Input className="h-8 w-20" value={giayKhi} onChange={(e) => setGiayKhi(e.target.value.replace(/\D/g, ""))} /><span>giây</span></>
         ) : null}
         <span>thì</span>
         <select className="h-8 rounded border border-border bg-background px-1" value={nen} onChange={(e) => setNen(e.target.value)}>
@@ -205,26 +216,48 @@ function SuaTruongHop({ chieu, ban, camBien, lich, onLuu, onHuy, them }: {
           <div key={i} className="flex flex-wrap items-center gap-1 pl-3">
             <span>nếu</span>
             <select className="h-8 rounded border border-border bg-background px-1" value={loai} onChange={(e) => doiLoai(i, e.target.value as LoaiDk)}>
-              <option value="trang_thai">cảm biến</option><option value="so_do">số đo</option><option value="so_sanh">so sánh 2 cảm biến</option><option value="gio">giờ</option>
+              <option value="trang_thai">cảm biến</option><option value="so_do">số đo</option><option value="so_sanh">so sánh 2 cảm biến</option><option value="gio">thời gian</option>
               <option value="lich">lịch</option><option value="ca_nha">cả nhà</option><option value="troi">trời</option>
             </select>
             {loai === "trang_thai" ? (<>
               {chon(d.ma, nhiPhan, (v) => sua(i, { ma: v }))}
-              <select className="h-8 rounded border border-border bg-background px-1" value={d.la || "on"} onChange={(e) => sua(i, { la: e.target.value })}>
-                <option value="on">có người / mở</option><option value="off">không có người / đóng</option>
-              </select>
-              {/* Chủ máy 06/10/2026: cần chế độ «chuyển trạng thái» — cửa để mở sẵn thì tắt đèn xong lại bị bật. */}
-              <select className="h-8 rounded border border-border bg-background px-1" value={kieuGiay(d)}
-                onChange={(e) => sua(i, { lien_giay: undefined, trong_giay: undefined, vua_chuyen_giay: undefined,
-                  [e.target.value]: d.lien_giay ?? d.trong_giay ?? d.vua_chuyen_giay
-                    ?? (e.target.value === "lien_giay" ? undefined : 30) })}
-                title="liền: đang ở và giữ liền N giây · vừa chuyển: vừa ĐỔI SANG trong N giây qua (mở sẵn từ trước không tính) · ở trong: đang ở hoặc từng ở trong N giây qua">
-                <option value="lien_giay">liền</option>
-                <option value="vua_chuyen_giay">vừa chuyển sang, trong</option>
-                <option value="trong_giay">ở trong</option>
-              </select>
-              <Input className="h-8 w-16" placeholder="giây" value={d[kieuGiay(d)] ?? ""}
-                onChange={(e) => sua(i, { [kieuGiay(d)]: e.target.value ? Number(e.target.value.replace(/\D/g, "")) : undefined })} />
+              {(() => {
+                // Chủ máy 06/10/2026: cần NHIỀU chế độ cảm biến, câu đọc phải xuôi — «đang» (không cần số giây), «đã … được ít nhất N giây», «vừa chuyển
+                // sang» (cửa để mở sẵn không tính), «từng … trong N giây qua». Mỗi điều kiện một chế độ (lõi `_KHOANG_GIAY`).
+                const [on, off] = chuTrangThai(nhiPhan.find((c) => c.ma === d.ma));
+                const tt = d.la === "off" ? off : on;
+                const k = kieuGiay(d);
+                return (<>
+                  <select className="h-8 rounded border border-border bg-background px-1" value={k}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      const giay = d.lien_giay ?? d.trong_giay ?? d.vua_chuyen_giay ?? 30;
+                      sua(i, { lien_giay: undefined, trong_giay: undefined, vua_chuyen_giay: undefined, ...(v === "dang" ? {} : { [v]: giay }) });
+                    }}>
+                    <option value="dang">đang</option>
+                    <option value="lien_giay">đã</option>
+                    <option value="vua_chuyen_giay">vừa chuyển</option>
+                    <option value="trong_giay">có lúc</option>
+                  </select>
+                  <select className="h-8 rounded border border-border bg-background px-1" value={d.la || "on"} onChange={(e) => sua(i, { la: e.target.value })}>
+                    {k === "vua_chuyen_giay"
+                      ? <><option value="on">từ {off} sang {on}</option><option value="off">từ {on} sang {off}</option></>
+                      : <><option value="on">{on}</option><option value="off">{off}</option></>}
+                  </select>
+                  {k !== "dang" ? (<>
+                    <span>{k === "lien_giay" ? "được ít nhất" : "trong"}</span>
+                    <Input className="h-8 w-16" value={d[k] ?? ""}
+                      onChange={(e) => sua(i, { [k]: e.target.value ? Number(e.target.value.replace(/\D/g, "")) : undefined })} />
+                    <span>{k === "lien_giay" ? "giây" : "giây qua"}</span>
+                  </>) : null}
+                  <span className="w-full pl-6 text-xs text-muted-foreground">
+                    {k === "dang" ? `→ Đạt khi đúng lúc đó cảm biến đang ${tt}.`
+                      : k === "lien_giay" ? `→ Đạt khi cảm biến ${tt} liên tục, không ngắt quãng, từ ít nhất ${d.lien_giay ?? "…"} giây trước tới giờ.`
+                        : k === "vua_chuyen_giay" ? `→ Đạt khi cảm biến vừa đổi từ ${d.la === "off" ? on : off} sang ${tt} trong ${d.vua_chuyen_giay ?? "…"} giây vừa qua. Nếu đã ${tt} từ lâu thì KHÔNG đạt.`
+                          : `→ Đạt khi bây giờ cảm biến ${tt}, hoặc có lúc ${tt} trong ${d.trong_giay ?? "…"} giây vừa qua.`}
+                  </span>
+                </>);
+              })()}
             </>) : null}
             {loai === "so_do" ? (<>
               {chon(d.ma, so, (v) => sua(i, { ma: v }))}
@@ -250,39 +283,69 @@ function SuaTruongHop({ chieu, ban, camBien, lich, onLuu, onHuy, them }: {
               {/* Đơn vị lấy từ cài đặt cảm biến (HA unit_of_measurement) — đổi cảm biến là đổi theo. */}
               <span className="text-muted-foreground">{so.find((c) => c.ma === d.ma)?.don_vi || ""}</span>
             </>) : null}
-            {loai === "gio" ? (<>
-              <select className="h-8 rounded border border-border bg-background px-1" value={d.phu_dinh ? "ngoai" : "trong"}
-                onChange={(e) => sua(i, { phu_dinh: e.target.value === "ngoai" || undefined })}>
-                <option value="trong">trong khung</option><option value="ngoai">ngoài khung</option>
-              </select>
-              {/* Chọn bằng bộ chọn giờ — luôn ra đúng HH:MM, khỏi gõ cho khớp định dạng (chủ máy 06/10/2026). */}
-              <Input className="h-8 w-28" type="time" value={gioHien(d.tu)} onChange={(e) => sua(i, { tu: e.target.value })} /><span>–</span>
-              <Input className="h-8 w-28" type="time" value={gioHien(d.den)} onChange={(e) => sua(i, { den: e.target.value })} />
-              <span className="flex w-full flex-wrap gap-0.5" title="Thứ trong tuần — bỏ trống = mọi ngày. Khung qua nửa đêm tính theo ngày bắt đầu.">
-                {THU.map((t, j) => {
-                  // Không có `thu` = MỌI ngày → 7 nút đều sáng (trước đây hiện tắt hết, trông như chọn đủ tuần là bị
-                  // xoá — chủ máy 06/10/2026). Bỏ hết là «không ngày nào» = luật chết → không cho.
-                  const dangChon = d.thu && d.thu.length ? d.thu : [0, 1, 2, 3, 4, 5, 6];
-                  const co = dangChon.includes(j);
-                  return (
-                    <button key={t} type="button"
-                      className={`h-8 rounded border px-1.5 text-xs ${co ? "border-primary bg-primary/15 text-primary" : "border-border"}`}
-                      title={co && dangChon.length === 1 ? "Phải chọn ít nhất một ngày" : undefined}
-                      onClick={() => {
-                        const moi = co ? dangChon.filter((v) => v !== j) : [...dangChon, j].sort();
-                        if (!moi.length) return;
-                        sua(i, { thu: moi.length < 7 ? moi : undefined });
-                      }}>{t}</button>
-                  );
-                })}
-              </span>
-              <span className="flex w-full flex-wrap items-center gap-1" title="Khoảng ngày (tuỳ chọn)">
-                ngày
-                <Input className="h-8 w-[8.75rem] max-w-full" type="date" value={d.tu_ngay || ""} onChange={(e) => sua(i, { tu_ngay: e.target.value || undefined })} />
-                <span>→</span>
-                <Input className="h-8 w-[8.75rem] max-w-full" type="date" value={d.den_ngay || ""} onChange={(e) => sua(i, { den_ngay: e.target.value || undefined })} />
-              </span>
-            </>) : null}
+            {loai === "gio" ? (() => {
+              // Chủ máy 06/10/2026: thời gian có nhiều chế độ — chỉ giờ / chỉ thứ / chỉ ngày, hai trong ba, hoặc cả ba.
+              // Bật phần nào thì phần đó mới vào điều kiện; phải còn ít nhất một phần.
+              const co = { gio: d.tu !== undefined, thu: d.thu !== undefined, ngay: d.tu_ngay !== undefined || d.den_ngay !== undefined };
+              const bat: Record<keyof typeof co, Partial<DieuKien>> = {
+                gio: { tu: "18:00", den: "22:00" }, thu: { thu: [0, 1, 2, 3, 4, 5, 6] }, ngay: { tu_ngay: "", den_ngay: "" } };
+              const tat: Record<keyof typeof co, Partial<DieuKien>> = {
+                gio: { tu: undefined, den: undefined }, thu: { thu: undefined }, ngay: { tu_ngay: undefined, den_ngay: undefined } };
+              const soBat = Object.values(co).filter(Boolean).length;
+              return (<>
+                <select className="h-8 rounded border border-border bg-background px-1" value={d.phu_dinh ? "ngoai" : "trong"}
+                  onChange={(e) => sua(i, { phu_dinh: e.target.value === "ngoai" || undefined })}>
+                  <option value="trong">đúng lúc</option><option value="ngoai">KHÔNG phải lúc</option>
+                </select>
+                {(["gio", "thu", "ngay"] as const).map((k) => (
+                  <button key={k} type="button"
+                    className={`h-8 rounded border px-2 text-xs ${co[k] ? "border-primary bg-primary/15 text-primary" : "border-border text-muted-foreground"}`}
+                    title={co[k] && soBat === 1 ? "Phải còn ít nhất một phần thời gian" : co[k] ? "Bỏ phần này" : "Thêm phần này"}
+                    onClick={() => { if (!(co[k] && soBat === 1)) sua(i, co[k] ? tat[k] : bat[k]); }}>
+                    {co[k] ? "✓ " : "+ "}{k === "gio" ? "giờ" : k === "thu" ? "thứ" : "ngày"}
+                  </button>
+                ))}
+                {co.gio ? (
+                  <span className="flex w-full flex-wrap items-center gap-1">
+                    giờ
+                    {/* Chọn bằng bộ chọn giờ — luôn ra đúng HH:MM, khỏi gõ cho khớp định dạng (chủ máy 06/10/2026). */}
+                    <Input className="h-8 w-28" type="time" value={gioHien(d.tu)} onChange={(e) => sua(i, { tu: e.target.value })} /><span>–</span>
+                    <Input className="h-8 w-28" type="time" value={gioHien(d.den)} onChange={(e) => sua(i, { den: e.target.value })} />
+                  </span>) : null}
+                {co.thu ? (
+                  <span className="flex w-full flex-wrap items-center gap-0.5" title="Khung giờ qua nửa đêm tính theo ngày bắt đầu.">
+                    thứ
+                    {THU.map((t, j) => {
+                      const on = (d.thu || []).includes(j);
+                      return (
+                        <button key={t} type="button"
+                          className={`h-8 rounded border px-1.5 text-xs ${on ? "border-primary bg-primary/15 text-primary" : "border-border"}`}
+                          title={on && d.thu?.length === 1 ? "Phải chọn ít nhất một ngày" : undefined}
+                          onClick={() => {
+                            const moi = on ? (d.thu || []).filter((v) => v !== j) : [...(d.thu || []), j].sort();
+                            if (moi.length) sua(i, { thu: moi });
+                          }}>{t}</button>
+                      );
+                    })}
+                  </span>) : null}
+                {co.ngay ? (
+                  <span className="flex w-full flex-wrap items-center gap-1" title="Bỏ trống một đầu = không giới hạn đầu đó">
+                    ngày
+                    <Input className="h-8 w-[8.75rem] max-w-full" type="date" value={d.tu_ngay || ""} onChange={(e) => sua(i, { tu_ngay: e.target.value })} />
+                    <span>→</span>
+                    <Input className="h-8 w-[8.75rem] max-w-full" type="date" value={d.den_ngay || ""} onChange={(e) => sua(i, { den_ngay: e.target.value })} />
+                  </span>) : null}
+                <span className="w-full pl-6 text-xs text-muted-foreground">{(() => {
+                  const phan = [
+                    co.gio && d.tu && d.den ? `từ ${d.tu} tới ${d.den}` : "",
+                    co.thu && d.thu && d.thu.length < 7 ? `vào ${d.thu.map((v) => THU[v]).join(", ")}` : "",
+                    co.ngay && (d.tu_ngay || d.den_ngay) ? `${d.tu_ngay ? `từ ngày ${d.tu_ngay.split("-").reverse().join("/")}` : ""}${d.tu_ngay && d.den_ngay ? " " : ""}${d.den_ngay ? `tới hết ngày ${d.den_ngay.split("-").reverse().join("/")}` : ""}` : "",
+                  ].filter(Boolean);
+                  if (!phan.length) return "→ Chưa giới hạn gì: lúc nào cũng đạt (lưu vẫn được).";
+                  return d.phu_dinh ? `→ Đạt khi KHÔNG nằm trong: ${phan.join(", ")}.` : `→ Đạt khi ${phan.join(", ")}.`;
+                })()}</span>
+              </>);
+            })() : null}
             {loai === "so_sanh" ? (<>
               {chon(d.ma, camBien, (v) => sua(i, { ma: v }))}
               <select className="h-8 rounded border border-border bg-background px-1" value={d.phu_dinh ? "khac" : "giong"}

@@ -300,11 +300,12 @@ def _kiem_dk(x: Any, ma_co: set[str], lich: set[str]) -> dict[str, Any]:
     ma = str(x["ma"])
     pd = {"phu_dinh": True} if x.get("phu_dinh") else {}
     if ma == "gio":
+        # Chủ máy 06/10/2026: thời gian có nhiều chế độ — chỉ giờ, chỉ thứ trong tuần, chỉ khoảng ngày, hai trong ba
+        # hoặc cả ba. Mỗi phần tuỳ chọn, phải có ít nhất một; khung giờ có thì đủ cả hai đầu.
         tu, den = str(x.get("tu") or ""), str(x.get("den") or "")
-        if not (_GIO_RE.fullmatch(tu) and _GIO_RE.fullmatch(den)):
+        if (tu or den) and not (_GIO_RE.fullmatch(tu) and _GIO_RE.fullmatch(den)):
             raise ValueError(f"khung giờ sai dạng: {tu}–{den}")
-        ra_g: dict[str, Any] = {"ma": "gio", "tu": tu, "den": den, **pd}
-        # Chủ máy 06/10/2026: "phần thời gian có thể chọn kèm ngày" — thứ trong tuần và / hoặc khoảng ngày.
+        ra_g: dict[str, Any] = {"ma": "gio", **({"tu": tu, "den": den} if tu else {}), **pd}
         if x.get("thu") is not None:
             try:
                 thu = sorted({int(v) for v in x["thu"]})
@@ -322,6 +323,8 @@ def _kiem_dk(x: Any, ma_co: set[str], lich: set[str]) -> dict[str, Any]:
                 ra_g[k] = v
         if ra_g.get("tu_ngay") and ra_g.get("den_ngay") and ra_g["tu_ngay"] > ra_g["den_ngay"]:
             raise ValueError(f"khoảng ngày ngược: {ra_g['tu_ngay']} → {ra_g['den_ngay']}")
+        if not any(k in ra_g for k in ("tu", "thu", "tu_ngay", "den_ngay")):
+            raise ValueError("điều kiện thời gian cần ít nhất một trong: khung giờ, thứ trong tuần, khoảng ngày")
         return ra_g
     if ma == "lich":
         if str(x.get("la")) not in lich:
@@ -754,13 +757,21 @@ def _chuan_dk_nguoi(x: Any) -> Any:
     return x
 
 
+def _gio_trong(x: Any) -> bool:
+    """Điều kiện thời gian không giới hạn gì: không khung giờ, không khoảng ngày, thứ trống hoặc đủ cả tuần."""
+    return (isinstance(x, dict) and x.get("ma") == "gio" and not (x.get("tu") or x.get("den"))
+            and not (x.get("tu_ngay") or x.get("den_ngay")) and len(set(x.get("thu") or range(7))) >= 7)
+
+
 def kiem_mot(tb: str, l: dict[str, Any]) -> dict[str, Any]:
     """Một luật anh nhập / sửa trên web → dạng chuẩn (kiểm ở biên như luật bot viết). Sai thì ValueError."""
     from services import lich_sinh_hoat
     chieu = str(l.get("chieu") or "")
     if chieu not in CHIEU_HD:
         raise ValueError("chiều phải là bat hoặc tat")
-    l = {**l, "neu": [_chuan_dk_nguoi(x) for x in l.get("neu") or []]}
+    # Điều kiện thời gian người bật mà để trống (ngày bỏ trống hai đầu, thứ chọn đủ 7 ngày) = KHÔNG giới hạn → bỏ, không
+    # báo lỗi (chủ máy 06/10/2026: "khi cài bất kỳ chế độ nào không bị lỗi").
+    l = {**l, "neu": [y for y in (_chuan_dk_nguoi(x) for x in l.get("neu") or []) if not _gio_trong(y)]}
     nen = str(l.get("nen") or chieu)
     luat, _, loi = kiem({"luat": [{**l, "so": 1, "nen": nen}]}, 1, {c["ma"] for c in cam_bien()} | {tb},
                         {x["ma"] for x in lich_sinh_hoat.ds()})
@@ -807,8 +818,11 @@ def quyet(tb: str, viec: str, id_: str = "", luat: dict[str, Any] | None = None,
             else:
                 ds.append({**r, "id": max([c["id"] for c in ds] or [0]) + 1, "loi": loi,
                            "nguon": "bot_hoc" if kieu == "hoc" else "anh", "luc": time.time()})
-            if loi:
-                xx["dung"] = [v for v in xx.get("dung") or [] if v != loi]
+            # «Lưu & chạy» = chạy: gỡ MỌI khoá tạm dừng của luật này. Luật chưa đặt tên bị dừng theo khoá
+            # `chu:<id>` (xem viec == "dung"), không theo lời — trước 06/10/2026 chỉ gỡ theo lời nên luật không tên
+            # lưu xong vẫn «Tạm dừng» (chủ máy: "lưu chạy có thấy được đâu").
+            bo = {loi} | ({f"chu:{cu['id']}", cu.get("loi")} if cu else set())
+            xx["dung"] = [v for v in xx.get("dung") or [] if v not in bo]
         if kieu == "lan":
             # Lời sửa vào bài học TRƯỚC, luật anh sửa lưu SAU — `_ap_tu` để quyết định sau cùng thắng.
             l_id, so_th = (int(v) for v in phan.split(":"))
@@ -882,9 +896,10 @@ def _dung_ngay(x: dict[str, Any], luc: float) -> bool:
         return True
     from datetime import datetime, timedelta, timezone
     d = datetime.fromtimestamp(luc, timezone(timedelta(hours=7)))
-    a, b = (int(v[:2]) * 60 + int(v[3:]) for v in (x["tu"], x["den"]))
-    if a > b and d.hour * 60 + d.minute < b:
-        d -= timedelta(days=1)
+    if x.get("tu"):
+        a, b = (int(v[:2]) * 60 + int(v[3:]) for v in (x["tu"], x["den"]))
+        if a > b and d.hour * 60 + d.minute < b:
+            d -= timedelta(days=1)
     if x.get("thu") and d.weekday() not in x["thu"]:
         return False
     ngay = d.strftime("%Y-%m-%d")
@@ -997,7 +1012,7 @@ def kiem_dieu_kien(neu: list[dict[str, Any]], luc: float,
     for x in neu:
         ma = x["ma"]
         if ma == "gio":
-            ok, gt = _trong_khung(x["tu"], x["den"], luc) and _dung_ngay(x, luc), "giờ hiện tại"
+            ok, gt = (not x.get("tu") or _trong_khung(x["tu"], x["den"], luc)) and _dung_ngay(x, luc), "giờ hiện tại"
         elif ma == "lich":
             m = lsh.tim(x["la"])
             ok, gt = bool(m and lsh.trong(m, luc)), "lịch"
@@ -1065,11 +1080,12 @@ def _doc_dk(x: dict[str, Any], ten: dict[str, str]) -> str:
     """Một điều kiện → chữ người đọc."""
     from services import hieu_thiet_bi_nha as ht
     if x["ma"] == "gio":
-        s = f"trong {x['tu']}–{x['den']}"
+        phan = [f"trong {x['tu']}–{x['den']}"] if x.get("tu") else []
         if x.get("thu"):
-            s += " vào " + ", ".join(_TEN_THU[v] for v in x["thu"])
+            phan.append("vào " + ", ".join(_TEN_THU[v] for v in x["thu"]))
         if x.get("tu_ngay") or x.get("den_ngay"):
-            s += f" (ngày {x.get('tu_ngay') or '…'} → {x.get('den_ngay') or '…'})"
+            phan.append(f"ngày {x.get('tu_ngay') or '…'} → {x.get('den_ngay') or '…'}")
+        s = " ".join(phan)
     elif x.get("so_voi"):
         s = (f"{ten.get(x['ma'], x['ma'])} {'KHÁC' if x.get('phu_dinh') else 'giống'} "
              f"{ten.get(x['so_voi'], x['so_voi'])}")
