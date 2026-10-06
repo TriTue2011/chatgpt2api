@@ -287,7 +287,7 @@ def _lam_moi_nen(profile: str) -> None:
                     return
                 p = _cf_hang[0]
             try:
-                lam_moi(p)
+                lam_moi(p, nen=True)
                 _log("grok_firefox_cf_lam_moi", profile=p, ok=True)
             except Exception as exc:  # noqa: BLE001
                 _log("grok_firefox_cf_lam_moi", profile=p, ok=False, loi=str(exc)[:120])
@@ -574,7 +574,7 @@ def dang_nhap(profile: str) -> dict[str, Any]:
     return {"pid": pid, "profile": profile}
 
 
-def lam_moi(profile: str, cho: float = 90) -> dict[str, str]:
+def lam_moi(profile: str, cho: float = 90, nen: bool = False) -> dict[str, str]:
     """Cookie file còn sống thì tắt Firefox cho đỡ tốn. Hết hạn thì mở lại đúng hồ sơ — còn đăng nhập thì grok.com
     tự cấp phiên mới, không gõ mật khẩu."""
     with _KHOA:
@@ -594,6 +594,11 @@ def lam_moi(profile: str, cho: float = 90) -> dict[str, str]:
                 tat(profile)
                 return cookies
             time.sleep(3)
+    if nen:
+        # Làm mới chạy NỀN (Cloudflare chặn) mà không xong: TẮT Firefox. Để mở chờ người đăng nhập chỉ hợp khi chính
+        # người bấm «Đăng nhập» — đo 06/10/2026: nền để mở cả 7 hồ sơ, 90 tiến trình Firefox trên máy chủ.
+        tat(profile)
+        raise RuntimeError(f"Grok {profile}: Firefox không lấy được cookie Cloudflare mới trong {int(cho)} giây.")
     _bat_theo_doi(profile)
     raise RuntimeError(f"Phiên Grok {profile} chưa tự mới — Firefox đang mở trên noVNC, đăng nhập lại là xong.")
 

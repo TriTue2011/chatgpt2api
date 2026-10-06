@@ -154,6 +154,23 @@ class CloudflareChanTests(unittest.TestCase):
             self.assertEqual("moi", gf.lam_moi("grok-1")["cf_clearance"])
 
 
+class LamMoiNenTests(unittest.TestCase):
+    def test_lam_moi_nen_that_bai_thi_tat_firefox_khong_de_mo(self):
+        """06/10/2026: làm mới nền để mở cả 7 hồ sơ (90 tiến trình Firefox). Nền thất bại → tắt, không canh chờ."""
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(gf, "doc_cookie_file", return_value={"sso": "a", "cf_clearance": "cu"}), \
+                mock.patch.object(gf, "phien_song", return_value=False), \
+                mock.patch.object(gf, "ho_so", return_value=Path(d)), \
+                mock.patch.object(gf, "_thu_tu_sqlite", return_value={"sso": "a", "cf_clearance": "cu"}), \
+                mock.patch.object(gf, "mo"), mock.patch.object(gf, "tat") as tat, \
+                mock.patch.object(gf, "_bat_theo_doi") as canh:
+            (Path(d) / "cookies.sqlite").write_text("x")
+            with self.assertRaises(RuntimeError):
+                gf.lam_moi("grok-1", cho=0, nen=True)
+        tat.assert_called_once_with("grok-1")
+        canh.assert_not_called()
+
+
 def _ts(giay: int) -> bytes:
     """Timestamp protobuf {1: giây}."""
     out, v = bytearray(b"\x08"), giay
