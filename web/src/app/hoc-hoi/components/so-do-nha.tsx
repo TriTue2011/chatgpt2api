@@ -188,7 +188,7 @@ function DongMoTa({ m, nhan, mau, xong }: { m: MoTa; nhan: string; mau: string; 
     return (
       <div className="space-y-1">
         <Textarea className="min-h-[60px] text-xs" value={sua} onChange={(e) => setSua(e.target.value)} />
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button size="sm" onClick={() => void luu(false)} disabled={!sua.trim()}><Check className="mr-1 h-4 w-4" />Lưu</Button>
           <Button size="sm" variant="ghost" onClick={() => setSua(null)}>Huỷ</Button>
         </div>
@@ -360,7 +360,7 @@ export function SoDoNha() {
             <div className="space-y-2 border-t pt-2">
               <Textarea className="min-h-[60px] text-xs" value={ghiChu} onChange={(e) => setGhiChu(e.target.value)}
                 placeholder="Sai ở đâu? Vd: «Cam bếp: ô E4, F4 là phòng khách», «bếp có cửa ra ban công»" />
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button size="sm" onClick={() => void cham(chuaCham.id, true)}>
                   <Check className="mr-1 h-4 w-4" />Đúng — dùng sơ đồ này
                 </Button>

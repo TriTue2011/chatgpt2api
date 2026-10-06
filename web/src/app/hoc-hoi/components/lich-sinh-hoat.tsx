@@ -281,7 +281,7 @@ export function LichSinhHoat() {
               <span className="text-muted-foreground">
                 ~{n.gio.replace("h", ":")} ±{n.lech_phut}p · thấy {n.so_lan} lần{n.thu >= 0 ? ` · ${THU[n.thu]}` : ""}
               </span>
-              <span className="ml-auto flex gap-1">
+              <span className="ml-auto flex flex-wrap gap-1">
                 <Button size="sm" variant="outline" className="h-7" onClick={() => nhanNep(n)}>Thêm vào lịch</Button>
                 <Button size="sm" variant="ghost" className="h-7" onClick={() => void boNep(n)}>Bỏ</Button>
               </span>
@@ -289,7 +289,7 @@ export function LichSinhHoat() {
           ))}
         </div>
       )}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button variant="outline" size="sm" onClick={() => {
           const ai = loc && loc !== "*" ? [loc] : [];
           setDs([...ds, { ma: "", ten: "", loai: "khac", tu: "12:00", den: "13:30", thu: [0, 1, 2, 3, 4, 5, 6], ai }]);

@@ -395,10 +395,12 @@ function SuaTruongHop({ chieu, ban, camBien, lich, onLuu, onHuy, them }: {
         </Button>
         <label className="flex items-center gap-1"><input type="checkbox" checked={xm} onChange={(e) => setXm(e.target.checked)} />
           nhìn lại camera trước khi làm</label>
-        <span className="ml-auto flex gap-2">
+        {/* Điện thoại: hàng nút phải XUỐNG DÒNG — trước đây «Chạy như cũ» + «Bỏ đề xuất» đẩy «Lưu & chạy» ra ngoài
+            mép màn hình, không thấy để bấm (chủ máy 06/10/2026 chụp màn hình). Nút chính đứng đầu. */}
+        <span className="ml-auto flex flex-wrap justify-end gap-2">
+          <Button size="sm" disabled={!khi} onClick={() => onLuu(loi, { chieu, nen, khi: [khi], neu, xac_minh: xm })}>Lưu &amp; chạy</Button>
           {them}
           {onHuy ? <Button size="sm" variant="ghost" onClick={onHuy}>Huỷ</Button> : null}
-          <Button size="sm" disabled={!khi} onClick={() => onLuu(loi, { chieu, nen, khi: [khi], neu, xac_minh: xm })}>Lưu &amp; chạy</Button>
         </span>
       </div>
     </div>
