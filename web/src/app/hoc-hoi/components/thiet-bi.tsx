@@ -291,20 +291,30 @@ function SuaTruongHop({ chieu, ban, camBien, lich, onLuu, onHuy, them }: {
                 gio: { tu: "18:00", den: "22:00" }, thu: { thu: [0, 1, 2, 3, 4, 5, 6] }, ngay: { tu_ngay: "", den_ngay: "" } };
               const tat: Record<keyof typeof co, Partial<DieuKien>> = {
                 gio: { tu: undefined, den: undefined }, thu: { thu: undefined }, ngay: { tu_ngay: undefined, den_ngay: undefined } };
-              const soBat = Object.values(co).filter(Boolean).length;
+              // Chủ máy 06/10/2026: "thiếu chỉ có ngày hoặc thứ, thiếu thứ + ngày" — ba nút bật/tắt bắt người tự đoán phải
+              // TẮT «giờ» mới ra «chỉ thứ». Nay chọn thẳng một trong 7 chế độ; đổi chế độ giữ nguyên giá trị phần còn lại.
+              const CHE_DO: [string, string][] = [
+                ["gio", "chỉ khung giờ"], ["thu", "chỉ thứ trong tuần"], ["ngay", "chỉ ngày (từ ngày … tới ngày …)"],
+                ["gio+thu", "khung giờ + thứ"], ["gio+ngay", "khung giờ + ngày"], ["thu+ngay", "thứ + ngày"],
+                ["gio+thu+ngay", "khung giờ + thứ + ngày"]];
+              const cheDo = (["gio", "thu", "ngay"] as const).filter((k) => co[k]).join("+") || "gio";
               return (<>
+                <select className="h-8 rounded border border-border bg-background px-1" value={cheDo}
+                  onChange={(e) => {
+                    const moi = e.target.value.split("+");
+                    let doi: Partial<DieuKien> = {};
+                    for (const k of ["gio", "thu", "ngay"] as const) {
+                      if (moi.includes(k) && !co[k]) doi = { ...doi, ...bat[k] };
+                      if (!moi.includes(k) && co[k]) doi = { ...doi, ...tat[k] };
+                    }
+                    sua(i, doi);
+                  }}>
+                  {CHE_DO.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+                </select>
                 <select className="h-8 rounded border border-border bg-background px-1" value={d.phu_dinh ? "ngoai" : "trong"}
                   onChange={(e) => sua(i, { phu_dinh: e.target.value === "ngoai" || undefined })}>
-                  <option value="trong">đúng lúc</option><option value="ngoai">KHÔNG phải lúc</option>
+                  <option value="trong">đúng lúc đó</option><option value="ngoai">KHÔNG phải lúc đó</option>
                 </select>
-                {(["gio", "thu", "ngay"] as const).map((k) => (
-                  <button key={k} type="button"
-                    className={`h-8 rounded border px-2 text-xs ${co[k] ? "border-primary bg-primary/15 text-primary" : "border-border text-muted-foreground"}`}
-                    title={co[k] && soBat === 1 ? "Phải còn ít nhất một phần thời gian" : co[k] ? "Bỏ phần này" : "Thêm phần này"}
-                    onClick={() => { if (!(co[k] && soBat === 1)) sua(i, co[k] ? tat[k] : bat[k]); }}>
-                    {co[k] ? "✓ " : "+ "}{k === "gio" ? "giờ" : k === "thu" ? "thứ" : "ngày"}
-                  </button>
-                ))}
                 {co.gio ? (
                   <span className="flex w-full flex-wrap items-center gap-1">
                     giờ
