@@ -113,6 +113,13 @@ class DungKhiMatPhienTest(_CoSo):
         self.addCleanup(p.stop)
         app = FastAPI()
         app.include_router(youtube_phat.create_router())
-        d = TestClient(app).post("/api/youtube-phat/dung-phien", json={"session_id": "phien-cu"}).json()
+        client = TestClient(app)
+        d = client.post("/api/youtube-phat/dung-phien", json={"session_id": "phien-cu"}).json()
         self.assertEqual((True, ["media_player.googlehome5802", "media_player.lg_webos_tv"]), (d["ok"], d["ket_qua"]))
+        # Mã phiên cũ trong khi loa đang thuộc một phiên CÒN SỐNG: không cắt ngang — phiên đó tự dừng loa của nó.
+        self.cuoc_goi.clear()
+        with patch.object(self.phat_ha, "cac_phien", return_value=[
+                {"session_id": "s2", "output_entity_ids": ["media_player.lg_webos_tv"]}]):
+            d = client.post("/api/youtube-phat/dung-phien", json={"session_id": "phien-cu"}).json()
+        self.assertEqual(["media_player.googlehome5802"], d["ket_qua"])
 

@@ -705,8 +705,9 @@ def create_router() -> APIRouter:
             except ValueError as loi:
                 if str(loi) != "phien_da_ket_thuc":
                     raise
-                # Phiên đã mất (c2a khởi động lại giữa bài) mà loa còn phát luồng của c2a.
-                return phat_ha.dung_loa_luong(ly_do="API dừng phiên: phiên đã mất")
+                # Phiên đã mất (c2a khởi động lại giữa bài) mà loa còn phát luồng của c2a. Chỉ loa MỒ CÔI: loa của
+                # phiên còn sống dừng qua chính phiên đó, không thì phiên treo «đang phát» trên loa đã nghỉ.
+                return phat_ha.dung_loa_luong(chi_mo_coi=True, ly_do="API dừng phiên: phiên đã mất")
         return await _phien_lenh(request, _dung)
 
     @router.post("/api/youtube-phat/bo-loa")
