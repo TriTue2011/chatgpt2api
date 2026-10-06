@@ -225,6 +225,8 @@ class DocThoiQuenTest(unittest.TestCase):
         self._sk("light.a", "off", g - 10)
         self._sk("light.a", "on", g + 60)
         self._sk("binary_sensor.p", "on", g + 30)
+        # Có người rồi đi — để «on» mãi là cảm biến KẸT, tầng học bỏ cả ngày đó (cam_bien_ket) khi mốc rơi vào nửa đêm.
+        self._sk("binary_sensor.p", "off", g + 900)
         nv_hoc = {"light.a": {"khu_vuc": "Bếp", "ngoai_vi": [{"ma": "binary_sensor.p", "ten": "P", "vai_tro": "hien_dien"}]}}
         de_da_gui: list[str] = []
 
@@ -256,6 +258,8 @@ class DocThoiQuenTest(unittest.TestCase):
         self._sk("light.a", "off", g - 10)
         self._sk("light.a", "on", g + 60)
         self._sk("binary_sensor.p", "on", g + 30)
+        # Có người rồi đi — để «on» mãi là cảm biến KẸT, tầng học bỏ cả ngày đó (cam_bien_ket) khi mốc rơi vào nửa đêm.
+        self._sk("binary_sensor.p", "off", g + 900)
         self._sk("light.b", "off", g - 10)
         nv_hoc = {"light.a": {"khu_vuc": "Bếp", "ngoai_vi": [
                       {"ma": "binary_sensor.p", "ten": "P", "vai_tro": "hien_dien"},

@@ -12,19 +12,22 @@ bật/tắt (on/off); số đo không đụng.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 KET = 0.98
+#: Ngày theo GIỜ NHÀ, như mọi tầng học (`lich_su_nha._TZ`) — không theo múi giờ tiến trình: CI chạy UTC thì «ngày»
+#: lệch 7 tiếng (đo 06/10/2026: test thoi_quen_doc đỏ đúng khi mốc rơi vào nửa đêm UTC).
+_TZ = timezone(timedelta(hours=7))
 _BAT_TAT = frozenset({"on", "off"})
 
 
 def _dau_ngay(t: float) -> float:
-    d = datetime.fromtimestamp(t)
+    d = datetime.fromtimestamp(t, _TZ)
     return d.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
 
 
 def _ngay_sau(t: float) -> float:
-    return (datetime.fromtimestamp(t) + timedelta(days=1, hours=2)).replace(
+    return (datetime.fromtimestamp(t, _TZ) + timedelta(days=1, hours=2)).replace(
         hour=0, minute=0, second=0, microsecond=0).timestamp()
 
 

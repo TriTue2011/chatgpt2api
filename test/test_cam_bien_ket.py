@@ -9,11 +9,11 @@ from datetime import datetime
 os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
 
 from services import thoi_quen_nha as tq  # noqa: E402
-from services.cam_bien_ket import bo_ket, ngay_ket  # noqa: E402
+from services.cam_bien_ket import _TZ, bo_ket, ngay_ket  # noqa: E402
 
 
 def _t(ngay: int, gio: int, phut: int = 0) -> float:
-    return datetime(2026, 9, ngay, gio, phut).timestamp()
+    return datetime(2026, 9, ngay, gio, phut, tzinfo=_TZ).timestamp()   # giờ NHÀ, không theo múi giờ máy chạy test
 
 
 def _chuoi_ket():
@@ -27,7 +27,7 @@ def _chuoi_ket():
 def test_ngay_on_tren_98_phan_tram_la_ket():
     ts, gt = _chuoi_ket()
     q = ngay_ket(ts, gt, _t(21, 0), _t(26, 0))
-    assert [datetime.fromtimestamp(a).day for a, _ in q] == [22, 23]
+    assert [datetime.fromtimestamp(a, _TZ).day for a, _ in q] == [22, 23]
 
 
 def test_cam_bien_binh_thuong_va_so_do_khong_bi_dung():
@@ -61,6 +61,6 @@ def test_kich_hoat_khong_sinh_moc_co_nguoi_vao_trong_ngay_ket(tmp_path, monkeypa
     c.commit()
     monkeypatch.setattr(kh._cbg, "ds", lambda: {})
     sk = kh._su_kien_nguon(c, _t(21, 0), _t(26, 0), set())
-    moc = [datetime.fromtimestamp(t).strftime("%d %H:%M") for t, n in sk if n.endswith("có người vào")]
+    moc = [datetime.fromtimestamp(t, _TZ).strftime("%d %H:%M") for t, n in sk if n.endswith("có người vào")]
     assert "22 09:10" not in moc, "chớp trong ngày kẹt không phải người vào"
     assert "24 19:00" in moc and "21 23:50" in moc
