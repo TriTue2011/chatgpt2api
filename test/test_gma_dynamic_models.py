@@ -154,3 +154,16 @@ def test_registry_warm_khong_ket_luan_som_ten_sai_cua_account_con_lanh(
         "one": _Client([_model("gemini-flash", "a1")]),
     })
     assert gma._resolve_model("gma/khong-ton-tai") == "khong-ton-tai"
+
+
+def test_catalog_hien_ten_phien_ban_that_tu_registry(monkeypatch) -> None:
+    """06/10/2026 «Gemini web api cũng thế, tôi cần tự động cập nhật»: Google lên 3.8 Flash, danh sách tay còn
+    «3.5-flash». Tên có số phiên bản lấy từ bí danh registry của từng tài khoản; mã băm / tên trần không liệt kê."""
+    from api import gemini_web as gma
+
+    moi = _model("gemini-flash", "56fd", aliases=("3.8 flash", "3.8-flash", "56fdd199312815e2", "flash"))
+    cu = _model("gemini-flash", "fbb1", aliases=("3.6 flash", "3.6-flash", "fbb127bbb056c959", "flash"))
+    monkeypatch.setattr(gma, "_clients", {"a": _Client([moi]), "b": _Client([cu])})
+    ids = gma.available_model_ids()
+    assert {"gma/3.8-flash", "gma/3.6-flash", "gma/gemini-flash"} <= set(ids)
+    assert not any(x in ids for x in ("gma/flash", "gma/56fdd199312815e2", "gma/3.8 flash"))

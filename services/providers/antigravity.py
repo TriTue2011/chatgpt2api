@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import time
 import uuid
 from typing import Any, Iterator
@@ -106,6 +107,88 @@ def _try_refresh_antigravity_token(stale_access_token: str) -> str | None:
     return new_access
 
 
+#: Model THẬT của từng tài khoản (Google đổi là đổi theo) — chủ máy 06/10/2026: "antigravity giờ model cũng đổi rồi,
+#: tôi cần tự động cập nhật". Đệm theo token. id → thông tin (có thể kèm quotaInfo.remainingFraction).
+_MODEL_DEM: dict[str, tuple[float, dict[str, dict[str, Any]]]] = {}
+MODEL_DEM_GIAY = 3600
+#: Thang bậc như Gemini web (`api.gemini_web.GMA_BAC`): việc khó → pro, vừa → flash, nhẹ → lite.
+AG_BAC: dict[str, tuple[str, ...]] = {
+    "kho": ("pro", "flash", "lite"), "vua": ("flash", "lite"), "nhe": ("lite",), "auto": ("pro", "flash", "lite"),
+}
+_MUC_NGHI = ("low", "medium", "high")
+
+
+def danh_sach_model(account: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Hỏi Google các model tài khoản đang dùng được (`v1internal:fetchAvailableModels`); hỏng thì rỗng (giữ tên
+    người gọi). Nhận cả dạng {"models": {id: {...}}} lẫn {"models": [{...}]}."""
+    token = str(account.get("access_token") or "")
+    hit = _MODEL_DEM.get(token)
+    if hit and time.time() - hit[0] < MODEL_DEM_GIAY:
+        return hit[1]
+    project = str(account.get("project_id") or "").strip()
+    for base_url in ANTIGRAVITY_BASE_URLS:
+        try:
+            resp = requests.post(
+                f"{base_url}/v1internal:fetchAvailableModels",
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}",
+                         "User-Agent": "antigravity/1.107.0 Windows/x64"},
+                json={"project": project} if project else {}, timeout=20)
+            if resp.status_code != 200:
+                continue
+            ms = (resp.json() or {}).get("models") or {}
+            if isinstance(ms, list):
+                ms = {str(m.get("id") or m.get("name") or m.get("model") or ""): m for m in ms if isinstance(m, dict)}
+            co = {str(k).split("/")[-1]: (v if isinstance(v, dict) else {}) for k, v in ms.items() if k}
+            if co:
+                _MODEL_DEM[token] = (time.time(), co)
+                logger.info({"event": "antigravity_models", "so": len(co), "ds": sorted(co)[:12]})
+                return co
+        except Exception as exc:  # noqa: BLE001 — không hỏi được thì giữ tên người gọi
+            logger.warning({"event": "antigravity_models_loi", "url": base_url, "error": str(exc)[:160]})
+    return {}
+
+
+def _dong(ten: str) -> str:
+    phan = re.split(r"[-_.]", ten.lower())
+    return next((d for d in ("lite", "flash", "pro") if d in phan), "")
+
+
+def _con_han(info: dict[str, Any]) -> bool:
+    q = info.get("quotaInfo") or {}
+    try:
+        return float(q.get("remainingFraction", 1)) > 0
+    except (TypeError, ValueError):
+        return True
+
+
+def chon_model(yeu_cau: str, co: dict[str, dict[str, Any]]) -> str:
+    """Tên gửi Google: còn trong danh sách + còn hạn mức thì giữ; tên bậc (auto/kho/vua/nhe) hoặc tên ĐÃ BỊ GỠ thì
+    lấy model cùng dòng (pro/flash/lite) phiên bản cao nhất, ưu tiên cùng mức suy nghĩ; dòng hết thì xuống dòng sau.
+    Không biết danh sách (chưa hỏi được) thì giữ nguyên."""
+    yeu_cau = str(yeu_cau or "").strip()
+    if not co:
+        return yeu_cau or "gemini-3.1-pro-high"
+    if yeu_cau in co and _con_han(co[yeu_cau]):
+        return yeu_cau
+    if yeu_cau in AG_BAC:
+        thu, nghi = AG_BAC[yeu_cau], "high" if yeu_cau in ("kho", "auto") else ""
+    else:
+        d = _dong(yeu_cau)
+        if not d:
+            return yeu_cau                 # Claude / GPT-OSS gọi đích danh: không đoán thay
+        thu = AG_BAC["auto"][AG_BAC["auto"].index(d):]
+        nghi = next((m for m in _MUC_NGHI if yeu_cau.lower().endswith("-" + m)), "")
+
+    def _khoa(ten: str) -> tuple:
+        so = tuple(int(x) for x in re.findall(r"\d+", ten.split("-", 2)[1] if ten.count("-") >= 2 else ten)[:2])
+        return (bool(nghi) and ten.lower().endswith("-" + nghi), so, ten)
+    for d in thu:
+        ung = [m for m, i in co.items() if _dong(m) == d and _con_han(i)]
+        if ung:
+            return max(ung, key=_khoa)
+    return yeu_cau
+
+
 class AntigravityProvider:
     """Antigravity provider using rotated Google Cloud Code companion tokens."""
 
@@ -164,6 +247,12 @@ class AntigravityProvider:
             else:
                 # Generate a decoy — will fail but allows graceful error vs email 403
                 project_id = generate_project_id()
+
+        # Model theo danh sách THẬT của tài khoản (tên bị Google gỡ / tên bậc → model cùng dòng mới nhất).
+        that = chon_model(model, danh_sach_model({**account, "project_id": project_id}))
+        if that != model:
+            logger.info({"event": "antigravity_doi_model", "yeu_cau": model, "dung": that})
+            model = that
 
         # Convert OpenAI request structures to Gemini structures
         contents, system_instruction, gemini_tools = _convert_request(messages, tools)

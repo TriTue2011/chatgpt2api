@@ -560,6 +560,13 @@ def available_model_ids() -> list[str]:
             ).strip()
             if name:
                 found.add(f"gma/{name}")
+            # Tên có SỐ PHIÊN BẢN đúng như giao diện Gemini đang hiện («3.8 Flash» → 3.8-flash) — lấy từ bí danh
+            # registry của chính tài khoản, nên Google lên bản mới là danh sách tự đổi theo (chủ máy 06/10/2026:
+            # "Gemini web api cũng thế, tôi cần tự động cập nhật"; đo cùng ngày: 2 tài khoản 3.8 Flash, 2 tài khoản
+            # 3.6 Flash). Bí danh khác (mã băm, tên trần «flash») không liệt kê.
+            for bd in getattr(model, "aliases", None) or []:
+                if re.fullmatch(r"\d+(?:\.\d+)*-[a-z]+(?:-[a-z]+)*", str(bd)):
+                    found.add(f"gma/{bd}")
     if found:
         # Model THEO BẬC (`GMA_BAC`) chọn được như model thường — gắn vào combo theo độ khó việc.
         found.update(f"gma/{b}" for b in GMA_BAC)

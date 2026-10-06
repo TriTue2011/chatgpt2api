@@ -279,6 +279,26 @@ def _fetch_gemini_web_api_models() -> set[str]:
         return set()
 
 
+def _fetch_antigravity_models() -> set[str]:
+    """Model THẬT các tài khoản Antigravity đang dùng được (`fetchAvailableModels`) + tên bậc. Chưa có tài khoản
+    hoặc không hỏi được thì rỗng → danh sách tĩnh (chủ máy 06/10/2026: "antigravity giờ model cũng đổi rồi")."""
+    try:
+        from services.account_service import account_service
+        from services.providers.antigravity import AG_BAC, danh_sach_model
+        tk = [a for a in account_service.list_accounts()
+              if "antigravity" in str(a.get("type") or "").split(",")
+              and a.get("status") not in ("disabled", "error") and a.get("access_token")]
+        found: set[str] = set()
+        for a in tk:
+            found.update(f"ag/{m}" for m in danh_sach_model(a))
+        if found:
+            found.update(f"ag/{b}" for b in AG_BAC)
+        return found
+    except Exception as exc:  # noqa: BLE001
+        logger.warning({"event": "list_models_antigravity_error", "error": str(exc)[:200]})
+        return set()
+
+
 def _merge_runtime_gma_models(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Ghép registry GMA trong RAM vào cả cache đĩa còn hạn.
 
@@ -936,6 +956,7 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
         "gemini_web": _fetch_gemini_web_models,
         "gemini_web_api": _fetch_gemini_web_api_models,
         "tokenrouter": _fetch_tokenrouter_models,
+        "antigravity": _fetch_antigravity_models,
     }
 
     # Add custom providers dynamically
@@ -1143,9 +1164,11 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
     # đưa vào enabled_models được.
     # Model THẬT của từng tài khoản (gemini-flash, gemini-flash-lite, gemini-pro…) do
     # `_merge_runtime_gma_models` ghép từ registry; đây chỉ là tên thân thiện còn sống.
-    gma_models = ["gma/auto", "gma/image",
-                  "gma/3.5-flash", "gma/3.1-flash",
-                  "gma/3.1-pro", "gma/3.5-flash-lite"]
+    gma_models = ["gma/auto", "gma/image"]
+    # Tên có số phiên bản: lấy THẬT từ registry (`available_model_ids` — 06/10/2026 Google đã lên 3.8 Flash
+    # trong khi danh sách tay còn «3.5-flash»). Danh sách tay chỉ khi chưa tài khoản nào nạp xong registry.
+    if not any(str(x.get("id") or "").startswith("gma/gemini-") for x in data):
+        gma_models += ["gma/3.5-flash", "gma/3.1-flash", "gma/3.1-pro", "gma/3.5-flash-lite"]
     for mid in gma_models:
         if mid not in seen:
             seen.add(mid)

@@ -73,9 +73,11 @@ class DanhSachModelTests(unittest.TestCase):
         """
         import re
         chinh = _ids()
-        khoi = re.search(r"gma_models = \[(.*?)\]", chinh, re.S)
-        self.assertIsNotNone(khoi, "không tìm thấy gma_models")
-        ten = re.findall(r'"gma/([^"]+)"', khoi.group(1))
+        # Danh sách tay gồm `gma_models = [...]` và phần dự phòng `gma_models += [...]` (chỉ khi registry chưa có —
+        # 06/10/2026 tên có số phiên bản lấy từ registry thật).
+        khoi = re.findall(r"gma_models \+?= \[(.*?)\]", chinh, re.S)
+        self.assertTrue(khoi, "không tìm thấy gma_models")
+        ten = [t for k in khoi for t in re.findall(r'"gma/([^"]+)"', k)]
         self.assertIn("3.5-flash", ten)
 
         gw = (GOC / "api/gemini_web.py").read_text(encoding="utf-8")
