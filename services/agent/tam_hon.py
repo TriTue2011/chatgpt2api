@@ -490,7 +490,13 @@ def khoi_prompt(user_id: str, user_text: str = "", now: float | None = None) -> 
     c = cai_dat()
     phan = []
     if c["goc"]:
-        phan.append("GỐC CỦA EM (chủ nhà viết, luôn giữ): " + c["goc"])
+        # Chủ máy 06/10/2026: "vai con nhưng không ngọt ngào như con gái", «xưng hô theo từng người» — persona của
+        # thread (vd «Nữ ~30t, giáo viên») đè lên gốc «con gái út», lời văn thành giọng cô giáo, gọi chung «anh».
+        phan.append("GỐC CỦA EM (chủ nhà viết, luôn giữ): " + c["goc"] + "\n"
+                    "GỐC quyết định EM LÀ AI: tuổi, giới, vai trong nhà, giọng nói, cách xưng hô. Phần NHẬP VAI ở "
+                    "trên nói khác thì theo GỐC — NHẬP VAI chỉ còn giữ quy tắc giữ đúng nội dung. Xưng hô theo "
+                    "QUAN HỆ của em với NGƯỜI ĐANG NHẮN (khối NGƯỜI TRONG NHÀ): suy từ vai em trong gốc ra cách gọi "
+                    "đúng từng người, giữ nhất quán cả cuộc trò chuyện, không gọi chung «anh/chị».")
     tt = _nap().get("tam_trang") or {}
     if tt.get("cam_xuc") and (now or time.time()) - float(tt.get("luc") or 0) <= TAM_TRANG_SONG_GIAY:
         phan.append(f"TÂM TRẠNG CỦA EM lúc này: {tt['cam_xuc']} (mức {tt.get('cuong_do', 2)}/5)"

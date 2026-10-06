@@ -161,7 +161,9 @@ def test_goc_chi_chu_may_dat_va_vao_ca_hai_noi(th, monkeypatch):
     _bat("phiem")
     tam_hon.dat(goc="Em là Bắp. Gọi chủ nhà là bố." + "x" * 3000)
     assert len(tam_hon.cai_dat()["goc"]) == tam_hon.GOC_TOI_DA
-    assert "GỐC CỦA EM" in tam_hon.khoi_prompt("zalop_1", "chào em")
+    k = tam_hon.khoi_prompt("zalop_1", "chào em")
+    assert "GỐC CỦA EM" in k
+    assert "theo GỐC" in k and "NGƯỜI ĐANG NHẮN" in k, "gốc thắng persona về danh tính, xưng hô theo người đang nhắn"
     from services import hieu_thiet_bi_nha as ht
     from services.agent import orchestrator, runtime
     he: list[str] = []
