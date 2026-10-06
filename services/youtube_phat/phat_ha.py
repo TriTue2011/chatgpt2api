@@ -28,9 +28,10 @@ from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 from services import ha_client
+from utils.log import logger
 
 from . import dich_vu, loa_c2a
-from .streaming import stream_target
+from .streaming import luong_ky_boi, stream_target
 
 MEDIA_PLAYER = re.compile(r"^media_player\.[a-z0-9_]+$")
 TOI_DA_THIET_BI = 16
@@ -555,6 +556,48 @@ def phat_bai_trong_phien(phien: dict[str, Any], bai: dict[str, Any], base_url: s
     return phat(str(bai.get("source") or "youtube"), str(bai.get("url") or bai.get("id")),
                 list(phien["output_entity_ids"]), url, media_content_type=bai.get("media_content_type"),
                 session_id=session_id, goi=goi)
+
+
+#: Loa còn "giữ" bài: đang phát, tạm dừng (TTS chen / Pause), đang nạp; "on" cho loa chỉ báo bật/tắt.
+DANG_PHAT = frozenset({"playing", "paused", "buffering", "on"})
+_STOP, _TURN_OFF, _PAUSE = 4096, 256, 1
+
+
+def loa_phat_luong(trang_thai: list[dict[str, Any]], secret: str) -> list[str]:
+    """Loa đang phát LUỒNG của chính c2a (chữ ký khớp), kể cả khi c2a đã QUÊN phiên.
+
+    Chủ máy 06/10/2026 (tích hợp HA 0.27.8 cùng lỗi, tái hiện trên loa camera thật): máy phát mất phiên giữa bài —
+    c2a khởi động lại để lên bản mới là mất — thì «dừng nhạc» không thấy phiên nào, loa phát tiếp; TTS chen vào là
+    nhạc tự phát lại. Dò theo LUỒNG trên loa thì không sót loa nào."""
+    return sorted(
+        str(s.get("entity_id"))
+        for s in trang_thai
+        if s.get("state") in DANG_PHAT
+        and luong_ky_boi((s.get("attributes") or {}).get("media_content_id"), secret)
+    )
+
+
+def dung_loa_luong(*, cho_phep: set[str] | None = None, ly_do: str = "", chi_mo_coi: bool = False,
+                   goi: Callable[[str, str, dict], bool] | None = None) -> list[str]:
+    """Dừng mọi loa đang phát luồng của c2a (lọc theo ``cho_phep`` nếu có). Loa không có Stop thì Turn off, không có
+    nữa thì Pause — không bỏ qua im lặng loa nào. ``chi_mo_coi``: chỉ loa KHÔNG thuộc phiên nào đang có (dọn lúc khởi
+    động không được cắt bài vừa phát sau khi lên lại). Trả các loa đã nhận lệnh."""
+    goi = goi or goi_loa
+    tt = _trang_thai_tho(dung_bo_dem=False)
+    theo_ma = {str(s.get("entity_id")): s for s in tt}
+    trong_phien = {e for p in cac_phien() for e in p.get("output_entity_ids") or []} if chi_mo_coi else set()
+    da: list[str] = []
+    for ma in loa_phat_luong(tt, dich_vu.core().integration_token):
+        if (cho_phep is not None and ma not in cho_phep) or ma in trong_phien:
+            continue
+        f = int((theo_ma[ma].get("attributes") or {}).get("supported_features") or 0)
+        dv = "media_stop" if f & _STOP else "turn_off" if f & _TURN_OFF else "media_pause" if f & _PAUSE else ""
+        if dv and goi("media_player", dv, {"entity_id": ma}):
+            da.append(ma)
+    if da:
+        _xoa_bo_dem()
+        logger.info({"event": "youtube_phat_dung_loa_luong", "ly_do": ly_do, "loa": da})
+    return da
 
 
 def dung_phien(session_id: Any, *, goi: Callable[[str, str, dict], bool] | None = None) -> list[str]:

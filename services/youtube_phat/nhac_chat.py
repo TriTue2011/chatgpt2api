@@ -221,6 +221,14 @@ def dieu_khien(args: dict[str, Any], cho_phep: set[str] | None) -> dict[str, Any
         return {"text": cau_loi("lenh_khong_ho_tro")}
     phien = _phien_cua(cho_phep)
     if not phien:
+        if lenh == "dung":
+            # c2a không còn phiên (khởi động lại giữa bài) mà loa vẫn phát luồng của c2a — dừng theo LUỒNG.
+            try:
+                da = phat_ha.dung_loa_luong(cho_phep=cho_phep, ly_do="bot: dừng nhạc khi không còn phiên")
+            except (OSError, RuntimeError, ValueError):
+                da = []
+            if da:
+                return {"text": f"[đã dừng nhạc trên {', '.join(da)}]"}
         return {"text": "[không loa nào đang phát nhạc]"}
     theo_ma = {d["entity_id"]: d for d in phat_ha.danh_sach()}
     loa_hoi = str(args.get("loa") or "").strip()

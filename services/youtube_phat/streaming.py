@@ -127,6 +127,19 @@ def _b64decode(value: str) -> bytes:
 
 
 _STREAM_TOKEN = re.compile(r"/api/stream/([A-Za-z0-9_-]+)\.[A-Za-z0-9_-]+")
+_STREAM_TOKEN_KY = re.compile(r"/api/stream/([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)")
+
+
+def luong_ky_boi(media_content_id: object, secret: str) -> bool:
+    """Loa có đang phát luồng KÝ bằng ``secret`` (luồng của chính máy phát này) không.
+
+    Chỉ so CHỮ KÝ, bỏ qua hạn dùng: bài dài phát quá hạn token vẫn là luồng của mình. Khác ``stream_target``
+    (chỉ đọc payload) ở chỗ không nhận nhầm luồng của máy phát khác (add-on) đang phát trên cùng HA."""
+    match = _STREAM_TOKEN_KY.search(str(media_content_id or ""))
+    if not match or not secret:
+        return False
+    ky = _b64encode(hmac.new(str(secret).encode(), match.group(1).encode(), hashlib.sha256).digest())
+    return hmac.compare_digest(match.group(2), ky)
 
 
 def stream_target(media_content_id: object) -> str | None:

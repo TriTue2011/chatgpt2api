@@ -373,12 +373,38 @@ def create_app() -> FastAPI:
         except Exception as exc:
             _record_startup_failure("tts_warmup_start", str(exc))
 
+        # Nhạc YouTube/Zing: loa còn phát luồng của LẦN CHẠY TRƯỚC (c2a bị ngắt ngang, phiên mất) → dọn sau 30 s,
+        # khi HA client đã sẵn. Chỉ loa không thuộc phiên mới (chủ máy 06/10/2026: "restart, gỡ, dừng thì xoá hoàn
+        # toàn nhạc ra loa").
+        def _don_loa_mo_coi() -> None:
+            import time as _t
+            _t.sleep(30)
+            try:
+                from services.youtube_phat import phat_ha
+                phat_ha.dung_loa_luong(chi_mo_coi=True, ly_do="c2a khởi động: dọn loa còn phát luồng cũ")
+            except Exception as exc:
+                logger.info({"event": "youtube_phat_don_loa_loi", "loi": str(exc)[:160]})
+        import threading as _thr_don
+        _thr_don.Thread(target=_don_loa_mo_coi, name="yt-don-loa", daemon=True).start()
+
         # Emit startup health summary before yielding to let requests through
         _emit_startup_health_summary()
 
         try:
             yield
         finally:
+            # c2a tắt (watchtower thay bản, docker stop): dừng mọi loa đang phát luồng của c2a TRƯỚC khi mất luồng —
+            # không thì loa giữ bài, TTS chen vào là phát lại. Tối đa 6 s: Docker chỉ chờ 10 s rồi giết.
+            try:
+                import concurrent.futures as _cf
+                from services.youtube_phat import phat_ha as _ph
+                _ex = _cf.ThreadPoolExecutor(1)
+                try:
+                    _ex.submit(_ph.dung_loa_luong, ly_do="c2a tắt").result(timeout=6)
+                finally:
+                    _ex.shutdown(wait=False)      # `with` sẽ chờ luồng xong — mất tác dụng của timeout
+            except Exception as exc:
+                logger.info({"event": "youtube_phat_dung_loa_khi_tat_loi", "loi": str(exc)[:160]})
             try:
                 from services.voice import wyoming_server as voice_wyoming
                 voice_wyoming.stop()

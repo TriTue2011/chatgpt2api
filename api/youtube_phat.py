@@ -699,7 +699,15 @@ def create_router() -> APIRouter:
     @router.post("/api/youtube-phat/dung-phien")
     async def dung_phien(request: Request, authorization: str | None = Header(default=None)):
         require_admin(authorization)
-        return await _phien_lenh(request, lambda p: phat_ha.dung_phien(p.get("session_id")))
+        def _dung(p: dict) -> list[str]:
+            try:
+                return phat_ha.dung_phien(p.get("session_id"))
+            except ValueError as loi:
+                if str(loi) != "phien_da_ket_thuc":
+                    raise
+                # Phiên đã mất (c2a khởi động lại giữa bài) mà loa còn phát luồng của c2a.
+                return phat_ha.dung_loa_luong(ly_do="API dừng phiên: phiên đã mất")
+        return await _phien_lenh(request, _dung)
 
     @router.post("/api/youtube-phat/bo-loa")
     async def bo_loa(request: Request, authorization: str | None = Header(default=None)):
