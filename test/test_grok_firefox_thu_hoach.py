@@ -129,16 +129,32 @@ class CloudflareChanTests(unittest.TestCase):
             self.assertEqual("het", gf.trang_thai_phien({"sso": "a"}))
         self.assertEqual("het", gf.trang_thai_phien({}))
 
-    def test_trang_thai_bi_chan_thi_xep_hang_lam_moi_khong_bao_het_phien(self):
+    def test_trang_thai_bi_chan_thi_khong_bao_het_phien_va_khong_mo_firefox(self):
+        """Cookie mới từ Firefox cũng không qua Cloudflare (ràng vân tay TLS — đo 06/10/2026): KHÔNG tự mở Firefox."""
         with mock.patch.object(gf, "tai_khoan", return_value=[{"profile": "grok-1", "label": "Main"}]), \
                 mock.patch.object(gf, "dang_mo", return_value=False), \
                 mock.patch.object(gf, "doc_cookie_file", return_value={"sso": "a"}), \
                 mock.patch.object(gf, "trang_thai_phien", return_value="cf_chan"), \
                 mock.patch.object(gf, "han_muc_cua", return_value=None), \
-                mock.patch.object(gf, "_lam_moi_nen") as nen:
+                mock.patch.object(gf, "mo") as mo:
             tk = gf.trang_thai()[0]
         self.assertEqual((None, True), (tk["phien_song"], tk["cf_chan"]))
-        nen.assert_called_once_with("grok-1")
+        mo.assert_not_called()
+
+    def test_dang_nhap_xong_ma_cloudflare_chan_van_luu_cookie(self):
+        """Bộ canh đăng nhập: cookie có sso đọc từ CHÍNH Firefox thì tin dù kiểm bị chặn — trước đó không bao giờ lưu."""
+        ck = {"sso": "moi", "cf_clearance": "x"}
+        with mock.patch.object(gf, "doc_cookie_sqlite", return_value=ck), \
+                mock.patch.object(gf, "ho_so", return_value=Path("/tmp")), \
+                mock.patch.object(gf, "trang_thai_phien", return_value="cf_chan"), \
+                mock.patch.object(gf, "ghi_cookie") as ghi:
+            self.assertEqual(ck, gf._thu_tu_sqlite("grok-1"))
+        ghi.assert_called_once_with("grok-1", ck)
+        with mock.patch.object(gf, "doc_cookie_sqlite", return_value={}), \
+                mock.patch.object(gf, "ho_so", return_value=Path("/tmp")), \
+                mock.patch.object(gf, "ghi_cookie") as ghi:
+            self.assertEqual({}, gf._thu_tu_sqlite("grok-1"))
+        ghi.assert_not_called()
 
     def test_lam_moi_doi_cf_clearance_moi_chu_khong_tra_ngay_khi_co_sso(self):
         cu = {"sso": "a", "cf_clearance": "cu"}

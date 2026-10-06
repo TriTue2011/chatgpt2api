@@ -24,7 +24,7 @@ import { moNoVNC } from "@/lib/duong-dan";
 export type GrokTaiKhoan = {
   profile: string; label: string; email?: string; enabled?: boolean; ordinal: number; is_primary: boolean;
   phien_song: boolean | null; da_dang_nhap: boolean; firefox_mo: boolean; cookie_luc: number | null;
-  /** Cloudflare chặn lời gọi kiểm (cf_clearance hết hạn) — KHÁC hết phiên; máy chủ đang tự mở lại hồ sơ lấy cookie mới. */
+  /** Cloudflare chặn lời gọi kiểm phiên / hạn mức từ máy chủ — KHÁC hết phiên; chat và vẽ (websocket) vẫn chạy. */
   cf_chan?: boolean;
   /** Hạn mức từ grok.com `/rest/rate-limits` (máy chủ lưu tạm 5 phút); null = chưa đọc được. */
   han_muc?: {
@@ -99,7 +99,7 @@ export function ChiTietGrok({ tk }: { tk: GrokTaiKhoan }) {
         </table>
       ) : (
         <p className="text-[var(--muted-foreground)]">
-          {tk.cf_chan ? "Chưa đọc được hạn mức — Cloudflare chặn, máy chủ đang lấy cookie mới (thử lại sau vài phút)."
+          {tk.cf_chan ? "Không đọc được hạn mức — grok.com (Cloudflare) chặn máy chủ hỏi; chat và vẽ vẫn chạy bình thường."
             : "Chưa đọc được hạn mức."}
         </p>
       )}
@@ -135,7 +135,7 @@ export async function grokDangNhap(profile: string): Promise<boolean> {
 export function TrangThaiGrok({ tk }: { tk: GrokTaiKhoan }) {
   if (tk.firefox_mo) return <Badge className="bg-sky-100 text-sky-700">Firefox đang mở — chờ đăng nhập</Badge>;
   if (!tk.da_dang_nhap) return <Badge className="bg-amber-100 text-amber-700">chưa đăng nhập</Badge>;
-  if (tk.cf_chan) return <Badge className="bg-amber-100 text-amber-700" title="Cookie Cloudflare hết hạn — máy chủ đang mở lại Firefox lấy cookie mới; chat / vẽ vẫn chạy">Cloudflare chặn — đang lấy cookie mới</Badge>;
+  if (tk.cf_chan) return <Badge className="bg-amber-100 text-amber-700" title="grok.com (Cloudflare) chặn máy chủ kiểm phiên và đọc hạn mức — không phải hết phiên; chat và vẽ vẫn chạy bằng cookie đang có">không kiểm được (Cloudflare) — vẫn dùng được</Badge>;
   if (tk.phien_song === false) return <Badge className="bg-rose-100 text-rose-700">hết phiên</Badge>;
   if (tk.phien_song === true) return <Badge className="bg-emerald-100 text-emerald-700">phiên sống</Badge>;
   return <Badge variant="secondary">đã đăng nhập</Badge>;

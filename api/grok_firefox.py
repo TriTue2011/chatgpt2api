@@ -239,11 +239,7 @@ def doc_cookie_file(profile: str) -> dict[str, str]:
 
 #: Cloudflare chặn lời gọi kiểm (403 «Just a moment…») KHÁC hết phiên — chủ máy 06/10/2026 (ảnh 7 tài khoản «hết
 #: phiên» mà vẽ ảnh vẫn chạy): cookie ghi 01–02/10, `cf_clearance` hết hạn nên mọi REST (kiểm phiên, hạn mức) bị chặn
-#: trong khi chat / vẽ qua websocket vẫn lọt. Bị chặn thì mở lại hồ sơ Firefox lấy cf_clearance mới (`lam_moi`).
-_CF_CHAN_LAN: dict[str, float] = {}
-_CF_LAM_MOI_GIAY = 30 * 60
-_cf_hang: list[str] = []
-_cf_khoa = threading.Lock()
+#: trong khi chat / vẽ qua websocket vẫn lọt. Cookie mới từ Firefox cũng không qua (ràng vân tay TLS) — chỉ báo đúng.
 
 
 def _la_cf_chan(exc: Exception) -> bool:
@@ -268,32 +264,6 @@ def trang_thai_phien(cookies: dict[str, str]) -> str:
 
 class _CfChan(Exception):
     pass
-
-
-def _lam_moi_nen(profile: str) -> None:
-    """Xếp hàng mở lại hồ sơ lấy cf_clearance mới — MỘT Firefox mỗi lúc (đỡ RAM), mỗi hồ sơ tối đa 30 phút một lần."""
-    with _cf_khoa:
-        if profile in _cf_hang or time.time() - _CF_CHAN_LAN.get(profile, 0) < _CF_LAM_MOI_GIAY:
-            return
-        _CF_CHAN_LAN[profile] = time.time()
-        _cf_hang.append(profile)
-        if len(_cf_hang) > 1:
-            return                                  # luồng đang chạy sẽ làm tiếp
-
-    def _chay() -> None:
-        while True:
-            with _cf_khoa:
-                if not _cf_hang:
-                    return
-                p = _cf_hang[0]
-            try:
-                lam_moi(p, nen=True)
-                _log("grok_firefox_cf_lam_moi", profile=p, ok=True)
-            except Exception as exc:  # noqa: BLE001
-                _log("grok_firefox_cf_lam_moi", profile=p, ok=False, loi=str(exc)[:120])
-            with _cf_khoa:
-                _cf_hang.pop(0)
-    threading.Thread(target=_chay, name="grok-cf-lam-moi", daemon=True).start()
 
 
 def thong_tin_phien(cookies: dict[str, str], nem_cf: bool = False) -> dict[str, str] | None:
@@ -557,9 +527,13 @@ def mo(profile: str) -> int:
 def _thu_tu_sqlite(profile: str) -> dict[str, str]:
     """Cookie trong hồ sơ còn phiên sống thì ghi file, cập nhật email của tài khoản, trả cookie."""
     cookies = doc_cookie_sqlite(ho_so(profile))
-    tt = thong_tin_phien(cookies) if cookies.get("sso") else None
-    if tt is None:
+    tt_phien = trang_thai_phien(cookies)
+    if tt_phien == "het":
         return {}
+    # Cloudflare chặn lời gọi kiểm (đo 06/10/2026: kể cả cf_clearance MỚI do Firefox vừa lấy — Cloudflare ràng vào dấu
+    # vân tay TLS của Firefox, Python không qua được) ≠ hết phiên: cookie có sso đọc từ chính Firefox thì tin. Không có
+    # nhánh này thì đăng nhập xong trên noVNC mà bộ canh không bao giờ lưu cookie.
+    tt = thong_tin_phien(cookies) if tt_phien == "song" else {}
     ghi_cookie(profile, cookies)
     if tt.get("email"):
         _sua_ds(lambda d: [{**a, "email": tt["email"]} if a.get("profile") == profile else a for a in d])
@@ -642,9 +616,9 @@ def trang_thai(kiem_phien: bool = True) -> list[dict[str, Any]]:
         if dang_mo(p):
             _bat_theo_doi(p)          # Firefox mở mà bộ canh đã thôi (hết giờ cũ, app khởi động lại) → canh tiếp
         f = _file_cookie(p)
+        # Bị Cloudflare chặn thì KHÔNG tự mở Firefox lấy cookie mới: cookie mới cũng không giúp Python qua được (đo
+        # 06/10/2026), chỉ tốn 7 Firefox mỗi lượt. Chat / vẽ (websocket) vẫn chạy bằng cookie đang có.
         tt = trang_thai_phien(doc_cookie_file(p)) if kiem_phien else ""
-        if tt == "cf_chan" and not dang_mo(p):
-            _lam_moi_nen(p)
         ra.append({**a, "ordinal": i + 1, "is_primary": i == 0,
                    "phien_song": {"song": True, "het": False}.get(tt) if kiem_phien else None,
                    "cf_chan": tt == "cf_chan",
