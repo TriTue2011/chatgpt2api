@@ -110,6 +110,9 @@ function nhomTruongHop(ds: TruongHop[], camBien: CamBien[]): { ten: string; ds: 
 // ── Sửa / thêm một trường hợp ───────────────────────────────────────────────
 type LoaiDk = "trang_thai" | "so_do" | "gio" | "lich" | "ca_nha" | "troi" | "so_sanh";
 const THU = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
+/** «24:00» (hết ngày — lõi chấp nhận) không có trong bộ chọn giờ của trình duyệt → ô trống (chủ máy 06/10/2026 chụp
+ *  màn hình). Hiện 23:59; không chạm ô thì giá trị lưu vẫn là 24:00. */
+const gioHien = (v?: string) => (v === "24:00" ? "23:59" : v || "");
 /** Số đo: dưới / trên / trong khoảng (có cả hai) / ngoài khoảng (có cả hai + phủ định) — lõi luat_duyet._kiem_dk. */
 function kieuSo(d: DieuKien): "duoi" | "tren" | "trong" | "ngoai" {
   if (d.duoi !== undefined && d.tren !== undefined) return d.phu_dinh ? "ngoai" : "trong";
@@ -253,9 +256,9 @@ function SuaTruongHop({ chieu, ban, camBien, lich, onLuu, onHuy, them }: {
                 <option value="trong">trong khung</option><option value="ngoai">ngoài khung</option>
               </select>
               {/* Chọn bằng bộ chọn giờ — luôn ra đúng HH:MM, khỏi gõ cho khớp định dạng (chủ máy 06/10/2026). */}
-              <Input className="h-8 w-28" type="time" value={d.tu || ""} onChange={(e) => sua(i, { tu: e.target.value })} /><span>–</span>
-              <Input className="h-8 w-28" type="time" value={d.den || ""} onChange={(e) => sua(i, { den: e.target.value })} />
-              <span className="flex gap-0.5" title="Thứ trong tuần — bỏ trống = mọi ngày. Khung qua nửa đêm tính theo ngày bắt đầu.">
+              <Input className="h-8 w-28" type="time" value={gioHien(d.tu)} onChange={(e) => sua(i, { tu: e.target.value })} /><span>–</span>
+              <Input className="h-8 w-28" type="time" value={gioHien(d.den)} onChange={(e) => sua(i, { den: e.target.value })} />
+              <span className="flex w-full flex-wrap gap-0.5" title="Thứ trong tuần — bỏ trống = mọi ngày. Khung qua nửa đêm tính theo ngày bắt đầu.">
                 {THU.map((t, j) => {
                   // Không có `thu` = MỌI ngày → 7 nút đều sáng (trước đây hiện tắt hết, trông như chọn đủ tuần là bị
                   // xoá — chủ máy 06/10/2026). Bỏ hết là «không ngày nào» = luật chết → không cho.
@@ -273,11 +276,11 @@ function SuaTruongHop({ chieu, ban, camBien, lich, onLuu, onHuy, them }: {
                   );
                 })}
               </span>
-              <span className="flex items-center gap-1" title="Khoảng ngày (tuỳ chọn)">
+              <span className="flex w-full flex-wrap items-center gap-1" title="Khoảng ngày (tuỳ chọn)">
                 ngày
-                <Input className="h-8 w-36" type="date" value={d.tu_ngay || ""} onChange={(e) => sua(i, { tu_ngay: e.target.value || undefined })} />
+                <Input className="h-8 w-[8.75rem] max-w-full" type="date" value={d.tu_ngay || ""} onChange={(e) => sua(i, { tu_ngay: e.target.value || undefined })} />
                 <span>→</span>
-                <Input className="h-8 w-36" type="date" value={d.den_ngay || ""} onChange={(e) => sua(i, { den_ngay: e.target.value || undefined })} />
+                <Input className="h-8 w-[8.75rem] max-w-full" type="date" value={d.den_ngay || ""} onChange={(e) => sua(i, { den_ngay: e.target.value || undefined })} />
               </span>
             </>) : null}
             {loai === "so_sanh" ? (<>
