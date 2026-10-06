@@ -325,18 +325,12 @@ def exchange_antigravity_code(code: str, state: str) -> dict[str, Any]:
     # 2. Fetch project ID
     project_id = None
     try:
-        load_headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-            "User-Agent": "google-api-nodejs-client/9.15.1",
-            "X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1",
-            "Client-Metadata": json.dumps({ "ideType": "IDE_UNSPECIFIED", "platform": "PLATFORM_UNSPECIFIED", "pluginType": "GEMINI" }),
-            "x-request-source": "local",
-        }
+        # Cùng MỘT danh tính với lúc gọi model (chủ máy duyệt 06/10/2026 — xem antigravity_danh_tinh).
+        from services.providers.antigravity_danh_tinh import METADATA, tieu_de
         load_resp = requests.post(
             "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
-            headers=load_headers,
-            json={"metadata": { "ideType": "IDE_UNSPECIFIED", "platform": "PLATFORM_UNSPECIFIED", "pluginType": "GEMINI" }},
+            headers=tieu_de(access_token),
+            json={"metadata": dict(METADATA)},
             timeout=15,
         )
         if load_resp.status_code == 200:

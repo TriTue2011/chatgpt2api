@@ -15,6 +15,7 @@ from typing import Any, Iterator
 from curl_cffi import requests
 
 from services.account_service import account_service
+from services.providers.antigravity_danh_tinh import METADATA, tieu_de
 from services.providers.gemini_free import _convert_request
 from utils.log import logger
 
@@ -43,14 +44,8 @@ def load_code_assist(access_token: str) -> str:
     try:
         resp = requests.post(
             "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-                "User-Agent": "google-api-nodejs-client/9.15.1",
-                "X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1",
-                "Client-Metadata": json.dumps({"ideType": "IDE_UNSPECIFIED", "platform": "PLATFORM_UNSPECIFIED", "pluginType": "GEMINI"}),
-            },
-            json={"metadata": {"ideType": "IDE_UNSPECIFIED", "platform": "PLATFORM_UNSPECIFIED", "pluginType": "GEMINI"}},
+            headers=tieu_de(access_token),
+            json={"metadata": dict(METADATA)},
             timeout=15,
         )
         if resp.status_code == 200:
@@ -130,8 +125,7 @@ def danh_sach_model(account: dict[str, Any]) -> dict[str, dict[str, Any]]:
         try:
             resp = requests.post(
                 f"{base_url}/v1internal:fetchAvailableModels",
-                headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}",
-                         "User-Agent": "antigravity/1.107.0 Windows/x64"},
+                headers=tieu_de(token),
                 json={"project": project} if project else {}, timeout=20)
             if resp.status_code != 200:
                 continue
@@ -291,14 +285,8 @@ class AntigravityProvider:
             action = "streamGenerateContent?alt=sse" if stream else "generateContent"
             url = f"{base_url}/v1internal:{action}"
 
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {access_token}",
-                "User-Agent": "antigravity/1.107.0 Windows/x64",
-                "x-request-source": "local",
-                "X-Machine-Session-Id": session_id,
-                "Accept": "text/event-stream" if stream else "application/json",
-            }
+            headers = tieu_de(access_token, **{"X-Machine-Session-Id": session_id,
+                                               "Accept": "text/event-stream" if stream else "application/json"})
 
             logger.info({
                 "event": "antigravity_request",

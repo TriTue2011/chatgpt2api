@@ -67,3 +67,17 @@ class HoiDanhSachTests(unittest.TestCase):
     def test_khong_hoi_duoc_thi_rong(self):
         with mock.patch.object(ag.requests, "post", return_value=self._tra(403, {})):
             self.assertEqual({}, ag.danh_sach_model({"access_token": "t3"}))
+
+
+def test_moi_loi_goi_khai_cung_mot_danh_tinh():
+    """06/10/2026 «User-Agent khớp giữa lúc lấy token và lúc gọi API»: loadCodeAssist từng tự xưng
+    google-api-nodejs-client / vscode_cloudshelleditor còn gọi model xưng antigravity/… (lệch → Google gắn cờ,
+    decolua/9router #1226). Mọi tiêu đề nay lấy từ `antigravity_danh_tinh.tieu_de`."""
+    from pathlib import Path
+    goc = Path(__file__).resolve().parents[1] / "services"
+    for f in (goc / "providers" / "antigravity.py", goc / "oauth_service.py"):
+        chu = f.read_text(encoding="utf-8")
+        assert "google-api-nodejs-client" not in chu and "vscode_cloudshelleditor" not in chu, f.name
+        assert "antigravity/1." not in chu, f"{f.name}: User-Agent phải lấy từ antigravity_danh_tinh"
+    from services.providers.antigravity_danh_tinh import USER_AGENT, tieu_de
+    assert tieu_de("t")["User-Agent"] == USER_AGENT and tieu_de("t", Accept="x")["Accept"] == "x"
