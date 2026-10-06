@@ -187,8 +187,15 @@ def _patch_state(new_state: dict[str, Any] | None, entity_id: str,
         elif 0 <= pos < len(cache) and cache[pos].get("entity_id") == entity_id:
             cache[pos] = new_state
         else:
-            index[entity_id] = len(cache)
-            cache.append(new_state)
+            # Chỉ mục lệch (thực thể vừa được nạp vào bộ đệm từ ngoài — khôi phục khỏi «Bỏ khỏi c2a»): tìm theo mã
+            # trước khi chèn, không thì gương có hai bản cùng một thực thể.
+            pos = next((j for j, st in enumerate(cache) if st.get("entity_id") == entity_id), -1)
+            if pos < 0:
+                pos = len(cache)
+                cache.append(new_state)
+            else:
+                cache[pos] = new_state
+            index[entity_id] = pos
         hc._state_cache_ts = time.time()
 
     # Ghi vào lịch sử để bot học nếp nhà. TRƯỚC ĐÂY KHÔNG CÓ MÓC NÀY: bảng

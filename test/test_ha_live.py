@@ -62,13 +62,15 @@ class PatchStateTests(unittest.TestCase):
         ha_live._patch_state(_st("fan.c", "off"), "fan.c", self.index)
         self.assertEqual(hc._state_cache[1]["state"], "off")
 
-    def test_stale_index_falls_back_to_append_not_corrupt(self) -> None:
-        """Index lệch (trỏ vào entity khác) → không được ghi đè nhầm."""
+    def test_stale_index_tim_theo_ma_khong_ghi_de_nham_khong_trung(self) -> None:
+        """Index lệch (trỏ vào entity khác) → không ghi đè nhầm, và vá đúng bản đang có thay vì chèn bản thứ hai
+        (06/10/2026: thực thể khôi phục khỏi «Bỏ khỏi c2a» được nạp vào bộ đệm từ ngoài gương)."""
         self.index["sensor.b"] = 0  # cố tình sai: trỏ vào light.a
         ha_live._patch_state(_st("sensor.b", "9"), "sensor.b", self.index)
         self.assertEqual(hc._state_cache[0]["entity_id"], "light.a",
                          "entity khác không được bị ghi đè")
-        self.assertEqual(hc._state_cache[-1]["state"], "9")
+        self.assertEqual([s["entity_id"] for s in hc._state_cache], ["light.a", "sensor.b", "fan.c"])
+        self.assertEqual((hc._state_cache[1]["state"], self.index["sensor.b"]), ("9", 1))
 
     def test_TEN_MANG_MAT_KHAU_khong_vao_guong_va_khong_ghi_lich_su(self) -> None:
         """12/09/2026: gương chèn lại thực thể `get_states` đã ẩn — tiến trình

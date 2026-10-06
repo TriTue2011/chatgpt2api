@@ -191,6 +191,35 @@ class DocTrangThaiTest(unittest.TestCase):
                                  "light.bep", index)
         self.assertEqual([s["entity_id"] for s in hc._state_cache], ["fan.c"])
 
+    def test_KHOI_PHUC_hien_ngay_khong_cho_doi_trang_thai_va_khong_trung(self) -> None:
+        """Chủ máy 06/10/2026 "Thiếu sensor.cua_person_count": khôi phục xong cảm biến đếm người (đứng yên ở 0) vẫn vô
+        hình — bộ đệm lọc lúc nạp, gương chỉ chèn lại khi nó ĐỔI trạng thái."""
+        from services import ha_client as hc
+        from services import ha_live
+
+        cu = (hc._state_cache, hc._state_cache_ts)
+        self.addCleanup(lambda: setattr(hc, "_state_cache", cu[0]))
+        self.addCleanup(lambda: setattr(hc, "_state_cache_ts", cu[1]))
+        self.tb.bo("ha", "sensor.cua_person_count")
+        hc._state_cache = [{"entity_id": "fan.c", "state": "on", "attributes": {}}]
+        index = {"fan.c": 0}
+        hc._state_cache_ts = time.time()
+        dem = {"entity_id": "sensor.cua_person_count", "state": "0", "attributes": {"unit_of_measurement": "objects"}}
+
+        class _Tra:
+            def read(self) -> bytes:
+                return json.dumps(dem).encode()
+
+        with mock.patch.object(hc, "_get_ha_config", return_value={"url": "http://ha", "token": "t"}), \
+             mock.patch.object(hc, "_get_cache_ttl", return_value=60), \
+             mock.patch("urllib.request.urlopen", return_value=_Tra()):
+            self.assertEqual(["ha:sensor.cua_person_count"], self.tb.bo_lai_nhieu([("ha", "sensor.cua_person_count")]))
+            self.assertIn("sensor.cua_person_count", [s["entity_id"] for s in hc.get_states()])
+        with mock.patch("services.lich_su_nha.ghi"):
+            ha_live._patch_state({**dem, "state": "1"}, "sensor.cua_person_count", index)
+        self.assertEqual([("fan.c", "on"), ("sensor.cua_person_count", "1")],
+                         [(s["entity_id"], s["state"]) for s in hc._state_cache])
+
     def test_MQTT_danh_sach_va_dem_nguoi_bo_camera_da_bo(self) -> None:
         from services import mqtt_nha as mq
 

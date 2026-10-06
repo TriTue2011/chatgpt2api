@@ -148,6 +148,10 @@ def bo_lai_nhieu(ds: list[tuple[str, str]]) -> list[str]:
             _luu(so)
     if xong:
         logger.info({"event": "thiet_bi_bo_lai", "so": len(xong), "khoa": [k[:60] for k in xong[:5]]})
+        ha = [k.split(":", 1)[1] for k in xong if k.startswith("ha:")]
+        if ha:
+            from services import ha_client
+            ha_client.nap_lai(ha)
     return xong
 
 

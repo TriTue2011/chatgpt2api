@@ -741,6 +741,27 @@ def get_state(entity_id: str) -> dict[str, Any] | None:
         return None
 
 
+def nap_lai(entity_ids: list[str]) -> list[str]:
+    """Đọc lại từng thực thể từ HA và đưa vào bộ đệm trạng thái — cho thực thể vừa KHÔI PHỤC khỏi «Bỏ khỏi c2a».
+
+    Bộ đệm lọc thực thể đã bỏ ngay lúc nạp, gương `ha_live` chỉ chèn lại khi thực thể ĐỔI trạng thái; cảm biến đứng
+    yên (đếm người = 0) thì khôi phục xong vẫn vô hình tới lúc HA kết nối lại (chủ máy 06/10/2026: "Thiếu
+    sensor.cua_person_count"). Trả các mã đã nạp được."""
+    xong = []
+    for ma in entity_ids:
+        st = get_state(ma)
+        if st is None:
+            continue
+        with _state_cache_lock:
+            pos = next((i for i, s in enumerate(_state_cache) if s.get("entity_id") == ma), -1)
+            if pos < 0:
+                _state_cache.append(st)
+            else:
+                _state_cache[pos] = st
+        xong.append(ma)
+    return xong
+
+
 def call_service(domain: str, service: str, data: dict[str, Any] | None = None) -> bool:
     """Call an HA service (e.g., light.turn_on). Passes full data dict as payload."""
     cfg = _get_ha_config()
