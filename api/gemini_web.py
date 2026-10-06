@@ -560,6 +560,9 @@ def available_model_ids() -> list[str]:
             ).strip()
             if name:
                 found.add(f"gma/{name}")
+    if found:
+        # Model THEO BẬC (`GMA_BAC`) chọn được như model thường — gắn vào combo theo độ khó việc.
+        found.update(f"gma/{b}" for b in GMA_BAC)
     return sorted(found, key=str.casefold)
 
 
@@ -1491,12 +1494,69 @@ def _flatten_messages_with_tools(messages: list[dict[str, Any]], tools: list[dic
     return "\n\n".join(parts)
 
 
+#: Model THEO BẬC (chủ máy 06/10/2026: "pro cho công việc khó, flash cho việc vừa, lite cho công việc vừa phải …
+#: gắn vào combo model"; "các tài khoản google free chỉ dùng được lite, làm cơ chế dùng các tài khoản pro, dùng các
+#: model flash trước rồi quay về lite nếu hết quota"). Mỗi bậc thử MỌI tài khoản có model đó — hạng từng tài khoản tự
+#: dò bằng registry riêng của nó (`_model_for_client`: không có thì `_ModelUnavailable`); hết tài khoản ở bậc nào thì
+#: lùi bậc sau.
+GMA_BAC: dict[str, tuple[str, ...]] = {
+    "kho": ("pro", "flash", "flash-lite"),
+    "vua": ("flash", "flash-lite"),
+    "nhe": ("flash-lite",),
+}
+#: Tài khoản hết hạn mức ở MỘT bậc thì chỉ nghỉ bậc đó (vẫn dùng được lite) — trước đây cả tài khoản bị hạ hạng
+#: chữ (`text_limit`). (profile, bậc) → nghỉ tới lúc.
+_NGHI_BAC: dict[tuple[str, str], float] = {}
+NGHI_BAC_GIAY = 3 * 3600
+
+
+def _ten_bac(model: str) -> str:
+    m = str(model or "").strip().lower()
+    for pfx in ("gma/", "gemini-web/", "gemini_web_api/"):
+        if m.startswith(pfx):
+            m = m[len(pfx):]
+            break
+    m = m.split(":")[0]
+    return m if m in GMA_BAC else ""
+
+
+def _chay_theo_bac(bac: str, messages: list[dict[str, Any]], stream: Any,
+                   body: dict[str, Any] | None, base_url: str) -> dict[str, Any] | Iterator[dict[str, Any]]:
+    """Thử lần lượt từng bậc của thang; bậc hết tài khoản (không có model / đang nghỉ / hết hạn mức) → bậc sau.
+    Lỗi của chính yêu cầu (HTTPException khác «model không có») thì báo ngay, không lùi."""
+    last: Exception | None = None
+    for i, muc in enumerate(GMA_BAC[bac]):
+        try:
+            kq = handle_gemini_web_api_chat(f"gma/{muc}", messages, False, body, base_url, _bac=muc)
+        except HTTPException as exc:
+            if not (isinstance(exc.detail, dict) and exc.detail.get("code") == "model_not_found"):
+                raise
+            last = exc
+        except Exception as exc:      # noqa: BLE001 — hết hạn mức / hết tài khoản / lỗi phiên ở bậc này
+            last = exc
+        else:
+            if i:
+                _logger().info({"event": "gma_bac_lui", "bac": bac, "dung": muc})
+            kq["model"] = f"gma/{bac}"
+            if not stream:
+                return kq
+            msg = kq["choices"][0]["message"]
+            delta: dict[str, Any] = {"role": "assistant", "content": msg.get("content") or ""}
+            if msg.get("tool_calls"):
+                delta["tool_calls"] = [{**tc, "index": j} for j, tc in enumerate(msg["tool_calls"])]
+            return iter([_openai_chunk(kq["model"], kq["id"], kq["created"], delta),
+                         _openai_chunk(kq["model"], kq["id"], kq["created"], {}, kq["choices"][0]["finish_reason"])])
+        _logger().warning({"event": "gma_bac_het", "bac": bac, "muc": muc, "error": str(last)[:160]})
+    raise last or RuntimeError(f"gma/{bac}: không bậc nào chạy được")
+
+
 def handle_gemini_web_api_chat(
     model: str,
     messages: list[dict[str, Any]],
     stream: Any,
     body: dict[str, Any] | None = None,
     base_url: str = "",
+    _bac: str = "",
 ) -> dict[str, Any] | Iterator[dict[str, Any]]:
     """Provider handler cho router chính (gma/* models).
 
@@ -1507,6 +1567,8 @@ def handle_gemini_web_api_chat(
     Trả lời xong luôn lưu (lịch sử + câu trả lời) → metadata để lượt sau tiếp nối.
     """
     from services.account_service import account_service
+    if not _bac and (bac := _ten_bac(model)):
+        return _chay_theo_bac(bac, messages, stream, body, base_url)
 
     # Lấy tools từ request body
     tools = body.get("tools") if body else None
@@ -1581,6 +1643,9 @@ def handle_gemini_web_api_chat(
         last_exc = None
         for tiep_noi, (psid, psidts, profile) in luot_thu:
             co_files = False
+            if _bac and _NGHI_BAC.get((profile, _bac), 0) > time.time():
+                last_exc = last_exc or RuntimeError(f"QUOTA_EXHAUSTED: {profile} đang nghỉ bậc {_bac}")
+                continue
             try:
                 client = _get_client(psid, psidts)
                 account_model = _model_for_client(client, model_enum)
@@ -1636,8 +1701,11 @@ def handle_gemini_web_api_chat(
 
                 # Quota exhaustion
                 if "quota_exhausted" in err:
-                    _logger().warning({"event": "gma_quota_hit", "profile": profile})
-                    if profile and profile != "static-config":
+                    _logger().warning({"event": "gma_quota_hit", "profile": profile, "bac": _bac})
+                    if _bac:
+                        # Theo bậc: chỉ nghỉ bậc này — bậc thấp hơn trên cùng tài khoản vẫn dùng được.
+                        _NGHI_BAC[(profile, _bac)] = time.time() + NGHI_BAC_GIAY
+                    elif profile and profile != "static-config":
                         account_service.record_profile_quota_failure(
                             profile=profile,
                             quota_type="file_upload" if co_files else "text_limit",

@@ -50,7 +50,8 @@ def test_catalog_dong_gop_nhieu_tai_khoan_va_bo_model_guest_khong_dung_duoc(
         "two": _Client([flash, pro]),
     })
 
-    assert gma.available_model_ids() == ["gma/gemini-flash", "gma/gemini-pro"]
+    # Kèm model THEO BẬC (gma/kho · vua · nhe — 06/10/2026) khi đã có tài khoản thật.
+    assert gma.available_model_ids() == ["gma/gemini-flash", "gma/gemini-pro", "gma/kho", "gma/nhe", "gma/vua"]
 
 
 def test_resolve_model_dung_registry_dong_thay_vi_enum_cung(monkeypatch) -> None:
