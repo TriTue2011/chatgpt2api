@@ -15,6 +15,7 @@ import {
 } from "@/components/google-security-hints";
 import { useSettingsStore } from "../store";
 import { moNoVNC } from "@/lib/duong-dan";
+import { khoaGoiCaptcha } from "@/lib/captcha-key";
 
 export function CodexOnboardCard() {
   const config = useSettingsStore((state) => state.config);
@@ -41,7 +42,7 @@ export function CodexOnboardCard() {
     const cgFree = provs.chatgpt_free || {};
     const flow = provs.flow || {};
     setCsUrl("/api/captcha");
-    setCsApiKey(cgFree.captcha_solver_api_key || flow.captcha_solver_api_key || "");
+    void khoaGoiCaptcha(cgFree.captcha_solver_api_key || flow.captcha_solver_api_key).then(setCsApiKey);
   }, [config]);
 
   async function saveSettings() {

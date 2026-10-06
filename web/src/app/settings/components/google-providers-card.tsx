@@ -11,6 +11,7 @@ import { generateTotpCode, totpSecondsRemaining } from "@/lib/totp";
 import { TotpSecretGuide, TotpSecretLabel } from "@/components/google-security-hints";
 import { ReuseProfilePicker } from "./reuse-profile-picker";
 import { moNoVNC } from "@/lib/duong-dan";
+import { khoaGoiCaptcha } from "@/lib/captcha-key";
 
 type FlowAccount = { profile: string; project_id: string; label?: string };
 type Cfg = { url: string; apiKey: string };
@@ -109,7 +110,7 @@ export function GoogleProvidersCard() {
       const fl = p.flow || {};
       // Always use the /api/captcha proxy — the captcha_solver_url in config is internal (backend→backend)
       // and cannot be reached directly from the browser.
-      setCs({ url: "/api/captcha", apiKey: fl.captcha_solver_api_key||"" });
+      setCs({ url: "/api/captcha", apiKey: await khoaGoiCaptcha(fl.captcha_solver_api_key) });
       setFlowCfg({ enabled: fl.enabled!==false, captcha_solver_url: fl.captcha_solver_url||"/api/captcha", captcha_solver_api_key: fl.captcha_solver_api_key||"", accounts: Array.isArray(fl.accounts)?fl.accounts:[], cooldown_seconds: fl.cooldown_seconds||3600 });
       setWebScan((d.data as any)?.config?.web_session_scan?.enabled === true);
     } catch {}

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { request } from "@/lib/request";
 import { SavedAccountsSelect } from "@/components/saved-accounts-select";
+import { khoaGoiCaptcha } from "@/lib/captcha-key";
 
 /**
  * Đăng nhập ChatGPT bằng TÀI KHOẢN OPENAI GỐC — email + mật khẩu + TOTP.
@@ -68,7 +69,8 @@ export function OpenAINativeCard() {
         // 60 phút, cả trên PC lẫn điện thoại). Thẻ Google ép cứng proxy từ trước
         // nên vẫn chạy — chính chỗ lệch đó làm lỗi trông như "chỉ thẻ này hỏng".
         setCs({ url: "/api/captcha",
-                apiKey: flow.captcha_solver_api_key || "" });
+                // Khoá che về rỗng/nhãn → 401, danh sách «(0)» (đo 06/10/2026 bằng trình duyệt thật).
+                apiKey: await khoaGoiCaptcha(flow.captcha_solver_api_key) });
       } catch { /* để mặc định */ }
     })();
     return () => { if (pollRef.current) window.clearInterval(pollRef.current); };

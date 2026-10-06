@@ -12,6 +12,7 @@ import { generateTotpCode, totpSecondsRemaining } from "@/lib/totp";
 import { TotpSecretGuide, TotpSecretLabel } from "@/components/google-security-hints";
 import { ReuseProfilePicker } from "./reuse-profile-picker";
 import { moNoVNC } from "@/lib/duong-dan";
+import { khoaGoiCaptcha } from "@/lib/captcha-key";
 
 type OnboardState = {
   profile: string;
@@ -112,7 +113,8 @@ export function ChatGPTOnboardCard() {
       const cgFree = provs.chatgpt_free || {};
       setCs({
         url: "/api/captcha",
-        apiKey: cgFree.captcha_solver_api_key || flow.captcha_solver_api_key || "",
+        // Khoá che (settings_redact_secrets) về rỗng/nhãn → khoá dashboard; proxy tự gắn khoá thật (captcha-key.ts).
+        apiKey: await khoaGoiCaptcha(cgFree.captcha_solver_api_key || flow.captcha_solver_api_key),
       });
     } catch (e) {
       console.error(e);

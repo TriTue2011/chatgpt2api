@@ -12,6 +12,7 @@ import { generateTotpCode, totpSecondsRemaining } from "@/lib/totp";
 import { TotpSecretGuide, TotpSecretLabel } from "@/components/google-security-hints";
 import { ReuseProfilePicker } from "./reuse-profile-picker";
 import { moNoVNC } from "@/lib/duong-dan";
+import { khoaGoiCaptcha } from "@/lib/captcha-key";
 
 type OnboardState = {
   profile: string;
@@ -82,7 +83,7 @@ export function GeminiWebApiCard() {
       const gemw = cfg.gemini_web_api || {};
       setCs({
         url: "/api/captcha",
-        apiKey: gemw.captcha_solver_api_key || flow.captcha_solver_api_key || "",
+        apiKey: await khoaGoiCaptcha(gemw.captcha_solver_api_key || flow.captcha_solver_api_key),
       });
       setProfile(gemw.profile || "gemini-web-api-default");
       setTimeoutVal(Number(gemw.timeout) || 120);
