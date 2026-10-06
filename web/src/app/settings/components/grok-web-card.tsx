@@ -24,6 +24,8 @@ import { moNoVNC } from "@/lib/duong-dan";
 export type GrokTaiKhoan = {
   profile: string; label: string; email?: string; enabled?: boolean; ordinal: number; is_primary: boolean;
   phien_song: boolean | null; da_dang_nhap: boolean; firefox_mo: boolean; cookie_luc: number | null;
+  /** Cloudflare chặn lời gọi kiểm (cf_clearance hết hạn) — KHÁC hết phiên; máy chủ đang tự mở lại hồ sơ lấy cookie mới. */
+  cf_chan?: boolean;
   /** Hạn mức từ grok.com `/rest/rate-limits` (máy chủ lưu tạm 5 phút); null = chưa đọc được. */
   han_muc?: {
     luc: number; goi: string;
@@ -67,6 +69,44 @@ export function HanMucGrok({ tk }: { tk: GrokTaiKhoan }) {
   );
 }
 
+/** Bấm vào tài khoản (trang Tài khoản): giới hạn và đã dùng từng loại như ChatGPT — chủ máy 06/10/2026. */
+export function ChiTietGrok({ tk }: { tk: GrokTaiKhoan }) {
+  const ds = tk.han_muc?.ds || [];
+  return (
+    <div className="space-y-1.5 px-5 pb-3 pl-[76px] text-[11px]">
+      <div className="flex flex-wrap gap-x-3 text-[var(--muted-foreground)]">
+        {tk.han_muc?.goi ? <span>Gói: <b className="text-[var(--foreground)]">{tk.han_muc.goi}</b></span> : null}
+        {tk.cookie_luc ? <span>Cookie ghi {new Date(tk.cookie_luc * 1000).toLocaleString("vi-VN")}</span> : null}
+        {tk.han_muc?.luc ? <span>Đọc hạn mức {new Date(tk.han_muc.luc * 1000).toLocaleTimeString("vi-VN")}</span> : null}
+        <span>Firefox {tk.firefox_mo ? "đang mở" : "tắt"}</span>
+      </div>
+      {ds.length ? (
+        <table className="w-full max-w-xl">
+          <thead><tr className="text-left text-[var(--muted-foreground)]">
+            <th className="font-normal">Loại</th><th className="font-normal">Đã dùng</th><th className="font-normal">Còn</th>
+            <th className="font-normal">Chu kỳ</th><th className="font-normal">Hồi lượt</th></tr></thead>
+          <tbody>
+            {ds.map((m) => (
+              <tr key={m.ten} className={m.con > 0 ? "" : "text-rose-600"}>
+                <td>{m.ten}</td>
+                <td>{m.phan_tram ? `${100 - m.con}%` : m.tong ? `${m.tong - m.con}/${m.tong}` : "—"}</td>
+                <td>{m.phan_tram ? `${m.con}%` : m.con}</td>
+                <td>{tenCuaSo(m.cua_so)}</td>
+                <td>{m.hoi_luc ? `lúc ${new Date(m.hoi_luc * 1000).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "numeric", month: "numeric" })}` : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="text-[var(--muted-foreground)]">
+          {tk.cf_chan ? "Chưa đọc được hạn mức — Cloudflare chặn, máy chủ đang lấy cookie mới (thử lại sau vài phút)."
+            : "Chưa đọc được hạn mức."}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export async function grokViec(body: Record<string, unknown>): Promise<boolean> {
   try {
     const r = await request.post("/api/grok-web/tai-khoan", body);
@@ -95,6 +135,7 @@ export async function grokDangNhap(profile: string): Promise<boolean> {
 export function TrangThaiGrok({ tk }: { tk: GrokTaiKhoan }) {
   if (tk.firefox_mo) return <Badge className="bg-sky-100 text-sky-700">Firefox đang mở — chờ đăng nhập</Badge>;
   if (!tk.da_dang_nhap) return <Badge className="bg-amber-100 text-amber-700">chưa đăng nhập</Badge>;
+  if (tk.cf_chan) return <Badge className="bg-amber-100 text-amber-700" title="Cookie Cloudflare hết hạn — máy chủ đang mở lại Firefox lấy cookie mới; chat / vẽ vẫn chạy">Cloudflare chặn — đang lấy cookie mới</Badge>;
   if (tk.phien_song === false) return <Badge className="bg-rose-100 text-rose-700">hết phiên</Badge>;
   if (tk.phien_song === true) return <Badge className="bg-emerald-100 text-emerald-700">phiên sống</Badge>;
   return <Badge variant="secondary">đã đăng nhập</Badge>;

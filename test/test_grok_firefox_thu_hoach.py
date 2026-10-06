@@ -112,6 +112,48 @@ class LamMoiTests(unittest.TestCase):
         mo.assert_not_called()
 
 
+class CloudflareChanTests(unittest.TestCase):
+    """06/10/2026: 7 tài khoản «hết phiên» mà vẽ ảnh vẫn chạy — /api/auth/session bị Cloudflare chặn (403 «Just a
+    moment…», cf_clearance cũ 4–5 ngày). Chặn ≠ hết phiên; bị chặn thì mở lại hồ sơ lấy cookie mới."""
+
+    def _loi_403(self, than: bytes):
+        import io
+        import urllib.error
+        return urllib.error.HTTPError("https://grok.com/api/auth/session", 403, "Forbidden", {}, io.BytesIO(than))
+
+    def test_cloudflare_chan_khac_het_phien(self):
+        with mock.patch("urllib.request.urlopen", side_effect=self._loi_403(b"<title>Just a moment...</title>")):
+            self.assertEqual("cf_chan", gf.trang_thai_phien({"sso": "a"}))
+            self.assertFalse(gf.phien_song({"sso": "a"}), "đường cũ (lam_moi, chuan_bi) vẫn coi là chưa sống")
+        with mock.patch("urllib.request.urlopen", side_effect=self._loi_403(b"forbidden")):
+            self.assertEqual("het", gf.trang_thai_phien({"sso": "a"}))
+        self.assertEqual("het", gf.trang_thai_phien({}))
+
+    def test_trang_thai_bi_chan_thi_xep_hang_lam_moi_khong_bao_het_phien(self):
+        with mock.patch.object(gf, "tai_khoan", return_value=[{"profile": "grok-1", "label": "Main"}]), \
+                mock.patch.object(gf, "dang_mo", return_value=False), \
+                mock.patch.object(gf, "doc_cookie_file", return_value={"sso": "a"}), \
+                mock.patch.object(gf, "trang_thai_phien", return_value="cf_chan"), \
+                mock.patch.object(gf, "han_muc_cua", return_value=None), \
+                mock.patch.object(gf, "_lam_moi_nen") as nen:
+            tk = gf.trang_thai()[0]
+        self.assertEqual((None, True), (tk["phien_song"], tk["cf_chan"]))
+        nen.assert_called_once_with("grok-1")
+
+    def test_lam_moi_doi_cf_clearance_moi_chu_khong_tra_ngay_khi_co_sso(self):
+        cu = {"sso": "a", "cf_clearance": "cu"}
+        doc = iter([{"sso": "a", "cf_clearance": "cu"}, {"sso": "a", "cf_clearance": "moi"}])
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(gf, "doc_cookie_file", return_value=cu), \
+                mock.patch.object(gf, "phien_song", return_value=False), \
+                mock.patch.object(gf, "ho_so", return_value=Path(d)), \
+                mock.patch.object(gf, "_thu_tu_sqlite", side_effect=lambda p: next(doc)), \
+                mock.patch.object(gf, "mo"), mock.patch.object(gf, "tat"), \
+                mock.patch.object(gf.time, "sleep"):
+            (Path(d) / "cookies.sqlite").write_text("x")
+            self.assertEqual("moi", gf.lam_moi("grok-1")["cf_clearance"])
+
+
 def _ts(giay: int) -> bytes:
     """Timestamp protobuf {1: giây}."""
     out, v = bytearray(b"\x08"), giay

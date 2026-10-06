@@ -237,8 +237,68 @@ def doc_cookie_file(profile: str) -> dict[str, str]:
     return {str(k): str(v) for k, v in data.items() if v}
 
 
-def thong_tin_phien(cookies: dict[str, str]) -> dict[str, str] | None:
-    """GET /api/auth/session: {"email"} khi phiên sống, None khi không. Không trả user id ra ngoài."""
+#: Cloudflare chặn lời gọi kiểm (403 «Just a moment…») KHÁC hết phiên — chủ máy 06/10/2026 (ảnh 7 tài khoản «hết
+#: phiên» mà vẽ ảnh vẫn chạy): cookie ghi 01–02/10, `cf_clearance` hết hạn nên mọi REST (kiểm phiên, hạn mức) bị chặn
+#: trong khi chat / vẽ qua websocket vẫn lọt. Bị chặn thì mở lại hồ sơ Firefox lấy cf_clearance mới (`lam_moi`).
+_CF_CHAN_LAN: dict[str, float] = {}
+_CF_LAM_MOI_GIAY = 30 * 60
+_cf_hang: list[str] = []
+_cf_khoa = threading.Lock()
+
+
+def _la_cf_chan(exc: Exception) -> bool:
+    if not isinstance(exc, urllib.error.HTTPError) or exc.code != 403:
+        return False
+    try:
+        than = exc.read(4096).decode("utf-8", "ignore")
+    except Exception:  # noqa: BLE001
+        than = ""
+    return "Just a moment" in than or exc.headers.get("cf-mitigated") == "challenge"
+
+
+def trang_thai_phien(cookies: dict[str, str]) -> str:
+    """«song» | «het» (không sso / grok.com nói chưa đăng nhập) | «cf_chan» (Cloudflare chặn, chưa biết phiên)."""
+    if not cookies.get("sso"):
+        return "het"
+    try:
+        return "song" if thong_tin_phien(cookies, nem_cf=True) is not None else "het"
+    except _CfChan:
+        return "cf_chan"
+
+
+class _CfChan(Exception):
+    pass
+
+
+def _lam_moi_nen(profile: str) -> None:
+    """Xếp hàng mở lại hồ sơ lấy cf_clearance mới — MỘT Firefox mỗi lúc (đỡ RAM), mỗi hồ sơ tối đa 30 phút một lần."""
+    with _cf_khoa:
+        if profile in _cf_hang or time.time() - _CF_CHAN_LAN.get(profile, 0) < _CF_LAM_MOI_GIAY:
+            return
+        _CF_CHAN_LAN[profile] = time.time()
+        _cf_hang.append(profile)
+        if len(_cf_hang) > 1:
+            return                                  # luồng đang chạy sẽ làm tiếp
+
+    def _chay() -> None:
+        while True:
+            with _cf_khoa:
+                if not _cf_hang:
+                    return
+                p = _cf_hang[0]
+            try:
+                lam_moi(p)
+                _log("grok_firefox_cf_lam_moi", profile=p, ok=True)
+            except Exception as exc:  # noqa: BLE001
+                _log("grok_firefox_cf_lam_moi", profile=p, ok=False, loi=str(exc)[:120])
+            with _cf_khoa:
+                _cf_hang.pop(0)
+    threading.Thread(target=_chay, name="grok-cf-lam-moi", daemon=True).start()
+
+
+def thong_tin_phien(cookies: dict[str, str], nem_cf: bool = False) -> dict[str, str] | None:
+    """GET /api/auth/session: {"email"} khi phiên sống, None khi không. Không trả user id ra ngoài. ``nem_cf``:
+    Cloudflare chặn thì ném `_CfChan` (để người gọi phân biệt với hết phiên) thay vì trả None."""
     if not cookies.get("sso"):
         return None
     jar = "; ".join(f"{k}={v}" for k, v in cookies.items())
@@ -252,7 +312,9 @@ def thong_tin_phien(cookies: dict[str, str]) -> dict[str, str] | None:
             if resp.status != 200:
                 return None
             data = json.loads(resp.read().decode())
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        if nem_cf and _la_cf_chan(exc):
+            raise _CfChan() from exc
         return None
     sess = data.get("session") if isinstance(data, dict) else None
     if not isinstance(sess, dict) or str(data.get("status") or "") != "authenticated" or not sess.get("userId"):
@@ -526,7 +588,9 @@ def lam_moi(profile: str, cho: float = 90) -> dict[str, str]:
         het = time.time() + cho
         while time.time() < het:
             cookies = _thu_tu_sqlite(profile)
-            if cookies.get("sso"):
+            # Có sso CHƯA đủ: phiên còn mà cf_clearance cũ thì Cloudflare vẫn chặn — đợi Firefox nạp grok.com xong
+            # (cf_clearance đổi) hoặc kiểm phiên qua được.
+            if cookies.get("sso") and (cookies.get("cf_clearance") != san.get("cf_clearance") or phien_song(cookies)):
                 tat(profile)
                 return cookies
             time.sleep(3)
@@ -573,8 +637,12 @@ def trang_thai(kiem_phien: bool = True) -> list[dict[str, Any]]:
         if dang_mo(p):
             _bat_theo_doi(p)          # Firefox mở mà bộ canh đã thôi (hết giờ cũ, app khởi động lại) → canh tiếp
         f = _file_cookie(p)
+        tt = trang_thai_phien(doc_cookie_file(p)) if kiem_phien else ""
+        if tt == "cf_chan" and not dang_mo(p):
+            _lam_moi_nen(p)
         ra.append({**a, "ordinal": i + 1, "is_primary": i == 0,
-                   "phien_song": phien_song(doc_cookie_file(p)) if kiem_phien else None,
+                   "phien_song": {"song": True, "het": False}.get(tt) if kiem_phien else None,
+                   "cf_chan": tt == "cf_chan",
                    "da_dang_nhap": (ho_so(p) / "cookies.sqlite").is_file(),
                    "firefox_mo": dang_mo(p),
                    "cookie_luc": f.stat().st_mtime if f.is_file() else None,

@@ -30,7 +30,7 @@ import {
   UserRound,
   LogIn,
 } from "lucide-react";
-import { grokDangNhap, grokViec, HanMucGrok, TrangThaiGrok, type GrokTaiKhoan } from "@/app/settings/components/grok-web-card";
+import { ChiTietGrok, grokDangNhap, grokViec, HanMucGrok, TrangThaiGrok, type GrokTaiKhoan } from "@/app/settings/components/grok-web-card";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -1729,7 +1729,9 @@ function AccountsPageContent() {
 
                       {/* Grok Web — mỗi tài khoản một hồ sơ Firefox; đăng nhập qua noVNC (Cài đặt › Grok có đủ nút). */}
                       {provider.type === "grok_web" && provider.instances?.map((tk: GrokTaiKhoan) => (
-                        <div key={`grok:${tk.profile}`} className="flex items-center gap-3 px-5 py-3 hover:bg-[var(--muted)]/60 transition-colors">
+                        <div key={`grok:${tk.profile}`}>
+                        <div className="flex cursor-pointer items-center gap-3 px-5 py-3 hover:bg-[var(--muted)]/60 transition-colors"
+                          onClick={() => setExpandedId(expandedId === `grok:${tk.profile}` ? null : `grok:${tk.profile}`)}>
                           <span className={cn(
                             "shrink-0 inline-flex items-center justify-center min-w-[28px] h-5 px-1.5 rounded-md text-[11px] font-mono font-bold tabular-nums",
                             tk.is_primary ? "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300" : "bg-[var(--secondary)] text-[var(--muted-foreground)]"
@@ -1759,6 +1761,8 @@ function AccountsPageContent() {
                               {tk.enabled === false ? <Power className="size-3" /> : <PowerOff className="size-3" />}
                             </button>
                           </div>
+                        </div>
+                        {expandedId === `grok:${tk.profile}` && <ChiTietGrok tk={tk} />}
                         </div>
                       ))}
 
