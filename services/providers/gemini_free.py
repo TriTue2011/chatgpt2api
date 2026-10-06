@@ -17,6 +17,15 @@ from curl_cffi import requests
 from services.config import config
 from utils.log import logger
 
+#: Chữ ký suy nghĩ (``thoughtSignature``) Gemini 3 gắn vào lời gọi công cụ — lượt sau PHẢI gửi trả đúng chỗ, thiếu là
+#: 400 "Function call is missing a thought_signature" (đo 06/10/2026: mọi lượt có gọi công cụ hỏng ở bước 2, bot rơi
+#: xuống model dự phòng yếu, trả lời lẫn tiếng Nga). Nhớ theo mã lời gọi trong tiến trình, có trần.
+_CHU_KY: dict[str, str] = {}
+_CHU_KY_TRAN = 2000
+#: Lời gọi công cụ KHÔNG do Gemini tạo (model khác gọi ở bước trước rồi lùi sang Gemini) thì không có chữ ký thật —
+#: giá trị Google cho phép dùng thay để bỏ qua kiểm (tài liệu Gemini 3 › Thought signatures).
+_CHU_KY_THAY = "skip_thought_signature_validator"
+
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 GEMINI_DEFAULT_MODEL = "gemini-3-flash-preview"
 
@@ -301,7 +310,8 @@ def _convert_request(messages, tools, *, google_search: bool = False):
                         tham_so = {}
                 parts.append({"functionCall": {
                     "name": ten,
-                    "args": tham_so if isinstance(tham_so, dict) else {}}})
+                    "args": tham_so if isinstance(tham_so, dict) else {}},
+                    "thoughtSignature": _CHU_KY.get(str(tc.get("id") or ""), _CHU_KY_THAY)})
                 ten_theo_id[str(tc.get("id") or "")] = ten
             if parts:
                 contents.append({"role": "model", "parts": parts})
@@ -470,8 +480,14 @@ def _parse_gemini_stream(response, model: str) -> Iterator[dict[str, Any]]:
                         # Function call response (native!)
                         func_call = part.get("functionCall")
                         if func_call:
+                            ma_goi = f"call_{uuid.uuid4().hex[:12]}"
+                            chu_ky = part.get("thoughtSignature") or part.get("thought_signature")
+                            if chu_ky:
+                                if len(_CHU_KY) >= _CHU_KY_TRAN:
+                                    _CHU_KY.pop(next(iter(_CHU_KY)))
+                                _CHU_KY[ma_goi] = str(chu_ky)
                             pending_tool_calls.append({
-                                "id": f"call_{uuid.uuid4().hex[:12]}",
+                                "id": ma_goi,
                                 "type": "function",
                                 "function": {
                                     "name": func_call.get("name", ""),

@@ -42,6 +42,50 @@ from utils.helper import build_chat_image_markdown_content, extract_chat_image, 
 from utils.log import logger
 
 
+#: Bảng chữ coi là «của người dùng»: tiếng Việt viết bằng chữ Latin; chữ Hy Lạp là ký hiệu Toán / Lý (α, π, Δ).
+_CHU_QUEN = ("LATIN", "GREEK")
+#: Câu trả lời có từ ngần này chữ thuộc bảng chữ lạ (không có trong câu hỏi) là model trôi ngôn ngữ.
+_CHU_LA_TOI_THIEU = 2
+#: Rớt đường truyền nhanh hơn ngần này (không mã HTTP) là thoáng qua — thử lại ngay một lần.
+_THU_LAI_NHANH_GIAY = 10.0
+
+
+def _bang_chu(ch: str) -> str:
+    """Bảng chữ của một chữ cái theo tên Unicode (CYRILLIC, CJK, HANGUL…); không phải chữ cái thì rỗng."""
+    if not ch.isalpha():
+        return ""
+    try:
+        return unicodedata.name(ch).split(" ")[0]
+    except ValueError:
+        return ""
+
+
+def _chu_la(tra_loi: str, cau_hoi: str) -> int:
+    """Số chữ trong câu trả lời thuộc bảng chữ LẠ: không phải Latin / Hy Lạp và không có trong câu hỏi.
+
+    Chủ máy 06/10/2026 «sao lại tiếng lạ thế»: chuỗi dự phòng rơi xuống model yếu (nemotron) trả lời lẫn tiếng Nga,
+    tiếng Trung giữa câu tiếng Việt; đo 7 ngày 4 lượt. Xét theo BẢNG CHỮ (tên Unicode), không theo danh sách từ —
+    người hỏi nhờ dịch sang tiếng Trung thì bảng chữ đó có trong câu hỏi nên không tính."""
+    co_san = {_bang_chu(c) for c in str(cau_hoi or "")} | set(_CHU_QUEN) | {""}
+    return sum(1 for c in str(tra_loi or "") if _bang_chu(c) not in co_san)
+
+
+def _chu_tra_loi(result: Any) -> str | None:
+    """Chữ câu trả lời của một kết quả KHÔNG stream; None nếu là stream, gọi công cụ, hoặc không đọc được."""
+    if not isinstance(result, dict):
+        return None
+    try:
+        msg = result["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError):
+        return None
+    if msg.get("tool_calls"):
+        return None
+    c = msg.get("content")
+    if isinstance(c, list):
+        c = "".join(str(p.get("text") or "") for p in c if isinstance(p, dict))
+    return c if isinstance(c, str) else None
+
+
 def _extract_status(error_text: str) -> int:
     """Extract HTTP status code from error message text."""
     import re
@@ -3790,12 +3834,45 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                     ),
                 })
 
-                result = _dispatch(route, messages_for_route, tools_with_mcp, tool_choice, body)
-                # Execute MCP tools server-side for combo too
-                if not isinstance(result, dict):
-                    result = _wrap_mcp_stream(result, messages_for_route, route, body)
-                elif isinstance(result, dict):
-                    result = _execute_mcp_tools_in_response(messages_for_route, result, route, body)
+                def _goi_mot_lan(msgs: list[dict[str, Any]]) -> Any:
+                    t_goi = time.monotonic()
+                    try:
+                        kq = _dispatch(route, msgs, tools_with_mcp, tool_choice, body)
+                    except NoFallbackError:
+                        raise
+                    except Exception as exc_goi:
+                        # Rớt đường truyền NHANH, không mã HTTP (curl 56 «Connection closed abruptly», reset) là thoáng
+                        # qua: thử lại ngay một lần. Trước 06/10/2026 một lần rớt như vậy phạt model chính nghỉ 60 s,
+                        # cả lượt rơi xuống model dự phòng yếu (trả lời lẫn tiếng Nga). Treo tới hết hạn chờ thì không.
+                        if _extract_status(str(exc_goi)) or time.monotonic() - t_goi > _THU_LAI_NHANH_GIAY:
+                            raise
+                        logger.warning({"event": "combo_thu_lai_rot_ket_noi", "combo": model, "provider": route.provider,
+                                        "error": str(exc_goi)[:160]})
+                        kq = _dispatch(route, msgs, tools_with_mcp, tool_choice, body)
+                    # Execute MCP tools server-side for combo too
+                    if not isinstance(kq, dict):
+                        return _wrap_mcp_stream(kq, msgs, route, body)
+                    return _execute_mcp_tools_in_response(msgs, kq, route, body)
+
+                result = _goi_mot_lan(messages_for_route)
+                # Câu trả lời trôi sang bảng chữ lạ (Nga, Trung…) mà câu hỏi không có: gọi lại MỘT lần kèm lời dặn; vẫn
+                # lạ thì còn đường kế → sang đường kế, là đường CUỐI thì giữ bản ít chữ lạ hơn (`_chu_la`).
+                la = _chu_la(_chu_tra_loi(result) or "", original_user_text)
+                if la >= _CHU_LA_TOI_THIEU:
+                    logger.warning({"event": "combo_tra_loi_chu_la", "combo": model, "provider": route.provider,
+                                    "model": route.model, "chu_la": la})
+                    lai = _goi_mot_lan(messages_for_route + [{"role": "system", "content": (
+                        "Câu trả lời vừa rồi lẫn chữ nước ngoài. Viết lại TOÀN BỘ bằng tiếng Việt có dấu, "
+                        "không dùng chữ Nga, Trung, Nhật, Hàn hay ngôn ngữ nào khác.")}])
+                    la_lai = _chu_la(_chu_tra_loi(lai) or "", original_user_text)
+                    if la_lai < _CHU_LA_TOI_THIEU:
+                        result = lai
+                    elif _route_idx < len(routes) - 1:
+                        last_error = f"{route.model} trả lời sai ngôn ngữ ({la_lai} chữ lạ)"
+                        _ghi_duong(route, "bỏ: trả lời sai ngôn ngữ")
+                        continue
+                    elif la_lai < la:
+                        result = lai
                 # Do NOT strip markdown/italics when client asked for JSON
                 # (response_format) — underscore rules mangle humans_detected keys.
                 _struct = bool(body.get("_response_format_meta") or body.get("response_format") or body.get("_structured_output"))

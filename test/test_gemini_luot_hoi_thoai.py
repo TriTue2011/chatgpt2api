@@ -96,3 +96,47 @@ class KetThucBangAssistantTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChuKySuyNghiTests(unittest.TestCase):
+    """06/10/2026: Gemini 3 trả 400 "Function call is missing a thought_signature" ở bước 2 của MỌI lượt có gọi công
+    cụ — chữ ký đi kèm functionCall bị vứt khi đọc, nên bot rơi xuống model dự phòng yếu (trả lời lẫn tiếng Nga)."""
+
+    def test_loi_goi_do_model_khac_tao_dung_chu_ky_thay(self):
+        from services.providers import gemini_free
+        contents, _, _ = _convert_request(GOI_CONG_CU, None)
+        goi = next(p for c in contents for p in c["parts"] if "functionCall" in p)
+        self.assertEqual(goi["thoughtSignature"], gemini_free._CHU_KY_THAY)
+
+    def test_loi_goi_do_gemini_tao_gui_tra_dung_chu_ky_that(self):
+        from services.providers import gemini_free
+        gemini_free._CHU_KY["call_1"] = "CHU_KY_THAT"
+        self.addCleanup(gemini_free._CHU_KY.pop, "call_1", None)
+        contents, _, _ = _convert_request(GOI_CONG_CU, None)
+        goi = next(p for c in contents for p in c["parts"] if "functionCall" in p)
+        self.assertEqual(goi["thoughtSignature"], "CHU_KY_THAT")
+
+    def test_doc_luong_nho_chu_ky_roi_luot_sau_gui_tra(self):
+        """Trọn vòng: Gemini trả functionCall kèm chữ ký → lượt sau (cùng mã lời gọi) gửi trả đúng chữ ký đó."""
+        import json as _json
+
+        from services.providers import gemini_free
+
+        class _Tra:
+            def iter_lines(self):
+                yield ("data: " + _json.dumps({"candidates": [{"content": {"parts": [
+                    {"functionCall": {"name": "home_status", "args": {}}, "thoughtSignature": "CK_TU_GEMINI"}]}}]})).encode()
+
+            def close(self):
+                pass
+
+        goi = [tc for ch in gemini_free._parse_gemini_stream(_Tra(), "gemini-3.5-flash-lite")
+               for tc in (ch["choices"][0]["delta"].get("tool_calls") or [])]
+        self.assertEqual(len(goi), 1)
+        self.addCleanup(gemini_free._CHU_KY.pop, goi[0]["id"], None)
+        tin = [{"role": "user", "content": "Nhà có ai không?"},
+               {"role": "assistant", "content": "", "tool_calls": goi},
+               {"role": "tool", "tool_call_id": goi[0]["id"], "content": "Không có ai."}]
+        contents, _, _ = _convert_request(tin, None)
+        fc = next(p for c in contents for p in c["parts"] if "functionCall" in p)
+        self.assertEqual(fc["thoughtSignature"], "CK_TU_GEMINI")
