@@ -2021,6 +2021,10 @@ export function TelegramCloudflareCard() {
                 🚫 Không dùng ChatGPT ở thread này — chuyển tiếp webhook và nhật ký vẫn chạy
               </label>
 
+              {/* Tâm hồn: chat 1-1 cũng nhận thơ / văn / nói chuyện phiếm — trước 06/10/2026 nằm trong khối «chỉ thread
+                  NHÓM» bên dưới nên thread Cá nhân không có ô để tích (chủ máy chụp màn hình: "làm gì có"). */}
+              {row.chatId.trim() ? <TamHonThread khoa={`${row.botKey}:${row.chatId.trim()}`} /> : null}
+
               {/* Bộ lọc TAG — chỉ trả lời khi bị tag (chỉ hiện với thread NHÓM) */}
               {!row.aiOff && row.kind !== "user" && (
               <div className="rounded border border-dashed border-border/70 p-2 space-y-1.5">
@@ -2090,7 +2094,6 @@ export function TelegramCloudflareCard() {
                     💬 Tag người hỏi khi bot trả lời — câu trả lời mở đầu bằng @tên người vừa hỏi
                   </label>
                 )}
-                {row.chatId.trim() ? <TamHonThread khoa={`${row.botKey}:${row.chatId.trim()}`} /> : null}
                 <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
                   <input
                     type="checkbox"
