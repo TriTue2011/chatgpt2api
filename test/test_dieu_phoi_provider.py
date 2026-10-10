@@ -20,6 +20,7 @@ os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
 
 import services.protocol.openai_v1_chat_complete as occ  # noqa: E402
 from services import adapter_registry  # noqa: E402
+from services import request_context as rc  # noqa: E402
 from services.backend_router import PROVIDER_PREFIXES  # noqa: E402
 
 MSGS = [{"role": "user", "content": "xin chào"}]
@@ -122,6 +123,42 @@ class SoAdapterTests(unittest.TestCase):
     def test_chi_chatgpt_tai_tep(self) -> None:
         tai = {m for m in adapter_registry.danh_sach() if adapter_registry.tim(m).tai_tep}
         self.assertEqual(tai, {"chatgpt", "chatgpt_free"})
+
+
+class GhiNguonTraLoiTests(unittest.TestCase):
+    """Cửa điều phối ghi NGUỒN THẬT của câu trả lời, không trông chờ từng provider tự khai.
+
+    Đo 10/10/2026 trên `runs.sqlite`: 1.206/1.276 lượt chat+vision (94,5%) không có
+    `dest_provider` vì chỉ ba provider tự gọi `note_provider_account`.
+    """
+
+    def setUp(self) -> None:
+        rc.reset_all()
+
+    def tearDown(self) -> None:
+        rc.reset_all()
+
+    def test_moi_provider_co_adapter_deu_de_lai_nguon(self) -> None:
+        for prov in ("opencode", "gemini_free", "claude", "agnes", "openai_oauth", "codex",
+                     "chatgpt", "chatgpt_free", "custom:lv", "grok_web", "gemini_web_api"):
+            with self.subTest(provider=prov):
+                rc.reset_all()
+                chay(prov, model="m1")
+                d = rc.get_dest()
+                self.assertEqual((d.get("provider"), d.get("model")), (prov, "m1"))
+                self.assertNotIn("yeu_cau", d)
+
+    def test_thay_the_lang_le_thi_ghi_ca_nguoi_duoc_goi_lan_nguoi_tra_loi(self) -> None:
+        chay("flow", model="banana-2-lite")
+        d = rc.get_dest()
+        self.assertEqual(d["provider"], "chatgpt_free")   # nơi THẬT sự trả lời
+        self.assertEqual(d["yeu_cau"], "flow")              # nơi đã được yêu cầu
+
+    def test_combo_nhieu_buoc_de_lai_vet_tung_buoc(self) -> None:
+        chay("flow", model="a")
+        chay("claude", model="b")
+        vet = [(r["provider"], r.get("yeu_cau", "")) for r in rc.get_dest_trail()]
+        self.assertEqual(vet, [("chatgpt_free", "flow"), ("claude", "")])
 
 
 class DieuPhoiProviderTests(unittest.TestCase):

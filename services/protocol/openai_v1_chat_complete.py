@@ -27,7 +27,7 @@ from services.protocol.conversation import (
 )
 from services.account_service import account_service
 from services.backend_router import backend_router
-from services import adapter_registry
+from services import adapter_registry, request_context
 from services.config import config
 from services.local_gateway import gateway_base_url
 from services.verbalize import verbalize
@@ -4927,9 +4927,15 @@ def _dispatch_provider(route, messages, tools, tool_choice, body):
         file_upload_threshold = 80_000 if file_upload_enabled else 0
         messages = _rtk_compress_messages(messages, rtk_threshold, file_upload_threshold=file_upload_threshold)
 
+    # Ghi NGUỒN THẬT của câu trả lời ở đúng cửa này, không chờ từng provider tự khai
+    # (đo 10/10/2026: 94,5% lượt chat+vision không có nguồn). Provider nào biết tài
+    # khoản cụ thể vẫn gọi lại `note_provider_account` và bản đầy đủ hơn thắng.
     if adapter is None:
         logger.warning({"event": "unknown_provider", "provider": route.provider, "fallback": "chatgpt_free"})
+        # `yeu_cau`: nơi được yêu cầu ≠ nơi trả lời — dấu vết để không còn thay thế lặng lẽ.
+        request_context.note_provider_account("chatgpt_free", model=route.model, yeu_cau=route.provider)
         return _chatgpt_free_thang(route, messages, tools, tool_choice, body)
+    request_context.note_provider_account(route.provider, model=route.model)
     return adapter.chat(route, messages, tools, tool_choice, body)
 
 
