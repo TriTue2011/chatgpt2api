@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import uuid
 from typing import Any, Iterator
@@ -50,6 +51,56 @@ _PROVIDER_TU_ENV: dict[str, tuple[str, str]] = {
 
 # Prefix của provider khai bằng env — đều là model chạy tại nhà.
 _PREFIX_MAY_NHA = {prefix for prefix, _ in _PROVIDER_TU_ENV.values()}
+
+
+# Module ở máy khác khai bằng NGUYÊN TẮC thay vì thêm tên vào dict trên:
+# mọi `C2A_PROVIDER_<ID>_URL` là một provider, tiền tố = ID viết thường, tên
+# hiển thị ở `C2A_PROVIDER_<ID>_NAME`, khoá ở `C2A_PROVIDER_<ID>_KEY`.
+# Vì sao: dict gõ tay chỉ có hai mục — thêm máy thứ ba (TTS trên .220, một
+# domain ngoài) là phải sửa code, quên sửa thì module mới bị bỏ ở ngoài mà
+# không ai báo. Các provider này KHÔNG vào `_PREFIX_MAY_NHA`: chưa chắc là
+# máy tại nhà, nên không được tự nhận cách chèn chữ giữa các ảnh của llama.cpp.
+_BIEN_PROVIDER_RE = re.compile(r"^C2A_PROVIDER_(.+)_URL$")
+_ID_PROVIDER_RE = re.compile(r"^[A-Z0-9_]+$")
+
+# `_providers_tu_env` chạy trong MỖI lần định tuyến model, nên một biến khai
+# sai mà cảnh báo mỗi lượt là ngập log — mỗi (sự kiện, biến) chỉ báo một lần.
+_da_canh_bao: set[tuple[str, str]] = set()
+
+
+def _canh_bao_mot_lan(su_kien: str, bien: str, **chi_tiet: Any) -> None:
+    if (su_kien, bien) in _da_canh_bao:
+        return
+    _da_canh_bao.add((su_kien, bien))
+    logger.warning({"event": su_kien, "bien": bien, **chi_tiet})
+
+
+def _provider_co_san_che(prefix: str) -> str:
+    """Tên provider có sẵn sẽ nhận `<prefix>/…` TRƯỚC custom provider, "" nếu không.
+
+    `BackendRouter.resolve_model` duyệt bảng tiền tố có sẵn trước rồi mới tới
+    custom provider, nên tiền tố trùng (vd `oc` → opencode) làm module mới bị
+    che mất. Tra thẳng hai bảng thay vì gọi `resolve_model`, vì `resolve_model`
+    lại gọi `get_custom_providers` → về đây: gọi nó là vòng lặp vô tận.
+    Nhập muộn để `backend_router` không phải nạp khi nạp mô-đun này.
+    """
+    from services.backend_router import IMAGE_PROVIDER_PREFIXES, PROVIDER_PREFIXES
+
+    mau = f"{prefix}/x"
+    for bang in (IMAGE_PROVIDER_PREFIXES, PROVIDER_PREFIXES):
+        for tien_to, provider in bang.items():
+            if mau.startswith(tien_to):
+                return provider
+    return ""
+
+
+def _chuan_hoa_url(gia_tri: str | None) -> str:
+    url = str(gia_tri or "").strip().rstrip("/")
+    # Cho khai gọn "http://192.168.1.10:5003" — tự thêm /v1 cho đỡ một lỗi
+    # đánh máy khiến model im lặng không hiện ra.
+    if url and not url.endswith("/v1"):
+        url = url + "/v1"
+    return url
 
 
 def _tach_khung_anh(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -91,19 +142,50 @@ def _tach_khung_anh(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _providers_tu_env() -> dict[str, dict[str, Any]]:
     ra: dict[str, dict[str, Any]] = {}
     for bien, (prefix, ten) in _PROVIDER_TU_ENV.items():
-        url = str(os.getenv(bien) or "").strip().rstrip("/")
+        url = _chuan_hoa_url(os.getenv(bien))
         if not url:
             continue
-        # Cho khai gọn "http://192.168.1.10:5003" — tự thêm /v1 cho đỡ một lỗi
-        # đánh máy khiến model im lặng không hiện ra.
-        if not url.endswith("/v1"):
-            url = url + "/v1"
         ra[prefix] = {
             "name": ten,
             "prefix": prefix,
             "base_url": url,
             "base_urls": [],
             "api_key": str(os.getenv(bien + "_KEY") or "local"),
+            "api_keys": [],
+            "enabled": True,
+        }
+
+    for bien in sorted(os.environ):
+        khop = _BIEN_PROVIDER_RE.match(bien)
+        if not khop:
+            continue
+        ma = khop.group(1)
+        if not _ID_PROVIDER_RE.match(ma):
+            # Bỏ im lặng thì người khai tưởng module đã vào — báo để sửa tên.
+            _canh_bao_mot_lan("provider_env_id_khong_hop_le", bien,
+                              ly_do="ID chỉ gồm A–Z, 0–9, _")
+            continue
+        url = _chuan_hoa_url(os.getenv(bien))
+        if not url:
+            continue
+        prefix = ma.lower()
+        che = _provider_co_san_che(prefix)
+        if che:
+            _canh_bao_mot_lan("provider_env_trung_tien_to", bien,
+                              prefix=prefix, provider=che)
+            continue
+        if prefix in ra:
+            # Trùng `lv`/`ol` của hai biến cũ đang đặt: biến cũ giữ nguyên
+            # hành vi, biến mới bị bỏ chứ không lặng lẽ thay máy đang chạy.
+            _canh_bao_mot_lan("provider_env_trung_tien_to", bien,
+                              prefix=prefix, provider=f"custom:{prefix}")
+            continue
+        ra[prefix] = {
+            "name": str(os.getenv(f"C2A_PROVIDER_{ma}_NAME") or "").strip() or prefix,
+            "prefix": prefix,
+            "base_url": url,
+            "base_urls": [],
+            "api_key": str(os.getenv(f"C2A_PROVIDER_{ma}_KEY") or "local"),
             "api_keys": [],
             "enabled": True,
         }
@@ -196,6 +278,7 @@ class CustomOpenAIProvider:
                 api_style = "deepseek"  # Perplexity also uses no /v1
             else:
                 api_style = "openai"
+        self._api_style = api_style
 
         # Determine paths: avoid double /v1 when base_url already includes it
         base_has_v1 = self.base_url.rstrip("/").endswith("/v1")
@@ -311,6 +394,80 @@ class CustomOpenAIProvider:
                 resp.close()
         except Exception:
             return False
+
+    _KIEM_TRA_TIMEOUT_S = 5
+
+    def kiem_tra(self) -> dict[str, Any]:
+        """Hỏi từng URL của provider: còn sống không, chậm bao nhiêu, mấy model.
+
+        Vì sao cần: `is_available` chỉ trả một bool và chỉ thử URL đầu, còn
+        `list_models` nuốt lỗi — một URL chết trong bể nhiều URL, hay một tiền
+        tố bị provider có sẵn che mất, đều không ai thấy cho tới khi người
+        dùng hỏi vì sao model biến mất.
+
+        CHỈ ĐỌC: không gọi `_demote_base_url`, không chạm `_base_url_cooldown`
+        — hạ hạng ở đây là đổi đường đi của request thật chỉ vì có người mở
+        trang kiểm tra. Kết quả đi thẳng ra giao diện nên không bao giờ mang
+        khoá API hay nội dung lỗi thô (lỗi mạng có thể kèm header).
+        """
+        ket_qua: list[dict[str, Any]] = []
+        key = self.api_key if self._get_keys() else ""
+        for url in self._base_urls:
+            muc: dict[str, Any] = {"url": url, "ok": False, "do_tre_ms": None,
+                                   "so_model": 0, "loi": ""}
+            ket_qua.append(muc)
+            if not key:
+                muc["loi"] = "chưa có khoá API"
+                continue
+            # Đường /models tính theo TỪNG URL: `_models_path` dựng theo URL đầu,
+            # mà bể có thể trộn URL có và không có /v1.
+            duong = ("/models" if self._api_style == "deepseek" or url.endswith("/v1")
+                     else "/v1/models")
+            bat_dau = time.monotonic()
+            try:
+                resp = requests.get(
+                    f"{url}{duong}",
+                    headers={"Authorization": f"Bearer {key}"},
+                    timeout=self._KIEM_TRA_TIMEOUT_S,
+                )
+            except Exception as exc:
+                muc["do_tre_ms"] = int((time.monotonic() - bat_dau) * 1000)
+                muc["loi"] = f"lỗi mạng: {type(exc).__name__}"
+                continue
+            muc["do_tre_ms"] = int((time.monotonic() - bat_dau) * 1000)
+            try:
+                if resp.status_code != 200:
+                    muc["loi"] = f"HTTP {resp.status_code}"
+                    continue
+                try:
+                    data = resp.json().get("data")
+                except Exception:
+                    data = None
+                if not isinstance(data, list):
+                    # 200 mà không phải danh sách model chuẩn OpenAI — thường là
+                    # trang đăng nhập hay proxy chặn, không phải module thật.
+                    muc["loi"] = "trả 200 nhưng không phải danh sách model OpenAI"
+                    continue
+                muc["ok"] = True
+                muc["so_model"] = len(data)
+            finally:
+                resp.close()
+
+        bi_che_boi = ""
+        prefix = str(self.cfg.get("prefix") or "").strip()
+        if prefix:
+            # Hỏi đúng bộ định tuyến thật thay vì đoán: nó trả gì cho
+            # "<prefix>/x" thì request thật đi đường đó. Nhập muộn vì
+            # backend_router nhập lại mô-đun này trong resolve_model.
+            from services.backend_router import BackendRouter
+
+            provider, _ = BackendRouter.resolve_model(f"{prefix}/x")
+            # "chatgpt" là đường rơi mặc định khi không ai nhận — provider này
+            # chưa được bật chứ không phải bị che.
+            if provider not in (f"custom:{prefix}", "chatgpt"):
+                bi_che_boi = provider
+        return {"ok": any(m["ok"] for m in ket_qua), "urls": ket_qua,
+                "bi_che_boi": bi_che_boi}
 
     def chat_completions(
         self,

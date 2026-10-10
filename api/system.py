@@ -1605,7 +1605,16 @@ def create_router(app_version: str) -> APIRouter:
             if isinstance(pcfg, dict):
                 norm = _normalize_multi_base_urls(_normalize_multi_api_keys(pcfg))
                 out[pid] = norm
-        return {"custom_providers": out}
+        # Provider khai bằng biến môi trường không nằm trong config.json, nên
+        # trước đây giao diện không thấy chúng. Tách thành khoá riêng để không
+        # đổi hình dạng `custom_providers` mà giao diện đang đọc; bỏ khoá API
+        # vì env giữ khoá thật của máy ngoài, không có lý do đưa lên trình duyệt.
+        from services.providers.custom_openai import _providers_tu_env
+        env_out = {
+            pid: {k: v for k, v in pcfg.items() if k not in ("api_key", "api_keys")}
+            for pid, pcfg in _providers_tu_env().items()
+        }
+        return {"custom_providers": out, "env_providers": env_out}
 
     @router.post("/api/v1/custom-providers")
     async def save_custom_provider(body: dict, authorization: str | None = Header(default=None)):
@@ -1694,6 +1703,20 @@ def create_router(app_version: str) -> APIRouter:
             invalidate_models_cache()
             return {"deleted": True, "provider_id": provider_id}
         raise HTTPException(status_code=404, detail={"error": f"provider '{provider_id}' not found"})
+
+    @router.get("/api/v1/custom-providers/{provider_id}/health")
+    async def custom_provider_health(provider_id: str, authorization: str | None = Header(default=None)):
+        """Hỏi từng URL của một custom provider: sống không, độ trễ, số model,
+        và có bị tiền tố có sẵn che mất không. Tìm cả provider khai bằng env."""
+        require_admin(authorization)
+        from services.providers.custom_openai import CustomOpenAIProvider, get_custom_providers
+        cfg = get_custom_providers().get(provider_id)
+        if cfg is None:
+            raise HTTPException(status_code=404, detail={"error": f"provider '{provider_id}' not found"})
+        # Mỗi URL chờ tới 5 s — chạy ngoài vòng lặp sự kiện để không treo
+        # mọi request khác trong lúc chờ một máy chết.
+        ket_qua = await run_in_threadpool(CustomOpenAIProvider(cfg).kiem_tra)
+        return {"provider_id": provider_id, **ket_qua}
 
     # ── Model Settings ──
 

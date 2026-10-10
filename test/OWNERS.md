@@ -42,6 +42,8 @@ E2E: `pytest -m e2e --run-e2e`
 | Auth key / roles (hash logic) | `test_auth_service.py` | Endpoint chỉ 401/200 |
 | Backend route + circuit/cooldown | `test_backend_router.py`, `test_provider_circuit.py`, `test_session_affinity.py` | |
 | Điều phối provider (`_dispatch_provider` → handler, tools, RTK, cgf/auto) | `test_dieu_phoi_provider.py` | đóng đinh trước khi chuyển sang sổ adapter |
+| Custom provider khai bằng biến môi trường (`VISION_URL_GPU`/`OLLAMA_URL`, `C2A_PROVIDER_<ID>_URL`) | `test_provider_tu_env.py` | |
+| Sức khoẻ custom provider (`kiem_tra`, `/custom-providers/{id}/health`, `env_providers`) | `test_custom_provider_suc_khoe.py` | giả HTTP ở `custom_openai.requests` |
 | Hợp đồng phản hồi ở cửa điều phối (`phan_hoi_sai_hop_dong`, `tools_bi_bo`, dấu `hop_dong`) | `test_hop_dong_phan_hoi.py` | chỉ quan sát — không đổi phản hồi |
 | `response_format` / vision JSON repair | `test_response_format.py`, `test_ha_json_strip.py` | |
 | Channel contacts / alias / new-chat | `test_channel_contacts.py` | |
