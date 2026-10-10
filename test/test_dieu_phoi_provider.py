@@ -53,6 +53,16 @@ def _nhan(x, body):
     return x
 
 
+def _tra_loi(ten: str) -> dict:
+    """Lời đáp chat-completion hợp lệ tối thiểu, mang tên handler đã trả nó (``ok``).
+
+    Phải HỢP LỆ: cửa điều phối kiểm hợp đồng phản hồi (``test_hop_dong_phan_hoi.py``);
+    trả ``{"ok": ten}`` trần thì mọi lượt đều bị ghi là sai hợp đồng.
+    """
+    return {"ok": ten, "choices": [{"index": 0, "finish_reason": "stop",
+                                    "message": {"role": "assistant", "content": "ok"}}]}
+
+
 def chay(provider: str, *, model: str = "mdl", stream=False, body_model=None,
          tools=TOOLS, rtk=False, rtk_khac=False, oauth_loi=False):
     """Gọi `_dispatch_provider` với mọi handler bị thay bằng bộ ghi. Trả về danh sách lời gọi."""
@@ -67,7 +77,7 @@ def chay(provider: str, *, model: str = "mdl", stream=False, body_model=None,
                         tuple(sorted((kk, _nhan(v, body)) for kk, v in k.items()))))
             if loi:
                 raise RuntimeError("oauth hỏng")
-            return tra if tra is not None else {"ok": ten}
+            return tra if tra is not None else _tra_loi(ten)
         return f
 
     def rtk_ghi(msgs, nguong, file_upload_threshold=0):
@@ -98,12 +108,16 @@ def chay(provider: str, *, model: str = "mdl", stream=False, body_model=None,
     return lan, kq
 
 
-# Provider có tiền tố trong `PROVIDER_PREFIXES` nhưng CHƯA có adapter — đo 10/10/2026.
-# Gọi tới chúng hiện rơi lặng lẽ về chatgpt_free (log `unknown_provider`). Danh sách này
-# chỉ được CO LẠI: viết adapter cho provider nào thì xoá tên nó khỏi đây.
-CHUA_CO_ADAPTER = {
+# Provider có tiền tố trong `PROVIDER_PREFIXES` nhưng CHƯA có adapter. Danh sách này chỉ
+# được CO LẠI. Đo 10/10/2026 có 11 cái, gọi tới thì rơi lặng lẽ về chatgpt_free; nay mỗi
+# cái hoặc có adapter thật (ninerouter, supercode) hoặc adapter báo lỗi rõ ràng. Thêm
+# tiền tố mới mà quên đăng ký adapter thì test chốt chặn bên dưới đỏ.
+CHUA_CO_ADAPTER: set[str] = set()
+
+# Có tiền tố nhưng KHÔNG có mã chat nào trong repo (đọc 10/10/2026): gọi tới phải báo lỗi.
+KHONG_CO_MA = {
     "chatgpt_web", "cursor", "gemini_cli", "github", "iflow", "kiro",
-    "ninerouter", "opencode_go", "perplexity_web", "qwen", "supercode",
+    "opencode_go", "perplexity_web", "qwen",
 }
 
 
@@ -123,6 +137,14 @@ class SoAdapterTests(unittest.TestCase):
     def test_chi_chatgpt_tai_tep(self) -> None:
         tai = {m for m in adapter_registry.danh_sach() if adapter_registry.tim(m).tai_tep}
         self.assertEqual(tai, {"chatgpt", "chatgpt_free"})
+
+    def test_khai_tools_dung_voi_hanh_vi(self) -> None:
+        # Khai `tools=True` đúng những adapter mà DieuPhoiProviderTests thấy chuyển tools.
+        co = {m for m in adapter_registry.danh_sach() if adapter_registry.tim(m).tools}
+        self.assertEqual(co, {
+            "openai_oauth", "codex", "agnes", "antigravity", "nvidia_nim", "tokenrouter",
+            "custom", "chatgpt_free", "chatgpt", "openai_api", "ninerouter",
+        })
 
 
 class GhiNguonTraLoiTests(unittest.TestCase):
@@ -240,7 +262,7 @@ class DieuPhoiProviderTests(unittest.TestCase):
                 self.assertEqual(lan, [("rtk", (100_000, 80_000), ()),
                                        ("_handle_openai_oauth_chat",
                                         ("auto", "MSGS", "TOOLS", TC, False, "BODY"), ())])
-                self.assertEqual(kq, {"ok": "_handle_openai_oauth_chat"})
+                self.assertEqual(kq["ok"], "_handle_openai_oauth_chat")
 
     def test_cgf_auto_codex_hong_thi_ve_free(self) -> None:
         lan, _ = chay("chatgpt_free", body_model="cgf/auto", oauth_loi=True)
@@ -256,9 +278,11 @@ class DieuPhoiProviderTests(unittest.TestCase):
         lan, _ = chay("chatgpt_free", body_model="cgf/gpt-5")
         self.assertNotIn("_handle_openai_oauth_chat", [x[0] for x in lan])
 
-    # ── provider không có nhánh: hiện rơi về chatgpt_free (ghi cảnh báo) ──
+    # ── provider không có adapter: vẫn rơi về chatgpt_free (ghi cảnh báo) ──
+    # Chỉ còn provider ẢNH (`flow`, tên nằm trong IMAGE_PROVIDER_PREFIXES) và tên lạ hẳn.
+    # Home Assistant đang dựa vào đường rơi này mỗi giờ; giữ nguyên tới khi chủ máy quyết.
     def test_provider_khong_co_nhanh_roi_ve_chatgpt_free(self) -> None:
-        for prov in ("flow", "ninerouter", "supercode", "opencode_go", "qwen", "khong_ton_tai"):
+        for prov in ("flow", "khong_ton_tai"):
             with self.subTest(provider=prov):
                 with self.assertLogs("chatgpt2api", level="WARNING") as cm:
                     lan, _ = chay(prov)
@@ -266,10 +290,106 @@ class DieuPhoiProviderTests(unittest.TestCase):
                                  ["slim", "handle_free_chat"])
                 self.assertTrue(any("unknown_provider" in m for m in cm.output), cm.output)
 
+    # ── provider có tiền tố mà không có mã: báo lỗi nêu tên + tiền tố, KHÔNG rơi về free ──
+    def test_provider_khong_co_ma_bao_loi_ro_rang(self) -> None:
+        tien_to = {}
+        for tt, ten in PROVIDER_PREFIXES.items():
+            tien_to.setdefault(ten, []).append(tt)
+        for prov in sorted(KHONG_CO_MA):
+            for stream in (False, True):
+                with self.subTest(provider=prov, stream=stream):
+                    with self.assertRaises(RuntimeError) as cm:
+                        lan, _ = chay(prov, stream=stream)
+                    loi = str(cm.exception)
+                    self.assertIn(prov, loi)
+                    self.assertTrue(any(f"`{tt}`" in loi for tt in tien_to[prov]), loi)
+                    self.assertIn("chưa được hỗ trợ", loi)
+                    # Có mã HTTP trong câu lỗi: không có thì vòng combo coi là «rớt
+                    # đường truyền nhanh» và gọi lại ngay một lần — vô ích, log sai.
+                    self.assertEqual(occ._extract_status(loi), 501)
+
+    def test_provider_khong_co_ma_khong_goi_handler_nao(self) -> None:
+        lan: list = []
+        with mock.patch.object(occ, "_chatgpt_free_thang", lambda *a: lan.append(a)):
+            with self.assertRaises(RuntimeError):
+                chay("qwen")
+        self.assertEqual(lan, [])
+
     # ── dấu `:`-marker bị bóc khỏi tên model trước khi giao cho handler ──
     def test_marker_bi_boc_khoi_model(self) -> None:
         lan, _ = chay("claude", model="opus:tts")
         self.assertEqual(lan[-1][1][0], "opus")
+
+
+def _sse(*khuc: dict, done=True, kieu="\n\n") -> list[str]:
+    """Các dòng SSE như provider trả về khi stream (chuỗi, chưa phải dict)."""
+    import json
+    dong = [": keep-alive" + kieu] + [f"data: {json.dumps(k)}{kieu}" for k in khuc]
+    if done:
+        dong.append("data: [DONE]" + kieu)
+    return dong
+
+
+KHUC = [{"choices": [{"index": 0, "delta": {"content": "xin"}, "finish_reason": None}]},
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}]
+
+
+class AdapterProviderThatTests(unittest.TestCase):
+    """ninerouter (`9r/`) và supercode (`sc/`) có mã chat hoàn chỉnh — adapter mỏng gọi nó.
+
+    Không gọi mạng: thay ``chat_completions`` của singleton bằng bộ ghi.
+    """
+
+    def _goi(self, prov, ten_mo_dun, ten_doi_tuong, tra, stream=False):
+        import importlib
+        doi_tuong = getattr(importlib.import_module(ten_mo_dun), ten_doi_tuong)
+        ghi: list = []
+
+        def gia(*a, **k):
+            ghi.append((a, k))
+            return tra
+        with mock.patch.object(doi_tuong, "chat_completions", gia):
+            _, kq = chay(prov, stream=stream)
+        return ghi, kq
+
+    def test_ninerouter_chuyen_tools_va_tra_nguyen_dict(self) -> None:
+        dap = _tra_loi("9r")
+        ghi, kq = self._goi("ninerouter", "services.providers.ninerouter", "ninerouter_proxy", dap)
+        self.assertIs(kq, dap)
+        (a, k), = ghi
+        self.assertEqual(a, ())
+        self.assertIs(k["messages"], MSGS)
+        self.assertEqual((k["model"], k["stream"], k["tool_choice"]), ("mdl", False, TC))
+        self.assertIs(k["tools"], TOOLS)
+
+    def test_ninerouter_stream_thanh_dict(self) -> None:
+        # 9router chuyển nguyên từng dòng (`line + "\n"`), không phải khung "\n\n"
+        ghi, kq = self._goi("ninerouter", "services.providers.ninerouter", "ninerouter_proxy",
+                            iter(_sse(*KHUC, kieu="\n")), stream=True)
+        self.assertTrue(ghi)   # gọi NGAY, không đợi tới lúc đọc stream — lỗi HTTP nổi sớm
+        self.assertEqual(list(kq), KHUC)
+
+    def test_supercode_khong_chuyen_tools(self) -> None:
+        # tools của supercode là dict theo khuôn riêng của nó, không phải list OpenAI
+        dap = _tra_loi("sc")
+        ghi, kq = self._goi("supercode", "services.providers.supercode", "supercode_provider", dap)
+        self.assertIs(kq, dap)
+        (a, k), = ghi
+        self.assertNotIn("tools", k)
+        self.assertEqual((k["model"], k["stream"]), ("mdl", False))
+        self.assertIs(k["messages"], MSGS)
+
+    def test_supercode_stream_thanh_dict(self) -> None:
+        ghi, kq = self._goi("supercode", "services.providers.supercode", "supercode_provider",
+                            iter(_sse(*KHUC)), stream=True)
+        self.assertTrue(ghi)
+        self.assertEqual(list(kq), KHUC)
+
+    def test_stream_dung_o_done(self) -> None:
+        dong = _sse(KHUC[0]) + ["data: {\"sau\": \"done\"}\n\n"]
+        _, kq = self._goi("supercode", "services.providers.supercode", "supercode_provider",
+                          iter(dong), stream=True)
+        self.assertEqual(list(kq), [KHUC[0]])
 
 
 if __name__ == "__main__":

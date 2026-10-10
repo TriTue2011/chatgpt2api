@@ -26,7 +26,7 @@ from services.protocol.conversation import (
     text_backend,
 )
 from services.account_service import account_service
-from services.backend_router import backend_router
+from services.backend_router import PROVIDER_PREFIXES, backend_router
 from services import adapter_registry, request_context
 from services.config import config
 from services.local_gateway import gateway_base_url
@@ -4931,12 +4931,73 @@ def _dispatch_provider(route, messages, tools, tool_choice, body):
     # (đo 10/10/2026: 94,5% lượt chat+vision không có nguồn). Provider nào biết tài
     # khoản cụ thể vẫn gọi lại `note_provider_account` và bản đầy đủ hơn thắng.
     if adapter is None:
+        # Còn tới được đây: provider ẢNH (`flow`… trong IMAGE_PROVIDER_PREFIXES) và tên lạ
+        # hẳn — mọi tiền tố trong PROVIDER_PREFIXES đã có adapter (thật hoặc báo lỗi).
+        # Vẫn rơi về chatgpt_free như cũ vì Home Assistant đang dựa vào đường này mỗi giờ;
+        # đổi sang báo lỗi là việc CHỜ CHỦ MÁY QUYẾT.
         logger.warning({"event": "unknown_provider", "provider": route.provider, "fallback": "chatgpt_free"})
         # `yeu_cau`: nơi được yêu cầu ≠ nơi trả lời — dấu vết để không còn thay thế lặng lẽ.
         request_context.note_provider_account("chatgpt_free", model=route.model, yeu_cau=route.provider)
-        return _chatgpt_free_thang(route, messages, tools, tool_choice, body)
+        result = _chatgpt_free_thang(route, messages, tools, tool_choice, body)
+        _quan_sat_phan_hoi(result, "chatgpt_free", route.model, tools, nhan_tools=True)
+        return result
     request_context.note_provider_account(route.provider, model=route.model)
-    return adapter.chat(route, messages, tools, tool_choice, body)
+    result = adapter.chat(route, messages, tools, tool_choice, body)
+    _quan_sat_phan_hoi(result, route.provider, route.model, tools, nhan_tools=adapter.tools)
+    return result
+
+
+def _ly_do_sai_hop_dong(kq: dict[str, Any]) -> str:
+    """Lý do một lời đáp KHÔNG stream không dùng được như chat-completion; ``""`` nếu ổn.
+
+    Chỉ những dạng chắc chắn sai — đọc các handler thật 10/10/2026 mới chốt:
+    ``id``/``object``/``usage`` KHÔNG bắt buộc (9router, custom chuyển nguyên
+    ``resp.json()``); gemini_free gom stream trả ``finish_reason="stop"`` kèm
+    ``tool_calls`` nên rỗng-mà-có-tool là hợp lệ; ``content`` có thể là danh sách phần.
+    Dict ``{"error": …}`` không có ``choices`` là SAI: vòng combo coi nó là thành công
+    rồi dừng — đúng lớp lỗi custom provider gặp 30/07 (xem `_handle_custom_openai_chat`).
+    """
+    choices = kq.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return "loi_trong_phan_hoi" if kq.get("error") else "thieu_choices"
+    dau = choices[0]
+    msg = dau.get("message") if isinstance(dau, dict) else None
+    if not isinstance(msg, dict):
+        return "thieu_message"
+    noi_dung = msg.get("content")
+    rong = not noi_dung.strip() if isinstance(noi_dung, str) else not noi_dung
+    # Chỉ kết luận khi model nói đã XONG ("stop"): rỗng vì "length" là hết token, chuyện khác.
+    if dau.get("finish_reason") == "stop" and rong and not msg.get("tool_calls"):
+        return "noi_dung_rong"
+    return ""
+
+
+def _quan_sat_phan_hoi(result, provider: str, model: str, tools, *, nhan_tools: bool) -> None:
+    """Kiểm hợp đồng phản hồi của adapter — CHỈ QUAN SÁT: ghi log + dấu ``hop_dong``.
+
+    Không đổi, không chặn, không raise: khối này hỏng thì lượt chat vẫn đi tiếp nguyên vẹn.
+    """
+    try:
+        if tools and not nhan_tools:
+            # gemini_free / gemini_web_api tự đọc `body["tools"]` (tools CỦA CLIENT), nên với
+            # hai provider này dòng log nói quá: chỉ tools web2api chèn thêm (MCP) là mất.
+            logger.info({"event": "tools_bi_bo", "provider": provider, "so_tool": len(tools)})
+        if not isinstance(result, dict):
+            return  # stream: CHƯA kiểm — kiểm được phải đọc trước khúc, tức là động vào stream
+        ly_do = _ly_do_sai_hop_dong(result)
+        if not ly_do:
+            return
+        logger.warning({"event": "phan_hoi_sai_hop_dong", "provider": provider, "model": model, "ly_do": ly_do})
+        # `set_dest` THAY cả hàng: dựng lại từ hàng hiện tại để không xoá tài khoản provider
+        # đã tự ghi, cũng không xoá `yeu_cau` của nhánh thay thế.
+        hang = request_context.get_dest()
+        hang["hop_dong"] = ly_do
+        request_context.note_provider_account(
+            hang.pop("provider", "") or provider, hang.pop("account", ""),
+            model=hang.pop("model", "") or model, account_id=hang.pop("account_id", ""), **hang,
+        )
+    except Exception as exc:
+        logger.warning({"event": "kiem_hop_dong_hong", "provider": provider, "error": str(exc)[:200]})
 
 
 # ── Adapter của từng provider: bọc mỏng quanh handler sẵn có, KHÔNG viết lại ruột ──
@@ -5038,20 +5099,89 @@ def _adapter_grok_web(route, messages, tools, tool_choice, body):
     return handle_grok_web_chat(route.model, messages, body.get("stream"), body)
 
 
+def _sse_thanh_khuc(dong_sse: Iterable[str]) -> Iterator[dict[str, Any]]:
+    """Dòng SSE thô (``data: {...}``) → khúc dict, theo khuôn `_stream_opencode_response`.
+
+    Hợp đồng adapter là ``Iterator[dict]``; 9router và supercode trả chuỗi SSE. Dừng ở
+    ``[DONE]``; dòng không phải ``data:`` (giữ kết nối, ``event:``) và mảnh JSON vỡ thì bỏ.
+    """
+    for dong in dong_sse:
+        dong = str(dong).strip()
+        if not dong.startswith("data:"):
+            continue
+        payload = dong[5:].strip()
+        if payload == "[DONE]":
+            return
+        try:
+            khuc = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(khuc, dict):
+            yield khuc
+
+
+def _adapter_ninerouter(route, messages, tools, tool_choice, body):
+    # 9router (9r/) — proxy tương thích OpenAI tới bản 9router tự dựng (mặc định
+    # localhost:20128), nó giữ OAuth của Claude/Codex/Copilot… Gọi NGAY ở đây (không
+    # trong generator) để lỗi HTTP nổi lên trong try của combo, không phải lúc đọc stream.
+    from services.providers.ninerouter import ninerouter_proxy
+    stream = bool(body.get("stream"))
+    kq = ninerouter_proxy.chat_completions(
+        messages=messages, model=route.model, stream=stream,
+        temperature=body.get("temperature"), max_tokens=body.get("max_tokens"),
+        tools=tools, tool_choice=tool_choice,
+    )
+    return _sse_thanh_khuc(kq) if stream else kq
+
+
+def _adapter_supercode(route, messages, tools, tool_choice, body):
+    # supercode-cli (sc/) — KHÔNG chuyển tools: `tools` của nó là dict theo khuôn riêng,
+    # đưa list OpenAI vào là sai định dạng. Đo 28/07/2026 (xem services/providers/supercode.py):
+    # đăng nhập chạy nhưng cả 4 upstream đều không trả lời được — adapter để sẵn.
+    from services.providers.supercode import supercode_provider
+    stream = bool(body.get("stream"))
+    kq = supercode_provider.chat_completions(messages=messages, model=route.model, stream=stream)
+    return _sse_thanh_khuc(kq) if stream else kq
+
+
+def _adapter_chua_ho_tro(route, messages, tools, tool_choice, body):
+    """Provider có tiền tố trong PROVIDER_PREFIXES nhưng KHÔNG có mã chat nào trong repo.
+
+    Trước 10/10/2026 các tiền tố này (phần lớn "port từ 9router" mà mã chưa từng có) rơi
+    lặng lẽ về ChatGPT free. Chủ máy chốt 02/10/2026: bị chặn/từ chối phải nói lý do.
+    Raise như mọi `_handle_*_chat` để combo bắt và sang bước kế. Mã 501 trong câu là để
+    `_extract_status` đọc ra: thiếu mã thì combo coi là «rớt đường truyền nhanh» và gọi lại
+    ngay một lần — vô ích. Đo 7 ngày tới 10/10/2026: 0 lượt thật tới các provider này.
+    """
+    tien_to = ", ".join(f"`{tt}`" for tt, ten in PROVIDER_PREFIXES.items() if ten == route.provider)
+    raise RuntimeError(
+        f"Provider {route.provider} (tiền tố {tien_to}) chưa được hỗ trợ trong bản này "
+        f"— chưa có mã gọi provider này (501)"
+    )
+
+
 adapter_registry.dang_ky("opencode", _adapter_opencode)
-adapter_registry.dang_ky("openai_oauth", _adapter_openai_oauth, bi_danh=("codex",))
+adapter_registry.dang_ky("openai_oauth", _adapter_openai_oauth, tools=True, bi_danh=("codex",))
 adapter_registry.dang_ky("gemini_free", _adapter_gemini_free)
-adapter_registry.dang_ky("agnes", _adapter_agnes)
-adapter_registry.dang_ky("antigravity", _adapter_antigravity)
-adapter_registry.dang_ky("nvidia_nim", _adapter_nvidia_nim)
-adapter_registry.dang_ky("tokenrouter", _adapter_tokenrouter)
+adapter_registry.dang_ky("agnes", _adapter_agnes, tools=True)
+adapter_registry.dang_ky("antigravity", _adapter_antigravity, tools=True)
+adapter_registry.dang_ky("nvidia_nim", _adapter_nvidia_nim, tools=True)
+adapter_registry.dang_ky("tokenrouter", _adapter_tokenrouter, tools=True)
 adapter_registry.dang_ky("gemini_web", _adapter_gemini_web)
-adapter_registry.dang_ky("custom", _adapter_custom)  # provider khai động: `custom:<tiền tố>`
-adapter_registry.dang_ky("chatgpt_free", _adapter_chatgpt_free, tai_tep=True, bi_danh=("chatgpt",))
-adapter_registry.dang_ky("openai_api", _adapter_openai_api)
+adapter_registry.dang_ky("custom", _adapter_custom, tools=True)  # provider khai động: `custom:<tiền tố>`
+adapter_registry.dang_ky("chatgpt_free", _adapter_chatgpt_free, tai_tep=True, tools=True, bi_danh=("chatgpt",))
+adapter_registry.dang_ky("openai_api", _adapter_openai_api, tools=True)
 adapter_registry.dang_ky("claude", _adapter_claude)
 adapter_registry.dang_ky("gemini_web_api", _adapter_gemini_web_api)
 adapter_registry.dang_ky("grok_web", _adapter_grok_web)
+adapter_registry.dang_ky("ninerouter", _adapter_ninerouter, tools=True)
+adapter_registry.dang_ky("supercode", _adapter_supercode)
+# Đọc mã 10/10/2026: không có hàm chat nào cho các provider này. chatgpt_web (cgw/) có
+# sẵn mảnh ghép — `call_chatgpt_web` (cần một token cụ thể) và cổng captcha-solver
+# `/v1/chatgpt-web/chat` — nhưng chưa ai nối thành handler.
+for _ten in ("chatgpt_web", "cursor", "gemini_cli", "github", "iflow", "kiro",
+             "opencode_go", "perplexity_web", "qwen"):
+    adapter_registry.dang_ky(_ten, _adapter_chua_ho_tro)
 
 
 def _restore_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

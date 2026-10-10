@@ -42,6 +42,7 @@ E2E: `pytest -m e2e --run-e2e`
 | Auth key / roles (hash logic) | `test_auth_service.py` | Endpoint chỉ 401/200 |
 | Backend route + circuit/cooldown | `test_backend_router.py`, `test_provider_circuit.py`, `test_session_affinity.py` | |
 | Điều phối provider (`_dispatch_provider` → handler, tools, RTK, cgf/auto) | `test_dieu_phoi_provider.py` | đóng đinh trước khi chuyển sang sổ adapter |
+| Hợp đồng phản hồi ở cửa điều phối (`phan_hoi_sai_hop_dong`, `tools_bi_bo`, dấu `hop_dong`) | `test_hop_dong_phan_hoi.py` | chỉ quan sát — không đổi phản hồi |
 | `response_format` / vision JSON repair | `test_response_format.py`, `test_ha_json_strip.py` | |
 | Channel contacts / alias / new-chat | `test_channel_contacts.py` | |
 | Agent phases / session / skills / reminders / wiki | `test_agent_phase_*`, `test_agent_session.py`, … | |

@@ -14,6 +14,10 @@ Hợp đồng của ``chat``::
 
 ``tai_tep`` — provider tải thẳng tệp lớn lên máy chủ phía bên kia (chatgpt.com): cửa điều
 phối luôn chạy bước nén RTK kiểu tải-tệp cho nó, bất kể công tắc ``rtk_enabled``.
+
+``tools`` — adapter có chuyển ``tools``/``tool_choice`` cho handler của nó hay không. Khai
+``False`` mà yêu cầu có tools thì cửa điều phối ghi ``tools_bi_bo``: tools bị bỏ im lặng là
+lỗi lớp «không báo cho ai» — model trả lời như thể không có công cụ nào.
 """
 from __future__ import annotations
 
@@ -26,15 +30,16 @@ class Adapter:
     ma: str
     chat: Callable[[Any, list, Any, Any, dict], Any]
     tai_tep: bool = False
+    tools: bool = False
 
 
 _BANG: dict[str, Adapter] = {}
 
 
-def dang_ky(ma: str, chat: Callable[..., Any], *, tai_tep: bool = False,
+def dang_ky(ma: str, chat: Callable[..., Any], *, tai_tep: bool = False, tools: bool = False,
             bi_danh: tuple[str, ...] = ()) -> None:
     """Đăng ký adapter cho ``ma`` và các tên gọi khác của nó (``bi_danh``)."""
-    adapter = Adapter(ma=ma, chat=chat, tai_tep=tai_tep)
+    adapter = Adapter(ma=ma, chat=chat, tai_tep=tai_tep, tools=tools)
     for ten in (ma, *bi_danh):
         _BANG[ten] = adapter
 
