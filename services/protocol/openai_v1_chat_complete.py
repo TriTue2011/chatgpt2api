@@ -27,6 +27,7 @@ from services.protocol.conversation import (
 )
 from services.account_service import account_service
 from services.backend_router import backend_router
+from services import adapter_registry
 from services.config import config
 from services.local_gateway import gateway_base_url
 from services.verbalize import verbalize
@@ -4905,16 +4906,17 @@ def _dispatch(route, messages, tools, tool_choice, body):
 
 
 def _dispatch_provider(route, messages, tools, tool_choice, body):
-    """Dispatch to the correct provider handler."""
+    """Tra sổ adapter (``services/adapter_registry``) rồi giao việc cho adapter của provider."""
     route.model = _strip_marker(route.model)
+    adapter = adapter_registry.tim(route.provider)
     # RTK compression thresholds — 24KB → 80KB → 100KB. We sit at the
     # chatgpt.com hard-limit cap; over-cap payloads still get compressed
     # by _rtk_compress_messages so requests never 413.
     # File upload bypass runs independently of RTK — when enabled for chatgpt
     # provider, large user messages (>80KB) are uploaded to /backend-api/files
     # and referenced via asset_pointer instead of being head+tail compressed.
-    file_upload_enabled = (route.provider in ("chatgpt", "chatgpt_free"))
-    if route.provider in ("chatgpt", "chatgpt_free"):
+    file_upload_enabled = bool(adapter and adapter.tai_tep)
+    if file_upload_enabled:
         rtk_on = config.rtk_enabled
         rtk_threshold = 100_000
     else:
@@ -4925,73 +4927,125 @@ def _dispatch_provider(route, messages, tools, tool_choice, body):
         file_upload_threshold = 80_000 if file_upload_enabled else 0
         messages = _rtk_compress_messages(messages, rtk_threshold, file_upload_threshold=file_upload_threshold)
 
-    if route.provider == "opencode":
-        return _handle_opencode_chat(route.model, messages, body.get("stream"), body)
-    elif route.provider in ("openai_oauth", "codex"):
-        return _handle_openai_oauth_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
-    elif route.provider == "gemini_free":
-        return _handle_gemini_chat(route.model, messages, body.get("stream"), body)
-    elif route.provider == "agnes":
-        return _handle_agnes_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
-    elif route.provider == "antigravity":
-        return _handle_antigravity_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
-    elif route.provider == "nvidia_nim":
-        return _handle_nvidia_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
-    elif route.provider == "tokenrouter":
-        return _handle_tokenrouter_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
-    elif route.provider == "gemini_web":
-        from services.providers.web_proxy import handle_gemini_web_chat
-        return handle_gemini_web_chat(route.model, messages, body.get("stream"), body)
-    elif route.provider.startswith("custom:"):
-        return _handle_custom_openai_chat(route.provider, route.model, messages, tools, tool_choice, body.get("stream"), body)
-    elif route.provider in ("chatgpt_free", "chatgpt"):
-        # Standalone free-tier module. `chatgpt/` and bare/unprefixed models are
-        # now aliases for free — handle_free_chat owns the whole free path
-        # (vision-fallback to gemini, tool→user normalization, free-pool
-        # rotation). Codex/paid traffic uses cx/ | codex/ | paid/; OpenAI-API
-        # (sk-/standard) uses oai/.
-        from services.providers.chatgpt_free import handle_free_chat
-        # cgf/auto → ROUTE NHANH: chatgpt.com free bắt buộc proof-of-work (~6s).
-        # Với riêng alias /auto, thử Codex OAuth (API thẳng ~3s) TRƯỚC; thiếu
-        # account/lỗi → fallback NGUYÊN VẸN về free pool (không mất tính năng).
-        # cgf/auto | free/auto → thử route Codex nhanh. Bắt theo MODEL GỐC (body)
-        # vì route() đã resolve "auto" thành model free mặc định.
-        _cgf_auto_fast = str((body or {}).get("model") or "").strip().lower() in ("cgf/auto", "free/auto")
-        if _cgf_auto_fast:
-            try:
-                return _handle_openai_oauth_chat("auto", messages, tools, tool_choice, body.get("stream"), body)
-            except Exception as exc:
-                logger.info({"event": "cgf_auto_codex_fallback_free", "error": str(exc)[:150]})
-        # Strip entity-enum bloat from HA's tool schemas so the payload fits the
-        # free backend's ~45KB limit (see _slim_tools_for_free).
-        tools = _slim_tools_for_free(tools)
-        return handle_free_chat(route.model, messages, tools, tool_choice, body.get("stream"), body, route)
-    elif route.provider == "openai_api":
-        # 3rd path kept separate (đại ca's decision): raw OpenAI API key (sk-)
-        # or `standard` JWT accounts → api.openai.com via custom:openai.
-        return _handle_openai_api_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
-    elif route.provider == "claude":
-        # claude.ai free web (claude/ | clf/ | cc/) — same backend as the
-        # dedicated /v1/claude/* endpoint, reachable from the main route so
-        # HA/automations can pick claude models from /v1/models directly.
-        from api.claude import handle_claude_chat
-        return handle_claude_chat(route.model, messages, body.get("stream"), body)
-    elif route.provider == "gemini_web_api":
-        # gemini.google.com qua cookie 1PSID (gma/ | gemini-web/) — HTTP API
-        # trực tiếp (gemini_webapi), nhanh hơn DOM scrape gmw/.
-        from api.gemini_web import handle_gemini_web_api_chat
-        _base_url = str(body.get("base_url") or "").rstrip("/")
-        return handle_gemini_web_api_chat(route.model, messages, body.get("stream"), body, base_url=_base_url)
-    elif route.provider == "grok_web":
-        # grok.com miễn phí (grok/ | gw/) — cookie hồ sơ hoặc file, websocket.
-        # Không mở trình duyệt trong lúc chat. Cùng cửa với gma/.
-        from api.grok_web import handle_grok_web_chat
-        return handle_grok_web_chat(route.model, messages, body.get("stream"), body)
-    else:
+    if adapter is None:
         logger.warning({"event": "unknown_provider", "provider": route.provider, "fallback": "chatgpt_free"})
-        from services.providers.chatgpt_free import handle_free_chat
-        tools = _slim_tools_for_free(tools)
-        return handle_free_chat(route.model, messages, tools, tool_choice, body.get("stream"), body, route)
+        return _chatgpt_free_thang(route, messages, tools, tool_choice, body)
+    return adapter.chat(route, messages, tools, tool_choice, body)
+
+
+# ── Adapter của từng provider: bọc mỏng quanh handler sẵn có, KHÔNG viết lại ruột ──
+# Handler tra tên lúc GỌI (không bắt trước) để test thay thế được và để import nặng
+# chỉ xảy ra khi provider đó thật sự được dùng.
+
+def _adapter_opencode(route, messages, tools, tool_choice, body):
+    return _handle_opencode_chat(route.model, messages, body.get("stream"), body)
+
+
+def _adapter_openai_oauth(route, messages, tools, tool_choice, body):
+    return _handle_openai_oauth_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
+
+
+def _adapter_gemini_free(route, messages, tools, tool_choice, body):
+    return _handle_gemini_chat(route.model, messages, body.get("stream"), body)
+
+
+def _adapter_agnes(route, messages, tools, tool_choice, body):
+    return _handle_agnes_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
+
+
+def _adapter_antigravity(route, messages, tools, tool_choice, body):
+    return _handle_antigravity_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
+
+
+def _adapter_nvidia_nim(route, messages, tools, tool_choice, body):
+    return _handle_nvidia_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
+
+
+def _adapter_tokenrouter(route, messages, tools, tool_choice, body):
+    return _handle_tokenrouter_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
+
+
+def _adapter_gemini_web(route, messages, tools, tool_choice, body):
+    from services.providers.web_proxy import handle_gemini_web_chat
+    return handle_gemini_web_chat(route.model, messages, body.get("stream"), body)
+
+
+def _adapter_custom(route, messages, tools, tool_choice, body):
+    return _handle_custom_openai_chat(route.provider, route.model, messages, tools, tool_choice, body.get("stream"), body)
+
+
+def _chatgpt_free_thang(route, messages, tools, tool_choice, body):
+    """Đường free thuần: bỏ phần thừa của schema tool rồi giao ``handle_free_chat``."""
+    from services.providers.chatgpt_free import handle_free_chat
+    # Strip entity-enum bloat from HA's tool schemas so the payload fits the
+    # free backend's ~45KB limit (see _slim_tools_for_free).
+    tools = _slim_tools_for_free(tools)
+    return handle_free_chat(route.model, messages, tools, tool_choice, body.get("stream"), body, route)
+
+
+def _adapter_chatgpt_free(route, messages, tools, tool_choice, body):
+    # Standalone free-tier module. `chatgpt/` and bare/unprefixed models are
+    # now aliases for free — handle_free_chat owns the whole free path
+    # (vision-fallback to gemini, tool→user normalization, free-pool
+    # rotation). Codex/paid traffic uses cx/ | codex/ | paid/; OpenAI-API
+    # (sk-/standard) uses oai/.
+    # cgf/auto → ROUTE NHANH: chatgpt.com free bắt buộc proof-of-work (~6s).
+    # Với riêng alias /auto, thử Codex OAuth (API thẳng ~3s) TRƯỚC; thiếu
+    # account/lỗi → fallback NGUYÊN VẸN về free pool (không mất tính năng).
+    # cgf/auto | free/auto → thử route Codex nhanh. Bắt theo MODEL GỐC (body)
+    # vì route() đã resolve "auto" thành model free mặc định.
+    _cgf_auto_fast = str((body or {}).get("model") or "").strip().lower() in ("cgf/auto", "free/auto")
+    if _cgf_auto_fast:
+        try:
+            return _handle_openai_oauth_chat("auto", messages, tools, tool_choice, body.get("stream"), body)
+        except Exception as exc:
+            logger.info({"event": "cgf_auto_codex_fallback_free", "error": str(exc)[:150]})
+    return _chatgpt_free_thang(route, messages, tools, tool_choice, body)
+
+
+def _adapter_openai_api(route, messages, tools, tool_choice, body):
+    # 3rd path kept separate (đại ca's decision): raw OpenAI API key (sk-)
+    # or `standard` JWT accounts → api.openai.com via custom:openai.
+    return _handle_openai_api_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
+
+
+def _adapter_claude(route, messages, tools, tool_choice, body):
+    # claude.ai free web (claude/ | clf/ | cc/) — same backend as the
+    # dedicated /v1/claude/* endpoint, reachable from the main route so
+    # HA/automations can pick claude models from /v1/models directly.
+    from api.claude import handle_claude_chat
+    return handle_claude_chat(route.model, messages, body.get("stream"), body)
+
+
+def _adapter_gemini_web_api(route, messages, tools, tool_choice, body):
+    # gemini.google.com qua cookie 1PSID (gma/ | gemini-web/) — HTTP API
+    # trực tiếp (gemini_webapi), nhanh hơn DOM scrape gmw/.
+    from api.gemini_web import handle_gemini_web_api_chat
+    _base_url = str(body.get("base_url") or "").rstrip("/")
+    return handle_gemini_web_api_chat(route.model, messages, body.get("stream"), body, base_url=_base_url)
+
+
+def _adapter_grok_web(route, messages, tools, tool_choice, body):
+    # grok.com miễn phí (grok/ | gw/) — cookie hồ sơ hoặc file, websocket.
+    # Không mở trình duyệt trong lúc chat. Cùng cửa với gma/.
+    from api.grok_web import handle_grok_web_chat
+    return handle_grok_web_chat(route.model, messages, body.get("stream"), body)
+
+
+adapter_registry.dang_ky("opencode", _adapter_opencode)
+adapter_registry.dang_ky("openai_oauth", _adapter_openai_oauth, bi_danh=("codex",))
+adapter_registry.dang_ky("gemini_free", _adapter_gemini_free)
+adapter_registry.dang_ky("agnes", _adapter_agnes)
+adapter_registry.dang_ky("antigravity", _adapter_antigravity)
+adapter_registry.dang_ky("nvidia_nim", _adapter_nvidia_nim)
+adapter_registry.dang_ky("tokenrouter", _adapter_tokenrouter)
+adapter_registry.dang_ky("gemini_web", _adapter_gemini_web)
+adapter_registry.dang_ky("custom", _adapter_custom)  # provider khai động: `custom:<tiền tố>`
+adapter_registry.dang_ky("chatgpt_free", _adapter_chatgpt_free, tai_tep=True, bi_danh=("chatgpt",))
+adapter_registry.dang_ky("openai_api", _adapter_openai_api)
+adapter_registry.dang_ky("claude", _adapter_claude)
+adapter_registry.dang_ky("gemini_web_api", _adapter_gemini_web_api)
+adapter_registry.dang_ky("grok_web", _adapter_grok_web)
 
 
 def _restore_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

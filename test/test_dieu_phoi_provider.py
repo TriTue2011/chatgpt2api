@@ -19,6 +19,8 @@ from unittest import mock
 os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
 
 import services.protocol.openai_v1_chat_complete as occ  # noqa: E402
+from services import adapter_registry  # noqa: E402
+from services.backend_router import PROVIDER_PREFIXES  # noqa: E402
 
 MSGS = [{"role": "user", "content": "xin chào"}]
 TOOLS = [{"type": "function", "function": {"name": "t"}}]
@@ -93,6 +95,33 @@ def chay(provider: str, *, model: str = "mdl", stream=False, body_model=None,
             for c in ctxs:
                 c.stop()
     return lan, kq
+
+
+# Provider có tiền tố trong `PROVIDER_PREFIXES` nhưng CHƯA có adapter — đo 10/10/2026.
+# Gọi tới chúng hiện rơi lặng lẽ về chatgpt_free (log `unknown_provider`). Danh sách này
+# chỉ được CO LẠI: viết adapter cho provider nào thì xoá tên nó khỏi đây.
+CHUA_CO_ADAPTER = {
+    "chatgpt_web", "cursor", "gemini_cli", "github", "iflow", "kiro",
+    "ninerouter", "opencode_go", "perplexity_web", "qwen", "supercode",
+}
+
+
+class SoAdapterTests(unittest.TestCase):
+    def test_moi_provider_co_tien_to_deu_co_adapter_hoac_khai_la_chua_co(self) -> None:
+        thieu = {v for v in PROVIDER_PREFIXES.values() if adapter_registry.tim(v) is None}
+        self.assertEqual(
+            thieu, CHUA_CO_ADAPTER,
+            "Thêm tiền tố provider mới thì phải đăng ký adapter (adapter_registry.dang_ky); "
+            "đã viết adapter cho provider cũ thì xoá nó khỏi CHUA_CO_ADAPTER.",
+        )
+
+    def test_provider_dong_custom_tra_ra_adapter_custom(self) -> None:
+        self.assertIs(adapter_registry.tim("custom:lv"), adapter_registry.tim("custom"))
+        self.assertIsNone(adapter_registry.tim("khong_ton_tai:x"))
+
+    def test_chi_chatgpt_tai_tep(self) -> None:
+        tai = {m for m in adapter_registry.danh_sach() if adapter_registry.tim(m).tai_tep}
+        self.assertEqual(tai, {"chatgpt", "chatgpt_free"})
 
 
 class DieuPhoiProviderTests(unittest.TestCase):
